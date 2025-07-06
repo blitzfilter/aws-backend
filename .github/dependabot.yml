@@ -6,3 +6,46 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
+
+  - package-ecosystem: "cargo"
+    directory: "/src/common"
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Berlin
+      groups:
+        same-dependency:
+          patterns:
+            - "*"
+  - package-ecosystem: "cargo"
+    directory: "/src/filter"
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Berlin
+      groups:
+        same-dependency:
+          patterns:
+            - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/src/item"
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Berlin
+      groups:
+        same-dependency:
+          patterns:
+            - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/src/test-api"
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Berlin
+      groups:
+        same-dependency:
+          patterns:
+            - "*"
