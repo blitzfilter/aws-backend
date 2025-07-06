@@ -42,7 +42,7 @@ jobs:
     strategy:
       matrix:
         crate:
-          - /
+          - ./
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +69,7 @@ jobs:
     strategy:
       matrix:
         crate:
-          - /
+          - ./
     steps:
       - uses: actions/checkout@v4
 
