@@ -42,7 +42,10 @@ jobs:
     strategy:
       matrix:
         crate:
-          - ./
+          - src/common
+          - src/filter
+          - src/item
+          - src/test-api
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +72,10 @@ jobs:
     strategy:
       matrix:
         crate:
-          - ./
+          - src/common
+          - src/filter
+          - src/item
+          - src/test-api
     steps:
       - uses: actions/checkout@v4
 
