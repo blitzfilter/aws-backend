@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "aws-backend"
+name = "blitzfilter-parent"
 version = "0.1.0"
