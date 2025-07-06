@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+common = { path = "src/common" }
+filter = { path = "src/filter" }
+item = { path = "src/item" }
+test-api = { path = "src/test-api" }
+
+[workspace]
+members = [
+    "src/common",
+    "src/filter",
+    "src/item",
+    "src/test-api",
+]

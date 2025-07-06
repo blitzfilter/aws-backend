@@ -5,3 +5,25 @@ version = 4
 [[package]]
 name = "blitzfilter-parent"
 version = "0.1.0"
+dependencies = [
+ "common",
+ "filter",
+ "item",
+ "test-api",
+]
+
+[[package]]
+name = "common"
+version = "0.1.0"
+
+[[package]]
+name = "filter"
+version = "0.1.0"
+
+[[package]]
+name = "item"
+version = "0.1.0"
+
+[[package]]
+name = "test-api"
+version = "0.1.0"
