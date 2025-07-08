@@ -41,6 +41,7 @@ pub struct ItemDocument {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description_en: Option<String>,
 
+    #[builder(setter(into))]
     pub price: f32,
 
     #[builder(setter(into))]
@@ -64,7 +65,7 @@ pub struct ItemDocument {
 }
 
 impl ItemDocument {
-    pub fn _id(&self) -> String {
-        self.item_id.to_string()
+    pub fn _id(&self) -> ItemId {
+        self.item_id
     }
 }
