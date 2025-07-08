@@ -4,6 +4,7 @@ use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shop_id::ShopId;
+use common::shops_item_id::ShopsItemId;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -27,6 +28,9 @@ pub struct ItemEventRecord {
 
     #[builder(setter(into, strip_option), default)]
     pub shop_id: ShopId,
+
+    #[builder(setter(into))]
+    pub shops_item_id: ShopsItemId,
 
     #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
