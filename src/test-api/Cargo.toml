@@ -4,3 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+test-api-macros = { path = "src/test-api-macros" }
+async-trait = { version = "0.1.88" }
+serial_test = { version = "3.2.0" }
+serde_json = { version = "1.0.140" }
+tokio = { version = "1.45.1", features = ["full"] }
+testcontainers = { version = "0.24.0" }
+testcontainers-modules = { version = "0.12.0", features = ["localstack"] }
+opensearch = { version = "2.3.0", features = ["aws-auth"] }
+aws-config = { version = "1.6.3" }
+aws-sdk-opensearch = { version = "1.85.0" }
+aws-sdk-dynamodb = { version = "1.78.0" }
+aws-sdk-sqs = { version = "1.71.0" }
+aws-sdk-lambda = { version = "1.82.0" }
+tracing-subscriber = { version = "0.3.19", features = ["json"] }
+tracing = "0.1.41"
