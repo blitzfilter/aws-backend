@@ -9,7 +9,7 @@ async fn should_set_up_indices() {
     let exists_response = get_opensearch_client()
         .await
         .indices()
-        .exists(IndicesExistsParts::Index(&["entities"]))
+        .exists(IndicesExistsParts::Index(&["items"]))
         .send()
         .await
         .expect("shouldn't fail retrieving indices-exist query");
