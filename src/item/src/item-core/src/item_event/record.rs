@@ -1,3 +1,4 @@
+use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::currency::record::CurrencyRecord;
 use derive_builder::Builder;
@@ -6,10 +7,20 @@ use time::OffsetDateTime;
 
 #[derive(Builder, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemEventRecord {
+    #[builder(setter(into))]
     pub pk: String,
+
+    #[builder(setter(into))]
     pub sk: String,
+
+    #[builder(setter(into))]
     pub item_id: String,
+
+    #[builder(setter(into))]
     pub event_id: String,
+
+    #[builder(setter(into))]
+    pub event_type: ItemEventTypeRecord,
 
     #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
