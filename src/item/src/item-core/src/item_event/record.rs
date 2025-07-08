@@ -1,6 +1,9 @@
 use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::currency::record::CurrencyRecord;
+use common::event_id::EventId;
+use common::item_id::ItemId;
+use common::shop_id::ShopId;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -14,17 +17,16 @@ pub struct ItemEventRecord {
     pub sk: String,
 
     #[builder(setter(into))]
-    pub item_id: String,
+    pub item_id: ItemId,
 
     #[builder(setter(into))]
-    pub event_id: String,
+    pub event_id: EventId,
 
     #[builder(setter(into))]
     pub event_type: ItemEventTypeRecord,
 
     #[builder(setter(into, strip_option), default)]
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub shop_id: Option<String>,
+    pub shop_id: ShopId,
 
     #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]

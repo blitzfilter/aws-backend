@@ -1,5 +1,8 @@
 use crate::item_state::record::ItemStateRecord;
 use common::currency::record::CurrencyRecord;
+use common::event_id::EventId;
+use common::item_id::ItemId;
+use common::shop_id::ShopId;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -13,13 +16,13 @@ pub struct ItemRecord {
     pub sk: String,
 
     #[builder(setter(into))]
-    pub item_id: String,
+    pub item_id: ItemId,
 
     #[builder(setter(into))]
-    pub event_id: String,
+    pub event_id: EventId,
 
     #[builder(setter(into))]
-    pub shop_id: String,
+    pub shop_id: ShopId,
 
     #[builder(setter(into))]
     pub shop_name: String,
