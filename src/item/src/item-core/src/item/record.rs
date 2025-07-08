@@ -3,10 +3,10 @@ use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shop_id::ShopId;
+use common::shops_item_id::ShopsItemId;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use common::shops_item_id::ShopsItemId;
 
 #[derive(Builder, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemRecord {
@@ -27,7 +27,7 @@ pub struct ItemRecord {
 
     #[builder(setter(into))]
     pub shops_item_id: ShopsItemId,
-    
+
     #[builder(setter(into))]
     pub shop_name: String,
 
