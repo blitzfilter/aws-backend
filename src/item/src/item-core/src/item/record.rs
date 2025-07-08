@@ -17,6 +17,12 @@ pub struct ItemRecord {
     pub sk: String,
 
     #[builder(setter(into))]
+    pub gsi_1_pk: String,
+
+    #[builder(setter(into))]
+    pub gsi_1_sk: String,
+
+    #[builder(setter(into))]
     pub item_id: ItemId,
 
     #[builder(setter(into))]
