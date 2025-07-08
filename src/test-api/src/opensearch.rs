@@ -139,11 +139,65 @@ async fn wait_until_domain_processed(
 
 async fn set_up_indices() -> Result<Response, Error> {
     let mapping = json!({
-        "mappings": {
-            "properties": {
-                "itemId":  { "type": "keyword" },
-            }
+      "mappings": {
+        "properties": {
+          "itemId": {
+            "type": "keyword"
+          },
+          "eventId": {
+            "type": "keyword"
+          },
+          "shopId": {
+            "type": "keyword"
+          },
+          "shopsItemId": {
+            "type": "keyword"
+          },
+          "shopName": {
+            "type": "keyword",
+          },
+          "titleDe": {
+            "type": "search_as_you_type",
+            "analyzer": "german"
+          },
+          "titleEn": {
+            "type": "search_as_you_type",
+            "analyzer": "english"
+          },
+          "descriptionDe": {
+            "type": "text",
+            "analyzer": "german",
+          },
+          "descriptionEn": {
+            "type": "text",
+            "analyzer": "english",
+          },
+          "price": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "state": {
+            "type": "keyword"
+          },
+          "isAvailable": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "keyword"
+          },
+          "image": {
+            "type": "keyword"
+          },
+          "created": {
+            "type": "date",
+            "format": "strict_date_time"
+          },
+          "updated": {
+            "type": "date",
+            "format": "strict_date_time"
+          }
         }
+      }
     });
 
     get_opensearch_client()
