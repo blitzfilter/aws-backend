@@ -78,7 +78,7 @@ jobs:
         crate:
           - src/common
           - src/filter
-          - src/item
+          - src/item/src/item-core
           - src/test-api
     steps:
       - uses: actions/checkout@v4

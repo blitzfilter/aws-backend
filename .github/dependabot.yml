@@ -29,7 +29,7 @@ updates:
           - "*"
 
   - package-ecosystem: "cargo"
-    directory: "/src/item"
+    directory: "/src/item/src/item-core"
     schedule:
       interval: daily
       time: "06:00"
