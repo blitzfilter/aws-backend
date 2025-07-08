@@ -1,0 +1,15 @@
+[package]
+name = "item-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../../../common" }
+serde = { version = "1.0.219", features = ["derive"] }
+blake3 = { version = "1.8.2" }
+time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
+derive_builder = "0.20.2"
+
+[dev-dependencies]
+serde_json = "1.0.140"
+rstest = { version = "0.25.0"}
