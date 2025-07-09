@@ -49,6 +49,7 @@ jobs:
           - src/common
           - src/filter
           - src/item/src/item-core
+          - src/item/src/item-read
           - src/test-api
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +80,7 @@ jobs:
           - src/common
           - src/filter
           - src/item/src/item-core
+          - src/item/src/item-read
           - src/test-api
     steps:
       - uses: actions/checkout@v4

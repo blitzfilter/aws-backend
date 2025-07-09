@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 item-core = { path = "src/item-core" }
+item-read = { path = "src/item-read" }

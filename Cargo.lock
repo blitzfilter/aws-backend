@@ -1709,20 +1709,8 @@ dependencies = [
 name = "item"
 version = "0.1.0"
 dependencies = [
- "item-command",
  "item-core",
- "item-query",
-]
-
-[[package]]
-name = "item-command"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "aws-sdk-dynamodb",
- "common",
- "item-core",
- "serde_dynamo",
+ "item-read",
 ]
 
 [[package]]
@@ -1739,7 +1727,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "item-query"
+name = "item-read"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -1747,6 +1735,10 @@ dependencies = [
  "common",
  "item-core",
  "serde_dynamo",
+ "serial_test",
+ "test-api",
+ "time",
+ "tracing",
 ]
 
 [[package]]
