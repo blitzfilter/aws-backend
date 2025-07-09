@@ -1,0 +1,17 @@
+[package]
+name = "item-read"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../../../common" }
+item-core = { path = "../item-core" }
+async-trait = "0.1.88"
+aws-sdk-dynamodb = "1.82.0"
+serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+test-api = { path = "../../../test-api" }
+serial_test = "3.2.0"
+time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
