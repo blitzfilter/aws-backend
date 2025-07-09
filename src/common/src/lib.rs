@@ -1,6 +1,7 @@
 pub mod currency;
 pub mod dynamodb_batch;
 pub mod event_id;
+pub mod has;
 pub mod item_id;
 pub mod language;
 pub mod serde;
