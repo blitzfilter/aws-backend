@@ -18,7 +18,7 @@ pub trait WriteItemRecords {
         &self,
         event_records: DynamoDbBatch<ItemRecord>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>>;
-    
+
     // TODO: Patch-Type for item-record-updates!
     //       Maybe with a clever From<ItemRecord>...?
 }
