@@ -49,6 +49,7 @@ jobs:
           - src/common
           - src/filter
           - src/item/src/item-core
+          - src/item/src/item-write
           - src/item/src/item-read
           - src/test-api
     steps:
@@ -80,6 +81,7 @@ jobs:
           - src/common
           - src/filter
           - src/item/src/item-core
+          - src/item/src/item-write
           - src/item/src/item-read
           - src/test-api
     steps:

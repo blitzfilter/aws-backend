@@ -1711,6 +1711,7 @@ version = "0.1.0"
 dependencies = [
  "item-core",
  "item-read",
+ "item-write",
 ]
 
 [[package]]
@@ -1739,6 +1740,17 @@ dependencies = [
  "test-api",
  "time",
  "tracing",
+]
+
+[[package]]
+name = "item-write"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-sdk-dynamodb",
+ "common",
+ "item-core",
+ "serde_dynamo",
 ]
 
 [[package]]

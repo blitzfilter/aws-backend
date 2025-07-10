@@ -1,0 +1,11 @@
+[package]
+name = "item-write"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../../../common" }
+item-core = { path = "../item-core" }
+async-trait = "0.1.88"
+aws-sdk-dynamodb = "1.82.0"
+serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
