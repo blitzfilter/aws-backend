@@ -51,7 +51,7 @@ where
             .and_then(|item_record_res| match item_record_res {
                 Ok(item_record) => Some(item_record),
                 Err(err) => {
-                    error!(error = %err, "Failed deserializing PrescriptionEventRecord.");
+                    error!(error = %err, "Failed deserializing ItemRecord.");
                     None
                 }
             });
@@ -73,6 +73,18 @@ where
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")
             .expression_attribute_values(":gsi_1_pk_val", AttributeValue::S(shop_id.to_string()))
             .scan_index_forward(scan_index_forward)
+            .projection_expression(
+                "#item_id, #shop_id, #shops_item_id, #price_currency, #price_amount, #state, #url, #hash"
+            )
+            .expression_attribute_names("#item_id", "item_id")
+            .expression_attribute_names("#shop_id", "shop_id")
+            .expression_attribute_names("#shops_item_id", "shops_item_id")
+            .expression_attribute_names("#price_currency", "price_currency")
+            .expression_attribute_names("#price_amount", "price_amount")
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_names("#url", "url")
+            .expression_attribute_names("#hash", "hash")
+            .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")
             .into_paginator()
             .send()
             .try_collect()
