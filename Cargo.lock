@@ -787,13 +787,16 @@ dependencies = [
 name = "common"
 version = "0.1.0"
 dependencies = [
+ "aws-sdk-dynamodb",
  "quickcheck",
  "rand 0.9.1",
  "rstest",
  "serde",
+ "serde_dynamo",
  "serde_json",
  "thiserror",
  "time",
+ "tracing",
  "uuid",
 ]
 
@@ -1750,6 +1753,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "common",
  "item-core",
+ "item-read",
  "serde_dynamo",
 ]
 

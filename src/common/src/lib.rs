@@ -1,4 +1,6 @@
 pub mod currency;
+
+#[cfg(feature = "dynamodb")]
 pub mod dynamodb_batch;
 pub mod event_id;
 pub mod has;
