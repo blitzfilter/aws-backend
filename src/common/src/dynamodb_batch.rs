@@ -5,9 +5,12 @@ use thiserror::Error;
 use tracing::error;
 
 #[derive(Error, Debug, Clone, Copy)]
-#[error("DynamoDB batch size exceeded: got {size}, max is 25")]
-pub struct DynamoDbBatchSizeExceeded {
-    size: usize,
+pub enum DynamoDbBatchConstructionError {
+    #[error("DynamoDB must not be empty")]
+    DynamoDbBatchEmpty,
+
+    #[error("DynamoDB batch size exceeded: got {0}, max is 25")]
+    DynamoDbBatchSizeExceeded(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
@@ -16,27 +19,22 @@ pub struct DynamoDbBatch<T>(Vec<T>);
 impl<T> DynamoDbBatch<T> {
     pub fn from_iter_safe<I: IntoIterator<Item = T>>(
         iter: I,
-    ) -> Result<Self, DynamoDbBatchSizeExceeded> {
+    ) -> Result<Self, DynamoDbBatchConstructionError> {
         let vec: Vec<T> = iter.into_iter().collect();
         Self::try_from(vec)
     }
 }
 
-impl<T> Default for DynamoDbBatch<T> {
-    fn default() -> Self {
-        Self(Vec::default())
-    }
-}
-
 impl<T> TryFrom<Vec<T>> for DynamoDbBatch<T> {
-    type Error = DynamoDbBatchSizeExceeded;
+    type Error = DynamoDbBatchConstructionError;
 
-    fn try_from(v: Vec<T>) -> Result<Self, DynamoDbBatchSizeExceeded> {
-        let size = v.len();
-        if size > 25 {
-            Err(DynamoDbBatchSizeExceeded { size })
-        } else {
-            Ok(Self(v))
+    fn try_from(v: Vec<T>) -> Result<Self, DynamoDbBatchConstructionError> {
+        match v.len() {
+            0 => Err(DynamoDbBatchConstructionError::DynamoDbBatchEmpty),
+            1..=25 => Ok(Self(v)),
+            size => Err(DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(
+                size,
+            )),
         }
     }
 }
@@ -80,6 +78,12 @@ impl<T: std::fmt::Display> std::fmt::Display for DynamoDbBatch<T> {
 impl<T> From<DynamoDbBatch<T>> for Vec<T> {
     fn from(v: DynamoDbBatch<T>) -> Self {
         v.0
+    }
+}
+
+impl<T> DynamoDbBatch<T> {
+    pub fn singleton(&self, v: T) -> Self {
+        DynamoDbBatch(vec![v])
     }
 }
 
