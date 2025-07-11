@@ -25,6 +25,136 @@ impl<T> DynamoDbBatch<T> {
     }
 }
 
+// region fixed-size array
+
+impl<T> From<[T; 1]> for DynamoDbBatch<T> {
+    fn from(value: [T; 1]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 2]> for DynamoDbBatch<T> {
+    fn from(value: [T; 2]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 3]> for DynamoDbBatch<T> {
+    fn from(value: [T; 3]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 4]> for DynamoDbBatch<T> {
+    fn from(value: [T; 4]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 5]> for DynamoDbBatch<T> {
+    fn from(value: [T; 5]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 6]> for DynamoDbBatch<T> {
+    fn from(value: [T; 6]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 7]> for DynamoDbBatch<T> {
+    fn from(value: [T; 7]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 8]> for DynamoDbBatch<T> {
+    fn from(value: [T; 8]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 9]> for DynamoDbBatch<T> {
+    fn from(value: [T; 9]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 10]> for DynamoDbBatch<T> {
+    fn from(value: [T; 10]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 11]> for DynamoDbBatch<T> {
+    fn from(value: [T; 11]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 12]> for DynamoDbBatch<T> {
+    fn from(value: [T; 12]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 13]> for DynamoDbBatch<T> {
+    fn from(value: [T; 13]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 14]> for DynamoDbBatch<T> {
+    fn from(value: [T; 14]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 15]> for DynamoDbBatch<T> {
+    fn from(value: [T; 15]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 16]> for DynamoDbBatch<T> {
+    fn from(value: [T; 16]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 17]> for DynamoDbBatch<T> {
+    fn from(value: [T; 17]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 18]> for DynamoDbBatch<T> {
+    fn from(value: [T; 18]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 19]> for DynamoDbBatch<T> {
+    fn from(value: [T; 19]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 20]> for DynamoDbBatch<T> {
+    fn from(value: [T; 20]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 21]> for DynamoDbBatch<T> {
+    fn from(value: [T; 21]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 22]> for DynamoDbBatch<T> {
+    fn from(value: [T; 22]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 23]> for DynamoDbBatch<T> {
+    fn from(value: [T; 23]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 24]> for DynamoDbBatch<T> {
+    fn from(value: [T; 24]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T> From<[T; 25]> for DynamoDbBatch<T> {
+    fn from(value: [T; 25]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+
+// endregion
+
 impl<T> TryFrom<Vec<T>> for DynamoDbBatch<T> {
     type Error = DynamoDbBatchConstructionError;
 
