@@ -4,7 +4,7 @@ use std::ops::Deref;
 use thiserror::Error;
 use tracing::error;
 
-#[derive(Error, Debug, Clone, Copy)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynamoDbBatchConstructionError {
     #[error("DynamoDB must not be empty")]
     DynamoDbBatchEmpty,
@@ -82,7 +82,7 @@ impl<T> From<DynamoDbBatch<T>> for Vec<T> {
 }
 
 impl<T> DynamoDbBatch<T> {
-    pub fn singleton(&self, v: T) -> Self {
+    pub fn singleton(v: T) -> Self {
         DynamoDbBatch(vec![v])
     }
 }
@@ -109,5 +109,57 @@ impl<T: Serialize> DynamoDbBatch<T> {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dynamodb_batch::{DynamoDbBatch, DynamoDbBatchConstructionError};
+
+    #[rstest::rstest]
+    #[case::empty(DynamoDbBatch::try_from(vec![]), DynamoDbBatchConstructionError::DynamoDbBatchEmpty)]
+    #[case::exceeded(DynamoDbBatch::try_from([1].repeat(26)), DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(26))]
+    #[case::exceeded(DynamoDbBatch::try_from([1].repeat(27)), DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(27))]
+    #[case::exceeded(DynamoDbBatch::try_from([1].repeat(100)), DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(100))]
+    fn should_err_from(
+        #[case] batch: Result<DynamoDbBatch<u32>, DynamoDbBatchConstructionError>,
+        #[case] err: DynamoDbBatchConstructionError,
+    ) {
+        assert!(batch.is_err());
+        assert_eq!(batch.unwrap_err(), err);
+    }
+
+    #[rstest::rstest]
+    #[case::one(1)]
+    #[case::two(2)]
+    #[case::three(3)]
+    #[case::four(4)]
+    #[case::five(5)]
+    #[case::six(6)]
+    #[case::seven(7)]
+    #[case::eight(8)]
+    #[case::nine(9)]
+    #[case::ten(10)]
+    #[case::eleven(11)]
+    #[case::twelve(12)]
+    #[case::thirteen(13)]
+    #[case::fourteen(14)]
+    #[case::fifteen(15)]
+    #[case::sixteen(16)]
+    #[case::seventeen(17)]
+    #[case::eighteen(18)]
+    #[case::nineteen(19)]
+    #[case::twenty(20)]
+    #[case::twentyone(21)]
+    #[case::twentytwo(22)]
+    #[case::twentythree(23)]
+    #[case::twentyfour(24)]
+    #[case::twentyfive(25)]
+    fn should_ok_from(#[case] size: usize) {
+        let batch: Result<DynamoDbBatch<&str>, DynamoDbBatchConstructionError> =
+            DynamoDbBatch::try_from(["foo"].repeat(size));
+
+        assert!(batch.is_ok());
+        assert_eq!(batch.unwrap().len(), size);
     }
 }
