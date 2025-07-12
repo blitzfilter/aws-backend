@@ -22,8 +22,9 @@ where
 }
 
 pub mod option {
-    use super::*;
-    use serde::{Deserializer, Serializer};
+    use crate::serde::date::FORMAT;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Date;
 
     pub fn serialize<S>(date: &Option<Date>, serializer: S) -> Result<S::Ok, S::Error>
     where

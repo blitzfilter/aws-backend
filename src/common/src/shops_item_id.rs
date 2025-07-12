@@ -12,7 +12,7 @@ impl Display for ShopsItemId {
 
 impl From<ShopsItemId> for String {
     fn from(id: ShopsItemId) -> Self {
-        id.0.to_string()
+        id.0
     }
 }
 
