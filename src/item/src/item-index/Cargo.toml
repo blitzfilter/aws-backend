@@ -1,0 +1,15 @@
+[package]
+name = "item-index"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../../../common" }
+item-core = { path = "../item-core" }
+async-trait = "0.1.88"
+opensearch = "2.3.0"
+
+[dev-dependencies]
+test-api = { path = "../../../test-api" }
+serial_test = "3.2.0"
+time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }

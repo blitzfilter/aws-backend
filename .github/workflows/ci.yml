@@ -49,6 +49,7 @@ jobs:
           - src/common
           - src/filter
           - src/item/src/item-core
+          - src/item/src/item-index
           - src/item/src/item-write
           - src/item/src/item-read
           - src/test-api
@@ -81,6 +82,7 @@ jobs:
           - src/common
           - src/filter
           - src/item/src/item-core
+          - src/item/src/item-index
           - src/item/src/item-write
           - src/item/src/item-read
           - src/test-api
@@ -116,6 +118,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt, llvm-tools
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
 
       - name: Run Clippy and generate JSON report
         run: |

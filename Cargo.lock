@@ -1713,6 +1713,7 @@ name = "item"
 version = "0.1.0"
 dependencies = [
  "item-core",
+ "item-index",
  "item-read",
  "item-write",
 ]
@@ -1727,6 +1728,19 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "time",
+]
+
+[[package]]
+name = "item-index"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "common",
+ "item-core",
+ "opensearch",
+ "serial_test",
+ "test-api",
  "time",
 ]
 
