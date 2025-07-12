@@ -11,6 +11,26 @@ pub struct ItemDocumentUpdate {
     pub event_id: EventId,
 
     #[builder(setter(into, strip_option), default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub shop_name: Option<String>,
+
+    #[builder(setter(into, strip_option), default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub title_de: Option<String>,
+
+    #[builder(setter(into, strip_option), default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub title_en: Option<String>,
+
+    #[builder(setter(into, strip_option), default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description_de: Option<String>,
+
+    #[builder(setter(into, strip_option), default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description_en: Option<String>,
+
+    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub price: Option<f32>,
 
