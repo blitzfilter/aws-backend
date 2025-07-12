@@ -105,7 +105,7 @@ jobs:
 
   sonar:
     name: SonarQube-Cloud Analysis
-    needs: test
+#    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,7 +115,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt, cargo-llvm-cov
+          components: clippy, rustfmt, llvm-tools
 
       - name: Run Clippy and generate JSON report
         run: |
