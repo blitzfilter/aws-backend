@@ -5,6 +5,8 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::diff_record::ItemDiffRecord;
 use item_core::item::record::ItemRecord;
+use item_core::item_event::record::ItemEventRecord;
+use item_core::item_event_type::record::ItemEventTypeRecord;
 use item_core::item_state::record::ItemStateRecord;
 use item_read::ReadItemRecords;
 use std::time::Duration;
@@ -78,7 +80,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
     let now_str = now.format(&well_known::Rfc3339).unwrap();
     let shop_id = ShopId::new();
     let shops_item_id: ShopsItemId = "123465".into();
-    let expected = ItemRecord {
+    let other = ItemRecord {
         pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
         sk: "item#materialized".to_string(),
         gsi_1_pk: shop_id.into(),
@@ -106,7 +108,81 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
     client
         .put_item()
         .table_name("items")
-        .set_item(serde_dynamo::to_item(&expected).ok())
+        .set_item(serde_dynamo::to_item(&other).ok())
+        .send()
+        .await
+        .unwrap();
+
+    let actual = client
+        .get_item_record(&ShopId::new(), &"non-existent".into())
+        .await
+        .unwrap();
+
+    assert!(actual.is_none());
+}
+
+#[localstack_test(services = [DynamoDB])]
+async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() {
+    let now = OffsetDateTime::now_utc();
+    let now_str = now.format(&well_known::Rfc3339).unwrap();
+    let shop_id = ShopId::new();
+    let shops_item_id: ShopsItemId = "123465".into();
+    let other1 = ItemRecord {
+        pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
+        sk: "item#materialized".to_string(),
+        gsi_1_pk: shop_id.into(),
+        gsi_1_sk: now_str.clone(),
+        item_id: ItemId::now(),
+        event_id: EventId::new(),
+        shop_id,
+        shops_item_id: shops_item_id.clone(),
+        shop_name: "Foo".to_string(),
+        title_de: Some("Bar".to_string()),
+        title_en: Some("Barr".to_string()),
+        description_de: Some("Baz".to_string()),
+        description_en: Some("Bazz".to_string()),
+        price_currency: CurrencyRecord::Eur,
+        price_amount: 110.5,
+        state: ItemStateRecord::Available,
+        url: "https:://foo.bar/123456".to_string(),
+        images: vec!["https:://foo.bar/123456/image".to_string()],
+        hash: "123456".to_string(),
+        created: now,
+        updated: now,
+    };
+    let other2 = ItemEventRecord {
+        pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
+        sk: format!("item#event#{now_str}"),
+        item_id: ItemId::now(),
+        event_id: EventId::new(),
+        event_type: ItemEventTypeRecord::StateListed,
+        shop_id,
+        shops_item_id: shops_item_id.clone(),
+        shop_name: None,
+        title_de: Some("Bar".to_string()),
+        title_en: Some("Barr".to_string()),
+        description_de: Some("Baz".to_string()),
+        description_en: Some("Bazz".to_string()),
+        price_currency: None,
+        price_amount: None,
+        state: Some(ItemStateRecord::Listed),
+        url: None,
+        images: vec!["https:://foo.bar/123456/image".to_string()],
+        timestamp: OffsetDateTime::now_utc(),
+    };
+
+    let client = get_dynamodb_client().await;
+    client
+        .put_item()
+        .table_name("items")
+        .set_item(serde_dynamo::to_item(&other1).ok())
+        .send()
+        .await
+        .unwrap();
+    client
+        .put_item()
+        .table_name("items")
+        .set_item(serde_dynamo::to_item(&other2).ok())
         .send()
         .await
         .unwrap();
@@ -360,7 +436,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     let now_str = now.format(&well_known::Rfc3339).unwrap();
     let shop_id = ShopId::new();
     let shops_item_id: ShopsItemId = "123465".into();
-    let inserted = ItemRecord {
+    let other = ItemRecord {
         pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
         sk: "item#materialized".to_string(),
         gsi_1_pk: shop_id.into(),
@@ -388,7 +464,84 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     client
         .put_item()
         .table_name("items")
-        .set_item(serde_dynamo::to_item(&inserted).ok())
+        .set_item(serde_dynamo::to_item(&other).ok())
+        .send()
+        .await
+        .unwrap();
+
+    // Wait for GSI
+    sleep(Duration::from_secs(3)).await;
+
+    let actual = client
+        .query_item_diff_records(&ShopId::new(), true)
+        .await
+        .unwrap();
+
+    assert!(actual.is_empty());
+}
+
+#[localstack_test(services = [DynamoDB])]
+async fn should_return_nothing_for_query_item_diff_records_when_only_others_exist_mix() {
+    let now = OffsetDateTime::now_utc();
+    let now_str = now.format(&well_known::Rfc3339).unwrap();
+    let shop_id = ShopId::new();
+    let shops_item_id: ShopsItemId = "123465".into();
+    let other = ItemRecord {
+        pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
+        sk: "item#materialized".to_string(),
+        gsi_1_pk: shop_id.into(),
+        gsi_1_sk: now_str.clone(),
+        item_id: ItemId::now(),
+        event_id: EventId::new(),
+        shop_id,
+        shops_item_id: shops_item_id.clone(),
+        shop_name: "Foo".to_string(),
+        title_de: Some("Bar".to_string()),
+        title_en: Some("Barr".to_string()),
+        description_de: Some("Baz".to_string()),
+        description_en: Some("Bazz".to_string()),
+        price_currency: CurrencyRecord::Eur,
+        price_amount: 110.5,
+        state: ItemStateRecord::Available,
+        url: "https:://foo.bar/123456".to_string(),
+        images: vec!["https:://foo.bar/123456/image".to_string()],
+        hash: "123456".to_string(),
+        created: now,
+        updated: now,
+    };
+    let other2 = ItemEventRecord {
+        pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
+        sk: format!("item#event#{now_str}"),
+        item_id: ItemId::now(),
+        event_id: EventId::new(),
+        event_type: ItemEventTypeRecord::StateListed,
+        shop_id,
+        shops_item_id: shops_item_id.clone(),
+        shop_name: None,
+        title_de: Some("Bar".to_string()),
+        title_en: Some("Barr".to_string()),
+        description_de: Some("Baz".to_string()),
+        description_en: Some("Bazz".to_string()),
+        price_currency: None,
+        price_amount: None,
+        state: Some(ItemStateRecord::Listed),
+        url: None,
+        images: vec!["https:://foo.bar/123456/image".to_string()],
+        timestamp: OffsetDateTime::now_utc(),
+    };
+
+    let client = get_dynamodb_client().await;
+    client
+        .put_item()
+        .table_name("items")
+        .set_item(serde_dynamo::to_item(&other).ok())
+        .send()
+        .await
+        .unwrap();
+    client
+        .put_item()
+        .table_name("items")
+        .set_item(serde_dynamo::to_item(&other2).ok())
         .send()
         .await
         .unwrap();
