@@ -124,7 +124,8 @@ jobs:
 
       - name: Run Clippy and generate JSON report
         run: |
-          cargo clippy --workspace --all-targets --all-features --message-format=json > clippy-report.json
+          cargo clippy --workspace --all-targets --all-features --message-format=json \
+          | jq -s '.' > clippy-report.json        
 
       - name: Generate coverage report
         run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
