@@ -1755,6 +1755,9 @@ dependencies = [
  "item-core",
  "item-read",
  "serde_dynamo",
+ "serial_test",
+ "test-api",
+ "time",
 ]
 
 [[package]]
