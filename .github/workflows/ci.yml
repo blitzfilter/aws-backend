@@ -119,9 +119,6 @@ jobs:
         with:
           components: clippy, rustfmt, llvm-tools
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov
-
       - name: Cache cargo registry and target
         uses: actions/cache@v4
         with:
@@ -130,6 +127,9 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
 
       - name: Generate coverage report
         run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
