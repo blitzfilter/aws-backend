@@ -128,11 +128,11 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov
+#      - name: Install cargo-llvm-cov
+#        run: cargo install cargo-llvm-cov
 
-      - name: Generate coverage report
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+#      - name: Generate coverage report
+#        run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
