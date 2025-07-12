@@ -119,8 +119,8 @@ jobs:
         with:
           components: clippy, rustfmt, llvm-tools
 
-#      - name: Install cargo-llvm-cov
-#        run: cargo install cargo-llvm-cov
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
 
       - name: Cache cargo registry and target
         uses: actions/cache@v4
@@ -131,12 +131,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-#      - name: Run Clippy and generate JSON report
-#        run: |
-#          cargo clippy --workspace --all-targets --all-features --message-format=json > clippy-report.json
-
-#      - name: Generate coverage report
-#        run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+      - name: Generate coverage report
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
