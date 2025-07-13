@@ -2,57 +2,44 @@ use crate::item::record::ItemRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
-use derive_builder::Builder;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-#[derive(Builder, Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ItemUpdateRecord {
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub event_id: Option<EventId>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub shop_name: Option<String>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub title_de: Option<String>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub title_en: Option<String>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description_de: Option<String>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description_en: Option<String>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price_currency: Option<CurrencyRecord>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price_amount: Option<f32>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub state: Option<ItemStateRecord>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub url: Option<String>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub images: Option<Vec<String>>,
 
-    #[builder(setter(into, strip_option), default)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hash: Option<String>,
 

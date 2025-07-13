@@ -4,32 +4,17 @@ use common::currency::record::CurrencyRecord;
 use common::item_id::ItemId;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 
-#[derive(Builder, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDiffRecord {
-    #[builder(setter(into))]
     pub item_id: ItemId,
-
-    #[builder(setter(into))]
     pub shop_id: ShopId,
-
-    #[builder(setter(into))]
     pub shops_item_id: ShopsItemId,
-
     pub price_currency: CurrencyRecord,
-
-    #[builder(setter(into))]
     pub price_amount: f32,
-
-    #[builder(setter(into))]
     pub state: ItemStateRecord,
-
-    #[builder(setter(into))]
     pub url: String,
-
-    #[builder(setter(into))]
     pub hash: String,
 }
 
