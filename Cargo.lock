@@ -1739,6 +1739,8 @@ dependencies = [
  "common",
  "item-core",
  "opensearch",
+ "serde",
+ "serde_json",
  "serial_test",
  "test-api",
  "time",
