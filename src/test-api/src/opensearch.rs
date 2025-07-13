@@ -185,7 +185,7 @@ async fn set_up_indices() -> Result<Response, Error> {
           "url": {
             "type": "keyword"
           },
-          "image": {
+          "images": {
             "type": "keyword"
           },
           "created": {

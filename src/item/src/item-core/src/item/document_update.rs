@@ -42,6 +42,10 @@ pub struct ItemDocumentUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_available: Option<bool>,
 
+    #[builder(setter(into), default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub images: Option<Vec<String>>,
+
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
 }

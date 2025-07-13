@@ -53,9 +53,9 @@ pub struct ItemDocument {
     #[builder(setter(into))]
     pub url: String,
 
-    #[builder(setter(into, strip_option), default)]
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub image: Option<String>,
+    #[builder(setter(into), default)]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub images: Vec<String>,
 
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
