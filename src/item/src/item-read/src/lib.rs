@@ -7,7 +7,7 @@ use aws_sdk_dynamodb::types::AttributeValue;
 use common::has::Has;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::diff_record::ItemDiffRecord;
+use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
 use tracing::error;
 
@@ -23,7 +23,7 @@ pub trait ReadItemRecords {
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<Vec<ItemDiffRecord>, SdkError<QueryError, HttpResponse>>;
+    ) -> Result<Vec<ItemHash>, SdkError<QueryError, HttpResponse>>;
 }
 
 #[async_trait]
@@ -63,7 +63,7 @@ where
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<Vec<ItemDiffRecord>, SdkError<QueryError, HttpResponse>> {
+    ) -> Result<Vec<ItemHash>, SdkError<QueryError, HttpResponse>> {
         let records = self
             .get()
             .query()
@@ -73,16 +73,10 @@ where
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")
             .expression_attribute_values(":gsi_1_pk_val", AttributeValue::S(shop_id.to_string()))
             .scan_index_forward(scan_index_forward)
-            .projection_expression(
-                "#item_id, #shop_id, #shops_item_id, #price_currency, #price_amount, #state, #url, #hash"
-            )
+            .projection_expression("#item_id, #shop_id, #shops_item_id, #hash")
             .expression_attribute_names("#item_id", "item_id")
             .expression_attribute_names("#shop_id", "shop_id")
             .expression_attribute_names("#shops_item_id", "shops_item_id")
-            .expression_attribute_names("#price_currency", "price_currency")
-            .expression_attribute_names("#price_amount", "price_amount")
-            .expression_attribute_names("#state", "state")
-            .expression_attribute_names("#url", "url")
             .expression_attribute_names("#hash", "hash")
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")
             .into_paginator()
@@ -91,7 +85,7 @@ where
             .await?
             .into_iter()
             .flat_map(|qo| qo.items.unwrap_or_default())
-            .map(serde_dynamo::from_item::<_, ItemDiffRecord>)
+            .map(serde_dynamo::from_item::<_, ItemHash>)
             .filter_map(|result| match result {
                 Ok(event) => Some(event),
                 Err(err) => {

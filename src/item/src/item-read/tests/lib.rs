@@ -3,7 +3,7 @@ use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::diff_record::ItemDiffRecord;
+use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
@@ -248,7 +248,7 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let expected: ItemDiffRecord = inserted.into();
+    let expected: ItemHash = inserted.into();
     let actual = client
         .query_item_diff_records(&shop_id, true)
         .await
@@ -332,8 +332,8 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let expected1: ItemDiffRecord = inserted1.into();
-    let expected2: ItemDiffRecord = inserted2.into();
+    let expected1: ItemHash = inserted1.into();
+    let expected2: ItemHash = inserted2.into();
     let actual = client
         .query_item_diff_records(&shop_id, true)
         .await
@@ -420,8 +420,8 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let expected1: ItemDiffRecord = inserted1.into();
-    let expected2: ItemDiffRecord = inserted2.into();
+    let expected1: ItemHash = inserted1.into();
+    let expected2: ItemHash = inserted2.into();
     let actual = client
         .query_item_diff_records(&shop_id, true)
         .await
