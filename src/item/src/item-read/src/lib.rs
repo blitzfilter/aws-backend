@@ -19,7 +19,7 @@ pub trait ReadItemRecords {
         shops_item_id: &ShopsItemId,
     ) -> Result<Option<ItemRecord>, SdkError<GetItemError, HttpResponse>>;
 
-    async fn query_item_diff_records(
+    async fn query_item_hashes(
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
@@ -59,7 +59,7 @@ where
         Ok(rec)
     }
 
-    async fn query_item_diff_records(
+    async fn query_item_hashes(
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
