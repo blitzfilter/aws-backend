@@ -100,7 +100,6 @@ where
             .key("pk", AttributeValue::S(pk))
             .key("sk", AttributeValue::S(sk))
             .update_expression(update_expr)
-            .condition_expression("#updated < :updated_val")
             .set_expression_attribute_names(Some(expr_attr_names))
             .set_expression_attribute_values(Some(expr_attr_values))
             .send()
