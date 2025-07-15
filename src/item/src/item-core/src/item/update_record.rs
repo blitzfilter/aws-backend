@@ -32,6 +32,9 @@ pub struct ItemUpdateRecord {
     pub price_amount: Option<f32>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_eur: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub state: Option<ItemStateRecord>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -58,6 +61,7 @@ impl From<ItemRecord> for ItemUpdateRecord {
             description_en: value.description_en,
             price_currency: value.price_currency,
             price_amount: value.price_amount,
+            price_eur: value.price_eur,
             state: Some(value.state),
             url: Some(value.url),
             images: Some(value.images),

@@ -45,6 +45,9 @@ pub struct ItemRecord {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price_amount: Option<f32>,
 
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_eur: Option<f32>,
+
     pub state: ItemStateRecord,
 
     pub url: String,
