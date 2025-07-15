@@ -1,6 +1,8 @@
 use crate::item::command::CreateItemCommand;
 use crate::item::hash::ItemHash;
+use crate::item_event::domain::{ItemCreatedEventPayload, ItemEvent, ItemEventPayload};
 use crate::item_state::domain::ItemState;
+use common::aggregate::{Aggregate, AggregateError};
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::language::domain::Language;
@@ -29,13 +31,11 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn create(cmd: CreateItemCommand, fx_rate: &impl FxRate) -> Self {
+    pub fn create(cmd: CreateItemCommand, fx_rate: &impl FxRate) -> ItemEvent {
         let price = cmd.price.map(|cmd| Price::from_command(cmd, fx_rate));
         let state = cmd.state.into();
         let hash = ItemHash::new(&price, &state);
-        Item {
-            item_id: ItemId::now(),
-            event_id: EventId::new(),
+        let payload = ItemCreatedEventPayload {
             shop_id: cmd.shop_id,
             shops_item_id: cmd.shops_item_id,
             shop_name: cmd.shop_name,
@@ -54,8 +54,102 @@ impl Item {
             url: cmd.url,
             images: cmd.images,
             hash,
-            created: OffsetDateTime::now_utc(),
-            updated: OffsetDateTime::now_utc(),
+        };
+        ItemEvent {
+            aggregate_id: ItemId::now(),
+            event_id: EventId::new(),
+            timestamp: OffsetDateTime::now_utc(),
+            payload: ItemEventPayload::Created(Box::new(payload)),
         }
     }
 }
+
+// region Aggregate
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ItemAggregateError {
+    #[error("No events exist to aggregate 'Item'.")]
+    Empty,
+
+    #[error("Encountered illegal event {0:?} to initialize 'Item'.")]
+    IllegalInitialization(ItemEventPayload),
+
+    #[error("Applied 'ItemEventPayload::Created' but 'Item' has already been initialized.")]
+    CreatedAfterCreated(Box<ItemCreatedEventPayload>),
+}
+
+impl AggregateError for ItemAggregateError {
+    fn empty() -> Self {
+        ItemAggregateError::Empty
+    }
+}
+
+impl Aggregate<ItemEvent> for Item {
+    type Error = ItemAggregateError;
+
+    fn init(event: ItemEvent) -> Result<Self, Self::Error>
+    where
+        Self: Sized,
+    {
+        match event.payload {
+            ItemEventPayload::Created(payload) => {
+                let item = Item {
+                    item_id: event.aggregate_id,
+                    event_id: event.event_id,
+                    shop_id: payload.shop_id,
+                    shops_item_id: payload.shops_item_id,
+                    shop_name: payload.shop_name,
+                    title: payload.title,
+                    description: payload.description,
+                    price: payload.price,
+                    state: payload.state,
+                    url: payload.url,
+                    images: payload.images,
+                    hash: payload.hash,
+                    created: event.timestamp,
+                    updated: event.timestamp,
+                };
+                Ok(item)
+            }
+            other => Err(ItemAggregateError::IllegalInitialization(other)),
+        }
+    }
+
+    fn apply(&mut self, event: ItemEvent) -> Result<(), Self::Error> {
+        match event.payload {
+            ItemEventPayload::Created(payload) => {
+                Err(ItemAggregateError::CreatedAfterCreated(payload))
+            }
+            ItemEventPayload::StateListed => {
+                self.state = ItemState::Listed;
+                Ok(())
+            }
+            ItemEventPayload::StateAvailable => {
+                self.state = ItemState::Available;
+                Ok(())
+            }
+            ItemEventPayload::StateReserved => {
+                self.state = ItemState::Reserved;
+                Ok(())
+            }
+            ItemEventPayload::StateSold => {
+                self.state = ItemState::Sold;
+                Ok(())
+            }
+            ItemEventPayload::StateRemoved => {
+                self.state = ItemState::Removed;
+                Ok(())
+            }
+            ItemEventPayload::PriceDropped(payload) => {
+                self.price = Some(payload.price);
+                Ok(())
+            }
+            ItemEventPayload::PriceIncreased(payload) => {
+                self.price = Some(payload.price);
+                Ok(())
+            }
+        }
+    }
+}
+
+// endregion
