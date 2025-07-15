@@ -1,10 +1,11 @@
 use crate::item_state::data::ItemStateData;
+use common::currency::data::CurrencyData;
 use common::event_id::EventId;
 use common::item_id::ItemId;
-use common::price::data::PriceData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use serde::Serialize;
+use std::collections::HashMap;
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -25,8 +26,8 @@ pub struct GetItemData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub price: Option<PriceData>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub price: HashMap<CurrencyData, f32>,
 
     pub state: ItemStateData,
 
