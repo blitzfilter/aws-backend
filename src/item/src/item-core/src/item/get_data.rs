@@ -1,3 +1,4 @@
+use crate::item::hash::ItemHash;
 use crate::item_state::data::ItemStateData;
 use common::currency::data::CurrencyData;
 use common::event_id::EventId;
@@ -36,7 +37,7 @@ pub struct GetItemData {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
 
-    pub hash: String,
+    pub hash: ItemHash,
 
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,

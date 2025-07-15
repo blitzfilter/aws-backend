@@ -7,7 +7,7 @@ use aws_sdk_dynamodb::types::AttributeValue;
 use common::has::Has;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::hash::ItemHash;
+use item_core::item::hash::ItemSummaryHash;
 use item_core::item::record::ItemRecord;
 use tracing::error;
 
@@ -23,7 +23,7 @@ pub trait ReadItemRecords {
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<Vec<ItemHash>, SdkError<QueryError, HttpResponse>>;
+    ) -> Result<Vec<ItemSummaryHash>, SdkError<QueryError, HttpResponse>>;
 }
 
 #[async_trait]
@@ -63,7 +63,7 @@ where
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<Vec<ItemHash>, SdkError<QueryError, HttpResponse>> {
+    ) -> Result<Vec<ItemSummaryHash>, SdkError<QueryError, HttpResponse>> {
         let records = self
             .get()
             .query()
@@ -85,7 +85,7 @@ where
             .await?
             .into_iter()
             .flat_map(|qo| qo.items.unwrap_or_default())
-            .map(serde_dynamo::from_item::<_, ItemHash>)
+            .map(serde_dynamo::from_item::<_, ItemSummaryHash>)
             .filter_map(|result| match result {
                 Ok(event) => Some(event),
                 Err(err) => {

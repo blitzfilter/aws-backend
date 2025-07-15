@@ -3,10 +3,11 @@ use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::hash::ItemHash;
+use item_core::item::hash::{ItemHash, ItemSummaryHash};
 use item_core::item::record::ItemRecord;
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
+use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
 use item_read::ReadItemRecords;
 use std::time::Duration;
@@ -52,7 +53,7 @@ async fn should_return_item_record_for_get_item_record_when_exists() {
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -101,7 +102,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -149,7 +150,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -168,6 +169,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
         description_en: Some("Bazz".to_string()),
         price_currency: None,
         price_amount: None,
+        price_eur: None,
         state: Some(ItemStateRecord::Listed),
         url: None,
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -235,7 +237,7 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -252,7 +254,7 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let expected: ItemHash = inserted.into();
+    let expected: ItemSummaryHash = inserted.into();
     let actual = client.query_item_hashes(&shop_id, true).await.unwrap();
 
     assert_eq!(vec![expected], actual);
@@ -284,7 +286,7 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now1,
         updated: now1,
     };
@@ -311,7 +313,7 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now2,
         updated: now2,
     };
@@ -335,8 +337,8 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let expected1: ItemHash = inserted1.into();
-    let expected2: ItemHash = inserted2.into();
+    let expected1: ItemSummaryHash = inserted1.into();
+    let expected2: ItemSummaryHash = inserted2.into();
     let actual = client.query_item_hashes(&shop_id, true).await.unwrap();
 
     assert_eq!(2, actual.len());
@@ -371,7 +373,7 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now1,
         updated: now1,
     };
@@ -398,7 +400,7 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now2,
         updated: now2,
     };
@@ -422,8 +424,8 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let expected1: ItemHash = inserted1.into();
-    let expected2: ItemHash = inserted2.into();
+    let expected1: ItemSummaryHash = inserted1.into();
+    let expected2: ItemSummaryHash = inserted2.into();
     let actual = client.query_item_hashes(&shop_id, true).await.unwrap();
 
     assert_eq!(vec![expected1, expected2], actual);
@@ -455,7 +457,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -506,7 +508,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -525,6 +527,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         description_en: Some("Bazz".to_string()),
         price_currency: None,
         price_amount: None,
+        price_eur: None,
         state: Some(ItemStateRecord::Listed),
         url: None,
         images: vec!["https:://foo.bar/123456/image".to_string()],

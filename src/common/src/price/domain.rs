@@ -1,5 +1,6 @@
 use crate::currency::domain::Currency;
 use crate::currency::domain::Currency::*;
+use crate::price::command::PriceCommand;
 use std::collections::HashMap;
 
 pub trait FxRate {
@@ -68,15 +69,24 @@ pub struct Price {
     pub eur_price: f32,
     pub native_currency: Currency,
     pub native_price: f32,
-    pub price: HashMap<Currency, f32>,
+    pub other_price: HashMap<Currency, f32>,
 }
 
 impl Price {
     pub fn change(&mut self, new_native_price: f32, fx_rate: &impl FxRate) {
         self.eur_price = fx_rate.exchange(self.native_currency, Eur, new_native_price);
         self.native_price = new_native_price;
-        for (currency, price) in &mut self.price {
+        for (currency, price) in &mut self.other_price {
             *price = fx_rate.exchange(self.native_currency, *currency, new_native_price);
+        }
+    }
+
+    pub fn from_command(cmd: PriceCommand, fx_rate: &impl FxRate) -> Self {
+        Price {
+            eur_price: fx_rate.exchange_for_eur(cmd.currency.into(), cmd.price),
+            native_currency: cmd.currency.into(),
+            native_price: cmd.price,
+            other_price: Default::default(),
         }
     }
 }

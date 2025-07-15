@@ -4,10 +4,12 @@ use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
 use item_core::item::update_record::ItemUpdateRecord;
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
+use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
 use item_read::ReadItemRecords;
 use item_write::WriteItemRecords;
@@ -41,7 +43,7 @@ async fn should_put_item_records_for_single_record() {
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };
@@ -87,7 +89,7 @@ async fn should_put_item_records_for_multiple_records() {
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now1,
         updated: now1,
     };
@@ -114,7 +116,7 @@ async fn should_put_item_records_for_multiple_records() {
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now2,
         updated: now2,
     };
@@ -162,6 +164,7 @@ async fn should_put_item_event_records_for_single_record() {
         description_en: Some("Bazz".to_string()),
         price_currency: Some(CurrencyRecord::Eur),
         price_amount: Some(110.5),
+        price_eur: None,
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -211,6 +214,7 @@ async fn should_put_item_event_records_for_multiple_records() {
         description_en: Some("Bazz".to_string()),
         price_currency: Some(CurrencyRecord::Eur),
         price_amount: Some(110.5),
+        price_eur: None,
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -235,6 +239,7 @@ async fn should_put_item_event_records_for_multiple_records() {
         description_en: Some("Bazz".to_string()),
         price_currency: Some(CurrencyRecord::Eur),
         price_amount: Some(110.5),
+        price_eur: None,
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -289,7 +294,7 @@ async fn should_update_item_record() {
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: "123456".to_string(),
+        hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
     };

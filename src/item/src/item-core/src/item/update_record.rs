@@ -1,3 +1,4 @@
+use crate::item::hash::ItemHash;
 use crate::item::record::ItemRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::currency::record::CurrencyRecord;
@@ -44,7 +45,7 @@ pub struct ItemUpdateRecord {
     pub images: Option<Vec<String>>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub hash: Option<String>,
+    pub hash: Option<ItemHash>,
 
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
