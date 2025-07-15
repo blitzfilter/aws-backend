@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ItemEventTypeRecord {
-    New,
+    Created,
     StateListed,
     StateAvailable,
     StateReserved,
@@ -19,7 +19,7 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case(ItemEventTypeRecord::New, "\"NEW\"")]
+    #[case(ItemEventTypeRecord::Created, "\"CREATED\"")]
     #[case(ItemEventTypeRecord::StateListed, "\"STATE_LISTED\"")]
     #[case(ItemEventTypeRecord::StateAvailable, "\"STATE_AVAILABLE\"")]
     #[case(ItemEventTypeRecord::StateReserved, "\"STATE_RESERVED\"")]
@@ -36,7 +36,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case("\"NEW\"", ItemEventTypeRecord::New)]
+    #[case("\"CREATED\"", ItemEventTypeRecord::Created)]
     #[case("\"STATE_LISTED\"", ItemEventTypeRecord::StateListed)]
     #[case("\"STATE_AVAILABLE\"", ItemEventTypeRecord::StateAvailable)]
     #[case("\"STATE_RESERVED\"", ItemEventTypeRecord::StateReserved)]
