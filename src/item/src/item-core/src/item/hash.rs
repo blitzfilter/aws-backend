@@ -2,7 +2,6 @@ use crate::item::record::ItemRecord;
 use crate::item_state::domain::ItemState;
 use common::currency::domain::Currency;
 use common::item_id::ItemId;
-use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use serde::{Deserialize, Serialize};
@@ -16,8 +15,8 @@ pub struct ItemHash(String);
 // region impl ItemHash
 
 impl ItemHash {
-    pub fn new(native_price: &Option<Price>, state: &ItemState) -> ItemHash {
-        let contribution = native_price.contribute() + state.contribute();
+    pub fn new(price: &Option<(f32, Currency)>, state: &ItemState) -> ItemHash {
+        let contribution = price.contribute() + state.contribute();
         ItemHash(blake3::hash(contribution.0.as_bytes()).to_string())
     }
 }
@@ -61,6 +60,12 @@ impl<T: ItemHashContributor> ItemHashContributor for Option<T> {
     }
 }
 
+impl<T: ItemHashContributor, R: ItemHashContributor> ItemHashContributor for (T, R) {
+    fn contribute(&self) -> ItemHashContribution {
+        self.0.contribute() + self.1.contribute()
+    }
+}
+
 impl ItemHashContributor for ItemState {
     fn contribute(&self) -> ItemHashContribution {
         match self {
@@ -87,10 +92,9 @@ impl ItemHashContributor for Currency {
     }
 }
 
-impl ItemHashContributor for Price {
+impl ItemHashContributor for f32 {
     fn contribute(&self) -> ItemHashContribution {
-        ItemHashContribution(format!("{:.2}", self.native_price))
-            + self.native_currency.contribute()
+        ItemHashContribution(format!("{:.2}", self))
     }
 }
 

@@ -37,7 +37,7 @@ impl Item {
     pub fn create(cmd: CreateItemCommand, fx_rate: &impl FxRate) -> ItemEvent {
         let price = cmd.price.map(|cmd| Price::from_command(cmd, fx_rate));
         let state = cmd.state.into();
-        let hash = ItemHash::new(&price, &state);
+        let hash = ItemHash::new(&price.map(Into::into), &state);
         let payload = ItemCreatedEventPayload {
             shop_id: cmd.shop_id,
             shops_item_id: cmd.shops_item_id,
@@ -60,6 +60,7 @@ impl Item {
 
     pub fn list(&mut self) -> ItemEvent {
         self.state = ItemState::Listed;
+        self.hash();
         Event {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
@@ -70,6 +71,7 @@ impl Item {
 
     pub fn available(&mut self) -> ItemEvent {
         self.state = ItemState::Available;
+        self.hash();
         Event {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
@@ -80,6 +82,7 @@ impl Item {
 
     pub fn reserve(&mut self) -> ItemEvent {
         self.state = ItemState::Reserved;
+        self.hash();
         Event {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
@@ -90,6 +93,7 @@ impl Item {
 
     pub fn sell(&mut self) -> ItemEvent {
         self.state = ItemState::Sold;
+        self.hash();
         Event {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
@@ -100,6 +104,7 @@ impl Item {
 
     pub fn remove(&mut self) -> ItemEvent {
         self.state = ItemState::Removed;
+        self.hash();
         Event {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
@@ -112,6 +117,7 @@ impl Item {
         match self.price {
             None => {
                 self.price = Some(new_price);
+                self.hash();
                 let payload = ItemPriceDiscoveredEventPayload { price: new_price };
                 let event = Event {
                     aggregate_id: self.item_id,
@@ -123,6 +129,7 @@ impl Item {
             }
             Some(old_price) => {
                 self.price = Some(new_price);
+                self.hash();
                 if old_price < new_price {
                     let payload = ItemPriceIncreasedEventPayload { price: new_price };
                     let event = Event {
@@ -146,6 +153,10 @@ impl Item {
                 }
             }
         }
+    }
+
+    fn hash(&mut self) {
+        self.hash = ItemHash::new(&self.price.map(Into::into), &self.state);
     }
 }
 
@@ -212,37 +223,45 @@ impl Aggregate<ItemEvent> for Item {
             }
             ItemEventPayload::StateListed => {
                 self.state = ItemState::Listed;
+                self.hash();
                 Ok(())
             }
             ItemEventPayload::StateAvailable => {
                 self.state = ItemState::Available;
+                self.hash();
                 Ok(())
             }
             ItemEventPayload::StateReserved => {
                 self.state = ItemState::Reserved;
+                self.hash();
                 Ok(())
             }
             ItemEventPayload::StateSold => {
                 self.state = ItemState::Sold;
+                self.hash();
                 Ok(())
             }
             ItemEventPayload::StateRemoved => {
                 self.state = ItemState::Removed;
+                self.hash();
                 Ok(())
             }
             ItemEventPayload::PriceDiscovered(payload) => match &self.price {
                 None => {
                     self.price = Some(payload.price);
+                    self.hash();
                     Ok(())
                 }
                 Some(price) => Err(PriceDiscoveredAfterKnown(*price, payload)),
             },
             ItemEventPayload::PriceDropped(payload) => {
                 self.price = Some(payload.price);
+                self.hash();
                 Ok(())
             }
             ItemEventPayload::PriceIncreased(payload) => {
                 self.price = Some(payload.price);
+                self.hash();
                 Ok(())
             }
         }

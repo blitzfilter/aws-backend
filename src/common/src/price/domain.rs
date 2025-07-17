@@ -85,6 +85,12 @@ impl PartialOrd for Price {
     }
 }
 
+impl From<Price> for (f32, Currency) {
+    fn from(price: Price) -> Self {
+        (price.native_price, price.native_currency)
+    }
+}
+
 impl Price {
     pub fn change(&mut self, new_native_price: f32, fx_rate: &impl FxRate) {
         self.eur_price = fx_rate.exchange(self.native_currency, Eur, new_native_price);
