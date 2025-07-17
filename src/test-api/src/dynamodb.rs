@@ -117,7 +117,11 @@ async fn set_up_table_items() -> Result<(), Error> {
                 )
                 .projection(
                     Projection::builder()
-                        .projection_type(ProjectionType::All)
+                        .projection_type(ProjectionType::Include)
+                        .non_key_attributes("item_id")
+                        .non_key_attributes("shop_id")
+                        .non_key_attributes("shops_item_id")
+                        .non_key_attributes("hash")
                         .build(),
                 )
                 .build()?,
