@@ -9,6 +9,7 @@ pub enum ItemEventTypeRecord {
     StateReserved,
     StateSold,
     StateRemoved,
+    PriceDiscovered,
     PriceDropped,
     PriceIncreased,
 }
@@ -25,6 +26,7 @@ mod tests {
     #[case(ItemEventTypeRecord::StateReserved, "\"STATE_RESERVED\"")]
     #[case(ItemEventTypeRecord::StateSold, "\"STATE_SOLD\"")]
     #[case(ItemEventTypeRecord::StateRemoved, "\"STATE_REMOVED\"")]
+    #[case(ItemEventTypeRecord::PriceDiscovered, "\"PRICE_DISCOVERED\"")]
     #[case(ItemEventTypeRecord::PriceDropped, "\"PRICE_DROPPED\"")]
     #[case(ItemEventTypeRecord::PriceIncreased, "\"PRICE_INCREASED\"")]
     fn should_serialize_item_event_type_record_in_screaming_snake_case(
@@ -42,6 +44,7 @@ mod tests {
     #[case("\"STATE_RESERVED\"", ItemEventTypeRecord::StateReserved)]
     #[case("\"STATE_SOLD\"", ItemEventTypeRecord::StateSold)]
     #[case("\"STATE_REMOVED\"", ItemEventTypeRecord::StateRemoved)]
+    #[case("\"PRICE_DISCOVERED\"", ItemEventTypeRecord::PriceDiscovered)]
     #[case("\"PRICE_DROPPED\"", ItemEventTypeRecord::PriceDropped)]
     #[case("\"PRICE_INCREASED\"", ItemEventTypeRecord::PriceIncreased)]
     fn should_deserialize_item_event_type_record_in_screaming_snake_case(

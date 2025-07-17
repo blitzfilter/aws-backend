@@ -2,11 +2,9 @@ use crate::item::hash::ItemHash;
 use crate::item_state::domain::ItemState;
 use common::event::Event;
 use common::item_id::ItemId;
-use common::language::domain::Language;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use std::collections::HashMap;
 
 pub type ItemEvent = Event<ItemId, ItemEventPayload>;
 
@@ -18,6 +16,7 @@ pub enum ItemEventPayload {
     StateReserved,
     StateSold,
     StateRemoved,
+    PriceDiscovered(ItemPriceDiscoveredEventPayload),
     PriceDropped(ItemPriceDroppedEventPayload),
     PriceIncreased(ItemPriceIncreasedEventPayload),
 }
@@ -27,8 +26,8 @@ pub struct ItemCreatedEventPayload {
     pub(crate) shop_id: ShopId,
     pub(crate) shops_item_id: ShopsItemId,
     pub(crate) shop_name: String,
-    pub(crate) title: HashMap<Language, String>,
-    pub(crate) description: HashMap<Language, String>,
+    pub(crate) title: String,
+    pub(crate) description: Option<String>,
     pub(crate) price: Option<Price>,
     pub(crate) state: ItemState,
     pub(crate) url: String,
@@ -36,12 +35,17 @@ pub struct ItemCreatedEventPayload {
     pub(crate) hash: ItemHash,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemPriceDiscoveredEventPayload {
+    pub(crate) price: Price,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ItemPriceDroppedEventPayload {
     pub(crate) price: Price,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ItemPriceIncreasedEventPayload {
     pub(crate) price: Price,
 }
