@@ -9,7 +9,7 @@ use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
-use item_read::ReadItemRecords;
+use item_read::repository::ReadItemRecords;
 use std::time::Duration;
 use test_api::tokio::time::sleep;
 use test_api::*;
