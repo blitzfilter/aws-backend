@@ -1,3 +1,4 @@
+use crate::item_event::domain::ItemEventPayload;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -12,6 +13,22 @@ pub enum ItemEventTypeRecord {
     PriceDiscovered,
     PriceDropped,
     PriceIncreased,
+}
+
+impl From<&ItemEventPayload> for ItemEventTypeRecord {
+    fn from(domain: &ItemEventPayload) -> Self {
+        match domain {
+            ItemEventPayload::Created(_) => ItemEventTypeRecord::Created,
+            ItemEventPayload::StateListed(_) => ItemEventTypeRecord::StateListed,
+            ItemEventPayload::StateAvailable(_) => ItemEventTypeRecord::StateAvailable,
+            ItemEventPayload::StateReserved(_) => ItemEventTypeRecord::StateReserved,
+            ItemEventPayload::StateSold(_) => ItemEventTypeRecord::StateSold,
+            ItemEventPayload::StateRemoved(_) => ItemEventTypeRecord::StateRemoved,
+            ItemEventPayload::PriceDiscovered(_) => ItemEventTypeRecord::PriceDiscovered,
+            ItemEventPayload::PriceDropped(_) => ItemEventTypeRecord::PriceDropped,
+            ItemEventPayload::PriceIncreased(_) => ItemEventTypeRecord::PriceIncreased,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use crate::currency::record::CurrencyRecord;
 use crate::price::domain::Price;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PriceRecord {
     pub currency: CurrencyRecord,
     pub amount: f32,

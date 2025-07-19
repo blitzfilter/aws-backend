@@ -181,7 +181,8 @@ async fn should_put_item_event_records_for_single_record() {
         }),
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
-        images: vec!["https:://foo.bar/123456/image".to_string()],
+        images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
+        hash: Some(ItemHash::new(&None, &ItemState::Listed)),
         timestamp: now,
     };
 
@@ -213,6 +214,10 @@ async fn should_put_item_event_records_for_multiple_records() {
     let now1 = OffsetDateTime::now_utc();
     let now_str1 = now1.format(&well_known::Rfc3339).unwrap();
     let shops_item_id1: ShopsItemId = "123465".into();
+    let price = PriceRecord {
+        amount: 110.5,
+        currency: CurrencyRecord::Eur,
+    };
     let expected1 = ItemEventRecord {
         pk: format!(
             "item#shop_id#{}#shops_item_id#{shops_item_id1}",
@@ -231,13 +236,11 @@ async fn should_put_item_event_records_for_multiple_records() {
         description: Some(TextRecord::new("Baz", LanguageRecord::De)),
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
-        price: Some(PriceRecord {
-            amount: 110.5,
-            currency: CurrencyRecord::Eur,
-        }),
+        price: Some(price),
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
-        images: vec!["https:://foo.bar/123456/image".to_string()],
+        images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
+        hash: Some(ItemHash::new(&Some(price.into()), &ItemState::Available)),
         timestamp: now1,
     };
 
@@ -268,7 +271,8 @@ async fn should_put_item_event_records_for_multiple_records() {
         }),
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
-        images: vec!["https:://foo.bar/123456/image".to_string()],
+        images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
+        hash: Some(ItemHash::new(&Some(price.into()), &ItemState::Available)),
         timestamp: now2,
     };
 
@@ -300,6 +304,10 @@ async fn should_update_item_record() {
     let now_str = now.format(&well_known::Rfc3339).unwrap();
     let shop_id = ShopId::new();
     let shops_item_id: ShopsItemId = "123465".into();
+    let price = PriceRecord {
+        amount: 110.5,
+        currency: CurrencyRecord::Eur,
+    };
     let initial = ItemRecord {
         pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
         sk: "item#materialized".to_string(),
@@ -316,14 +324,11 @@ async fn should_update_item_record() {
         description: Some(TextRecord::new("Baz", LanguageRecord::De)),
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
-        price: Some(PriceRecord {
-            amount: 110.5,
-            currency: CurrencyRecord::Eur,
-        }),
+        price: Some(price),
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
-        hash: ItemHash::new(&None, &ItemState::Available),
+        hash: ItemHash::new(&Some(price.into()), &ItemState::Available),
         created: now,
         updated: now,
     };

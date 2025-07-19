@@ -2,8 +2,8 @@ use crate::item::command::CreateItemCommand;
 use crate::item::hash::ItemHash;
 use crate::item::record::ItemRecord;
 use crate::item_event::domain::{
-    ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceDiscoveredEventPayload,
-    ItemPriceDroppedEventPayload, ItemPriceIncreasedEventPayload,
+    ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
+    ItemStateChangeEventPayload,
 };
 use crate::item_state::domain::ItemState;
 use common::aggregate::{Aggregate, AggregateError};
@@ -56,7 +56,7 @@ impl Item {
             aggregate_id: ItemId::now(),
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::Created(Box::new(payload)),
+            payload: ItemEventPayload::Created(payload),
         }
     }
 
@@ -67,7 +67,10 @@ impl Item {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateListed,
+            payload: ItemEventPayload::StateListed(ItemStateChangeEventPayload {
+                shop_id: self.shop_id.clone(),
+                shops_item_id: self.shops_item_id.clone(),
+            }),
         }
     }
 
@@ -78,7 +81,10 @@ impl Item {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateAvailable,
+            payload: ItemEventPayload::StateAvailable(ItemStateChangeEventPayload {
+                shop_id: self.shop_id.clone(),
+                shops_item_id: self.shops_item_id.clone(),
+            }),
         }
     }
 
@@ -89,7 +95,10 @@ impl Item {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateReserved,
+            payload: ItemEventPayload::StateReserved(ItemStateChangeEventPayload {
+                shop_id: self.shop_id.clone(),
+                shops_item_id: self.shops_item_id.clone(),
+            }),
         }
     }
 
@@ -100,7 +109,10 @@ impl Item {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateSold,
+            payload: ItemEventPayload::StateSold(ItemStateChangeEventPayload {
+                shop_id: self.shop_id.clone(),
+                shops_item_id: self.shops_item_id.clone(),
+            }),
         }
     }
 
@@ -111,7 +123,10 @@ impl Item {
             aggregate_id: self.item_id,
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateRemoved,
+            payload: ItemEventPayload::StateRemoved(ItemStateChangeEventPayload {
+                shop_id: self.shop_id.clone(),
+                shops_item_id: self.shops_item_id.clone(),
+            }),
         }
     }
 
@@ -120,7 +135,11 @@ impl Item {
             None => {
                 self.price = Some(new_price);
                 self.hash();
-                let payload = ItemPriceDiscoveredEventPayload { price: new_price };
+                let payload = ItemPriceChangeEventPayload {
+                    shop_id: self.shop_id.clone(),
+                    shops_item_id: self.shops_item_id.clone(),
+                    price: new_price,
+                };
                 let event = Event {
                     aggregate_id: self.item_id,
                     event_id: EventId::new(),
@@ -134,7 +153,11 @@ impl Item {
                 self.hash();
                 if old_price.currency == new_price.currency {
                     if old_price.monetary_amount < new_price.monetary_amount {
-                        let payload = ItemPriceIncreasedEventPayload { price: new_price };
+                        let payload = ItemPriceChangeEventPayload {
+                            shop_id: self.shop_id.clone(),
+                            shops_item_id: self.shops_item_id.clone(),
+                            price: new_price,
+                        };
                         let event = Event {
                             aggregate_id: self.item_id,
                             event_id: EventId::new(),
@@ -143,7 +166,11 @@ impl Item {
                         };
                         Some(event)
                     } else if old_price.monetary_amount > new_price.monetary_amount {
-                        let payload = ItemPriceDroppedEventPayload { price: new_price };
+                        let payload = ItemPriceChangeEventPayload {
+                            shop_id: self.shop_id.clone(),
+                            shops_item_id: self.shops_item_id.clone(),
+                            price: new_price,
+                        };
                         let event = Event {
                             aggregate_id: self.item_id,
                             event_id: EventId::new(),
@@ -157,7 +184,11 @@ impl Item {
                 } else {
                     self.price = Some(new_price);
                     self.hash();
-                    let payload = ItemPriceDiscoveredEventPayload { price: new_price };
+                    let payload = ItemPriceChangeEventPayload {
+                        shop_id: self.shop_id.clone(),
+                        shops_item_id: self.shops_item_id.clone(),
+                        price: new_price,
+                    };
                     let event = Event {
                         aggregate_id: self.item_id,
                         event_id: EventId::new(),
@@ -185,8 +216,10 @@ pub enum ItemAggregateError {
     #[error("Encountered illegal event '{0:?}' to initialize 'Item'.")]
     IllegalInitialization(ItemEventPayload),
 
-    #[error("Applied 'ItemEventPayload::Created' but 'Item' has already been initialized.")]
-    CreatedAfterCreated(Box<ItemCreatedEventPayload>),
+    #[error(
+        "Applied illegal event 'ItemEventPayload::Created' with '{0:?}' but 'Item' has already been initialized."
+    )]
+    CreatedAfterCreated(ItemCreatedEventPayload),
 }
 
 impl AggregateError for ItemAggregateError {
@@ -231,27 +264,27 @@ impl Aggregate<ItemEvent> for Item {
             ItemEventPayload::Created(payload) => {
                 Err(ItemAggregateError::CreatedAfterCreated(payload))
             }
-            ItemEventPayload::StateListed => {
+            ItemEventPayload::StateListed(_) => {
                 self.state = ItemState::Listed;
                 self.hash();
                 Ok(())
             }
-            ItemEventPayload::StateAvailable => {
+            ItemEventPayload::StateAvailable(_) => {
                 self.state = ItemState::Available;
                 self.hash();
                 Ok(())
             }
-            ItemEventPayload::StateReserved => {
+            ItemEventPayload::StateReserved(_) => {
                 self.state = ItemState::Reserved;
                 self.hash();
                 Ok(())
             }
-            ItemEventPayload::StateSold => {
+            ItemEventPayload::StateSold(_) => {
                 self.state = ItemState::Sold;
                 self.hash();
                 Ok(())
             }
-            ItemEventPayload::StateRemoved => {
+            ItemEventPayload::StateRemoved(_) => {
                 self.state = ItemState::Removed;
                 self.hash();
                 Ok(())
