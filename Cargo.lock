@@ -1000,6 +1000,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "field"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccccd906aacf6f92d665a5a3c4757d02781a8aedc8db733a1b370a838f477f15"
+
+[[package]]
 name = "filetime"
 version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1693,6 +1699,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "common",
+ "field",
  "rstest",
  "serde",
  "serde_json",

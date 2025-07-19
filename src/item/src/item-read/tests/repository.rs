@@ -187,7 +187,6 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
         state: Some(ItemStateRecord::Listed),
         url: None,
         images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
-        hash: Some(ItemHash::new(&None, &ItemState::Listed)),
         timestamp: OffsetDateTime::now_utc(),
     };
 
@@ -567,7 +566,6 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         state: Some(ItemStateRecord::Listed),
         url: None,
         images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
-        hash: Some(ItemHash::new(&None, &ItemState::Listed)),
         timestamp: OffsetDateTime::now_utc(),
     };
 

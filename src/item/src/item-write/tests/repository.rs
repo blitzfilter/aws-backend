@@ -182,7 +182,6 @@ async fn should_put_item_event_records_for_single_record() {
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
         images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
-        hash: Some(ItemHash::new(&None, &ItemState::Listed)),
         timestamp: now,
     };
 
@@ -240,7 +239,6 @@ async fn should_put_item_event_records_for_multiple_records() {
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
         images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
-        hash: Some(ItemHash::new(&Some(price.into()), &ItemState::Available)),
         timestamp: now1,
     };
 
@@ -272,7 +270,6 @@ async fn should_put_item_event_records_for_multiple_records() {
         state: Some(ItemStateRecord::Available),
         url: Some("https:://foo.bar/123456".to_string()),
         images: Some(vec!["https:://foo.bar/123456/image".to_string()]),
-        hash: Some(ItemHash::new(&Some(price.into()), &ItemState::Available)),
         timestamp: now2,
     };
 
