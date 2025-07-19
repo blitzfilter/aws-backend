@@ -28,10 +28,16 @@ pub struct ItemEventRecord {
     pub shop_name: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub title: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub title_de: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub title_en: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description_de: Option<String>,
