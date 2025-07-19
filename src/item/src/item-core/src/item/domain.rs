@@ -1,35 +1,39 @@
 use crate::item::command::CreateItemCommand;
 use crate::item::hash::ItemHash;
+use crate::item::record::ItemRecord;
 use crate::item_event::domain::{
     ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceDiscoveredEventPayload,
     ItemPriceDroppedEventPayload, ItemPriceIncreasedEventPayload,
 };
 use crate::item_state::domain::ItemState;
 use common::aggregate::{Aggregate, AggregateError};
+use common::currency::domain::Currency;
 use common::event::Event;
 use common::event_id::EventId;
 use common::item_id::ItemId;
+use common::language::domain::Language;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use std::collections::HashMap;
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
-    pub(crate) item_id: ItemId,
-    pub(crate) event_id: EventId,
-    pub(crate) shop_id: ShopId,
-    pub(crate) shops_item_id: ShopsItemId,
-    pub(crate) shop_name: String,
-    pub(crate) title: String,
-    pub(crate) description: Option<String>,
-    pub(crate) price: Option<Price>,
-    pub(crate) state: ItemState,
-    pub(crate) url: String,
-    pub(crate) images: Vec<String>,
-    pub(crate) hash: ItemHash,
-    pub(crate) created: OffsetDateTime,
-    pub(crate) updated: OffsetDateTime,
+    pub item_id: ItemId,
+    pub event_id: EventId,
+    pub shop_id: ShopId,
+    pub shops_item_id: ShopsItemId,
+    pub shop_name: String,
+    pub title: HashMap<Language, String>,
+    pub description: HashMap<Language, String>,
+    pub price: Option<Price>,
+    pub state: ItemState,
+    pub url: String,
+    pub images: Vec<String>,
+    pub hash: ItemHash,
+    pub created: OffsetDateTime,
+    pub updated: OffsetDateTime,
 }
 
 impl Item {
@@ -273,3 +277,59 @@ impl Aggregate<ItemEvent> for Item {
 }
 
 // endregion
+
+impl From<ItemRecord> for Item {
+    fn from(record: ItemRecord) -> Self {
+        let mut title = HashMap::with_capacity(2);
+        if let Some(title_en) = record.title_en {
+            title.insert(Language::En, title_en);
+        }
+        if let Some(title_de) = record.title_de {
+            title.insert(Language::De, title_de);
+        }
+
+        let mut description = HashMap::with_capacity(2);
+        if let Some(description_en) = record.description_en {
+            description.insert(Language::En, description_en);
+        }
+        if let Some(description_de) = record.description_de {
+            description.insert(Language::De, description_de);
+        }
+
+        let price = match (record.price_amount, record.price_currency) {
+            (Some(price_amount), Some(price_currency)) => {
+                Some(
+                    Price {
+                        monetary_amount: price_amount
+                            .try_into()
+                            .expect("shouldn't fail mapping ItemRecord::price_amount to MonetaryAmount because by convention only positive prices are stored"),
+                        currency: price_currency.into(),
+                    }
+                )
+            }
+            _ => record.price_eur.map(|eur_amount| Price {
+                monetary_amount: eur_amount
+                    .try_into()
+                    .expect("shouldn't fail mapping ItemRecord::eur_amount to MonetaryAmount because by convention only positive prices are stored"),
+                currency: Currency::Eur,
+            })
+        };
+
+        Item {
+            item_id: record.item_id,
+            event_id: record.event_id,
+            shop_id: record.shop_id,
+            shops_item_id: record.shops_item_id,
+            shop_name: record.shop_name,
+            title,
+            description,
+            price,
+            state: record.state.into(),
+            url: record.url,
+            images: record.images,
+            hash: record.hash,
+            created: record.created,
+            updated: record.updated,
+        }
+    }
+}

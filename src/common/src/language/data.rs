@@ -1,4 +1,6 @@
+use crate::language::domain::Language;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ISO 639-1
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -8,6 +10,49 @@ pub enum LanguageData {
     En,
     Fr,
     Es,
+}
+
+impl From<Language> for LanguageData {
+    fn from(domain: Language) -> Self {
+        match domain {
+            Language::De => LanguageData::De,
+            Language::En => LanguageData::En,
+            Language::Fr => LanguageData::Fr,
+            Language::Es => LanguageData::Es,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalizedTextData {
+    pub text: String,
+    pub language: LanguageData,
+}
+
+impl LocalizedTextData {
+    pub fn new(text: String, language: LanguageData) -> Self {
+        LocalizedTextData { text, language }
+    }
+
+    pub fn from_domain_fallbacked(
+        domain: &HashMap<Language, String>,
+        language: Language,
+    ) -> Option<Self> {
+        domain
+            .get(&language)
+            .map(|text| LocalizedTextData::new(text.to_owned(), language.into()))
+            .or(domain
+                .get(&Language::En)
+                .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::En)))
+            .or(domain
+                .get(&Language::De)
+                .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::De)))
+            .or(domain
+                .iter()
+                .next()
+                .map(|(lang, text)| LocalizedTextData::new(text.to_owned(), (*lang).into())))
+    }
 }
 
 #[cfg(test)]

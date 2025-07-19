@@ -1,16 +1,12 @@
 use crate::item_state::command::ItemStateCommand;
 use common::language::command::LanguageCommand;
+use common::language::domain::Language;
 use common::price::command::PriceCommand;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct I18NStringCommand {
-    pub language: LanguageCommand,
-    pub string: String,
-}
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpsertItemCommand {
@@ -22,10 +18,10 @@ pub struct UpsertItemCommand {
     pub shop_name: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title: Option<I18NStringCommand>,
+    pub title: Option<HashMap<LanguageCommand, String>>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub description: Option<I18NStringCommand>,
+    pub description: Option<HashMap<LanguageCommand, String>>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price: Option<PriceCommand>,
@@ -45,8 +41,8 @@ pub struct CreateItemCommand {
     pub shop_id: ShopId,
     pub shops_item_id: ShopsItemId,
     pub shop_name: String,
-    pub title: String,
-    pub description: Option<String>,
+    pub title: HashMap<Language, String>,
+    pub description: HashMap<Language, String>,
     pub price: Option<Price>,
     pub state: ItemStateCommand,
     pub url: String,
@@ -56,8 +52,8 @@ pub struct CreateItemCommand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateItemCommand {
     pub shop_name: Option<String>,
-    pub title: Option<String>,
-    pub description: Option<String>,
+    pub title: Option<HashMap<Language, String>>,
+    pub description: Option<HashMap<Language, String>>,
     pub price: Option<Price>,
     pub state: Option<ItemStateCommand>,
     pub url: Option<String>,

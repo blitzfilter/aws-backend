@@ -66,6 +66,7 @@ impl FxRate for FixedFxRate {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct MonetaryAmount(f32);
 
+#[derive(Debug, Clone, Copy)]
 pub struct NegativeMonetaryAmountError;
 impl TryFrom<f32> for MonetaryAmount {
     type Error = NegativeMonetaryAmountError;
@@ -109,4 +110,26 @@ impl From<MonetaryAmount> for f32 {
 pub struct Price {
     pub monetary_amount: MonetaryAmount,
     pub currency: Currency,
+}
+
+impl Price {
+    pub fn into_exchanged(self, fx_rate: &impl FxRate, currency: Currency) -> Self {
+        Price {
+            monetary_amount: MonetaryAmount(fx_rate.exchange(
+                self.currency,
+                self.currency,
+                self.monetary_amount.into(),
+            )),
+            currency,
+        }
+    }
+
+    pub fn exchanged(&mut self, fx_rate: &impl FxRate, currency: Currency) {
+        self.monetary_amount = MonetaryAmount(fx_rate.exchange(
+            self.currency,
+            self.currency,
+            self.monetary_amount.into(),
+        ));
+        self.currency = currency;
+    }
 }
