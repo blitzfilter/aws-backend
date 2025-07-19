@@ -22,7 +22,7 @@ pub enum GetItemError {
 
 #[async_trait]
 pub trait ReadItem {
-    async fn get_item(
+    async fn get_item_with_currency(
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
@@ -32,7 +32,7 @@ pub trait ReadItem {
 
 #[async_trait]
 impl<T: Has<aws_sdk_dynamodb::Client> + Sync> ReadItem for T {
-    async fn get_item(
+    async fn get_item_with_currency(
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
