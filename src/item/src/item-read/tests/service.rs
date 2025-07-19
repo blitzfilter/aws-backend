@@ -2,6 +2,8 @@ use common::currency::domain::Currency;
 use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
 use common::item_id::ItemId;
+use common::language::record::{LanguageRecord, TextRecord};
+use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::domain::Item;
@@ -49,15 +51,16 @@ async fn should_return_item_record_for_get_item_with_currency_when_exists() {
         shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),
         shop_name: "Foo".to_string(),
-        title: Some("Bar".to_string()),
+        title: Some(TextRecord::new("Bar", LanguageRecord::De)),
         title_de: Some("Bar".to_string()),
         title_en: Some("Barr".to_string()),
-        description: Some("Baz".to_string()),
+        description: Some(TextRecord::new("Baz", LanguageRecord::De)),
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
-        price_currency: Some(CurrencyRecord::Eur),
-        price_amount: Some(110.5),
-        price_eur: Some(110.5),
+        price: Some(PriceRecord {
+            amount: 110.5,
+            currency: CurrencyRecord::Eur,
+        }),
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],

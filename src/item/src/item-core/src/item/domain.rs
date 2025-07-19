@@ -7,7 +7,6 @@ use crate::item_event::domain::{
 };
 use crate::item_state::domain::ItemState;
 use common::aggregate::{Aggregate, AggregateError};
-use common::currency::domain::Currency;
 use common::event::Event;
 use common::event_id::EventId;
 use common::item_id::ItemId;
@@ -287,6 +286,9 @@ impl From<ItemRecord> for Item {
         if let Some(title_de) = record.title_de {
             title.insert(Language::De, title_de);
         }
+        if let Some(title_record) = record.title {
+            title.insert(title_record.language.into(), title_record.text);
+        }
 
         let mut description = HashMap::with_capacity(2);
         if let Some(description_en) = record.description_en {
@@ -295,25 +297,9 @@ impl From<ItemRecord> for Item {
         if let Some(description_de) = record.description_de {
             description.insert(Language::De, description_de);
         }
-
-        let price = match (record.price_amount, record.price_currency) {
-            (Some(price_amount), Some(price_currency)) => {
-                Some(
-                    Price {
-                        monetary_amount: price_amount
-                            .try_into()
-                            .expect("shouldn't fail mapping ItemRecord::price_amount to MonetaryAmount because by convention only positive prices are stored"),
-                        currency: price_currency.into(),
-                    }
-                )
-            }
-            _ => record.price_eur.map(|eur_amount| Price {
-                monetary_amount: eur_amount
-                    .try_into()
-                    .expect("shouldn't fail mapping ItemRecord::eur_amount to MonetaryAmount because by convention only positive prices are stored"),
-                currency: Currency::Eur,
-            })
-        };
+        if let Some(description_record) = record.description {
+            title.insert(description_record.language.into(), description_record.text);
+        }
 
         Item {
             item_id: record.item_id,
@@ -323,7 +309,7 @@ impl From<ItemRecord> for Item {
             shop_name: record.shop_name,
             title,
             description,
-            price,
+            price: record.price.map(Into::into),
             state: record.state.into(),
             url: record.url,
             images: record.images,

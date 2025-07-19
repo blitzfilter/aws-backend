@@ -1,3 +1,4 @@
+use crate::item_state::domain::ItemState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -9,6 +10,19 @@ pub enum ItemStateRecord {
     Sold,
     Removed,
     Unknown,
+}
+
+impl From<ItemState> for ItemStateRecord {
+    fn from(domain: ItemState) -> Self {
+        match domain {
+            ItemState::Listed => ItemStateRecord::Listed,
+            ItemState::Available => ItemStateRecord::Available,
+            ItemState::Reserved => ItemStateRecord::Reserved,
+            ItemState::Sold => ItemStateRecord::Sold,
+            ItemState::Removed => ItemStateRecord::Removed,
+            ItemState::Unknown => ItemStateRecord::Unknown,
+        }
+    }
 }
 
 #[cfg(test)]

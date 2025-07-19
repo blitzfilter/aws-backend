@@ -1,8 +1,9 @@
 use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
-use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
 use common::item_id::ItemId;
+use common::language::record::TextRecord;
+use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ pub struct ItemEventRecord {
     pub shop_name: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title: Option<String>,
+    pub title: Option<TextRecord>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub title_de: Option<String>,
@@ -37,7 +38,7 @@ pub struct ItemEventRecord {
     pub title_en: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub description: Option<String>,
+    pub description: Option<TextRecord>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description_de: Option<String>,
@@ -46,13 +47,7 @@ pub struct ItemEventRecord {
     pub description_en: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub price_currency: Option<CurrencyRecord>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub price_amount: Option<f32>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub price_eur: Option<f32>,
+    pub price: Option<PriceRecord>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub state: Option<ItemStateRecord>,

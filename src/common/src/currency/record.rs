@@ -1,3 +1,4 @@
+use crate::currency::domain::Currency;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug)]
@@ -9,6 +10,19 @@ pub enum CurrencyRecord {
     Aud,
     Cad,
     Nzd,
+}
+
+impl From<Currency> for CurrencyRecord {
+    fn from(domain: Currency) -> Self {
+        match domain {
+            Currency::Eur => CurrencyRecord::Eur,
+            Currency::Gbp => CurrencyRecord::Gbp,
+            Currency::Usd => CurrencyRecord::Usd,
+            Currency::Aud => CurrencyRecord::Aud,
+            Currency::Cad => CurrencyRecord::Cad,
+            Currency::Nzd => CurrencyRecord::Nzd,
+        }
+    }
 }
 
 #[cfg(test)]

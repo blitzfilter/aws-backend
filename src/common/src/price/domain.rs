@@ -1,5 +1,6 @@
 use crate::currency::domain::Currency;
 use crate::currency::domain::Currency::*;
+use crate::price::record::PriceRecord;
 use std::ops::{Add, Sub};
 
 pub trait FxRate {
@@ -131,5 +132,17 @@ impl Price {
             self.monetary_amount.into(),
         ));
         self.currency = currency;
+    }
+}
+
+impl From<PriceRecord> for Price {
+    fn from(record: PriceRecord) -> Self {
+        Price {
+            monetary_amount: record.amount.try_into().expect(
+                "shouldn't fail converting persisted 'monetary_amount' from f32 to \
+                        MonetaryAmount because by convention all persisted amounts are non-negative"
+            ),
+            currency: record.currency.into(),
+        }
     }
 }

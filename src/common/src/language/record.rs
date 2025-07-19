@@ -1,3 +1,4 @@
+use crate::language::domain::Language;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -7,6 +8,32 @@ pub enum LanguageRecord {
     En,
     Fr,
     Es,
+}
+
+impl From<Language> for LanguageRecord {
+    fn from(domain: Language) -> Self {
+        match domain {
+            Language::De => LanguageRecord::De,
+            Language::En => LanguageRecord::En,
+            Language::Fr => LanguageRecord::Fr,
+            Language::Es => LanguageRecord::Es,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
+pub struct TextRecord {
+    pub text: String,
+    pub language: LanguageRecord,
+}
+
+impl TextRecord {
+    pub fn new(text: impl Into<String>, language: LanguageRecord) -> TextRecord {
+        TextRecord {
+            text: text.into(),
+            language,
+        }
+    }
 }
 
 #[cfg(test)]
