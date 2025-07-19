@@ -38,6 +38,6 @@ impl From<&str> for ShopId {
 
 impl From<ShopId> for String {
     fn from(id: ShopId) -> Self {
-        id.0.to_string()
+        id.0
     }
 }
