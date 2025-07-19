@@ -1,4 +1,5 @@
-mod command;
+pub mod command;
+pub mod command_data;
 pub mod document;
 pub mod document_update;
 pub mod domain;

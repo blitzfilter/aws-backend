@@ -1,4 +1,4 @@
-use crate::currency::command::CurrencyCommand;
+use crate::currency::command_data::CurrencyCommandData;
 use crate::currency::record::CurrencyRecord;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -11,15 +11,15 @@ pub enum Currency {
     Nzd,
 }
 
-impl From<CurrencyCommand> for Currency {
-    fn from(cmd: CurrencyCommand) -> Self {
+impl From<CurrencyCommandData> for Currency {
+    fn from(cmd: CurrencyCommandData) -> Self {
         match cmd {
-            CurrencyCommand::Eur => Currency::Eur,
-            CurrencyCommand::Gbp => Currency::Gbp,
-            CurrencyCommand::Usd => Currency::Usd,
-            CurrencyCommand::Aud => Currency::Aud,
-            CurrencyCommand::Cad => Currency::Cad,
-            CurrencyCommand::Nzd => Currency::Nzd,
+            CurrencyCommandData::Eur => Currency::Eur,
+            CurrencyCommandData::Gbp => Currency::Gbp,
+            CurrencyCommandData::Usd => Currency::Usd,
+            CurrencyCommandData::Aud => Currency::Aud,
+            CurrencyCommandData::Cad => Currency::Cad,
+            CurrencyCommandData::Nzd => Currency::Nzd,
         }
     }
 }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 // ISO 639-1
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 #[serde(rename_all = "lowercase")]
-pub enum LanguageCommand {
+pub enum LanguageCommandData {
     De,
     En,
     Fr,
@@ -12,16 +12,16 @@ pub enum LanguageCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::LanguageCommand;
+    use super::LanguageCommandData;
     use rstest::rstest;
 
     #[rstest]
-    #[case(LanguageCommand::De, "\"de\"")]
-    #[case(LanguageCommand::En, "\"en\"")]
-    #[case(LanguageCommand::Fr, "\"fr\"")]
-    #[case(LanguageCommand::Es, "\"es\"")]
+    #[case(LanguageCommandData::De, "\"de\"")]
+    #[case(LanguageCommandData::En, "\"en\"")]
+    #[case(LanguageCommandData::Fr, "\"fr\"")]
+    #[case(LanguageCommandData::Es, "\"es\"")]
     fn should_serialize_language_according_to_iso_639_1(
-        #[case] language: LanguageCommand,
+        #[case] language: LanguageCommandData,
         #[case] expected: &str,
     ) {
         let actual = serde_json::to_string(&language).unwrap();
@@ -29,15 +29,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case("\"de\"", LanguageCommand::De)]
-    #[case("\"en\"", LanguageCommand::En)]
-    #[case("\"fr\"", LanguageCommand::Fr)]
-    #[case("\"es\"", LanguageCommand::Es)]
+    #[case("\"de\"", LanguageCommandData::De)]
+    #[case("\"en\"", LanguageCommandData::En)]
+    #[case("\"fr\"", LanguageCommandData::Fr)]
+    #[case("\"es\"", LanguageCommandData::Es)]
     fn should_deserialize_language_according_to_iso_639_1(
         #[case] language: &str,
-        #[case] expected: LanguageCommand,
+        #[case] expected: LanguageCommandData,
     ) {
-        let actual = serde_json::from_str::<LanguageCommand>(language).unwrap();
+        let actual = serde_json::from_str::<LanguageCommandData>(language).unwrap();
         assert_eq!(actual, expected);
     }
 }

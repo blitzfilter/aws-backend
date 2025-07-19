@@ -1,4 +1,4 @@
-use crate::language::command::LanguageCommand;
+use crate::language::command_data::LanguageCommandData;
 use crate::language::record::LanguageRecord;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -9,13 +9,13 @@ pub enum Language {
     Es,
 }
 
-impl From<LanguageCommand> for Language {
-    fn from(cmd: LanguageCommand) -> Self {
+impl From<LanguageCommandData> for Language {
+    fn from(cmd: LanguageCommandData) -> Self {
         match cmd {
-            LanguageCommand::De => Language::De,
-            LanguageCommand::En => Language::En,
-            LanguageCommand::Fr => Language::Fr,
-            LanguageCommand::Es => Language::Es,
+            LanguageCommandData::De => Language::De,
+            LanguageCommandData::En => Language::En,
+            LanguageCommandData::Fr => Language::Fr,
+            LanguageCommandData::Es => Language::Es,
         }
     }
 }

@@ -1,4 +1,4 @@
-pub mod command;
+pub mod command_data;
 pub mod data;
 pub mod document;
 pub mod domain;
