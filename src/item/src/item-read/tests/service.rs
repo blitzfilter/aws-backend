@@ -42,11 +42,11 @@ async fn should_return_item_record_for_get_item_with_currency_when_exists() {
     let inserted = ItemRecord {
         pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
         sk: "item#materialized".to_string(),
-        gsi_1_pk: shop_id.into(),
+        gsi_1_pk: shop_id.clone().into(),
         gsi_1_sk: now_str.clone(),
         item_id: ItemId::now(),
         event_id: EventId::new(),
-        shop_id,
+        shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),
         shop_name: "Foo".to_string(),
         title: Some("Bar".to_string()),

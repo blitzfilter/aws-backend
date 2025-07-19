@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Serialize, Deserialize)]
-#[serde(into = "String", try_from = "String")]
-pub struct ShopId(Uuid);
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ShopId(String);
 
 impl Default for ShopId {
     fn default() -> Self {
@@ -14,7 +14,7 @@ impl Default for ShopId {
 
 impl ShopId {
     pub fn new() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::new_v4().to_string())
     }
 }
 
@@ -24,22 +24,20 @@ impl Display for ShopId {
     }
 }
 
-impl TryFrom<String> for ShopId {
-    type Error = uuid::Error;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Uuid::parse_str(&s).map(Self)
+impl From<String> for ShopId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for ShopId {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
     }
 }
 
 impl From<ShopId> for String {
     fn from(id: ShopId) -> Self {
         id.0.to_string()
-    }
-}
-
-impl TryFrom<&str> for ShopId {
-    type Error = uuid::Error;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Uuid::parse_str(s).map(Self)
     }
 }

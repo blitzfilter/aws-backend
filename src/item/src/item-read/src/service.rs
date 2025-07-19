@@ -42,7 +42,10 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> ReadItem for T {
             .get_item_record(shop_id, shops_item_id)
             .await
             .map_err(Box::from)?
-            .ok_or(GetItemError::ItemNotFound(*shop_id, shops_item_id.clone()))?;
+            .ok_or(GetItemError::ItemNotFound(
+                shop_id.clone(),
+                shops_item_id.clone(),
+            ))?;
 
         let mut item: Item = item_record.into();
         if let Some(price) = &mut item.price {
