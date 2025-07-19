@@ -1,5 +1,4 @@
 use crate::item::command::CreateItemCommand;
-use crate::item::domain::ItemAggregateError::PriceDiscoveredAfterKnown;
 use crate::item::hash::ItemHash;
 use crate::item_event::domain::{
     ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceDiscoveredEventPayload,
@@ -10,7 +9,7 @@ use common::aggregate::{Aggregate, AggregateError};
 use common::event::Event;
 use common::event_id::EventId;
 use common::item_id::ItemId;
-use common::price::domain::{FxRate, Price};
+use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use time::OffsetDateTime;
@@ -34,10 +33,10 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn create(cmd: CreateItemCommand, fx_rate: &impl FxRate) -> ItemEvent {
-        let price = cmd.price.map(|cmd| Price::from_command(cmd, fx_rate));
+    pub fn create(cmd: CreateItemCommand) -> ItemEvent {
+        let price = cmd.price;
         let state = cmd.state.into();
-        let hash = ItemHash::new(&price.map(Into::into), &state);
+        let hash = ItemHash::new(&price, &state);
         let payload = ItemCreatedEventPayload {
             shop_id: cmd.shop_id,
             shops_item_id: cmd.shops_item_id,
@@ -130,33 +129,46 @@ impl Item {
             Some(old_price) => {
                 self.price = Some(new_price);
                 self.hash();
-                if old_price < new_price {
-                    let payload = ItemPriceIncreasedEventPayload { price: new_price };
-                    let event = Event {
-                        aggregate_id: self.item_id,
-                        event_id: EventId::new(),
-                        timestamp: OffsetDateTime::now_utc(),
-                        payload: ItemEventPayload::PriceIncreased(payload),
-                    };
-                    Some(event)
-                } else if old_price > new_price {
-                    let payload = ItemPriceDroppedEventPayload { price: new_price };
-                    let event = Event {
-                        aggregate_id: self.item_id,
-                        event_id: EventId::new(),
-                        timestamp: OffsetDateTime::now_utc(),
-                        payload: ItemEventPayload::PriceDropped(payload),
-                    };
-                    Some(event)
+                if old_price.currency == new_price.currency {
+                    if old_price.monetary_amount < new_price.monetary_amount {
+                        let payload = ItemPriceIncreasedEventPayload { price: new_price };
+                        let event = Event {
+                            aggregate_id: self.item_id,
+                            event_id: EventId::new(),
+                            timestamp: OffsetDateTime::now_utc(),
+                            payload: ItemEventPayload::PriceIncreased(payload),
+                        };
+                        Some(event)
+                    } else if old_price.monetary_amount > new_price.monetary_amount {
+                        let payload = ItemPriceDroppedEventPayload { price: new_price };
+                        let event = Event {
+                            aggregate_id: self.item_id,
+                            event_id: EventId::new(),
+                            timestamp: OffsetDateTime::now_utc(),
+                            payload: ItemEventPayload::PriceDropped(payload),
+                        };
+                        Some(event)
+                    } else {
+                        None
+                    }
                 } else {
-                    None
+                    self.price = Some(new_price);
+                    self.hash();
+                    let payload = ItemPriceDiscoveredEventPayload { price: new_price };
+                    let event = Event {
+                        aggregate_id: self.item_id,
+                        event_id: EventId::new(),
+                        timestamp: OffsetDateTime::now_utc(),
+                        payload: ItemEventPayload::PriceDiscovered(payload),
+                    };
+                    Some(event)
                 }
             }
         }
     }
 
     fn hash(&mut self) {
-        self.hash = ItemHash::new(&self.price.map(Into::into), &self.state);
+        self.hash = ItemHash::new(&self.price, &self.state);
     }
 }
 
@@ -172,11 +184,6 @@ pub enum ItemAggregateError {
 
     #[error("Applied 'ItemEventPayload::Created' but 'Item' has already been initialized.")]
     CreatedAfterCreated(Box<ItemCreatedEventPayload>),
-
-    #[error(
-        "Applied 'ItemEventPayload::PriceDiscovered' but 'Item' already has known price '{0:?}'."
-    )]
-    PriceDiscoveredAfterKnown(Price, ItemPriceDiscoveredEventPayload),
 }
 
 impl AggregateError for ItemAggregateError {
@@ -246,14 +253,11 @@ impl Aggregate<ItemEvent> for Item {
                 self.hash();
                 Ok(())
             }
-            ItemEventPayload::PriceDiscovered(payload) => match &self.price {
-                None => {
-                    self.price = Some(payload.price);
-                    self.hash();
-                    Ok(())
-                }
-                Some(price) => Err(PriceDiscoveredAfterKnown(*price, payload)),
-            },
+            ItemEventPayload::PriceDiscovered(payload) => {
+                self.price = Some(payload.price);
+                self.hash();
+                Ok(())
+            }
             ItemEventPayload::PriceDropped(payload) => {
                 self.price = Some(payload.price);
                 self.hash();

@@ -1726,6 +1726,7 @@ dependencies = [
  "serde_dynamo",
  "serial_test",
  "test-api",
+ "thiserror",
  "time",
  "tracing",
 ]

@@ -10,6 +10,7 @@ async-trait = "0.1.88"
 aws-sdk-dynamodb = "1.82.0"
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
 tracing = "0.1.41"
+thiserror = "2.0.12"
 
 [dev-dependencies]
 test-api = { path = "../../../test-api" }

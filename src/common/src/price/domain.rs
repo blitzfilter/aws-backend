@@ -1,7 +1,6 @@
 use crate::currency::domain::Currency;
 use crate::currency::domain::Currency::*;
-use crate::price::command::PriceCommand;
-use std::cmp::Ordering;
+use std::ops::{Add, Sub};
 
 pub trait FxRate {
     fn exchange(&self, from_currency: Currency, to_currency: Currency, from_amount: f32) -> f32;
@@ -64,44 +63,50 @@ impl FxRate for FixedFxRate {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Price {
-    pub eur_price: f32,
-    pub native_currency: Currency,
-    pub native_price: f32,
-}
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct MonetaryAmount(f32);
 
-impl PartialEq<Self> for Price {
-    fn eq(&self, other: &Self) -> bool {
-        self.eur_price == other.eur_price
-    }
-}
-
-impl Eq for Price {}
-
-impl PartialOrd for Price {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.eur_price.partial_cmp(&other.eur_price)
-    }
-}
-
-impl From<Price> for (f32, Currency) {
-    fn from(price: Price) -> Self {
-        (price.native_price, price.native_currency)
-    }
-}
-
-impl Price {
-    pub fn change(&mut self, new_native_price: f32, fx_rate: &impl FxRate) {
-        self.eur_price = fx_rate.exchange(self.native_currency, Eur, new_native_price);
-        self.native_price = new_native_price;
-    }
-
-    pub fn from_command(cmd: PriceCommand, fx_rate: &impl FxRate) -> Self {
-        Price {
-            eur_price: fx_rate.exchange_for_eur(cmd.currency.into(), cmd.price),
-            native_currency: cmd.currency.into(),
-            native_price: cmd.price,
+pub struct NegativeMonetaryAmountError;
+impl TryFrom<f32> for MonetaryAmount {
+    type Error = NegativeMonetaryAmountError;
+    fn try_from(value: f32) -> Result<Self, Self::Error> {
+        if value < 0.0 {
+            Err(NegativeMonetaryAmountError)
+        } else {
+            Ok(MonetaryAmount(value))
         }
     }
+}
+
+impl Add for MonetaryAmount {
+    type Output = MonetaryAmount;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        MonetaryAmount(self.0 + rhs.0)
+    }
+}
+
+impl Sub for MonetaryAmount {
+    type Output = Result<MonetaryAmount, NegativeMonetaryAmountError>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let value = self.0 - rhs.0;
+        if value < 0.0 {
+            Err(NegativeMonetaryAmountError)
+        } else {
+            Ok(MonetaryAmount(value))
+        }
+    }
+}
+
+impl From<MonetaryAmount> for f32 {
+    fn from(price: MonetaryAmount) -> Self {
+        price.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Price {
+    pub monetary_amount: MonetaryAmount,
+    pub currency: Currency,
 }
