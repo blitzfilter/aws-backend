@@ -2,7 +2,7 @@ use crate::item_event::domain::{ItemCommonEventPayload, ItemEvent, ItemEventPayl
 use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
-use common::item_id::ItemId;
+use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
@@ -63,6 +63,16 @@ pub struct ItemEventRecord {
 
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
+}
+
+impl ItemEventRecord {
+    pub fn item_key(&self) -> ItemKey {
+        (self.shop_id.clone(), self.shops_item_id.clone())
+    }
+
+    pub fn into_item_key(self) -> ItemKey {
+        (self.shop_id, self.shops_item_id)
+    }
 }
 
 impl TryFrom<ItemEvent> for ItemEventRecord {

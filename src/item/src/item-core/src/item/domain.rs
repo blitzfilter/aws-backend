@@ -1,4 +1,3 @@
-use crate::item::command::CreateItemCommand;
 use crate::item::hash::ItemHash;
 use crate::item::record::ItemRecord;
 use crate::item_event::domain::{
@@ -36,20 +35,29 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn create(cmd: CreateItemCommand) -> ItemEvent {
-        let price = cmd.price;
-        let state = cmd.state.into();
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        shop_id: ShopId,
+        shops_item_id: ShopsItemId,
+        shop_name: String,
+        title: HashMap<Language, String>,
+        description: HashMap<Language, String>,
+        price: Option<Price>,
+        state: ItemState,
+        url: String,
+        images: Vec<String>,
+    ) -> ItemEvent {
         let hash = ItemHash::new(&price, &state);
         let payload = ItemCreatedEventPayload {
-            shop_id: cmd.shop_id,
-            shops_item_id: cmd.shops_item_id,
-            shop_name: cmd.shop_name,
-            title: cmd.title,
-            description: cmd.description,
+            shop_id,
+            shops_item_id,
+            shop_name,
+            title,
+            description,
             price,
             state,
-            url: cmd.url,
-            images: cmd.images,
+            url,
+            images,
             hash,
         };
         ItemEvent {

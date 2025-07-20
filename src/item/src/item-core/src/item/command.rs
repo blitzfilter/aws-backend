@@ -18,13 +18,14 @@ pub struct CreateItemCommand {
     pub images: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct UpdateItemCommand {
-    pub shop_name: Option<String>,
-    pub title: Option<HashMap<Language, String>>,
-    pub description: Option<HashMap<Language, String>>,
     pub price: Option<Price>,
     pub state: Option<ItemState>,
-    pub url: Option<String>,
-    pub images: Option<Vec<String>>,
+}
+
+impl UpdateItemCommand {
+    pub fn is_empty(&self) -> bool {
+        self.price.is_none() && self.state.is_none()
+    }
 }

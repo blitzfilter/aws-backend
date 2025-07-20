@@ -1,8 +1,12 @@
+use crate::shop_id::ShopId;
+use crate::shops_item_id::ShopsItemId;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+pub type ItemKey = (ShopId, ShopsItemId);
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
