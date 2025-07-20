@@ -1,15 +1,18 @@
 use aws_sdk_dynamodb::types::{PutRequest, WriteRequest};
+use itertools::Itertools;
 use serde::Serialize;
 use std::ops::Deref;
 use thiserror::Error;
 use tracing::error;
+
+pub const DYNAMODB_MAX_BATCH_SIZE: usize = 25;
 
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynamoDbBatchConstructionError {
     #[error("DynamoDB must not be empty")]
     DynamoDbBatchEmpty,
 
-    #[error("DynamoDB batch size exceeded: got {0}, max is 25")]
+    #[error("DynamoDB batch size exceeded: got {0}, max is {DYNAMODB_MAX_BATCH_SIZE}")]
     DynamoDbBatchSizeExceeded(usize),
 }
 
@@ -17,11 +20,35 @@ pub enum DynamoDbBatchConstructionError {
 pub struct DynamoDbBatch<T>(Vec<T>);
 
 impl<T> DynamoDbBatch<T> {
-    pub fn from_iter_safe<I: IntoIterator<Item = T>>(
+    pub fn try_from_iter<I: IntoIterator<Item = T>>(
         iter: I,
     ) -> Result<Self, DynamoDbBatchConstructionError> {
         let vec: Vec<T> = iter.into_iter().collect();
         Self::try_from(vec)
+    }
+
+    pub fn chunked_from(xs: Vec<T>) -> Vec<DynamoDbBatch<T>> {
+        xs.into_iter()
+            .chunks(DYNAMODB_MAX_BATCH_SIZE)
+            .into_iter()
+            .map(|chunk| DynamoDbBatch(chunk.collect()))
+            .collect()
+    }
+}
+
+impl<T: Clone> DynamoDbBatch<T> {
+    pub fn chunked(xs: &[T]) -> Vec<DynamoDbBatch<T>> {
+        let (lss, rs) = xs.as_chunks::<DYNAMODB_MAX_BATCH_SIZE>();
+        let mut zero = Vec::with_capacity(xs.len().div_ceil(DYNAMODB_MAX_BATCH_SIZE));
+
+        if !rs.is_empty() {
+            zero.push(DynamoDbBatch(rs.into()));
+        }
+
+        lss.iter().fold(zero, |mut batches, xs| {
+            batches.push(xs.into());
+            batches
+        })
     }
 }
 
@@ -153,6 +180,132 @@ impl<T> From<[T; 25]> for DynamoDbBatch<T> {
     }
 }
 
+impl<T: Clone> From<&[T; 1]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 1]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 2]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 2]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 3]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 3]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 4]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 4]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 5]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 5]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 6]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 6]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 7]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 7]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 8]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 8]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 9]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 9]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 10]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 10]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 11]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 11]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 12]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 12]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 13]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 13]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 14]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 14]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 15]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 15]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 16]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 16]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 17]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 17]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 18]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 18]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 19]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 19]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 20]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 20]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 21]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 21]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 22]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 22]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 23]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 23]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 24]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 24]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+impl<T: Clone> From<&[T; 25]> for DynamoDbBatch<T> {
+    fn from(value: &[T; 25]) -> Self {
+        DynamoDbBatch(value.into())
+    }
+}
+
 // endregion
 
 impl<T> TryFrom<Vec<T>> for DynamoDbBatch<T> {
@@ -161,7 +314,7 @@ impl<T> TryFrom<Vec<T>> for DynamoDbBatch<T> {
     fn try_from(v: Vec<T>) -> Result<Self, DynamoDbBatchConstructionError> {
         match v.len() {
             0 => Err(DynamoDbBatchConstructionError::DynamoDbBatchEmpty),
-            1..=25 => Ok(Self(v)),
+            1..=DYNAMODB_MAX_BATCH_SIZE => Ok(Self(v)),
             size => Err(DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(
                 size,
             )),
@@ -247,10 +400,22 @@ mod tests {
     use crate::dynamodb_batch::{DynamoDbBatch, DynamoDbBatchConstructionError};
 
     #[rstest::rstest]
-    #[case::empty(DynamoDbBatch::try_from(vec![]), DynamoDbBatchConstructionError::DynamoDbBatchEmpty)]
-    #[case::exceeded(DynamoDbBatch::try_from([1].repeat(26)), DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(26))]
-    #[case::exceeded(DynamoDbBatch::try_from([1].repeat(27)), DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(27))]
-    #[case::exceeded(DynamoDbBatch::try_from([1].repeat(100)), DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(100))]
+    #[case::empty(
+        DynamoDbBatch::try_from(vec![]),
+        DynamoDbBatchConstructionError::DynamoDbBatchEmpty
+    )]
+    #[case::exceeded(
+        DynamoDbBatch::try_from([1].repeat(26)),
+        DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(26)
+    )]
+    #[case::exceeded(
+        DynamoDbBatch::try_from([1].repeat(27)),
+        DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(27)
+    )]
+    #[case::exceeded(
+        DynamoDbBatch::try_from([1].repeat(100)),
+        DynamoDbBatchConstructionError::DynamoDbBatchSizeExceeded(100)
+    )]
     fn should_err_from(
         #[case] batch: Result<DynamoDbBatch<u32>, DynamoDbBatchConstructionError>,
         #[case] err: DynamoDbBatchConstructionError,
