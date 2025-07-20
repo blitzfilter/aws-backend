@@ -7,6 +7,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 pub type ItemKey = (ShopId, ShopsItemId);
+pub type ItemKeyRef<'a> = (&'a ShopId, &'a ShopsItemId);
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
