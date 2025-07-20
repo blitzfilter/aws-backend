@@ -1,5 +1,5 @@
+use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
-use common::dynamodb_batch::DynamoDbBatch;
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::language::record::{LanguageRecord, TextRecord};
@@ -55,7 +55,7 @@ async fn should_put_item_records_for_single_record() {
 
     let client = get_dynamodb_client().await;
     client
-        .put_item_records(DynamoDbBatch::singleton(expected.clone()))
+        .put_item_records(Batch::from([expected.clone()]))
         .await
         .unwrap();
 
@@ -187,7 +187,7 @@ async fn should_put_item_event_records_for_single_record() {
 
     let client = get_dynamodb_client().await;
     client
-        .put_item_event_records(DynamoDbBatch::singleton(expected.clone()))
+        .put_item_event_records(Batch::from([expected.clone()]))
         .await
         .unwrap();
 
@@ -275,7 +275,7 @@ async fn should_put_item_event_records_for_multiple_records() {
 
     let client = get_dynamodb_client().await;
     client
-        .put_item_event_records(DynamoDbBatch::from([expected1.clone(), expected2.clone()]))
+        .put_item_event_records(Batch::from([expected1.clone(), expected2.clone()]))
         .await
         .unwrap();
 
@@ -354,7 +354,7 @@ async fn should_update_item_record() {
 
     let client = get_dynamodb_client().await;
     client
-        .put_item_records(DynamoDbBatch::singleton(initial.clone()))
+        .put_item_records(Batch::from([initial.clone()]))
         .await
         .unwrap();
     client

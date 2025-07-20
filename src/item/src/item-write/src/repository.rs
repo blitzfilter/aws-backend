@@ -4,7 +4,7 @@ use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::batch_write_item::{BatchWriteItemError, BatchWriteItemOutput};
 use aws_sdk_dynamodb::operation::update_item::{UpdateItemError, UpdateItemOutput};
 use aws_sdk_dynamodb::types::AttributeValue;
-use common::dynamodb_batch::DynamoDbBatch;
+use common::batch::Batch;
 use common::has::Has;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -18,12 +18,12 @@ use std::collections::HashMap;
 pub trait WriteItemRecords {
     async fn put_item_event_records(
         &self,
-        item_event_records: DynamoDbBatch<ItemEventRecord>,
+        item_event_records: Batch<ItemEventRecord, 25>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>>;
 
     async fn put_item_records(
         &self,
-        item_records: DynamoDbBatch<ItemRecord>,
+        item_records: Batch<ItemRecord, 25>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>>;
 
     async fn update_item_record(
@@ -41,13 +41,13 @@ where
 {
     async fn put_item_event_records(
         &self,
-        item_event_records: DynamoDbBatch<ItemEventRecord>,
+        item_event_records: Batch<ItemEventRecord, 25>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>> {
         self.get()
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
                 "items".to_owned(),
-                item_event_records.into_write_requests(),
+                item_event_records.into_dynamodb_write_requests(),
             )])))
             .send()
             .await
@@ -55,13 +55,13 @@ where
 
     async fn put_item_records(
         &self,
-        item_records: DynamoDbBatch<ItemRecord>,
+        item_records: Batch<ItemRecord, 25>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>> {
         self.get()
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
                 "items".to_owned(),
-                item_records.into_write_requests(),
+                item_records.into_dynamodb_write_requests(),
             )])))
             .send()
             .await

@@ -1,8 +1,7 @@
 pub mod currency;
 
 pub mod aggregate;
-#[cfg(feature = "dynamodb")]
-pub mod dynamodb_batch;
+pub mod batch;
 pub mod error;
 pub mod event;
 pub mod event_id;
