@@ -1,6 +1,7 @@
+use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
-use common::item_id::ItemId;
+use common::item_id::{ItemId, ItemKey};
 use common::language::record::{LanguageRecord, TextRecord};
 use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
@@ -594,4 +595,228 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         .unwrap();
 
     assert!(actual.is_empty());
+}
+
+#[localstack_test(services = [DynamoDB])]
+async fn should_return_item_records_for_batch_get_item_records_when_all_exist() {
+    let client = get_dynamodb_client().await;
+    let shop_id = ShopId::new();
+    let mk_expected = |n: i32| {
+        let now = OffsetDateTime::now_utc();
+        let now_str = now.format(&well_known::Rfc3339).unwrap();
+        let shops_item_id: ShopsItemId = n.to_string().into();
+        ItemRecord {
+            pk: format!(
+                "item#shop_id#{}#shops_item_id#{shops_item_id}",
+                shop_id.clone()
+            ),
+            sk: "item#materialized".to_string(),
+            gsi_1_pk: shop_id.clone().into(),
+            gsi_1_sk: now_str.clone(),
+            item_id: ItemId::now(),
+            event_id: EventId::new(),
+            shop_id: shop_id.clone(),
+            shops_item_id: shops_item_id.clone(),
+            shop_name: "Foo".to_string(),
+            title: Some(TextRecord::new("Bar", LanguageRecord::De)),
+            title_de: Some("Bar".to_string()),
+            title_en: Some("Barr".to_string()),
+            description: Some(TextRecord::new("Baz", LanguageRecord::De)),
+            description_de: Some("Baz".to_string()),
+            description_en: Some("Bazz".to_string()),
+            price: Some(PriceRecord {
+                amount: 110.5,
+                currency: CurrencyRecord::Eur,
+            }),
+            state: ItemStateRecord::Available,
+            url: format!("https:://foo.bar/{n}"),
+            images: vec![format!("https:://foo.bar/{n}/image")],
+            hash: ItemHash::new(&None, &ItemState::Available),
+            created: now,
+            updated: now,
+        }
+    };
+    let mut expecteds = Vec::with_capacity(100);
+    for n in 1..=100 {
+        let expected = mk_expected(n);
+        client
+            .put_item()
+            .table_name("items")
+            .set_item(serde_dynamo::to_item(&expected).ok())
+            .send()
+            .await
+            .unwrap();
+        expecteds.push(expected);
+    }
+
+    let mut actuals = client
+        .get_item_records(
+            Batch::try_from(
+                (1..=100)
+                    .map(|n| ItemKey::new(shop_id.clone(), ShopsItemId::from(n.to_string())))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(actuals.unprocessed.is_none());
+    assert_eq!(actuals.items.len(), 100);
+
+    expecteds.sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+    actuals
+        .items
+        .sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+    assert_eq!(actuals.items, expecteds);
+}
+
+#[localstack_test(services = [DynamoDB])]
+async fn should_return_item_records_for_batch_get_item_records_when_some_do_not_exist() {
+    let client = get_dynamodb_client().await;
+    let shop_id = ShopId::new();
+    let mk_expected = |n: i32| {
+        let now = OffsetDateTime::now_utc();
+        let now_str = now.format(&well_known::Rfc3339).unwrap();
+        let shops_item_id: ShopsItemId = n.to_string().into();
+        ItemRecord {
+            pk: format!(
+                "item#shop_id#{}#shops_item_id#{shops_item_id}",
+                shop_id.clone()
+            ),
+            sk: "item#materialized".to_string(),
+            gsi_1_pk: shop_id.clone().into(),
+            gsi_1_sk: now_str.clone(),
+            item_id: ItemId::now(),
+            event_id: EventId::new(),
+            shop_id: shop_id.clone(),
+            shops_item_id: shops_item_id.clone(),
+            shop_name: "Foo".to_string(),
+            title: Some(TextRecord::new("Bar", LanguageRecord::De)),
+            title_de: Some("Bar".to_string()),
+            title_en: Some("Barr".to_string()),
+            description: Some(TextRecord::new("Baz", LanguageRecord::De)),
+            description_de: Some("Baz".to_string()),
+            description_en: Some("Bazz".to_string()),
+            price: Some(PriceRecord {
+                amount: 110.5,
+                currency: CurrencyRecord::Eur,
+            }),
+            state: ItemStateRecord::Available,
+            url: format!("https:://foo.bar/{n}"),
+            images: vec![format!("https:://foo.bar/{n}/image")],
+            hash: ItemHash::new(&None, &ItemState::Available),
+            created: now,
+            updated: now,
+        }
+    };
+    let mut expecteds = Vec::with_capacity(100);
+    for n in 1..=10 {
+        let expected = mk_expected(n);
+        client
+            .put_item()
+            .table_name("items")
+            .set_item(serde_dynamo::to_item(&expected).ok())
+            .send()
+            .await
+            .unwrap();
+        expecteds.push(expected);
+    }
+
+    let mut actuals = client
+        .get_item_records(
+            Batch::try_from(
+                (1..=14)
+                    .map(|n| ItemKey::new(shop_id.clone(), ShopsItemId::from(n.to_string())))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(actuals.unprocessed.is_none());
+    assert_eq!(actuals.items.len(), 10);
+
+    expecteds.sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+    actuals
+        .items
+        .sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+    assert_eq!(actuals.items, expecteds);
+}
+
+#[localstack_test(services = [DynamoDB])]
+async fn should_return_item_records_for_batch_get_item_records_when_more_than_100_exist() {
+    let client = get_dynamodb_client().await;
+    let shop_id = ShopId::new();
+    let mk_expected = |n: i32| {
+        let now = OffsetDateTime::now_utc();
+        let now_str = now.format(&well_known::Rfc3339).unwrap();
+        let shops_item_id: ShopsItemId = n.to_string().into();
+        ItemRecord {
+            pk: format!(
+                "item#shop_id#{}#shops_item_id#{shops_item_id}",
+                shop_id.clone()
+            ),
+            sk: "item#materialized".to_string(),
+            gsi_1_pk: shop_id.clone().into(),
+            gsi_1_sk: now_str.clone(),
+            item_id: ItemId::now(),
+            event_id: EventId::new(),
+            shop_id: shop_id.clone(),
+            shops_item_id: shops_item_id.clone(),
+            shop_name: "Foo".to_string(),
+            title: Some(TextRecord::new("Bar", LanguageRecord::De)),
+            title_de: Some("Bar".to_string()),
+            title_en: Some("Barr".to_string()),
+            description: Some(TextRecord::new("Baz", LanguageRecord::De)),
+            description_de: Some("Baz".to_string()),
+            description_en: Some("Bazz".to_string()),
+            price: Some(PriceRecord {
+                amount: 110.5,
+                currency: CurrencyRecord::Eur,
+            }),
+            state: ItemStateRecord::Available,
+            url: format!("https:://foo.bar/{n}"),
+            images: vec![format!("https:://foo.bar/{n}/image")],
+            hash: ItemHash::new(&None, &ItemState::Available),
+            created: now,
+            updated: now,
+        }
+    };
+    let mut expecteds = Vec::with_capacity(100);
+    for n in 1..=120 {
+        let expected = mk_expected(n);
+        client
+            .put_item()
+            .table_name("items")
+            .set_item(serde_dynamo::to_item(&expected).ok())
+            .send()
+            .await
+            .unwrap();
+        if n <= 100 {
+            expecteds.push(expected);
+        }
+    }
+
+    let mut actuals = client
+        .get_item_records(
+            Batch::try_from(
+                (1..=100)
+                    .map(|n| ItemKey::new(shop_id.clone(), ShopsItemId::from(n.to_string())))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(actuals.unprocessed.is_none());
+    assert_eq!(actuals.items.len(), 100);
+
+    expecteds.sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+    actuals
+        .items
+        .sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+    assert_eq!(actuals.items, expecteds);
 }
