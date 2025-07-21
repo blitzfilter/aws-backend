@@ -8,7 +8,7 @@ use crate::item_state::domain::ItemState;
 use common::aggregate::{Aggregate, AggregateError};
 use common::event::Event;
 use common::event_id::EventId;
-use common::item_id::ItemId;
+use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
@@ -68,78 +68,30 @@ impl Item {
         }
     }
 
-    pub fn list(&mut self) -> ItemEvent {
-        self.state = ItemState::Listed;
-        self.hash();
-        Event {
-            aggregate_id: self.item_id,
-            event_id: EventId::new(),
-            timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateListed(ItemStateChangeEventPayload {
-                shop_id: self.shop_id.clone(),
-                shops_item_id: self.shops_item_id.clone(),
-                hash: self.hash.clone(),
-            }),
-        }
-    }
-
-    pub fn available(&mut self) -> ItemEvent {
-        self.state = ItemState::Available;
-        self.hash();
-        Event {
-            aggregate_id: self.item_id,
-            event_id: EventId::new(),
-            timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateAvailable(ItemStateChangeEventPayload {
-                shop_id: self.shop_id.clone(),
-                shops_item_id: self.shops_item_id.clone(),
-                hash: self.hash.clone(),
-            }),
-        }
-    }
-
-    pub fn reserve(&mut self) -> ItemEvent {
-        self.state = ItemState::Reserved;
-        self.hash();
-        Event {
-            aggregate_id: self.item_id,
-            event_id: EventId::new(),
-            timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateReserved(ItemStateChangeEventPayload {
-                shop_id: self.shop_id.clone(),
-                shops_item_id: self.shops_item_id.clone(),
-                hash: self.hash.clone(),
-            }),
-        }
-    }
-
-    pub fn sell(&mut self) -> ItemEvent {
-        self.state = ItemState::Sold;
-        self.hash();
-        Event {
-            aggregate_id: self.item_id,
-            event_id: EventId::new(),
-            timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateSold(ItemStateChangeEventPayload {
-                shop_id: self.shop_id.clone(),
-                shops_item_id: self.shops_item_id.clone(),
-                hash: self.hash.clone(),
-            }),
-        }
-    }
-
-    pub fn remove(&mut self) -> ItemEvent {
-        self.state = ItemState::Removed;
-        self.hash();
-        Event {
-            aggregate_id: self.item_id,
-            event_id: EventId::new(),
-            timestamp: OffsetDateTime::now_utc(),
-            payload: ItemEventPayload::StateRemoved(ItemStateChangeEventPayload {
-                shop_id: self.shop_id.clone(),
-                shops_item_id: self.shops_item_id.clone(),
-                hash: self.hash.clone(),
-            }),
+    pub fn change_state(&mut self, new_state: ItemState) -> Option<ItemEvent> {
+        if self.state == new_state {
+            None
+        } else {
+            self.state = new_state;
+            self.hash();
+            let event_payload_constructor = match new_state {
+                ItemState::Listed => ItemEventPayload::StateListed,
+                ItemState::Available => ItemEventPayload::StateAvailable,
+                ItemState::Reserved => ItemEventPayload::StateReserved,
+                ItemState::Sold => ItemEventPayload::StateSold,
+                ItemState::Removed => ItemEventPayload::StateRemoved,
+            };
+            let event = Event {
+                aggregate_id: self.item_id,
+                event_id: EventId::new(),
+                timestamp: OffsetDateTime::now_utc(),
+                payload: event_payload_constructor(ItemStateChangeEventPayload {
+                    shop_id: self.shop_id.clone(),
+                    shops_item_id: self.shops_item_id.clone(),
+                    hash: self.hash.clone(),
+                }),
+            };
+            Some(event)
         }
     }
 
@@ -215,6 +167,13 @@ impl Item {
                     Some(event)
                 }
             }
+        }
+    }
+
+    pub fn item_key(&self) -> ItemKey {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
         }
     }
 
