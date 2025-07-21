@@ -132,10 +132,14 @@ where
 
         let batch_result = BatchGetItemResult {
             items: records,
-            unprocessed: Batch::try_from(unprocessed).expect(
-                "shouldn't fail creating batch because DynamoDB cannot respond \
+            unprocessed: if unprocessed.is_empty() {
+                None
+            } else {
+                Some(Batch::try_from(unprocessed).expect(
+                    "shouldn't fail creating batch because DynamoDB cannot respond \
                                 with more failed ItemKeys than those requested.",
-            ),
+                ))
+            },
         };
         Ok(batch_result)
     }
