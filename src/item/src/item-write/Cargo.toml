@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 common = { path = "../../../common", features = ["dynamodb"] }
 item-core = { path = "../item-core" }
+item-read = { path = "../item-read" }
 async-trait = "0.1.88"
 aws-sdk-dynamodb = "1.82.0"
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
@@ -13,7 +14,6 @@ tracing = "0.1.41"
 itertools = "0.14.0"
 
 [dev-dependencies]
-item-read = { path = "../item-read" }
 test-api = { path = "../../../test-api" }
 time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
 serial_test = "3.2.0"
