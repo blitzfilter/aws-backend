@@ -371,6 +371,11 @@ impl<T: Serialize> Batch<T, 25> {
     }
 }
 
+pub struct BatchGetItemResult<T, Key> {
+    pub items: Vec<T>,
+    pub unprocessed: Batch<Key, 100>,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::batch::{Batch, BatchConstructionError};
