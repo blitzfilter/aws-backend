@@ -1,7 +1,6 @@
 use itertools::Itertools;
 use std::ops::Deref;
 use thiserror::Error;
-use tracing::error;
 
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchConstructionError<const N: usize> {
