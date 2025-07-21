@@ -37,7 +37,7 @@ async fn refresh_index() {
 
 #[localstack_test(services = [OpenSearch, S3])]
 async fn should_create_item_document() {
-    let item_id = ItemId::now();
+    let item_id = ItemId::new();
     let expected = ItemDocument {
         item_id,
         event_id: Default::default(),
@@ -70,7 +70,7 @@ async fn should_create_item_document() {
 
 #[localstack_test(services = [OpenSearch, S3])]
 async fn should_create_item_documents() {
-    let item_id1 = ItemId::now();
+    let item_id1 = ItemId::new();
     let expected1 = ItemDocument {
         item_id: item_id1,
         event_id: Default::default(),
@@ -89,7 +89,7 @@ async fn should_create_item_documents() {
         created: OffsetDateTime::now_utc(),
         updated: OffsetDateTime::now_utc(),
     };
-    let item_id2 = ItemId::now();
+    let item_id2 = ItemId::new();
     let expected2 = ItemDocument {
         item_id: item_id2,
         event_id: Default::default(),
@@ -124,7 +124,7 @@ async fn should_create_item_documents() {
 
 #[localstack_test(services = [OpenSearch, S3])]
 async fn should_update_item_document() {
-    let item_id = ItemId::now();
+    let item_id = ItemId::new();
     let initial = ItemDocument {
         item_id,
         event_id: Default::default(),

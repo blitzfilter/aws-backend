@@ -46,7 +46,7 @@ async fn should_return_item_record_for_get_item_with_currency_when_exists() {
         sk: "item#materialized".to_string(),
         gsi_1_pk: shop_id.clone().into(),
         gsi_1_sk: now_str.clone(),
-        item_id: ItemId::now(),
+        item_id: ItemId::new(),
         event_id: EventId::new(),
         shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),

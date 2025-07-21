@@ -61,7 +61,7 @@ impl Item {
             hash,
         };
         ItemEvent {
-            aggregate_id: ItemId::now(),
+            aggregate_id: ItemId::new(),
             event_id: EventId::new(),
             timestamp: OffsetDateTime::now_utc(),
             payload: ItemEventPayload::Created(payload),
