@@ -25,7 +25,7 @@ pub trait ReadItemRecords {
 
     async fn get_item_records(
         &self,
-        item_keys: Batch<ItemKey, 100>,
+        item_keys: &Batch<ItemKey, 100>,
     ) -> Result<BatchGetItemResult<ItemRecord, ItemKey>, SdkError<BatchGetItemError, HttpResponse>>;
 
     async fn query_item_hashes(
@@ -68,11 +68,11 @@ where
 
     async fn get_item_records(
         &self,
-        item_keys: Batch<ItemKey, 100>,
+        item_keys: &Batch<ItemKey, 100>,
     ) -> Result<BatchGetItemResult<ItemRecord, ItemKey>, SdkError<BatchGetItemError, HttpResponse>>
     {
         let keys = item_keys
-            .into_iter()
+            .iter()
             .map(|item_key| {
                 let mut columns = HashMap::with_capacity(2);
                 columns.insert(

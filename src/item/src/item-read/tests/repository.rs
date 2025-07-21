@@ -653,7 +653,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_all_exist() 
 
     let mut actuals = client
         .get_item_records(
-            Batch::try_from(
+            &Batch::try_from(
                 (1..=100)
                     .map(|n| ItemKey::new(shop_id.clone(), ShopsItemId::from(n.to_string())))
                     .collect::<Vec<_>>(),
@@ -727,7 +727,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_some_do_not_
 
     let mut actuals = client
         .get_item_records(
-            Batch::try_from(
+            &Batch::try_from(
                 (1..=14)
                     .map(|n| ItemKey::new(shop_id.clone(), ShopsItemId::from(n.to_string())))
                     .collect::<Vec<_>>(),
@@ -803,7 +803,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_more_than_10
 
     let mut actuals = client
         .get_item_records(
-            Batch::try_from(
+            &Batch::try_from(
                 (1..=100)
                     .map(|n| ItemKey::new(shop_id.clone(), ShopsItemId::from(n.to_string())))
                     .collect::<Vec<_>>(),
