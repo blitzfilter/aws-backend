@@ -34,6 +34,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
         &self,
         commands: Vec<CreateItemCommand>,
     ) -> Result<(), Vec<ItemKey>> {
+        let commands_len = commands.len();
         let mut failures = Vec::new();
         let event_records = commands
             .into_iter()
@@ -79,7 +80,13 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
             }
         }
 
-        if failures.is_empty() {
+        let failures_len = failures.len();
+        info!(
+            successful = commands_len - failures_len,
+            failures = failures_len,
+            "Handled multiple CreateItemCommands."
+        );
+        if failures_len == 0 {
             Ok(())
         } else {
             Err(failures)
@@ -90,6 +97,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
         &self,
         commands: HashMap<ItemKey, UpdateItemCommand>,
     ) -> Result<(), Vec<ItemKey>> {
+        let commands_len = commands.len();
         let mut failures: Vec<ItemKey> = Vec::new();
         let update_chunks = commands
             .into_iter()
@@ -156,7 +164,13 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
             }
         }
 
-        if failures.is_empty() {
+        let failures_len = failures.len();
+        info!(
+            successful = commands_len - failures_len,
+            failures = failures_len,
+            "Handled multiple CreateItemCommands."
+        );
+        if failures_len == 0 {
             Ok(())
         } else {
             Err(failures)
