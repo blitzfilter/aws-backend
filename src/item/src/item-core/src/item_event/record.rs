@@ -1,3 +1,4 @@
+use crate::item::hash::ItemHash;
 use crate::item_event::domain::{ItemCommonEventPayload, ItemEvent, ItemEventPayload};
 use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
@@ -60,6 +61,8 @@ pub struct ItemEventRecord {
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub images: Option<Vec<String>>,
+
+    pub hash: ItemHash,
 
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
@@ -125,11 +128,12 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: Some(payload.state.into()),
                     url: Some(payload.url),
                     images: Some(payload.images),
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
             }
-            ItemEventPayload::StateListed(_) => {
+            ItemEventPayload::StateListed(payload) => {
                 let record = ItemEventRecord {
                     pk,
                     sk,
@@ -149,11 +153,12 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: Some(ItemStateRecord::Listed),
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
             }
-            ItemEventPayload::StateAvailable(_) => {
+            ItemEventPayload::StateAvailable(payload) => {
                 let record = ItemEventRecord {
                     pk,
                     sk,
@@ -173,11 +178,12 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: Some(ItemStateRecord::Available),
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
             }
-            ItemEventPayload::StateReserved(_) => {
+            ItemEventPayload::StateReserved(payload) => {
                 let record = ItemEventRecord {
                     pk,
                     sk,
@@ -197,11 +203,12 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: Some(ItemStateRecord::Reserved),
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
             }
-            ItemEventPayload::StateSold(_) => {
+            ItemEventPayload::StateSold(payload) => {
                 let record = ItemEventRecord {
                     pk,
                     sk,
@@ -221,11 +228,12 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: Some(ItemStateRecord::Sold),
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
             }
-            ItemEventPayload::StateRemoved(_) => {
+            ItemEventPayload::StateRemoved(payload) => {
                 let record = ItemEventRecord {
                     pk,
                     sk,
@@ -245,6 +253,7 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: Some(ItemStateRecord::Removed),
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
@@ -269,6 +278,7 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: None,
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
@@ -293,6 +303,7 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: None,
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)
@@ -317,6 +328,7 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     state: None,
                     url: None,
                     images: None,
+                    hash: payload.hash,
                     timestamp: domain.timestamp,
                 };
                 Ok(record)

@@ -93,6 +93,7 @@ impl ItemCommonEventPayload for ItemCreatedEventPayload {
 pub struct ItemStateChangeEventPayload {
     pub(crate) shop_id: ShopId,
     pub(crate) shops_item_id: ShopsItemId,
+    pub(crate) hash: ItemHash,
 }
 
 impl ItemCommonEventPayload for ItemStateChangeEventPayload {
@@ -110,6 +111,7 @@ pub struct ItemPriceChangeEventPayload {
     pub(crate) shop_id: ShopId,
     pub(crate) shops_item_id: ShopsItemId,
     pub(crate) price: Price,
+    pub(crate) hash: ItemHash,
 }
 
 impl ItemCommonEventPayload for ItemPriceChangeEventPayload {
@@ -135,7 +137,6 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
                     .state
                     .ok_or::<MissingPersistenceField>(field!(state@ItemEventRecord).into())?
                     .into();
-                let hash = ItemHash::new(&Some(price), &state);
                 let mut title = HashMap::with_capacity(2);
                 if let Some(title_en) = record.title_en {
                     title.insert(Language::En, title_en);
@@ -172,37 +173,42 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
                         .url
                         .ok_or::<MissingPersistenceField>(field!(url@ItemEventRecord).into())?,
                     images: record.images.unwrap_or_default(),
-                    hash,
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::StateListed => {
                 ItemEventPayload::StateListed(ItemStateChangeEventPayload {
                     shop_id: record.shop_id,
                     shops_item_id: record.shops_item_id,
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::StateAvailable => {
                 ItemEventPayload::StateAvailable(ItemStateChangeEventPayload {
                     shop_id: record.shop_id,
                     shops_item_id: record.shops_item_id,
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::StateReserved => {
                 ItemEventPayload::StateReserved(ItemStateChangeEventPayload {
                     shop_id: record.shop_id,
                     shops_item_id: record.shops_item_id,
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::StateSold => {
                 ItemEventPayload::StateSold(ItemStateChangeEventPayload {
                     shop_id: record.shop_id,
                     shops_item_id: record.shops_item_id,
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::StateRemoved => {
                 ItemEventPayload::StateRemoved(ItemStateChangeEventPayload {
                     shop_id: record.shop_id,
                     shops_item_id: record.shops_item_id,
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::PriceDiscovered => {
@@ -213,6 +219,7 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
                         .price
                         .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
                         .into(),
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::PriceDropped => {
@@ -223,6 +230,7 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
                         .price
                         .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
                         .into(),
+                    hash: record.hash,
                 })
             }
             ItemEventTypeRecord::PriceIncreased => {
@@ -233,6 +241,7 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
                         .price
                         .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
                         .into(),
+                    hash: record.hash,
                 })
             }
         };

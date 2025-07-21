@@ -9,6 +9,8 @@ item-core = { path = "../item-core" }
 async-trait = "0.1.88"
 aws-sdk-dynamodb = "1.82.0"
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
+tracing = "0.1.41"
+itertools = "0.14.0"
 
 [dev-dependencies]
 item-read = { path = "../item-read" }

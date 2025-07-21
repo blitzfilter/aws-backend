@@ -78,6 +78,7 @@ impl Item {
             payload: ItemEventPayload::StateListed(ItemStateChangeEventPayload {
                 shop_id: self.shop_id.clone(),
                 shops_item_id: self.shops_item_id.clone(),
+                hash: self.hash.clone(),
             }),
         }
     }
@@ -92,6 +93,7 @@ impl Item {
             payload: ItemEventPayload::StateAvailable(ItemStateChangeEventPayload {
                 shop_id: self.shop_id.clone(),
                 shops_item_id: self.shops_item_id.clone(),
+                hash: self.hash.clone(),
             }),
         }
     }
@@ -106,6 +108,7 @@ impl Item {
             payload: ItemEventPayload::StateReserved(ItemStateChangeEventPayload {
                 shop_id: self.shop_id.clone(),
                 shops_item_id: self.shops_item_id.clone(),
+                hash: self.hash.clone(),
             }),
         }
     }
@@ -120,6 +123,7 @@ impl Item {
             payload: ItemEventPayload::StateSold(ItemStateChangeEventPayload {
                 shop_id: self.shop_id.clone(),
                 shops_item_id: self.shops_item_id.clone(),
+                hash: self.hash.clone(),
             }),
         }
     }
@@ -134,6 +138,7 @@ impl Item {
             payload: ItemEventPayload::StateRemoved(ItemStateChangeEventPayload {
                 shop_id: self.shop_id.clone(),
                 shops_item_id: self.shops_item_id.clone(),
+                hash: self.hash.clone(),
             }),
         }
     }
@@ -147,6 +152,7 @@ impl Item {
                     shop_id: self.shop_id.clone(),
                     shops_item_id: self.shops_item_id.clone(),
                     price: new_price,
+                    hash: self.hash.clone(),
                 };
                 let event = Event {
                     aggregate_id: self.item_id,
@@ -165,6 +171,7 @@ impl Item {
                             shop_id: self.shop_id.clone(),
                             shops_item_id: self.shops_item_id.clone(),
                             price: new_price,
+                            hash: self.hash.clone(),
                         };
                         let event = Event {
                             aggregate_id: self.item_id,
@@ -178,6 +185,7 @@ impl Item {
                             shop_id: self.shop_id.clone(),
                             shops_item_id: self.shops_item_id.clone(),
                             price: new_price,
+                            hash: self.hash.clone(),
                         };
                         let event = Event {
                             aggregate_id: self.item_id,
@@ -196,6 +204,7 @@ impl Item {
                         shop_id: self.shop_id.clone(),
                         shops_item_id: self.shops_item_id.clone(),
                         price: new_price,
+                        hash: self.hash.clone(),
                     };
                     let event = Event {
                         aggregate_id: self.item_id,
@@ -272,44 +281,44 @@ impl Aggregate<ItemEvent> for Item {
             ItemEventPayload::Created(payload) => {
                 Err(ItemAggregateError::CreatedAfterCreated(payload))
             }
-            ItemEventPayload::StateListed(_) => {
+            ItemEventPayload::StateListed(payload) => {
                 self.state = ItemState::Listed;
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
-            ItemEventPayload::StateAvailable(_) => {
+            ItemEventPayload::StateAvailable(payload) => {
                 self.state = ItemState::Available;
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
-            ItemEventPayload::StateReserved(_) => {
+            ItemEventPayload::StateReserved(payload) => {
                 self.state = ItemState::Reserved;
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
-            ItemEventPayload::StateSold(_) => {
+            ItemEventPayload::StateSold(payload) => {
                 self.state = ItemState::Sold;
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
-            ItemEventPayload::StateRemoved(_) => {
+            ItemEventPayload::StateRemoved(payload) => {
                 self.state = ItemState::Removed;
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
             ItemEventPayload::PriceDiscovered(payload) => {
                 self.price = Some(payload.price);
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
             ItemEventPayload::PriceDropped(payload) => {
                 self.price = Some(payload.price);
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
             ItemEventPayload::PriceIncreased(payload) => {
                 self.price = Some(payload.price);
-                self.hash();
+                self.hash = payload.hash;
                 Ok(())
             }
         }
