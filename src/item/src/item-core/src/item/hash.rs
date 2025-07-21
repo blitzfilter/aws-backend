@@ -75,7 +75,6 @@ impl ItemHashContributor for ItemState {
             ItemState::Reserved => ItemHashContribution("ItemState::Reserved".to_owned()),
             ItemState::Sold => ItemHashContribution("ItemState::Sold".to_owned()),
             ItemState::Removed => ItemHashContribution("ItemState::Removed".to_owned()),
-            ItemState::Unknown => ItemHashContribution("ItemState::Unknown".to_owned()),
         }
     }
 }

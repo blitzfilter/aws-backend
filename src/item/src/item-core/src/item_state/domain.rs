@@ -8,7 +8,6 @@ pub enum ItemState {
     Reserved,
     Sold,
     Removed,
-    Unknown,
 }
 
 impl From<ItemStateCommandData> for ItemState {
@@ -19,7 +18,6 @@ impl From<ItemStateCommandData> for ItemState {
             ItemStateCommandData::Reserved => ItemState::Reserved,
             ItemStateCommandData::Sold => ItemState::Sold,
             ItemStateCommandData::Removed => ItemState::Removed,
-            ItemStateCommandData::Unknown => ItemState::Unknown,
         }
     }
 }
@@ -32,7 +30,6 @@ impl From<ItemStateRecord> for ItemState {
             ItemStateRecord::Reserved => ItemState::Reserved,
             ItemStateRecord::Sold => ItemState::Sold,
             ItemStateRecord::Removed => ItemState::Removed,
-            ItemStateRecord::Unknown => ItemState::Unknown,
         }
     }
 }

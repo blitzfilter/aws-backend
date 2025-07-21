@@ -9,7 +9,6 @@ pub enum ItemStateRecord {
     Reserved,
     Sold,
     Removed,
-    Unknown,
 }
 
 impl From<ItemState> for ItemStateRecord {
@@ -20,7 +19,6 @@ impl From<ItemState> for ItemStateRecord {
             ItemState::Reserved => ItemStateRecord::Reserved,
             ItemState::Sold => ItemStateRecord::Sold,
             ItemState::Removed => ItemStateRecord::Removed,
-            ItemState::Unknown => ItemStateRecord::Unknown,
         }
     }
 }
@@ -36,7 +34,6 @@ mod tests {
     #[case(ItemStateRecord::Reserved, "\"RESERVED\"")]
     #[case(ItemStateRecord::Sold, "\"SOLD\"")]
     #[case(ItemStateRecord::Removed, "\"REMOVED\"")]
-    #[case(ItemStateRecord::Unknown, "\"UNKNOWN\"")]
     fn should_serialize_item_state_record_in_screaming_snake_case(
         #[case] item_state_record: ItemStateRecord,
         #[case] expected: &str,
@@ -51,7 +48,6 @@ mod tests {
     #[case("\"RESERVED\"", ItemStateRecord::Reserved)]
     #[case("\"SOLD\"", ItemStateRecord::Sold)]
     #[case("\"REMOVED\"", ItemStateRecord::Removed)]
-    #[case("\"UNKNOWN\"", ItemStateRecord::Unknown)]
     fn should_deserialize_item_state_record_in_screaming_snake_case(
         #[case] currency: &str,
         #[case] expected: ItemStateRecord,

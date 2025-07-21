@@ -8,7 +8,6 @@ pub enum ItemStateCommandData {
     Reserved,
     Sold,
     Removed,
-    Unknown,
 }
 
 #[cfg(test)]
@@ -22,7 +21,6 @@ mod tests {
     #[case(ItemStateCommandData::Reserved, "\"RESERVED\"")]
     #[case(ItemStateCommandData::Sold, "\"SOLD\"")]
     #[case(ItemStateCommandData::Removed, "\"REMOVED\"")]
-    #[case(ItemStateCommandData::Unknown, "\"UNKNOWN\"")]
     fn should_serialize_item_state_command_in_screaming_snake_case(
         #[case] item_state_record: ItemStateCommandData,
         #[case] expected: &str,
@@ -37,7 +35,6 @@ mod tests {
     #[case("\"RESERVED\"", ItemStateCommandData::Reserved)]
     #[case("\"SOLD\"", ItemStateCommandData::Sold)]
     #[case("\"REMOVED\"", ItemStateCommandData::Removed)]
-    #[case("\"UNKNOWN\"", ItemStateCommandData::Unknown)]
     fn should_deserialize_item_state_command_in_screaming_snake_case(
         #[case] currency: &str,
         #[case] expected: ItemStateCommandData,
