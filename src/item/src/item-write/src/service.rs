@@ -168,7 +168,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
         info!(
             successful = commands_len - failures_len,
             failures = failures_len,
-            "Handled multiple CreateItemCommands."
+            "Handled multiple UpdateItemCommands."
         );
         if failures_len == 0 {
             Ok(())
