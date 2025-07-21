@@ -6,8 +6,20 @@ use std::fmt::{Display, Formatter};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-pub type ItemKey = (ShopId, ShopsItemId);
-pub type ItemKeyRef<'a> = (&'a ShopId, &'a ShopsItemId);
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Hash)]
+pub struct ItemKey {
+    pub shop_id: ShopId,
+    pub shops_item_id: ShopsItemId,
+}
+
+impl ItemKey {
+    pub fn new(shop_id: ShopId, shops_item_id: ShopsItemId) -> Self {
+        ItemKey {
+            shop_id,
+            shops_item_id,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]

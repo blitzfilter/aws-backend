@@ -31,7 +31,7 @@ pub trait ItemCommonEventPayload {
     fn shop_id(&self) -> &ShopId;
     fn shops_item_id(&self) -> &ShopsItemId;
     fn item_key(&self) -> ItemKey {
-        (self.shop_id().clone(), self.shops_item_id().clone())
+        ItemKey::new(self.shop_id().clone(), self.shops_item_id().clone())
     }
 }
 

@@ -67,11 +67,11 @@ pub struct ItemEventRecord {
 
 impl ItemEventRecord {
     pub fn item_key(&self) -> ItemKey {
-        (self.shop_id.clone(), self.shops_item_id.clone())
+        ItemKey::new(self.shop_id.clone(), self.shops_item_id.clone())
     }
 
     pub fn into_item_key(self) -> ItemKey {
-        (self.shop_id, self.shops_item_id)
+        ItemKey::new(self.shop_id, self.shops_item_id)
     }
 }
 
