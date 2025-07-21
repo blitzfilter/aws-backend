@@ -1,3 +1,4 @@
+use crate::item_state::record::ItemStateRecord;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -8,6 +9,18 @@ pub enum ItemStateDocument {
     Reserved,
     Sold,
     Removed,
+}
+
+impl From<ItemStateRecord> for ItemStateDocument {
+    fn from(document: ItemStateRecord) -> Self {
+        match document {
+            ItemStateRecord::Listed => ItemStateDocument::Listed,
+            ItemStateRecord::Available => ItemStateDocument::Available,
+            ItemStateRecord::Reserved => ItemStateDocument::Reserved,
+            ItemStateRecord::Sold => ItemStateDocument::Sold,
+            ItemStateRecord::Removed => ItemStateDocument::Removed,
+        }
+    }
 }
 
 #[cfg(test)]
