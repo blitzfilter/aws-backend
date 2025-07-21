@@ -347,6 +347,7 @@ pub mod tests {
 
         let mut failures = Vec::new();
         let actuals = find_update_events_with_existing_items(update_chunk, vec![], &mut failures);
+        failures.sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
 
         assert!(actuals.is_empty());
         assert_eq!(failures.len(), 2);
