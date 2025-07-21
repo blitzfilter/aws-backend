@@ -129,10 +129,6 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
     fn try_from(record: ItemEventRecord) -> Result<Self, Self::Error> {
         let payload = match record.event_type {
             ItemEventTypeRecord::Created => {
-                let price = record
-                    .price
-                    .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
-                    .into();
                 let state = record
                     .state
                     .ok_or::<MissingPersistenceField>(field!(state@ItemEventRecord).into())?
@@ -167,7 +163,7 @@ impl TryFrom<ItemEventRecord> for ItemEvent {
                     )?,
                     title,
                     description,
-                    price: Some(price),
+                    price: record.price.map(Price::from),
                     state,
                     url: record
                         .url
