@@ -1731,6 +1731,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "common",
  "item-core",
+ "rstest",
  "serde_dynamo",
  "serial_test",
  "test-api",
