@@ -61,8 +61,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
                         None
                     }
                 }
-            })
-            .collect();
+            });
         let batches = Batch::<_, 25>::chunked_from(event_records);
 
         for batch in batches {
@@ -132,8 +131,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
                                     None
                                 }
                             }
-                        })
-                        .collect();
+                        });
                     let batches = Batch::<_, 25>::chunked_from(event_records);
 
                     for batch in batches {

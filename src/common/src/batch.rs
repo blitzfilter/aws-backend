@@ -22,9 +22,8 @@ impl<T, const N: usize> Batch<T, N> {
         Self::try_from(vec)
     }
 
-    pub fn chunked_from(xs: Vec<T>) -> Vec<Batch<T, N>> {
-        xs.into_iter()
-            .chunks(N)
+    pub fn chunked_from<I: Itertools<Item = T>>(iter: I) -> Vec<Batch<T, N>> {
+        iter.chunks(N)
             .into_iter()
             .map(|chunk| Batch(chunk.collect()))
             .collect()
