@@ -17,3 +17,4 @@ itertools = "0.14.0"
 test-api = { path = "../../../test-api" }
 time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
 serial_test = "3.2.0"
+rstest = "0.25.0"

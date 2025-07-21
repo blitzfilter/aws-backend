@@ -1750,6 +1750,7 @@ dependencies = [
  "item-core",
  "item-read",
  "itertools 0.14.0",
+ "rstest",
  "serde_dynamo",
  "serial_test",
  "test-api",

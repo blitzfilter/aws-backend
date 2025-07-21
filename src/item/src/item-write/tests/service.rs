@@ -1,0 +1,94 @@
+use common::aggregate::Aggregate;
+use common::shop_id::ShopId;
+use common::shops_item_id::ShopsItemId;
+use item_core::item::command::CreateItemCommand;
+use item_core::item::domain::Item;
+use item_core::item_event::domain::ItemEvent;
+use item_core::item_event::record::ItemEventRecord;
+use item_core::item_state::domain::ItemState;
+use item_write::service::InboundWriteItems;
+use test_api::*;
+
+#[localstack_test(services = [DynamoDB])]
+async fn should_create_items_for_handle_create_items_with_one_command() {
+    let shop_id = ShopId::new();
+    let shops_item_id = ShopsItemId::new();
+    let cmd = CreateItemCommand {
+        shop_id: shop_id.clone(),
+        shops_item_id: shops_item_id.clone(),
+        shop_name: "Boop".to_string(),
+        title: Default::default(),
+        description: Default::default(),
+        price: None,
+        state: ItemState::Listed,
+        url: "https://beep.boop.com/baap".to_string(),
+        images: vec![],
+    };
+
+    let client = get_dynamodb_client().await;
+    let write_res = client.handle_create_items(vec![cmd.clone()]).await;
+    assert!(write_res.is_ok());
+
+    let event_record_attr_map = client
+        .scan()
+        .table_name("items")
+        .send()
+        .await
+        .unwrap()
+        .items
+        .unwrap()[0]
+        .clone();
+    let event_record =
+        serde_dynamo::from_item::<_, ItemEventRecord>(event_record_attr_map).unwrap();
+    let event: ItemEvent = event_record.try_into().unwrap();
+    let actual = Item::init(event).unwrap();
+
+    assert_eq!(cmd.shop_id, actual.shop_id);
+    assert_eq!(cmd.shops_item_id, actual.shops_item_id);
+    assert_eq!(cmd.shop_name, actual.shop_name);
+    assert_eq!(cmd.title, actual.title);
+    assert_eq!(cmd.description, actual.description);
+    assert_eq!(cmd.price, actual.price);
+    assert_eq!(cmd.state, actual.state);
+    assert_eq!(cmd.url, actual.url);
+    assert_eq!(cmd.images, actual.images);
+}
+
+#[rstest::rstest]
+#[case::ten(10)]
+#[case::twentyfive(25)]
+#[case::fortytwo(42)]
+#[case::fifty(50)]
+#[case::sixtynine(69)]
+#[case::onehundred(100)]
+#[case::fourhundredandtwenty(420)]
+#[case::fivehundred(500)]
+#[localstack_test(services = [DynamoDB])]
+async fn should_create_items_for_handle_create_items_with_commands_count(#[case] count: i32) {
+    let shop_id = ShopId::new();
+    let mk_cmd = |x: i32| CreateItemCommand {
+        shop_id: shop_id.clone(),
+        shops_item_id: ShopsItemId::from(x.to_string()),
+        shop_name: "Boop".to_string(),
+        title: Default::default(),
+        description: Default::default(),
+        price: None,
+        state: ItemState::Listed,
+        url: "https://beep.boop.com/baap".to_string(),
+        images: vec![],
+    };
+    let cmds = (1..=count).map(mk_cmd).collect();
+    let client = get_dynamodb_client().await;
+    let write_res = client.handle_create_items(cmds).await;
+    assert!(write_res.is_ok());
+
+    let actual_count = client
+        .scan()
+        .table_name("items")
+        .send()
+        .await
+        .unwrap()
+        .count;
+
+    assert_eq!(count, actual_count);
+}
