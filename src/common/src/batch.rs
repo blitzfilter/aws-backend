@@ -1,6 +1,4 @@
-use aws_sdk_dynamodb::types::{PutRequest, WriteRequest};
 use itertools::Itertools;
-use serde::Serialize;
 use std::ops::Deref;
 use thiserror::Error;
 use tracing::error;
@@ -345,29 +343,36 @@ impl<T, const N: usize> From<Batch<T, N>> for Vec<T> {
 }
 
 #[cfg(feature = "dynamodb")]
-impl<T: Serialize> Batch<T, 25> {
-    pub fn into_dynamodb_write_requests(self) -> Vec<WriteRequest> {
-        self.0
-            .into_iter()
-            .filter_map(|record| match serde_dynamo::to_item(record) {
-                Ok(item) => Some(
-                    WriteRequest::builder()
-                        .put_request(PutRequest::builder().set_item(Some(item)).build().expect(
-                            "should always succeed because PutRequest::set_item() \
+pub mod dynamodb {
+    use crate::batch::Batch;
+    use aws_sdk_dynamodb::types::{PutRequest, WriteRequest};
+    use serde::Serialize;
+    use tracing::error;
+
+    impl<T: Serialize> Batch<T, 25> {
+        pub fn into_dynamodb_write_requests(self) -> Vec<WriteRequest> {
+            self.0
+                .into_iter()
+                .filter_map(|record| match serde_dynamo::to_item(record) {
+                    Ok(item) => Some(
+                        WriteRequest::builder()
+                            .put_request(PutRequest::builder().set_item(Some(item)).build().expect(
+                                "should always succeed because PutRequest::set_item() \
                                                 is always called before PutRequest::build()",
-                        ))
-                        .build(),
-                ),
-                Err(err) => {
-                    error!(
-                        error = %err,
-                        type = %std::any::type_name::<T>(),
-                        "Failed to serialize record."
-                    );
-                    None
-                }
-            })
-            .collect()
+                            ))
+                            .build(),
+                    ),
+                    Err(err) => {
+                        error!(
+                            error = %err,
+                            type = %std::any::type_name::<T>(),
+                            "Failed to serialize record."
+                        );
+                        None
+                    }
+                })
+                .collect()
+        }
     }
 }
 
