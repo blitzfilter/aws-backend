@@ -28,6 +28,11 @@ pub trait ReadItemRecords {
         item_keys: &Batch<ItemKey, 100>,
     ) -> Result<BatchGetItemResult<ItemRecord, ItemKey>, SdkError<BatchGetItemError, HttpResponse>>;
 
+    async fn exist_item_records(
+        &self,
+        item_keys: &Batch<ItemKey, 100>,
+    ) -> Result<BatchGetItemResult<ItemKey, ItemKey>, SdkError<BatchGetItemError, HttpResponse>>;
+
     async fn query_item_hashes(
         &self,
         shop_id: &ShopId,
@@ -106,6 +111,85 @@ where
                 Ok(event) => Some(event),
                 Err(err) => {
                     error!(error = %err, "Failed deserializing ItemRecord.");
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let unprocessed = response
+            .unprocessed_keys
+            .unwrap_or_default()
+            .remove("items")
+            .map(|keys_and_attributes| keys_and_attributes.keys)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|attr_map| match extract_item_key(attr_map) {
+                Ok(key) => Some(key),
+                Err(err) => {
+                    error!(
+                        error = err,
+                        "Failed extracting ItemKey from BatchGetItemOutput::unprocessed_keys."
+                    );
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let batch_result = BatchGetItemResult {
+            items: records,
+            unprocessed: if unprocessed.is_empty() {
+                None
+            } else {
+                Some(Batch::try_from(unprocessed).expect(
+                    "shouldn't fail creating batch because DynamoDB cannot respond \
+                                with more failed ItemKeys than those requested.",
+                ))
+            },
+        };
+        Ok(batch_result)
+    }
+
+    async fn exist_item_records(
+        &self,
+        item_keys: &Batch<ItemKey, 100>,
+    ) -> Result<BatchGetItemResult<ItemKey, ItemKey>, SdkError<BatchGetItemError, HttpResponse>>
+    {
+        let keys = item_keys
+            .iter()
+            .map(|item_key| {
+                let mut columns = HashMap::with_capacity(2);
+                columns.insert(
+                    "pk".to_owned(),
+                    AttributeValue::S(mk_pk(&item_key.shop_id, &item_key.shops_item_id)),
+                );
+                columns.insert("sk".to_owned(), AttributeValue::S(mk_sk().to_owned()));
+                columns
+            })
+            .collect();
+        let keys_and_attributes = KeysAndAttributes::builder()
+            .set_keys(Some(keys))
+            .projection_expression("pk")
+            .build()
+            .expect("shouldn't fail because we previously set the only required field 'keys'.");
+        let request_items = Some(HashMap::from([("items".to_owned(), keys_and_attributes)]));
+        let response = self
+            .get()
+            .batch_get_item()
+            .set_request_items(request_items)
+            .send()
+            .await?;
+
+        let records = response
+            .responses
+            .unwrap_or_default()
+            .remove("items")
+            .unwrap_or_default()
+            .into_iter()
+            .map(extract_item_key)
+            .filter_map(|result| match result {
+                Ok(event) => Some(event),
+                Err(err) => {
+                    error!(error = %err, "Failed extracting ItemKey.");
                     None
                 }
             })
