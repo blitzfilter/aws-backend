@@ -8,3 +8,4 @@ item-core = { path = "src/item-core" }
 item-read = { path = "src/item-read" }
 item-write = { path = "src/item-write" }
 item-index = { path = "src/item-index" }
+item-lambda = { path = "src/item-lambda" }
