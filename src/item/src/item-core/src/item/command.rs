@@ -1,5 +1,6 @@
 use crate::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
 use crate::item_state::domain::ItemState;
+use common::item_id::ItemKey;
 use common::language::domain::Language;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
@@ -39,6 +40,15 @@ impl From<CreateItemCommandData> for CreateItemCommand {
             state: data.state.into(),
             url: data.url,
             images: data.images,
+        }
+    }
+}
+
+impl CreateItemCommand {
+    pub fn item_key(&self) -> ItemKey {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
         }
     }
 }

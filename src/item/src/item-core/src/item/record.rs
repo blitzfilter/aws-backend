@@ -2,7 +2,7 @@ use crate::item::domain::Item;
 use crate::item::hash::ItemHash;
 use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
-use common::item_id::ItemId;
+use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
@@ -66,6 +66,15 @@ pub struct ItemRecord {
 
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
+}
+
+impl ItemRecord {
+    pub fn item_key(&self) -> ItemKey {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
+        }
+    }
 }
 
 impl From<Item> for ItemRecord {
