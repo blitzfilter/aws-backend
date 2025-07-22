@@ -336,12 +336,13 @@ async fn should_update_item_record() {
         event_id: event_id2,
         price: None,
         state: Some(ItemStateRecord::Sold),
-        hash: ItemHash::new(&None, &ItemState::Sold),
+        hash: ItemHash::new(&Some(price.into()), &ItemState::Sold),
         updated: now2,
     };
     let mut expected = initial.clone();
     expected.event_id = event_id2;
     expected.state = ItemStateRecord::Sold;
+    expected.hash = ItemHash::new(&Some(price.into()), &ItemState::Sold);
     expected.updated = now2;
 
     let client = get_dynamodb_client().await;
