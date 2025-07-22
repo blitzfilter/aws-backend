@@ -11,7 +11,7 @@ use item_core::item_event::domain::{ItemCommonEventPayload, ItemEvent};
 use item_core::item_event::record::ItemEventRecord;
 use item_read::repository::ReadItemRecords;
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{error, info, warn};
 
 /// Service handling inbound item-commands (towards persistence)
@@ -35,56 +35,25 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
         &self,
         commands: Vec<CreateItemCommand>,
     ) -> Result<(), Vec<ItemKey>> {
+        let mut skipped_count = 0;
         let commands_len = commands.len();
         let mut failures = Vec::new();
-        let event_records = commands
+        let create_chunks = commands
             .into_iter()
-            .map(|cmd| {
-                Item::create(
-                    cmd.shop_id,
-                    cmd.shops_item_id,
-                    cmd.shop_name,
-                    cmd.title,
-                    cmd.description,
-                    cmd.price,
-                    cmd.state,
-                    cmd.url,
-                    cmd.images,
-                )
-            })
-            .filter_map(|event| {
-                let item_key = event.payload.item_key();
-                let record_res = ItemEventRecord::try_from(event);
-                match record_res {
-                    Ok(record_event) => Some(record_event),
-                    Err(err) => {
-                        error!(error = %err, "Failed converting ItemEvent to ItemEventRecord.");
-                        failures.push(item_key);
-                        None
-                    }
-                }
-            });
-        let batches = Batch::<_, 25>::chunked_from(event_records);
+            .chunks(100)
+            .into_iter()
+            .map(|chunk| chunk.collect::<Vec<_>>())
+            .collect::<Vec<_>>();
 
-        for batch in batches {
-            let item_keys = batch
-                .iter()
-                .map(ItemEventRecord::item_key)
-                .collect::<Vec<_>>();
-            let res = self.put_item_event_records(batch).await;
-            match res {
-                Ok(output) => handle_batch_output(output, &mut failures),
-                Err(err) => {
-                    error!(error = %err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
-                    failures.extend(item_keys);
-                }
-            }
+        for chunk in create_chunks {
+            handle_create_chunk(self, chunk, &mut failures, &mut skipped_count).await;
         }
 
         let failures_len = failures.len();
         info!(
-            successful = commands_len - failures_len,
+            successful = commands_len - failures_len - skipped_count,
             failures = failures_len,
+            skipped = skipped_count,
             "Handled multiple CreateItemCommands."
         );
         if failures_len == 0 {
@@ -99,6 +68,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
         commands: HashMap<ItemKey, UpdateItemCommand>,
     ) -> Result<(), Vec<ItemKey>> {
         let commands_len = commands.len();
+        let mut skipped_count = 0;
         let mut failures: Vec<ItemKey> = Vec::new();
         let update_chunks = commands
             .into_iter()
@@ -107,13 +77,14 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
             .map(|chunk| chunk.collect::<HashMap<_, _>>())
             .collect::<Vec<_>>();
         for update_chunk in update_chunks {
-            handle_update_chunk(self, update_chunk, &mut failures).await;
+            handle_update_chunk(self, update_chunk, &mut failures, &mut skipped_count).await;
         }
 
         let failures_len = failures.len();
         info!(
-            successful = commands_len - failures_len,
+            successful = commands_len - failures_len - skipped_count,
             failures = failures_len,
+            skipped = skipped_count,
             "Handled multiple UpdateItemCommands."
         );
         if failures_len == 0 {
@@ -124,17 +95,99 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
     }
 }
 
+async fn handle_create_chunk(
+    repository: &(impl ReadItemRecords + WriteItemRecords),
+    create_chunk: Vec<CreateItemCommand>,
+    failures: &mut Vec<ItemKey>,
+    skipped_count: &mut usize,
+) {
+    let create_item_keys = Batch::try_from(
+        create_chunk.iter()
+            .map(CreateItemCommand::item_key)
+            .collect::<Vec<_>>()
+    ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
+
+    match repository.exist_item_records(&create_item_keys).await {
+        Ok(existing_item_keys) => {
+            if let Some(unprocessed) = existing_item_keys.unprocessed {
+                warn!(
+                    unprocessed = unprocessed.len(),
+                    "Failed creating some items because the previously required BatchGetItem-Request contained unprocessed items."
+                );
+                failures.extend(unprocessed);
+            }
+            let existing_item_keys: HashSet<ItemKey> = HashSet::from_iter(existing_item_keys.items);
+            let events = create_chunk.into_iter().filter_map(|cmd| {
+                if existing_item_keys.contains(&cmd.item_key()) {
+                    warn!(
+                        shopId = &cmd.item_key().shop_id.to_string(),
+                        shopsItemId = &cmd.item_key().shops_item_id.to_string(),
+                        "Cannot create item because it already exists."
+                    );
+                    *skipped_count += 1;
+                    None
+                } else {
+                    Some(Item::create(
+                        cmd.shop_id,
+                        cmd.shops_item_id,
+                        cmd.shop_name,
+                        cmd.title,
+                        cmd.description,
+                        cmd.price,
+                        cmd.state,
+                        cmd.url,
+                        cmd.images,
+                    ))
+                }
+            });
+            let event_records = events.into_iter().filter_map(|event| {
+                let item_key = event.payload.item_key();
+                let record_res = ItemEventRecord::try_from(event);
+                match record_res {
+                    Ok(record_event) => Some(record_event),
+                    Err(err) => {
+                        error!(error = %err, "Failed converting ItemEvent to ItemEventRecord.");
+                        failures.push(item_key);
+                        None
+                    }
+                }
+            });
+            let batches = Batch::<_, 25>::chunked_from(event_records);
+
+            for batch in batches {
+                let item_keys = batch
+                    .iter()
+                    .map(ItemEventRecord::item_key)
+                    .collect::<Vec<_>>();
+                let res = repository.put_item_event_records(batch).await;
+                match res {
+                    Ok(output) => handle_batch_output(output, failures),
+                    Err(err) => {
+                        error!(error = %err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
+                        failures.extend(item_keys);
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            error!(error = %err, "Failed entire BatchGetItem-Operation due to SdkError.");
+            failures.extend(create_item_keys);
+        }
+    }
+}
+
 async fn handle_update_chunk(
     repository: &(impl ReadItemRecords + WriteItemRecords),
     update_chunk: HashMap<ItemKey, UpdateItemCommand>,
     failures: &mut Vec<ItemKey>,
+    skipped_count: &mut usize,
 ) {
     let update_item_keys = Batch::try_from(
         update_chunk
             .keys()
             .cloned()
             .collect::<Vec<_>>()
-    ).expect("shouldn't fail creating Batch from Vec because by convention itertools::chunks(100) produces Vec's of size no more than 100.");
+    ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
 
     match repository.get_item_records(&update_item_keys).await {
         Ok(existing_item_keys) => {
@@ -148,7 +201,7 @@ async fn handle_update_chunk(
             let events = find_update_events_with_existing_items(
                 update_chunk,
                 existing_item_keys.items,
-                failures,
+                skipped_count,
             );
             let event_records = events.into_iter().filter_map(|event| {
                 let item_key = event.payload.item_key();
@@ -215,7 +268,7 @@ fn handle_batch_output(output: BatchWriteItemOutput, failures: &mut Vec<ItemKey>
 fn find_update_events_with_existing_items(
     update_chunk: HashMap<ItemKey, UpdateItemCommand>,
     existing_records: Vec<ItemRecord>,
-    failures: &mut Vec<ItemKey>,
+    skipped_count: &mut usize,
 ) -> Vec<ItemEvent> {
     let mut update_chunk = update_chunk;
     let mut events = Vec::with_capacity(existing_records.len());
@@ -240,18 +293,20 @@ fn find_update_events_with_existing_items(
                     shopId = item_key.shop_id.to_string(),
                     shopsItemId = item_key.shops_item_id.to_string(),
                     "Received Update-Command for item that had no actual changes."
-                )
+                );
+                *skipped_count += 1;
             }
         }
     }
 
-    if !update_chunk.is_empty() {
+    for non_existent_key in update_chunk.keys() {
         warn!(
-            nonExistent = update_chunk.len(),
-            "Failed to update items because they don't exist."
+            shopId = non_existent_key.shop_id.to_string(),
+            shopsItemId = non_existent_key.shops_item_id.to_string(),
+            "Cannot update item because it doesn't exist."
         );
-        failures.extend(update_chunk.into_keys());
     }
+    *skipped_count += update_chunk.len();
 
     events
 }
@@ -318,21 +373,23 @@ pub mod tests {
             updated: OffsetDateTime::now_utc(),
         }];
 
-        let mut failures = Vec::new();
-        let actuals =
-            find_update_events_with_existing_items(update_chunk, existing_records, &mut failures);
+        let mut skipped_count = 0;
+        let actuals = find_update_events_with_existing_items(
+            update_chunk,
+            existing_records,
+            &mut skipped_count,
+        );
 
         assert_eq!(actuals.len(), 1);
         assert_eq!(
             actuals[0].payload.shops_item_id(),
             &ShopsItemId::from("abc")
         );
-        assert_eq!(failures.len(), 1);
-        assert_eq!(failures[0].shops_item_id, ShopsItemId::from("def"));
+        assert_eq!(1, skipped_count);
     }
 
     #[test]
-    fn should_find_no_update_events_and_mark_failures_when_no_items_exist() {
+    fn should_find_no_update_events_when_no_items_exist() {
         let update_chunk = HashMap::from([
             (
                 ItemKey::new("123".into(), "abc".into()),
@@ -353,18 +410,16 @@ pub mod tests {
             ),
         ]);
 
-        let mut failures = Vec::new();
-        let actuals = find_update_events_with_existing_items(update_chunk, vec![], &mut failures);
-        failures.sort_by(|x, y| x.shops_item_id.cmp(&y.shops_item_id));
+        let mut skipped_count = 0;
+        let actuals =
+            find_update_events_with_existing_items(update_chunk, vec![], &mut skipped_count);
 
         assert!(actuals.is_empty());
-        assert_eq!(failures.len(), 2);
-        assert_eq!(failures[0].shops_item_id, ShopsItemId::from("abc"));
-        assert_eq!(failures[1].shops_item_id, ShopsItemId::from("def"));
+        assert_eq!(2, skipped_count);
     }
 
     #[test]
-    fn should_find_no_update_events_and_not_mark_failures_when_no_actual_changes() {
+    fn should_find_no_update_events_when_no_actual_changes() {
         let update_chunk = HashMap::from([
             (
                 ItemKey::new("123".into(), "abc".into()),
@@ -409,12 +464,14 @@ pub mod tests {
             updated: OffsetDateTime::now_utc(),
         }];
 
-        let mut failures = Vec::new();
-        let actuals =
-            find_update_events_with_existing_items(update_chunk, existing_records, &mut failures);
+        let mut skipped_count = 0;
+        let actuals = find_update_events_with_existing_items(
+            update_chunk,
+            existing_records,
+            &mut skipped_count,
+        );
 
         assert!(actuals.is_empty());
-        assert_eq!(failures.len(), 1);
-        assert_eq!(failures[0].shops_item_id, ShopsItemId::from("def"));
+        assert_eq!(2, skipped_count);
     }
 }

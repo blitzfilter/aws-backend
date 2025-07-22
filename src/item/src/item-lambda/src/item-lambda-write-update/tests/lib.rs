@@ -13,7 +13,7 @@ use test_api::*;
 #[case::fivehundred(500)]
 #[case::onethousand(1000)]
 #[localstack_test(services = [DynamoDB])]
-async fn should_fail_all_when_they_dont_exist(#[case] n: usize) {
+async fn should_skip_all_when_they_dont_exist(#[case] n: usize) {
     let mk_message = |x: usize| {
         let command_data = UpdateItemCommandData {
             shop_id: Default::default(),
@@ -43,7 +43,7 @@ async fn should_fail_all_when_they_dont_exist(#[case] n: usize) {
     let client = get_dynamodb_client().await;
     let response = handler(client, lambda_event).await.unwrap();
 
-    assert_eq!(n, response.batch_item_failures.len());
+    assert!(response.batch_item_failures.is_empty());
 
     let scan_result = client.scan().table_name("items").send().await.unwrap();
     assert_eq!(0, scan_result.count as usize);

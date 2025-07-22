@@ -100,6 +100,87 @@ async fn should_create_items_for_handle_create_items_with_commands_count(#[case]
     assert_eq!(count, actual_count);
 }
 
+#[localstack_test(services = [DynamoDB])]
+async fn should_partially_skip_existent_items_for_handle_create_items() {
+    let shop_id = ShopId::new();
+    let shops_item_id = ShopsItemId::new();
+    let cmd = CreateItemCommand {
+        shop_id: shop_id.clone(),
+        shops_item_id: shops_item_id.clone(),
+        shop_name: "Boop".to_string(),
+        title: Default::default(),
+        description: Default::default(),
+        price: None,
+        state: ItemState::Reserved,
+        url: "https://beep.boop.com/baap".to_string(),
+        images: vec![],
+    };
+
+    let client = get_dynamodb_client().await;
+    let write_res_1 = client.handle_create_items(vec![cmd.clone()]).await;
+    assert!(write_res_1.is_ok());
+
+    // manually insert the materialized one
+    let materialized = ItemRecord {
+        pk: format!(
+            "item#shop_id#{}#shops_item_id#{}",
+            shop_id.clone(),
+            shops_item_id.clone()
+        ),
+        sk: "item#materialized".to_string(),
+        gsi_1_pk: format!("shop_id#{}", shop_id.clone()),
+        gsi_1_sk: "updated#2007-12-24T18:21Z".to_string(),
+        item_id: Default::default(),
+        event_id: Default::default(),
+        shop_id: shop_id.clone(),
+        shops_item_id: shops_item_id.clone(),
+        shop_name: "".to_string(),
+        title: None,
+        title_de: None,
+        title_en: None,
+        description: None,
+        description_de: None,
+        description_en: None,
+        price: None,
+        state: ItemStateRecord::Reserved,
+        url: "".to_string(),
+        images: vec![],
+        hash: ItemHash::new(&None, &ItemState::Reserved),
+        created: OffsetDateTime::now_utc(),
+        updated: OffsetDateTime::now_utc(),
+    };
+    let write_materialized_output = client
+        .put_item_records(Batch::from([materialized]))
+        .await
+        .unwrap();
+    assert!(
+        write_materialized_output
+            .unprocessed_items
+            .unwrap_or_default()
+            .is_empty()
+    );
+    let actual_count_1 = client
+        .scan()
+        .table_name("items")
+        .send()
+        .await
+        .unwrap()
+        .count;
+    assert_eq!(2, actual_count_1);
+
+    // Attempting to write created-event again is successful, but skipped
+    let write_res_2 = client.handle_create_items(vec![cmd.clone()]).await;
+    assert!(write_res_2.is_ok());
+    let actual_count_2 = client
+        .scan()
+        .table_name("items")
+        .send()
+        .await
+        .unwrap()
+        .count;
+    assert_eq!(actual_count_1, actual_count_2);
+}
+
 #[rstest::rstest]
 #[case::ten(10)]
 #[case::twentyfive(25)]
@@ -110,7 +191,7 @@ async fn should_create_items_for_handle_create_items_with_commands_count(#[case]
 #[case::fourhundredandtwenty(420)]
 #[case::fivehundred(500)]
 #[localstack_test(services = [DynamoDB])]
-async fn should_fail_non_existent_items_for_handle_update_items_with_commands_count(
+async fn should_skip_non_existent_items_for_handle_update_items_with_commands_count(
     #[case] count: i32,
 ) {
     let shop_id = ShopId::new();
@@ -126,8 +207,7 @@ async fn should_fail_non_existent_items_for_handle_update_items_with_commands_co
     let cmds = (1..=count).map(mk_entry).collect();
     let client = get_dynamodb_client().await;
     let write_res = client.handle_update_items(cmds).await;
-    assert!(write_res.is_err());
-    assert_eq!(count as usize, write_res.unwrap_err().len());
+    assert!(write_res.is_ok());
 
     let actual_count = client
         .scan()
@@ -149,7 +229,7 @@ async fn should_fail_non_existent_items_for_handle_update_items_with_commands_co
 #[case::fourhundredandtwenty(420)]
 #[case::fivehundred(500)]
 #[localstack_test(services = [DynamoDB])]
-async fn should_partially_fail_non_existent_items_for_handle_update_items_with_commands_count(
+async fn should_partially_skip_non_existent_items_for_handle_update_items_with_commands_count(
     #[case] count: i32,
 ) {
     let shop_id = ShopId::new();
@@ -219,8 +299,7 @@ async fn should_partially_fail_non_existent_items_for_handle_update_items_with_c
     let cmds = (1..=count).map(mk_entry).collect();
     let client = get_dynamodb_client().await;
     let write_res = client.handle_update_items(cmds).await;
-    assert!(write_res.is_err());
-    assert_eq!(count as usize - 1, write_res.unwrap_err().len());
+    assert!(write_res.is_ok());
 
     let actual_count = client
         .scan()
