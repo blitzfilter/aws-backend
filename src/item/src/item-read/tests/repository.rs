@@ -823,7 +823,6 @@ async fn should_return_item_records_for_batch_get_item_records_when_more_than_10
     assert_eq!(actuals.items, expecteds);
 }
 
-
 #[localstack_test(services = [DynamoDB])]
 async fn should_return_item_keys_for_batch_exist_item_records_when_all_exist() {
     let client = get_dynamodb_client().await;
