@@ -2,7 +2,7 @@ use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::document::ItemDocument;
-use item_core::item::document_update::ItemDocumentUpdate;
+use item_core::item::update_document::ItemUpdateDocument;
 use item_core::item_state::document::ItemStateDocument;
 use item_index::IndexItemDocuments;
 use opensearch::params::Refresh;
@@ -153,17 +153,11 @@ async fn should_update_item_document() {
 
     let updated_event_id = EventId::new();
     let updated_update_ts = OffsetDateTime::now_utc();
-    let update = ItemDocumentUpdate {
+    let update = ItemUpdateDocument {
         event_id: updated_event_id,
-        shop_name: None,
-        title_de: None,
-        title_en: None,
-        description_de: None,
-        description_en: None,
         price: None,
         state: Some(ItemStateDocument::Sold),
         is_available: None,
-        images: None,
         updated: updated_update_ts,
     };
     let update_response = client

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use common::has::Has;
 use common::item_id::ItemId;
 use item_core::item::document::ItemDocument;
-use item_core::item::document_update::ItemDocumentUpdate;
+use item_core::item::update_document::ItemUpdateDocument;
 use opensearch::{BulkOperation, BulkOperations, BulkParts};
 use serde_json::json;
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ pub trait IndexItemDocuments {
 
     async fn update_item_documents(
         &self,
-        updates: HashMap<ItemId, ItemDocumentUpdate>,
+        updates: HashMap<ItemId, ItemUpdateDocument>,
     ) -> Result<BulkResponse, opensearch::Error>;
 }
 
@@ -46,7 +46,7 @@ impl<T: Has<opensearch::OpenSearch> + Sync> IndexItemDocuments for T {
 
     async fn update_item_documents(
         &self,
-        updates: HashMap<ItemId, ItemDocumentUpdate>,
+        updates: HashMap<ItemId, ItemUpdateDocument>,
     ) -> Result<BulkResponse, opensearch::Error> {
         let mut ops = BulkOperations::new();
         for (_id, doc) in updates {
