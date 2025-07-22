@@ -1,4 +1,5 @@
 use crate::item::hash::ItemHash;
+use crate::item_event::record::ItemEventRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
 use common::price::record::PriceRecord;
@@ -19,4 +20,16 @@ pub struct ItemUpdateRecord {
 
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
+}
+
+impl From<ItemEventRecord> for ItemUpdateRecord {
+    fn from(event: ItemEventRecord) -> Self {
+        ItemUpdateRecord {
+            event_id: event.event_id,
+            price: event.price,
+            state: event.state,
+            hash: event.hash,
+            updated: event.timestamp,
+        }
+    }
 }
