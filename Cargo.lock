@@ -1796,10 +1796,33 @@ name = "item-lambda"
 version = "0.1.0"
 dependencies = [
  "item-lambda-write-new",
+ "item-lambda-write-update",
 ]
 
 [[package]]
 name = "item-lambda-write-new"
+version = "0.1.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws_lambda_events",
+ "common",
+ "dotenvy",
+ "item-core",
+ "item-write",
+ "lambda_runtime",
+ "mockall",
+ "rstest",
+ "serde_json",
+ "serial_test",
+ "test-api",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "item-lambda-write-update"
 version = "0.1.0"
 dependencies = [
  "aws-config",

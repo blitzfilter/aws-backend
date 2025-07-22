@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 item-lambda-write-new = { path = "src/item-lambda-write-new" }
+item-lambda-write-update = { path = "src/item-lambda-write-update" }
