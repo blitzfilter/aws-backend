@@ -16,3 +16,9 @@ tokio = { version = "1.45.0", features = ["macros"] }
 tracing-subscriber = { version = "0.3.19", features = ["json"] }
 tracing = "0.1.41"
 dotenvy = "0.15.7"
+
+[dev-dependencies]
+test-api = { path = "../../../../../../src/test-api" }
+serial_test = "3.2.0"
+rstest = "0.25.0"
+mockall = "0.13.1"
