@@ -107,62 +107,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
             .map(|chunk| chunk.collect::<HashMap<_, _>>())
             .collect::<Vec<_>>();
         for update_chunk in update_chunks {
-            let update_item_keys = Batch::try_from(
-                update_chunk
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-            ).expect("shouldn't fail creating Batch from Vec because by convention itertools::chunks(100) produces Vec's of size no more than 100.");
-
-            match self.get_item_records(&update_item_keys).await {
-                Ok(existing_item_keys) => {
-                    if let Some(unprocessed) = existing_item_keys.unprocessed {
-                        warn!(
-                            unprocessed = unprocessed.len(),
-                            "Failed updating some items because the previously required BatchGetItem-Request contained unprocessed items."
-                        );
-                        failures.extend(unprocessed);
-                    }
-                    let events = find_update_events_with_existing_items(
-                        update_chunk,
-                        existing_item_keys.items,
-                        &mut failures,
-                    );
-                    let event_records = events.into_iter()
-                        .filter_map(|event| {
-                            let item_key = event.payload.item_key();
-                            let record_res = ItemEventRecord::try_from(event);
-                            match record_res {
-                                Ok(record_event) => Some(record_event),
-                                Err(err) => {
-                                    error!(error = %err, "Failed converting ItemEvent to ItemEventRecord.");
-                                    failures.push(item_key);
-                                    None
-                                }
-                            }
-                        });
-                    let batches = Batch::<_, 25>::chunked_from(event_records);
-
-                    for batch in batches {
-                        let item_keys = batch
-                            .iter()
-                            .map(ItemEventRecord::item_key)
-                            .collect::<Vec<_>>();
-                        let res = self.put_item_event_records(batch).await;
-                        match res {
-                            Ok(output) => handle_batch_output(output, &mut failures),
-                            Err(err) => {
-                                error!(error = %err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
-                                failures.extend(item_keys);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    error!(error = %err, "Failed entire BatchGetItem-Operation due to SdkError.");
-                    failures.extend(update_item_keys);
-                }
-            }
+            handle_update_chunk(self, update_chunk, &mut failures).await;
         }
 
         let failures_len = failures.len();
@@ -175,6 +120,68 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> InboundWriteItems for T {
             Ok(())
         } else {
             Err(failures)
+        }
+    }
+}
+
+async fn handle_update_chunk(
+    repository: &(impl ReadItemRecords + WriteItemRecords),
+    update_chunk: HashMap<ItemKey, UpdateItemCommand>,
+    failures: &mut Vec<ItemKey>,
+) {
+    let update_item_keys = Batch::try_from(
+        update_chunk
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    ).expect("shouldn't fail creating Batch from Vec because by convention itertools::chunks(100) produces Vec's of size no more than 100.");
+
+    match repository.get_item_records(&update_item_keys).await {
+        Ok(existing_item_keys) => {
+            if let Some(unprocessed) = existing_item_keys.unprocessed {
+                warn!(
+                    unprocessed = unprocessed.len(),
+                    "Failed updating some items because the previously required BatchGetItem-Request contained unprocessed items."
+                );
+                failures.extend(unprocessed);
+            }
+            let events = find_update_events_with_existing_items(
+                update_chunk,
+                existing_item_keys.items,
+                failures,
+            );
+            let event_records = events.into_iter().filter_map(|event| {
+                let item_key = event.payload.item_key();
+                let record_res = ItemEventRecord::try_from(event);
+                match record_res {
+                    Ok(record_event) => Some(record_event),
+                    Err(err) => {
+                        error!(error = %err, "Failed converting ItemEvent to ItemEventRecord.");
+                        failures.push(item_key);
+                        None
+                    }
+                }
+            });
+            let batches = Batch::<_, 25>::chunked_from(event_records);
+
+            for batch in batches {
+                let item_keys = batch
+                    .iter()
+                    .map(ItemEventRecord::item_key)
+                    .collect::<Vec<_>>();
+                let res = repository.put_item_event_records(batch).await;
+                match res {
+                    Ok(output) => handle_batch_output(output, failures),
+                    Err(err) => {
+                        error!(error = %err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
+                        failures.extend(item_keys);
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            error!(error = %err, "Failed entire BatchGetItem-Operation due to SdkError.");
+            failures.extend(update_item_keys);
         }
     }
 }
