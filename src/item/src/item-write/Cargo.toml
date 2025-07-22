@@ -12,10 +12,10 @@ aws-sdk-dynamodb = "1.82.0"
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
 tracing = "0.1.41"
 itertools = "0.14.0"
+mockall = { version = "0.13.1" }
 
 [dev-dependencies]
 test-api = { path = "../../../test-api" }
 time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
 serial_test = "3.2.0"
 rstest = "0.25.0"
-mockall = "0.13.1"

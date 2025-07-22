@@ -102,3 +102,68 @@ fn extract_message_data(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::handler;
+    use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
+    use common::item_id::ItemKey;
+    use common::shop_id::ShopId;
+    use item_core::item::command_data::CreateItemCommandData;
+    use item_core::item_state::command_data::ItemStateCommandData;
+    use item_write::service::MockInboundWriteItems;
+    use lambda_runtime::{Context, LambdaEvent};
+
+    #[rstest::rstest]
+    #[case::one(1)]
+    #[case::five(5)]
+    #[case::ten(10)]
+    #[case::fifty(50)]
+    #[case::fivehundred(500)]
+    #[case::onethousand(1000)]
+    #[case::tenthousand(10000)]
+    #[tokio::test]
+    async fn should_pass_on_service_failures(#[case] n: usize) {
+        let shop_id = ShopId::new();
+        let mk_message = |x: usize| {
+            let command_data = CreateItemCommandData {
+                shop_id: shop_id.clone(),
+                shops_item_id: x.to_string().into(),
+                shop_name: "".to_string(),
+                title: Default::default(),
+                description: Default::default(),
+                price: None,
+                state: ItemStateCommandData::Listed,
+                url: "".to_string(),
+                images: vec![],
+            };
+            SqsMessage {
+                message_id: Some(x.to_string()),
+                receipt_handle: None,
+                body: Some(serde_json::to_string(&command_data).unwrap()),
+                md5_of_body: None,
+                md5_of_message_attributes: None,
+                attributes: Default::default(),
+                message_attributes: Default::default(),
+                event_source_arn: None,
+                event_source: None,
+                aws_region: None,
+            }
+        };
+        let records = (1..=n).map(mk_message).collect();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Context::default(),
+        };
+
+        let mut service_mock = MockInboundWriteItems::default();
+        service_mock
+            .expect_handle_create_items()
+            .return_once(move |_| {
+                Box::pin(async move { Err(vec![ItemKey::new(shop_id, n.to_string().into())]) })
+            });
+        let response = handler(&service_mock, lambda_event).await.unwrap();
+
+        assert_eq!(response.batch_item_failures.len(), 1);
+    }
+}

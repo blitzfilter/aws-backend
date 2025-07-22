@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 
 /// Service handling inbound item-commands (towards persistence)
 #[async_trait]
-#[cfg_attr(test, mockall::automock)]
+#[mockall::automock]
 pub trait InboundWriteItems {
     async fn handle_create_items(
         &self,
