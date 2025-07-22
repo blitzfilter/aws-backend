@@ -48,25 +48,10 @@ pub struct UpdateItemCommandData {
     pub shops_item_id: ShopsItemId,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub shop_name: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title: Option<HashMap<LanguageCommandData, String>>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub description: Option<HashMap<LanguageCommandData, String>>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price: Option<PriceCommandData>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub state: Option<ItemStateCommandData>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub url: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub images: Option<Vec<String>>,
 }
 
 impl UpdateItemCommandData {

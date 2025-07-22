@@ -1,4 +1,4 @@
-use crate::item::command_data::CreateItemCommandData;
+use crate::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
 use crate::item_state::domain::ItemState;
 use common::language::domain::Language;
 use common::price::domain::Price;
@@ -52,5 +52,14 @@ pub struct UpdateItemCommand {
 impl UpdateItemCommand {
     pub fn is_empty(&self) -> bool {
         self.price.is_none() && self.state.is_none()
+    }
+}
+
+impl From<UpdateItemCommandData> for UpdateItemCommand {
+    fn from(data: UpdateItemCommandData) -> Self {
+        UpdateItemCommand {
+            price: data.price.map(Price::from),
+            state: data.state.map(ItemState::from),
+        }
     }
 }
