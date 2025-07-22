@@ -333,19 +333,10 @@ async fn should_update_item_record() {
     let now2 = OffsetDateTime::now_utc();
     let event_id2 = EventId::new();
     let update = ItemUpdateRecord {
-        event_id: Some(event_id2),
-        shop_name: None,
-        title: None,
-        title_de: None,
-        title_en: None,
-        description: None,
-        description_de: None,
-        description_en: None,
+        event_id: event_id2,
         price: None,
         state: Some(ItemStateRecord::Sold),
-        url: None,
-        images: None,
-        hash: None,
+        hash: ItemHash::new(&None, &ItemState::Sold),
         updated: now2,
     };
     let mut expected = initial.clone();
