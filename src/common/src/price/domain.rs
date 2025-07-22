@@ -1,5 +1,6 @@
 use crate::currency::domain::Currency;
 use crate::currency::domain::Currency::*;
+use crate::price::command_data::PriceCommandData;
 use crate::price::record::PriceRecord;
 use std::ops::{Add, Sub};
 
@@ -143,6 +144,15 @@ impl From<PriceRecord> for Price {
                         MonetaryAmount because by convention all persisted amounts are non-negative"
             ),
             currency: record.currency.into(),
+        }
+    }
+}
+
+impl From<PriceCommandData> for Price {
+    fn from(data: PriceCommandData) -> Self {
+        Price {
+            monetary_amount: MonetaryAmount(data.price),
+            currency: data.currency.into(),
         }
     }
 }

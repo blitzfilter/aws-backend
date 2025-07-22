@@ -19,6 +19,12 @@ impl ItemKey {
     }
 }
 
+impl Display for ItemKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}", self.shop_id, self.shops_item_id)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
 pub struct ItemId(Uuid);
