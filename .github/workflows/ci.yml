@@ -50,6 +50,8 @@ jobs:
           - src/filter
           - src/item/src/item-core
           - src/item/src/item-index
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
           - src/item/src/item-write
           - src/item/src/item-read
           - src/test-api
@@ -83,6 +85,8 @@ jobs:
           - src/filter
           - src/item/src/item-core
           - src/item/src/item-index
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
           - src/item/src/item-write
           - src/item/src/item-read
           - src/test-api
