@@ -1,5 +1,4 @@
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
-use aws_sdk_dynamodb::Client;
 use common::item_id::ItemKey;
 use item_core::item::command::CreateItemCommand;
 use item_core::item::command_data::CreateItemCommandData;
@@ -8,9 +7,9 @@ use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
 use tracing::{error, info};
 
-#[tracing::instrument(skip(client, event), fields(requestId = %event.context.request_id))]
+#[tracing::instrument(skip(service, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
-    client: &Client,
+    service: &impl InboundWriteItems,
     event: LambdaEvent<SqsEvent>,
 ) -> Result<SqsBatchResponse, lambda_runtime::Error> {
     let records_count = event.payload.records.len();
@@ -32,7 +31,7 @@ pub async fn handler(
         }
     }
 
-    let failed_command_keys = client
+    let failed_command_keys = service
         .handle_create_items(commands)
         .await
         .err()
