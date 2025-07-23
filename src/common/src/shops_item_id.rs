@@ -36,6 +36,12 @@ impl From<String> for ShopsItemId {
     }
 }
 
+impl From<&String> for ShopsItemId {
+    fn from(value: &String) -> Self {
+        ShopsItemId(value.to_string())
+    }
+}
+
 impl From<&str> for ShopsItemId {
     fn from(value: &str) -> Self {
         ShopsItemId(value.to_string())

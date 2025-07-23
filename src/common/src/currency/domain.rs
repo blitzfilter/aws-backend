@@ -1,4 +1,5 @@
 use crate::currency::command_data::CurrencyCommandData;
+use crate::currency::data::CurrencyData;
 use crate::currency::record::CurrencyRecord;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -33,6 +34,19 @@ impl From<CurrencyRecord> for Currency {
             CurrencyRecord::Aud => Currency::Aud,
             CurrencyRecord::Cad => Currency::Cad,
             CurrencyRecord::Nzd => Currency::Nzd,
+        }
+    }
+}
+
+impl From<CurrencyData> for Currency {
+    fn from(data: CurrencyData) -> Self {
+        match data {
+            CurrencyData::Eur => Currency::Eur,
+            CurrencyData::Gbp => Currency::Gbp,
+            CurrencyData::Usd => Currency::Usd,
+            CurrencyData::Aud => Currency::Aud,
+            CurrencyData::Cad => Currency::Cad,
+            CurrencyData::Nzd => Currency::Nzd,
         }
     }
 }

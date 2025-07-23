@@ -6,9 +6,43 @@ use std::collections::HashMap;
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageData {
+    #[serde(
+        alias = "de-DE",
+        alias = "de-AT",
+        alias = "de-CH",
+        alias = "de-LU",
+        alias = "de-LI"
+    )]
     De,
+
+    #[serde(
+        alias = "en-US",
+        alias = "en-GB",
+        alias = "en-AU",
+        alias = "en-CA",
+        alias = "en-NZ",
+        alias = "en_IE"
+    )]
     En,
+
+    #[serde(
+        alias = "fr-FR",
+        alias = "fr-CA",
+        alias = "fr-BE",
+        alias = "fr-CH",
+        alias = "fr-LU"
+    )]
     Fr,
+
+    #[serde(
+        alias = "es-ES",
+        alias = "es-MX",
+        alias = "es-AR",
+        alias = "es-CO",
+        alias = "es-CL",
+        alias = "es-PE",
+        alias = "es-VE"
+    )]
     Es,
 }
 
@@ -37,21 +71,21 @@ impl LocalizedTextData {
 
     pub fn from_domain_fallbacked(
         domain: &HashMap<Language, String>,
-        language: Language,
+        languages: &[Language],
     ) -> Option<Self> {
-        domain
-            .get(&language)
-            .map(|text| LocalizedTextData::new(text.to_owned(), language.into()))
-            .or(domain
-                .get(&Language::En)
-                .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::En)))
+        languages
+            .iter()
+            .find_map(|lang| {
+                domain
+                    .get(lang)
+                    .map(|text| LocalizedTextData::new(text.to_owned(), (*lang).into()))
+            })
             .or(domain
                 .get(&Language::De)
                 .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::De)))
             .or(domain
-                .iter()
-                .next()
-                .map(|(lang, text)| LocalizedTextData::new(text.to_owned(), (*lang).into())))
+                .get(&Language::En)
+                .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::En)))
     }
 }
 

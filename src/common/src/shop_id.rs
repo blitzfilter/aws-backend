@@ -30,6 +30,12 @@ impl From<String> for ShopId {
     }
 }
 
+impl From<&String> for ShopId {
+    fn from(s: &String) -> Self {
+        Self(s.to_owned())
+    }
+}
+
 impl From<&str> for ShopId {
     fn from(s: &str) -> Self {
         Self(s.to_owned())

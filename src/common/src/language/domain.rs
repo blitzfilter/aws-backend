@@ -1,4 +1,5 @@
 use crate::language::command_data::LanguageCommandData;
+use crate::language::data::LanguageData;
 use crate::language::record::LanguageRecord;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -27,6 +28,17 @@ impl From<LanguageRecord> for Language {
             LanguageRecord::En => Language::En,
             LanguageRecord::Fr => Language::Fr,
             LanguageRecord::Es => Language::Es,
+        }
+    }
+}
+
+impl From<LanguageData> for Language {
+    fn from(data: LanguageData) -> Self {
+        match data {
+            LanguageData::De => Language::De,
+            LanguageData::En => Language::En,
+            LanguageData::Fr => Language::Fr,
+            LanguageData::Es => Language::Es,
         }
     }
 }
