@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+item-api = { path = "src/item-api" }
 item-core = { path = "src/item-core" }
 item-read = { path = "src/item-read" }
 item-write = { path = "src/item-write" }

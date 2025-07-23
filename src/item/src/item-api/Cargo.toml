@@ -1,0 +1,7 @@
+[package]
+name = "item-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+item-api-get-item = { path = "../item-api/src/item-api-get-item" }
