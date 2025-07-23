@@ -5,8 +5,14 @@ use std::fmt::Display;
 #[serde(transparent)]
 pub struct ApiErrorCode(&'static str);
 
-pub const INTERNAL_SERVER_ERROR: ApiErrorCode = ApiErrorCode("INTERNAL_SERVER_ERROR");
 pub const BAD_REQUEST: ApiErrorCode = ApiErrorCode("BAD_REQUEST");
+pub const BAD_QUERY_PARAMETER_VALUE: ApiErrorCode = ApiErrorCode("BAD_QUERY_PARAMETER_VALUE");
+pub const BAD_HEADER_VALUE: ApiErrorCode = ApiErrorCode("BAD_HEADER_VALUE");
+pub const BAD_PARAMETER: ApiErrorCode = ApiErrorCode("BAD_PARAMETER_VALUE");
+
+pub const ITEM_NOT_FOUND: ApiErrorCode = ApiErrorCode("ITEM_NOT_FOUND");
+
+pub const INTERNAL_SERVER_ERROR: ApiErrorCode = ApiErrorCode("INTERNAL_SERVER_ERROR");
 pub const GATEWAY_TIMEOUT: ApiErrorCode = ApiErrorCode("GATEWAY_TIMEOUT");
 
 // region impl ApiErrorCode

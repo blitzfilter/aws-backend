@@ -8,7 +8,11 @@ use std::error::Error;
 #[derive(Debug, Serialize)]
 pub struct ApiError {
     pub status: u16,
+
     pub error: ApiErrorCode,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ApiErrorSource>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -31,8 +35,45 @@ impl ApiError {
         ApiError {
             status: status.as_u16(),
             error,
+            source: None,
             message: None,
         }
+    }
+
+    pub fn with_source(mut self, field: ApiErrorSource) -> Self {
+        self.source = Some(field);
+        self
+    }
+
+    pub fn with_header_field(mut self, field: &'static str) -> Self {
+        self.source = Some(ApiErrorSource {
+            field,
+            source_type: ApiErrorSourceType::HEADER,
+        });
+        self
+    }
+
+    pub fn with_query_field(mut self, field: &'static str) -> Self {
+        self.source = Some(ApiErrorSource {
+            field,
+            source_type: ApiErrorSourceType::QUERY,
+        });
+        self
+    }
+
+    pub fn with_path_field(mut self, field: &'static str) -> Self {
+        self.source = Some(ApiErrorSource {
+            field,
+            source_type: ApiErrorSourceType::PATH,
+        });
+        self
+    }
+    pub fn with_body_field(mut self, field: &'static str) -> Self {
+        self.source = Some(ApiErrorSource {
+            field,
+            source_type: ApiErrorSourceType::BODY,
+        });
+        self
     }
 
     pub fn with_message(mut self, msg: impl Into<String>) -> Self {
@@ -86,6 +127,23 @@ impl From<ApiError> for ApiGatewayProxyResponse {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct ApiErrorSource {
+    pub field: &'static str,
+
+    #[serde(rename = "type")]
+    pub source_type: ApiErrorSourceType,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ApiErrorSourceType {
+    HEADER,
+    PATH,
+    QUERY,
+    BODY,
+}
+
 #[cfg(feature = "dynamodb")]
 pub mod dynamodb {
     use crate::api::error::ApiError;
@@ -119,8 +177,10 @@ pub mod tests {
     use serde_json::{Value, json};
 
     #[rstest::rstest]
-    #[case::bad_request(ApiError::bad_request(BAD_REQUEST), json!({ "status": 400, "error": "BAD_REQUEST" }))]
-    #[case::bad_request_msg(ApiError::bad_request(BAD_REQUEST).with_message("foo"), json!({ "status": 400, "error": "BAD_REQUEST", "message": "foo" }))]
+    #[case::bad_request(ApiError::bad_request(BAD_REQUEST), json!({ "status": 400, "error": "BAD_REQUEST" })
+    )]
+    #[case::bad_request_msg(ApiError::bad_request(BAD_REQUEST).with_message("foo"), json!({ "status": 400, "error": "BAD_REQUEST", "message": "foo" })
+    )]
     fn should_serialize_api_error(#[case] error: ApiError, #[case] expected: Value) {
         let actual = serde_json::to_value(error).unwrap();
         assert_eq!(expected, actual);
