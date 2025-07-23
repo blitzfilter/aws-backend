@@ -48,7 +48,9 @@ pub async fn handle(
         .map(accept_language::parse)
         .unwrap_or_default()
         .into_iter()
-        .map(|accept_language| serde_json::from_str::<LanguageData>(&accept_language))
+        .map(|accept_language| {
+            serde_json::from_str::<LanguageData>(&format!(r#""{accept_language}""#))
+        })
         .filter_map(Result::ok)
         .map(Language::from)
         .collect::<Vec<_>>();
@@ -111,18 +113,39 @@ mod tests {
     use time::OffsetDateTime;
 
     #[rstest::rstest]
-    #[case("de;q=0.95,en-US,en;q=0.9", "German title")]
-    #[case("de-DE", "German title")]
-    #[case("de-AT", "German title")]
-    #[case("de-CH", "German title")]
-    #[case("de-LU", "German title")]
-    #[case("de-LI", "German title")]
-    #[case("en-US", "English title")]
-    #[case("en-GB", "English title")]
-    #[case("en-AU", "English title")]
-    #[case("en-CA", "English title")]
-    #[case("en-NZ", "English title")]
-    #[case("en_IE", "English title")]
+    #[case::de_DE("de-DE", "German title")]
+    #[case::de_AT("de-AT", "German title")]
+    #[case::de_CH("de-CH", "German title")]
+    #[case::de_LU("de-LU", "German title")]
+    #[case::de_LI("de-LI", "German title")]
+    #[case::en_US("en-US", "English title")]
+    #[case::en_GB("en-GB", "English title")]
+    #[case::en_AU("en-AU", "English title")]
+    #[case::en_CA("en-CA", "English title")]
+    #[case::en_NZ("en-NZ", "English title")]
+    #[case::en_IE("en_IE", "English title")]
+    #[case::fr_FR("fr-FR", "French title")]
+    #[case::fr_CA("fr-CA", "French title")]
+    #[case::fr_BE("fr-BE", "French title")]
+    #[case::fr_CH("fr-CH", "French title")]
+    #[case::fr_LU("fr-LU", "French title")]
+    #[case::es_ES("es-ES", "Spanish title")]
+    #[case::es_MX("es-MX", "Spanish title")]
+    #[case::es_AR("es-AR", "Spanish title")]
+    #[case::es_CO("es-CO", "Spanish title")]
+    #[case::es_CL("es-CL", "Spanish title")]
+    #[case::es_PE("es-PE", "Spanish title")]
+    #[case::es_VE("es-VE", "Spanish title")]
+    #[case::complex_de("de;q=0.95,en;q=0.9", "German title")]
+    #[case::complex_en("en-US,en;q=0.9,de;q=0.8", "English title")]
+    #[case::complex_de("fr-CA,fr;q=0.92,en;q=0.6", "French title")]
+    #[case::complex_de("es-ES,es;q=0.91,en;q=0.7", "Spanish title")]
+    #[case::edge_quality("en;q=1.0", "English title")]
+    #[case::edge_format_1("fr-CH, de;q=0.9, en;q=0.8", "French title")]
+    #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish title")]
+    #[case::star("*", "German title")]
+    #[case::star_overriden("en, *", "English title")]
+    #[allow(non_snake_case)]
     #[tokio::test]
     async fn should_respect_accept_language_header_for_title(
         #[case] header_value: &str,
@@ -184,8 +207,111 @@ mod tests {
         if let Text(body) = handler(lambda_event, &service).await.unwrap().body.unwrap() {
             let item_data = serde_json::from_str::<Value>(&body).unwrap();
             assert_eq!(
-                item_data.get("title").unwrap().get("text").unwrap(),
-                expected_item_title
+                expected_item_title,
+                item_data.get("title").unwrap().get("text").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::de_DE("de-DE", "German description")]
+    #[case::de_AT("de-AT", "German description")]
+    #[case::de_CH("de-CH", "German description")]
+    #[case::de_LU("de-LU", "German description")]
+    #[case::de_LI("de-LI", "German description")]
+    #[case::en_US("en-US", "English description")]
+    #[case::en_GB("en-GB", "English description")]
+    #[case::en_AU("en-AU", "English description")]
+    #[case::en_CA("en-CA", "English description")]
+    #[case::en_NZ("en-NZ", "English description")]
+    #[case::en_IE("en_IE", "English description")]
+    #[case::fr_FR("fr-FR", "French description")]
+    #[case::fr_CA("fr-CA", "French description")]
+    #[case::fr_BE("fr-BE", "French description")]
+    #[case::fr_CH("fr-CH", "French description")]
+    #[case::fr_LU("fr-LU", "French description")]
+    #[case::es_ES("es-ES", "Spanish description")]
+    #[case::es_MX("es-MX", "Spanish description")]
+    #[case::es_AR("es-AR", "Spanish description")]
+    #[case::es_CO("es-CO", "Spanish description")]
+    #[case::es_CL("es-CL", "Spanish description")]
+    #[case::es_PE("es-PE", "Spanish description")]
+    #[case::es_VE("es-VE", "Spanish description")]
+    #[case::complex_de("de;q=0.95,en;q=0.9", "German description")]
+    #[case::complex_en("en-US,en;q=0.9,de;q=0.8", "English description")]
+    #[case::complex_de("fr-CA,fr;q=0.92,en;q=0.6", "French description")]
+    #[case::complex_de("es-ES,es;q=0.91,en;q=0.7", "Spanish description")]
+    #[case::edge_quality("en;q=1.0", "English description")]
+    #[case::edge_format_1("fr-CH, de;q=0.9, en;q=0.8", "French description")]
+    #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish description")]
+    #[case::star("*", "German description")]
+    #[case::star_overriden("en, *", "English description")]
+    #[allow(non_snake_case)]
+    #[tokio::test]
+    async fn should_respect_accept_language_header_for_description(
+        #[case] header_value: &str,
+        #[case] expected_item_description: &str,
+    ) {
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(|shop_id, shops_item_id, _| {
+                let description = HashMap::from([
+                    (Language::De, "German description".to_string()),
+                    (Language::En, "English description".to_string()),
+                    (Language::Es, "Spanish description".to_string()),
+                    (Language::Fr, "French description".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id: Default::default(),
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title: Default::default(),
+                    description,
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: HeaderMap::from_iter([(
+                    ACCEPT_LANGUAGE,
+                    HeaderValue::from_str(header_value).unwrap(),
+                )]),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        if let Text(body) = handler(lambda_event, &service).await.unwrap().body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(
+                expected_item_description,
+                item_data.get("description").unwrap().get("text").unwrap()
             );
         } else {
             panic!("Expected Text.");

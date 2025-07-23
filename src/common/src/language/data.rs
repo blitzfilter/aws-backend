@@ -80,12 +80,16 @@ impl LocalizedTextData {
                     .get(lang)
                     .map(|text| LocalizedTextData::new(text.to_owned(), (*lang).into()))
             })
-            .or(domain
-                .get(&Language::De)
-                .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::De)))
-            .or(domain
-                .get(&Language::En)
-                .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::En)))
+            .or_else(|| {
+                domain
+                    .get(&Language::De)
+                    .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::De))
+            })
+            .or_else(|| {
+                domain
+                    .get(&Language::En)
+                    .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::En))
+            })
     }
 }
 
