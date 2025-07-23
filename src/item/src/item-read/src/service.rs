@@ -20,7 +20,24 @@ pub enum GetItemError {
     ),
 }
 
+#[cfg(feature = "api")]
+pub mod api {
+    use crate::service::GetItemError;
+    use common::api::error::ApiError;
+    use common::api::error_code::ITEM_NOT_FOUND;
+
+    impl From<GetItemError> for ApiError {
+        fn from(err: GetItemError) -> Self {
+            match err {
+                GetItemError::ItemNotFound(_, _) => ApiError::not_found(ITEM_NOT_FOUND),
+                GetItemError::SdkGetItemError(_) => err.into(),
+            }
+        }
+    }
+}
+
 #[async_trait]
+#[mockall::automock]
 pub trait ReadItem {
     async fn get_item_with_currency(
         &self,

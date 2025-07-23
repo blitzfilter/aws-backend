@@ -47,15 +47,15 @@ pub struct GetItemData {
 }
 
 impl GetItemData {
-    pub fn from_domain_localized(domain: Item, language: Language) -> GetItemData {
+    pub fn from_domain_localized(domain: Item, languages: Vec<Language>) -> GetItemData {
         GetItemData {
             item_id: domain.item_id,
             event_id: domain.event_id,
             shop_id: domain.shop_id,
             shops_item_id: domain.shops_item_id,
             shop_name: domain.shop_name,
-            title: LocalizedTextData::from_domain_fallbacked(&domain.title, language),
-            description: LocalizedTextData::from_domain_fallbacked(&domain.description, language),
+            title: LocalizedTextData::from_domain_fallbacked(&domain.title, &languages),
+            description: LocalizedTextData::from_domain_fallbacked(&domain.description, &languages),
             price: domain.price.map(Into::into),
             state: domain.state.into(),
             url: domain.url,

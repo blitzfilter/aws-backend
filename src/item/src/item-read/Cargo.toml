@@ -11,9 +11,14 @@ aws-sdk-dynamodb = "1.82.0"
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
 tracing = "0.1.41"
 thiserror = "2.0.12"
+mockall = "0.13.1"
 
 [dev-dependencies]
 test-api = { path = "../../../test-api" }
 serial_test = "3.2.0"
 rstest = "0.25.0"
 time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
+
+[features]
+default = []
+api = ["common/api"]
