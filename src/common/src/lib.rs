@@ -1,6 +1,8 @@
 pub mod currency;
 
 pub mod aggregate;
+#[cfg(feature = "api")]
+pub mod api;
 pub mod batch;
 pub mod error;
 pub mod event;
