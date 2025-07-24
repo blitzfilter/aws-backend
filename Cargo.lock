@@ -1795,7 +1795,6 @@ dependencies = [
  "mockall",
  "rstest",
  "serde_json",
- "test-api",
  "time",
  "tokio",
  "tracing",

@@ -23,18 +23,15 @@ pub async fn handler(
     service: &impl ReadItem,
 ) -> Result<ApiGatewayProxyResponse, lambda_runtime::Error> {
     match handle(event, service).await {
-        Ok(response) => Ok(ApiGatewayProxyResponseBuilder::json(200)
-            .body(response)
-            .cors()
-            .build()),
-        Err(err) => Ok(err.into()),
+        Ok(response) => Ok(response),
+        Err(err) => Ok(ApiGatewayProxyResponse::from(err)),
     }
 }
 
 pub async fn handle(
     event: LambdaEvent<ApiGatewayProxyRequest>,
     service: &impl ReadItem,
-) -> Result<String, ApiError> {
+) -> Result<ApiGatewayProxyResponse, ApiError> {
     let languages = event
         .payload
         .headers
@@ -91,7 +88,17 @@ pub async fn handle(
         error!(error = %err, payload = ?item_data, "Failed serializing GetItemData.");
         ApiError::internal_server_error(INTERNAL_SERVER_ERROR)
     })?;
-    Ok(response)
+
+    let content_language = item_data
+        .title
+        .or(item_data.description)
+        .map(|localized| localized.language);
+
+    Ok(ApiGatewayProxyResponseBuilder::json(200)
+        .body(response)
+        .try_content_language(content_language)
+        .cors()
+        .build())
 }
 
 #[cfg(test)]
@@ -105,7 +112,7 @@ mod tests {
     use common::price::domain::{MonetaryAmount, Price};
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
-    use http::header::ACCEPT_LANGUAGE;
+    use http::header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE};
     use http::{HeaderMap, HeaderValue};
     use item_core::item::domain::Item;
     use item_core::item::hash::ItemHash;
@@ -117,44 +124,45 @@ mod tests {
     use time::OffsetDateTime;
 
     #[rstest::rstest]
-    #[case::de_DE("de-DE", "German title")]
-    #[case::de_AT("de-AT", "German title")]
-    #[case::de_CH("de-CH", "German title")]
-    #[case::de_LU("de-LU", "German title")]
-    #[case::de_LI("de-LI", "German title")]
-    #[case::en_US("en-US", "English title")]
-    #[case::en_GB("en-GB", "English title")]
-    #[case::en_AU("en-AU", "English title")]
-    #[case::en_CA("en-CA", "English title")]
-    #[case::en_NZ("en-NZ", "English title")]
-    #[case::en_IE("en_IE", "English title")]
-    #[case::fr_FR("fr-FR", "French title")]
-    #[case::fr_CA("fr-CA", "French title")]
-    #[case::fr_BE("fr-BE", "French title")]
-    #[case::fr_CH("fr-CH", "French title")]
-    #[case::fr_LU("fr-LU", "French title")]
-    #[case::es_ES("es-ES", "Spanish title")]
-    #[case::es_MX("es-MX", "Spanish title")]
-    #[case::es_AR("es-AR", "Spanish title")]
-    #[case::es_CO("es-CO", "Spanish title")]
-    #[case::es_CL("es-CL", "Spanish title")]
-    #[case::es_PE("es-PE", "Spanish title")]
-    #[case::es_VE("es-VE", "Spanish title")]
-    #[case::complex_de("de;q=0.95,en;q=0.9", "German title")]
-    #[case::complex_en("en-US,en;q=0.9,de;q=0.8", "English title")]
-    #[case::complex_de("fr-CA,fr;q=0.92,en;q=0.6", "French title")]
-    #[case::complex_de("es-ES,es;q=0.91,en;q=0.7", "Spanish title")]
-    #[case::edge_quality("en;q=1.0", "English title")]
-    #[case::edge_format_1("fr-CH, de;q=0.9, en;q=0.8", "French title")]
-    #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish title")]
-    #[case::star("*", "German title")]
-    #[case::star_overriden("en, *", "English title")]
-    #[case::empty("", "German title")]
+    #[case::de_DE("de-DE", "German title", "de")]
+    #[case::de_AT("de-AT", "German title", "de")]
+    #[case::de_CH("de-CH", "German title", "de")]
+    #[case::de_LU("de-LU", "German title", "de")]
+    #[case::de_LI("de-LI", "German title", "de")]
+    #[case::en_US("en-US", "English title", "en")]
+    #[case::en_GB("en-GB", "English title", "en")]
+    #[case::en_AU("en-AU", "English title", "en")]
+    #[case::en_CA("en-CA", "English title", "en")]
+    #[case::en_NZ("en-NZ", "English title", "en")]
+    #[case::en_IE("en_IE", "English title", "en")]
+    #[case::fr_FR("fr-FR", "French title", "fr")]
+    #[case::fr_CA("fr-CA", "French title", "fr")]
+    #[case::fr_BE("fr-BE", "French title", "fr")]
+    #[case::fr_CH("fr-CH", "French title", "fr")]
+    #[case::fr_LU("fr-LU", "French title", "fr")]
+    #[case::es_ES("es-ES", "Spanish title", "es")]
+    #[case::es_MX("es-MX", "Spanish title", "es")]
+    #[case::es_AR("es-AR", "Spanish title", "es")]
+    #[case::es_CO("es-CO", "Spanish title", "es")]
+    #[case::es_CL("es-CL", "Spanish title", "es")]
+    #[case::es_PE("es-PE", "Spanish title", "es")]
+    #[case::es_VE("es-VE", "Spanish title", "es")]
+    #[case::complex_de("de;q=0.95,en;q=0.9", "German title", "de")]
+    #[case::complex_en("en-US,en;q=0.9,de;q=0.8", "English title", "en")]
+    #[case::complex_de("fr-CA,fr;q=0.92,en;q=0.6", "French title", "fr")]
+    #[case::complex_de("es-ES,es;q=0.91,en;q=0.7", "Spanish title", "es")]
+    #[case::edge_quality("en;q=1.0", "English title", "en")]
+    #[case::edge_format_1("fr-CH, de;q=0.9, en;q=0.8", "French title", "fr")]
+    #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish title", "es")]
+    #[case::star("*", "German title", "de")]
+    #[case::star_overriden("en, *", "English title", "en")]
+    #[case::empty("", "German title", "de")]
     #[allow(non_snake_case)]
     #[tokio::test]
     async fn should_respect_accept_language_header_for_title(
         #[case] header_value: &str,
         #[case] expected_item_title: &str,
+        #[case] expected_content_language: &str,
     ) {
         let mut service = MockReadItem::default();
         service
@@ -209,7 +217,13 @@ mod tests {
             },
             context: Default::default(),
         };
-        if let Text(body) = handler(lambda_event, &service).await.unwrap().body.unwrap() {
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        assert_eq!(
+            expected_content_language,
+            response.headers.get(CONTENT_LANGUAGE).unwrap()
+        );
+        if let Text(body) = response.body.unwrap() {
             let item_data = serde_json::from_str::<Value>(&body).unwrap();
             assert_eq!(
                 expected_item_title,
@@ -286,44 +300,45 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::de_DE("de-DE", "German description")]
-    #[case::de_AT("de-AT", "German description")]
-    #[case::de_CH("de-CH", "German description")]
-    #[case::de_LU("de-LU", "German description")]
-    #[case::de_LI("de-LI", "German description")]
-    #[case::en_US("en-US", "English description")]
-    #[case::en_GB("en-GB", "English description")]
-    #[case::en_AU("en-AU", "English description")]
-    #[case::en_CA("en-CA", "English description")]
-    #[case::en_NZ("en-NZ", "English description")]
-    #[case::en_IE("en_IE", "English description")]
-    #[case::fr_FR("fr-FR", "French description")]
-    #[case::fr_CA("fr-CA", "French description")]
-    #[case::fr_BE("fr-BE", "French description")]
-    #[case::fr_CH("fr-CH", "French description")]
-    #[case::fr_LU("fr-LU", "French description")]
-    #[case::es_ES("es-ES", "Spanish description")]
-    #[case::es_MX("es-MX", "Spanish description")]
-    #[case::es_AR("es-AR", "Spanish description")]
-    #[case::es_CO("es-CO", "Spanish description")]
-    #[case::es_CL("es-CL", "Spanish description")]
-    #[case::es_PE("es-PE", "Spanish description")]
-    #[case::es_VE("es-VE", "Spanish description")]
-    #[case::complex_de("de;q=0.95,en;q=0.9", "German description")]
-    #[case::complex_en("en-US,en;q=0.9,de;q=0.8", "English description")]
-    #[case::complex_de("fr-CA,fr;q=0.92,en;q=0.6", "French description")]
-    #[case::complex_de("es-ES,es;q=0.91,en;q=0.7", "Spanish description")]
-    #[case::edge_quality("en;q=1.0", "English description")]
-    #[case::edge_format_1("fr-CH, de;q=0.9, en;q=0.8", "French description")]
-    #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish description")]
-    #[case::star("*", "German description")]
-    #[case::star_overriden("en, *", "English description")]
-    #[case::empty("", "German description")]
+    #[case::de_DE("de-DE", "German description", "de")]
+    #[case::de_AT("de-AT", "German description", "de")]
+    #[case::de_CH("de-CH", "German description", "de")]
+    #[case::de_LU("de-LU", "German description", "de")]
+    #[case::de_LI("de-LI", "German description", "de")]
+    #[case::en_US("en-US", "English description", "en")]
+    #[case::en_GB("en-GB", "English description", "en")]
+    #[case::en_AU("en-AU", "English description", "en")]
+    #[case::en_CA("en-CA", "English description", "en")]
+    #[case::en_NZ("en-NZ", "English description", "en")]
+    #[case::en_IE("en_IE", "English description", "en")]
+    #[case::fr_FR("fr-FR", "French description", "fr")]
+    #[case::fr_CA("fr-CA", "French description", "fr")]
+    #[case::fr_BE("fr-BE", "French description", "fr")]
+    #[case::fr_CH("fr-CH", "French description", "fr")]
+    #[case::fr_LU("fr-LU", "French description", "fr")]
+    #[case::es_ES("es-ES", "Spanish description", "es")]
+    #[case::es_MX("es-MX", "Spanish description", "es")]
+    #[case::es_AR("es-AR", "Spanish description", "es")]
+    #[case::es_CO("es-CO", "Spanish description", "es")]
+    #[case::es_CL("es-CL", "Spanish description", "es")]
+    #[case::es_PE("es-PE", "Spanish description", "es")]
+    #[case::es_VE("es-VE", "Spanish description", "es")]
+    #[case::complex_de("de;q=0.95,en;q=0.9", "German description", "de")]
+    #[case::complex_en("en-US,en;q=0.9,de;q=0.8", "English description", "en")]
+    #[case::complex_de("fr-CA,fr;q=0.92,en;q=0.6", "French description", "fr")]
+    #[case::complex_de("es-ES,es;q=0.91,en;q=0.7", "Spanish description", "es")]
+    #[case::edge_quality("en;q=1.0", "English description", "en")]
+    #[case::edge_format_1("fr-CH, de;q=0.9, en;q=0.8", "French description", "fr")]
+    #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish description", "es")]
+    #[case::star("*", "German description", "de")]
+    #[case::star_overriden("en, *", "English description", "en")]
+    #[case::empty("", "German description", "de")]
     #[allow(non_snake_case)]
     #[tokio::test]
     async fn should_respect_accept_language_header_for_description(
         #[case] header_value: &str,
         #[case] expected_item_description: &str,
+        #[case] expected_content_language: &str,
     ) {
         let mut service = MockReadItem::default();
         service
@@ -380,6 +395,10 @@ mod tests {
         };
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(200, response.status_code);
+        assert_eq!(
+            expected_content_language,
+            response.headers.get(CONTENT_LANGUAGE).unwrap()
+        );
         if let Text(body) = response.body.unwrap() {
             let item_data = serde_json::from_str::<Value>(&body).unwrap();
             assert_eq!(
