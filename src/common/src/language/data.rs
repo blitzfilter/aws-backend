@@ -90,6 +90,11 @@ impl LocalizedTextData {
                     .get(&Language::En)
                     .map(|text| LocalizedTextData::new(text.to_owned(), LanguageData::En))
             })
+            .or_else(|| {
+                domain.iter().next().map(|(lang, text)| {
+                    LocalizedTextData::new(text.to_owned(), LanguageData::from(*lang))
+                })
+            })
     }
 }
 
