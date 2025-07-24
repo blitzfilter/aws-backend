@@ -49,7 +49,7 @@ impl ApiGatewayProxyResponseBuilder {
     }
 
     pub fn content_language(mut self, language: LanguageData) -> Self {
-        match serde_json::to_value(&language) {
+        match serde_json::to_value(language) {
             Ok(content_language) => match content_language.as_str() {
                 None => {
                     error!(
