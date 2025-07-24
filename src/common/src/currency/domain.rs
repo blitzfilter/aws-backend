@@ -12,6 +12,12 @@ pub enum Currency {
     Nzd,
 }
 
+impl Default for Currency {
+    fn default() -> Self {
+        Self::Eur
+    }
+}
+
 impl From<CurrencyCommandData> for Currency {
     fn from(cmd: CurrencyCommandData) -> Self {
         match cmd {

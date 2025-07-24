@@ -11,6 +11,7 @@ use common::language::data::LanguageData;
 use common::language::domain::Language;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use http::header::ACCEPT_LANGUAGE;
 use item_core::item::get_data::GetItemData;
 use item_read::service::ReadItem;
 use lambda_runtime::LambdaEvent;
@@ -37,11 +38,11 @@ pub async fn handle(
     let languages = event
         .payload
         .headers
-        .get("Accept-Language")
+        .get(ACCEPT_LANGUAGE)
         .map(HeaderValue::to_str)
         .map(|header_value_res| {
             header_value_res.map_err(|_| {
-                ApiError::bad_request(BAD_HEADER_VALUE).with_header_field("Accept-Language")
+                ApiError::bad_request(BAD_HEADER_VALUE).with_header_field(ACCEPT_LANGUAGE.as_str())
             })
         })
         .transpose()?
@@ -68,7 +69,7 @@ pub async fn handle(
         })
         .transpose()?
         .map(Currency::from)
-        .unwrap_or(Currency::Eur);
+        .unwrap_or_default();
     let shop_id = event
         .payload
         .path_parameters
@@ -98,7 +99,10 @@ mod tests {
     use crate::handler;
     use aws_lambda_events::apigw::ApiGatewayProxyRequest;
     use aws_lambda_events::encodings::Body::Text;
+    use aws_lambda_events::query_map::QueryMap;
+    use common::currency::domain::Currency;
     use common::language::domain::Language;
+    use common::price::domain::{MonetaryAmount, Price};
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use http::header::ACCEPT_LANGUAGE;
@@ -145,6 +149,7 @@ mod tests {
     #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish title")]
     #[case::star("*", "German title")]
     #[case::star_overriden("en, *", "English title")]
+    #[case::empty("", "German title")]
     #[allow(non_snake_case)]
     #[tokio::test]
     async fn should_respect_accept_language_header_for_title(
@@ -215,6 +220,71 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn should_default_to_german_when_accept_language_header_is_missing_for_title() {
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(|shop_id, shops_item_id, _| {
+                let title = HashMap::from([
+                    (Language::De, "German title".to_string()),
+                    (Language::En, "English title".to_string()),
+                    (Language::Es, "Spanish title".to_string()),
+                    (Language::Fr, "French title".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id: Default::default(),
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title,
+                    description: Default::default(),
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(
+                "German title",
+                item_data.get("title").unwrap().get("text").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
     #[rstest::rstest]
     #[case::de_DE("de-DE", "German description")]
     #[case::de_AT("de-AT", "German description")]
@@ -248,6 +318,7 @@ mod tests {
     #[case::edge_format_2("es-AR;q=0.6, es;q=0.5, en;q=0.3", "Spanish description")]
     #[case::star("*", "German description")]
     #[case::star_overriden("en, *", "English description")]
+    #[case::empty("", "German description")]
     #[allow(non_snake_case)]
     #[tokio::test]
     async fn should_respect_accept_language_header_for_description(
@@ -307,11 +378,404 @@ mod tests {
             },
             context: Default::default(),
         };
-        if let Text(body) = handler(lambda_event, &service).await.unwrap().body.unwrap() {
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        if let Text(body) = response.body.unwrap() {
             let item_data = serde_json::from_str::<Value>(&body).unwrap();
             assert_eq!(
                 expected_item_description,
                 item_data.get("description").unwrap().get("text").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_default_to_german_when_accept_language_header_is_missing_for_description() {
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(|shop_id, shops_item_id, _| {
+                let description = HashMap::from([
+                    (Language::De, "German description".to_string()),
+                    (Language::En, "English description".to_string()),
+                    (Language::Es, "Spanish description".to_string()),
+                    (Language::Fr, "French description".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id: Default::default(),
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title: Default::default(),
+                    description,
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(
+                "German description",
+                item_data.get("description").unwrap().get("text").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_default_to_german_when_accept_language_header_is_invalid_for_title() {
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(|shop_id, shops_item_id, _| {
+                let title = HashMap::from([
+                    (Language::De, "German description".to_string()),
+                    (Language::En, "English description".to_string()),
+                    (Language::Es, "Spanish description".to_string()),
+                    (Language::Fr, "French description".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id: Default::default(),
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title,
+                    description: Default::default(),
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: HeaderMap::from_iter([(
+                    ACCEPT_LANGUAGE,
+                    HeaderValue::from_str("invalid header value").unwrap(),
+                )]),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(
+                "German description",
+                item_data.get("title").unwrap().get("text").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_default_to_german_when_accept_language_header_is_invalid_for_description() {
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(|shop_id, shops_item_id, _| {
+                let description = HashMap::from([
+                    (Language::De, "German description".to_string()),
+                    (Language::En, "English description".to_string()),
+                    (Language::Es, "Spanish description".to_string()),
+                    (Language::Fr, "French description".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id: Default::default(),
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title: Default::default(),
+                    description,
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: HeaderMap::from_iter([(
+                    ACCEPT_LANGUAGE,
+                    HeaderValue::from_str("invalid header value").unwrap(),
+                )]),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(
+                "German description",
+                item_data.get("description").unwrap().get("text").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_400_when_currency_query_param_is_invalid() {
+        let mut service = MockReadItem::default();
+        service.expect_get_item_with_currency().never();
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: QueryMap::from(HashMap::from([(
+                    "currency".to_string(),
+                    "invalid_currency".to_string(),
+                )])),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(400, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(400, item_data.get("status").unwrap().as_u64().unwrap());
+            assert_eq!(
+                "currency",
+                item_data.get("source").unwrap().get("field").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_default_to_euro_when_currency_query_param_is_missing() {
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(|shop_id, shops_item_id, _| {
+                let description = HashMap::from([
+                    (Language::De, "German description".to_string()),
+                    (Language::En, "English description".to_string()),
+                    (Language::Es, "Spanish description".to_string()),
+                    (Language::Fr, "French description".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id: Default::default(),
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title: Default::default(),
+                    description,
+                    price: Some(Price {
+                        currency: Currency::Eur,
+                        monetary_amount: MonetaryAmount::try_from(100f32).unwrap(),
+                    }),
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(
+                "EUR",
+                item_data.get("price").unwrap().get("currency").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_400_when_path_param_shop_id_is_missing() {
+        let mut service = MockReadItem::default();
+        service.expect_get_item_with_currency().never();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([(
+                    "shopsItemId".to_string(),
+                    shops_item_id.to_string(),
+                )]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(400, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(400, item_data.get("status").unwrap().as_u64().unwrap());
+            assert_eq!(
+                "shopId",
+                item_data.get("source").unwrap().get("field").unwrap()
+            );
+        } else {
+            panic!("Expected Text.");
+        }
+    }
+
+    #[tokio::test]
+    async fn should_400_when_path_param_shops_item_id_is_missing() {
+        let mut service = MockReadItem::default();
+        service.expect_get_item_with_currency().never();
+        let shop_id = ShopId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([("shopId".to_string(), shop_id.to_string())]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(400, response.status_code);
+        if let Text(body) = response.body.unwrap() {
+            let item_data = serde_json::from_str::<Value>(&body).unwrap();
+            assert_eq!(400, item_data.get("status").unwrap().as_u64().unwrap());
+            assert_eq!(
+                "shopsItemId",
+                item_data.get("source").unwrap().get("field").unwrap()
             );
         } else {
             panic!("Expected Text.");
