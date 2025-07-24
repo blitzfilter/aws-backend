@@ -107,8 +107,7 @@ fn extract_shops_item_id(shop_item: ElementRef) -> Option<ShopsItemId> {
         .next()
         .unwrap()
         .attr("href")
-        .map(|href| href.strip_prefix("?code="))
-        .flatten()
+        .and_then(|href| href.strip_prefix("?code="))
         .map(ShopsItemId::from)
 }
 
@@ -122,14 +121,14 @@ fn extract_title(shop_item: ElementRef) -> Option<String> {
 }
 
 fn extract_description(shop_item: ElementRef) -> Option<String> {
-    // TODO: This only gathers the description for the catalog-page.
-    //       It may have been shortened. If so, it ends with '...'.
-    //       If it does, go the the items page and parse full description there
+    // See aws-backend#7
+    // This only gathers the description for the catalog-page.
+    // It may have been shortened. If so, it ends with '...'.
+    // If it does, go to the items page and parse full description there
     shop_item
         .select(&Selector::parse("div.block-text > p.itemDescription").unwrap())
         .next()
-        .map(|desc_elem| desc_elem.text().next().map(|text| text.trim().to_string()))
-        .flatten()
+        .and_then(|desc_elem| desc_elem.text().next().map(|text| text.trim().to_string()))
 }
 
 fn extract_price(
@@ -140,45 +139,36 @@ fn extract_price(
     shop_item
         .select(&Selector::parse("div.block-text > div.actioncontainer > p.price").unwrap())
         .next()
-        .map(|price_elem| {
-            price_elem
-                .text()
-                .next()
-                .map(|price_text| {
-                    let mut words = price_text.trim().split_whitespace();
-                    let amount = words
-                        .next()
-                        .map(|price_str| price_str.parse::<f32>().ok())
-                        .flatten();
-                    let currency = words
-                        .next()
-                        .map(|currency_str| match currency_str {
-                            "EUR" => Some(CurrencyData::Eur),
-                            "GBP" => Some(CurrencyData::Gbp),
-                            "USD" => Some(CurrencyData::Usd),
-                            "AUD" => Some(CurrencyData::Aud),
-                            "CAD" => Some(CurrencyData::Cad),
-                            "NZD" => Some(CurrencyData::Nzd),
-                            invalid => {
-                                warn!(
-                                    shopId = shop_id.to_string(),
-                                    shopsItemId = shops_item_id.to_string(),
-                                    payload = invalid,
-                                    "Found invalid CurrencyData."
-                                );
-                                None
-                            }
-                        })
-                        .flatten();
-                    if let (Some(amount), Some(currency)) = (amount, currency) {
-                        Some(PriceData { currency, amount })
-                    } else {
+        .and_then(|price_elem| {
+            price_elem.text().next().and_then(|price_text| {
+                let mut words = price_text.trim().split_whitespace();
+                let amount = words
+                    .next()
+                    .and_then(|price_str| price_str.parse::<f32>().ok());
+                let currency = words.next().and_then(|currency_str| match currency_str {
+                    "EUR" => Some(CurrencyData::Eur),
+                    "GBP" => Some(CurrencyData::Gbp),
+                    "USD" => Some(CurrencyData::Usd),
+                    "AUD" => Some(CurrencyData::Aud),
+                    "CAD" => Some(CurrencyData::Cad),
+                    "NZD" => Some(CurrencyData::Nzd),
+                    invalid => {
+                        warn!(
+                            shopId = shop_id.to_string(),
+                            shopsItemId = shops_item_id.to_string(),
+                            payload = invalid,
+                            "Found invalid CurrencyData."
+                        );
                         None
                     }
-                })
-                .flatten()
+                });
+                if let (Some(amount), Some(currency)) = (amount, currency) {
+                    Some(PriceData { currency, amount })
+                } else {
+                    None
+                }
+            })
         })
-        .flatten()
 }
 
 fn extract_state(shop_item: ElementRef) -> Option<ItemStateData> {
