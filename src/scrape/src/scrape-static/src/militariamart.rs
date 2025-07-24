@@ -14,6 +14,7 @@ use tracing::warn;
 
 #[derive(Debug)]
 pub struct MilitariaMart {
+    pub id: &'static str,
     pub url: &'static str,
     pub name: &'static str,
     pub shop_dimension: Option<u64>,
@@ -23,7 +24,7 @@ pub struct MilitariaMart {
 #[async_trait]
 impl Scraper<Client> for MilitariaMart {
     fn shop_id_str(&self) -> &'static str {
-        self.url
+        self.id
     }
 
     fn shop_name_str(&self) -> &'static str {
