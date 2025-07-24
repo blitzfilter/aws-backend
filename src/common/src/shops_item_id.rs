@@ -38,12 +38,12 @@ impl From<String> for ShopsItemId {
 
 impl From<&String> for ShopsItemId {
     fn from(value: &String) -> Self {
-        ShopsItemId(value.to_string())
+        ShopsItemId(value.to_owned())
     }
 }
 
 impl From<&str> for ShopsItemId {
     fn from(value: &str) -> Self {
-        ShopsItemId(value.to_string())
+        ShopsItemId(value.to_owned())
     }
 }
