@@ -141,7 +141,7 @@ fn extract_price(
         .next()
         .and_then(|price_elem| {
             price_elem.text().next().and_then(|price_text| {
-                let mut words = price_text.trim().split_whitespace();
+                let mut words = price_text.split_whitespace();
                 let amount = words
                     .next()
                     .and_then(|price_str| price_str.parse::<f32>().ok());
