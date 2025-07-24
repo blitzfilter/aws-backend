@@ -15,6 +15,8 @@ env:
 jobs:
   lint:
     name: Lint Workspace
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +44,8 @@ jobs:
   build:
     name: Build ${{ matrix.crate }}
     needs: lint
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -78,6 +82,8 @@ jobs:
   test:
     name: Test ${{ matrix.crate }}
     needs: build
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -114,6 +120,8 @@ jobs:
   sonar:
     name: SonarQube-Cloud Analysis
     needs: test
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
