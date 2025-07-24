@@ -7,6 +7,7 @@ edition = "2024"
 common = { path = "src/common" }
 filter = { path = "src/filter" }
 item = { path = "src/item" }
+scrape = { path = "src/scrape" }
 test-api = { path = "src/test-api" }
 
 [workspace]
@@ -14,5 +15,6 @@ members = [
     "src/common",
     "src/filter",
     "src/item",
+    "src/scrape",
     "src/test-api",
 ]

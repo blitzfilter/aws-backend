@@ -694,6 +694,7 @@ dependencies = [
  "common",
  "filter",
  "item",
+ "scrape",
  "test-api",
 ]
 
@@ -2883,6 +2884,27 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scrape"
+version = "0.1.0"
+dependencies = [
+ "scrape-core",
+]
+
+[[package]]
+name = "scrape-core"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "common",
+ "futures",
+ "item-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "sct"

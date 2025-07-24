@@ -59,6 +59,7 @@ jobs:
           - src/item/src/item-lambda/src/item-lambda-write-update
           - src/item/src/item-write
           - src/item/src/item-read
+          - src/scrape/src/scrape-core
           - src/test-api
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +98,7 @@ jobs:
           - src/item/src/item-lambda/src/item-lambda-write-update
           - src/item/src/item-write
           - src/item/src/item-read
+          - src/scrape/src/scrape-core
           - src/test-api
     steps:
       - uses: actions/checkout@v4
