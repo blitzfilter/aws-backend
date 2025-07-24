@@ -48,7 +48,7 @@ jobs:
         crate:
           - src/common
           - src/filter
-          - src/item/src/item-api/item-api-get-item
+          - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
           - src/item/src/item-index
           - src/item/src/item-lambda/src/item-lambda-write-new
@@ -84,7 +84,7 @@ jobs:
         crate:
           - src/common
           - src/filter
-          - src/item/src/item-api/item-api-get-item
+          - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
           - src/item/src/item-index
           - src/item/src/item-lambda/src/item-lambda-write-new
