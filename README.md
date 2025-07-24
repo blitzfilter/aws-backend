@@ -1,6 +1,8 @@
 # Blitzfilter AWS-Backend
 
 [![CI](https://github.com/blitzfilter/aws-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/blitzfilter/aws-backend/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/github-code-scanning/codeql)
+[![Dependabot Updates](https://github.com/blitzfilter/aws-backend/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/dependabot/dependabot-updates)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=blitzfilter_aws-backend&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=blitzfilter_aws-backend)
 
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=blitzfilter_aws-backend&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=blitzfilter_aws-backend)
