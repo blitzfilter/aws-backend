@@ -97,6 +97,8 @@ pub async fn handle(
     Ok(ApiGatewayProxyResponseBuilder::json(200)
         .body(response)
         .try_content_language(content_language)
+        .e_tag(item_data.event_id.to_string().as_str())
+        .last_modified(item_data.updated)
         .cors()
         .build())
 }
@@ -108,11 +110,12 @@ mod tests {
     use aws_lambda_events::encodings::Body::Text;
     use aws_lambda_events::query_map::QueryMap;
     use common::currency::domain::Currency;
+    use common::event_id::EventId;
     use common::language::domain::Language;
     use common::price::domain::{MonetaryAmount, Price};
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
-    use http::header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE};
+    use http::header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE, ETAG, LAST_MODIFIED};
     use http::{HeaderMap, HeaderValue};
     use item_core::item::domain::Item;
     use item_core::item::hash::ItemHash;
@@ -122,6 +125,7 @@ mod tests {
     use serde_json::Value;
     use std::collections::HashMap;
     use time::OffsetDateTime;
+    use time::macros::datetime;
 
     #[rstest::rstest]
     #[case::de_DE("de-DE", "German title", "de")]
@@ -799,5 +803,128 @@ mod tests {
         } else {
             panic!("Expected Text.");
         }
+    }
+
+    #[tokio::test]
+    async fn should_include_event_id_as_header_e_tag() {
+        let event_id = EventId::new();
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(move |shop_id, shops_item_id, _| {
+                let title = HashMap::from([
+                    (Language::De, "German title".to_string()),
+                    (Language::En, "English title".to_string()),
+                    (Language::Es, "Spanish title".to_string()),
+                    (Language::Fr, "French title".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id,
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title,
+                    description: Default::default(),
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: OffsetDateTime::now_utc(),
+                    updated: OffsetDateTime::now_utc(),
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        assert_eq!(
+            event_id.to_string().as_str(),
+            response.headers.get(ETAG).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn should_include_updated_timestamp_as_header_last_modified() {
+        let timestamp = datetime!(2020-01-01 0:00 UTC);
+        let event_id = EventId::new();
+        let mut service = MockReadItem::default();
+        service
+            .expect_get_item_with_currency()
+            .return_once(move |shop_id, shops_item_id, _| {
+                let title = HashMap::from([
+                    (Language::De, "German title".to_string()),
+                    (Language::En, "English title".to_string()),
+                    (Language::Es, "Spanish title".to_string()),
+                    (Language::Fr, "French title".to_string()),
+                ]);
+                let item = Item {
+                    item_id: Default::default(),
+                    event_id,
+                    shop_id: shop_id.clone(),
+                    shops_item_id: shops_item_id.clone(),
+                    shop_name: "".to_string(),
+                    title,
+                    description: Default::default(),
+                    price: None,
+                    state: ItemState::Listed,
+                    url: "".to_string(),
+                    images: vec![],
+                    hash: ItemHash::new(&None, &ItemState::Listed),
+                    created: timestamp,
+                    updated: timestamp,
+                };
+                Box::pin(async move { Ok(item) })
+            });
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayProxyRequest {
+                resource: None,
+                path: None,
+                http_method: Default::default(),
+                headers: Default::default(),
+                multi_value_headers: Default::default(),
+                query_string_parameters: Default::default(),
+                multi_value_query_string_parameters: Default::default(),
+                path_parameters: HashMap::from_iter([
+                    ("shopId".to_string(), shop_id.to_string()),
+                    ("shopsItemId".to_string(), shops_item_id.to_string()),
+                ]),
+                stage_variables: Default::default(),
+                request_context: Default::default(),
+                body: None,
+                is_base64_encoded: false,
+            },
+            context: Default::default(),
+        };
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(200, response.status_code);
+        assert_eq!(
+            "Wed, 01 Jan 2020 00:00:00 GMT",
+            response.headers.get(LAST_MODIFIED).unwrap()
+        );
     }
 }

@@ -1,8 +1,12 @@
 use crate::language::data::LanguageData;
 use aws_lambda_events::apigw::ApiGatewayProxyResponse;
 use aws_lambda_events::encodings::Body;
-use http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_LANGUAGE, CONTENT_TYPE};
+use http::header::{
+    ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_LANGUAGE, CONTENT_TYPE, ETAG, LAST_MODIFIED,
+};
 use http::{HeaderMap, HeaderName, HeaderValue};
+use httpdate::fmt_http_date;
+use std::time::SystemTime;
 use tracing::error;
 
 pub struct ApiGatewayProxyResponseBuilder {
@@ -49,7 +53,7 @@ impl ApiGatewayProxyResponseBuilder {
             Ok(content_language) => match content_language.as_str() {
                 None => {
                     error!(
-                        payload = ?language,
+                        language = ?language,
                         "Failed to serialize LanguageData as JSON-Value-String when setting HTTP Content-Language."
                     );
                 }
@@ -60,7 +64,7 @@ impl ApiGatewayProxyResponseBuilder {
                     Err(err) => {
                         error!(
                             error = %err,
-                            payload = ?content_language,
+                            language = ?content_language,
                             "Failed to convert serialized LanguageData to HeaderValue when setting HTTP Content-Language."
                         );
                     }
@@ -69,7 +73,7 @@ impl ApiGatewayProxyResponseBuilder {
             Err(err) => {
                 error!(
                     error = %err,
-                    payload = ?language,
+                    language = ?language,
                     "Failed to serialize LanguageData when setting HTTP Content-Language."
                 );
             }
@@ -83,6 +87,39 @@ impl ApiGatewayProxyResponseBuilder {
         } else {
             self
         }
+    }
+
+    pub fn e_tag(mut self, e_tag: &str) -> Self {
+        match HeaderValue::from_str(e_tag) {
+            Ok(e_tag_value) => {
+                self.headers.insert(ETAG, e_tag_value);
+            }
+            Err(err) => {
+                error!(
+                    error = %err,
+                    eTag = %e_tag,
+                    "Failed to convert e_tag to HeaderValue when setting HTTP ETag."
+                )
+            }
+        }
+        self
+    }
+
+    pub fn last_modified(mut self, last_modified_time: impl Into<SystemTime>) -> Self {
+        let last_modified = fmt_http_date(last_modified_time.into());
+        match HeaderValue::from_str(&last_modified) {
+            Ok(last_modified_value) => {
+                self.headers.insert(LAST_MODIFIED, last_modified_value);
+            }
+            Err(err) => {
+                error!(
+                    error = %err,
+                    lastModified = %last_modified,
+                    "Failed to convert lastModified to HeaderValue when setting HTTP Last-Modified."
+                )
+            }
+        }
+        self
     }
 
     pub fn body<T: Into<Body>>(mut self, body: T) -> Self {
