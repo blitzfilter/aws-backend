@@ -13,20 +13,12 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
   - package-ecosystem: "cargo"
     directory: "/src/filter"
     schedule:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-api/src/item-api-get-item"
@@ -34,10 +26,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-core"
@@ -45,10 +33,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-index"
@@ -56,10 +40,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-lambda/src/item-lambda-write-new"
@@ -67,10 +47,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-lambda/src/item-lambda-write-update"
@@ -78,10 +54,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-write"
@@ -89,10 +61,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/item/src/item-read"
@@ -100,10 +68,6 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/src/test-api"
@@ -111,7 +75,3 @@ updates:
       interval: daily
       time: "06:00"
       timezone: Europe/Berlin
-    groups:
-      same-dependency:
-        patterns:
-          - "*"
