@@ -1,6 +1,5 @@
 pub mod currency;
 
-pub mod aggregate;
 #[cfg(feature = "api")]
 pub mod api;
 pub mod batch;

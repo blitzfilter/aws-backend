@@ -1,13 +1,11 @@
-use common::aggregate::Aggregate;
 use common::batch::Batch;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::command::{CreateItemCommand, UpdateItemCommand};
-use item_core::item::domain::Item;
 use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
-use item_core::item_event::domain::ItemEvent;
+use item_core::item_event::domain::{ItemEvent, ItemEventPayload};
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
@@ -48,17 +46,20 @@ async fn should_create_items_for_handle_create_items_with_one_command() {
     let event_record =
         serde_dynamo::from_item::<_, ItemEventRecord>(event_record_attr_map).unwrap();
     let event: ItemEvent = event_record.try_into().unwrap();
-    let actual = Item::init(event).unwrap();
-
-    assert_eq!(cmd.shop_id, actual.shop_id);
-    assert_eq!(cmd.shops_item_id, actual.shops_item_id);
-    assert_eq!(cmd.shop_name, actual.shop_name);
-    assert_eq!(cmd.title, actual.title);
-    assert_eq!(cmd.description, actual.description);
-    assert_eq!(cmd.price, actual.price);
-    assert_eq!(cmd.state, actual.state);
-    assert_eq!(cmd.url, actual.url);
-    assert_eq!(cmd.images, actual.images);
+    match event.payload {
+        ItemEventPayload::Created(payload) => {
+            assert_eq!(cmd.shop_id, payload.shop_id);
+            assert_eq!(cmd.shops_item_id, payload.shops_item_id);
+            assert_eq!(cmd.shop_name, payload.shop_name);
+            assert_eq!(cmd.title, payload.title);
+            assert_eq!(cmd.description, payload.description);
+            assert_eq!(cmd.price, payload.price);
+            assert_eq!(cmd.state, payload.state);
+            assert_eq!(cmd.url, payload.url);
+            assert_eq!(cmd.images, payload.images);
+        }
+        _ => panic!("Expected ItemEventPayload::Created."),
+    }
 }
 
 #[rstest::rstest]

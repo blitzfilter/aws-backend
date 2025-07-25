@@ -67,16 +67,16 @@ impl ItemCommonEventPayload for ItemEventPayload {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemCreatedEventPayload {
-    pub(crate) shop_id: ShopId,
-    pub(crate) shops_item_id: ShopsItemId,
-    pub(crate) shop_name: String,
-    pub(crate) title: HashMap<Language, String>,
-    pub(crate) description: HashMap<Language, String>,
-    pub(crate) price: Option<Price>,
-    pub(crate) state: ItemState,
-    pub(crate) url: String,
-    pub(crate) images: Vec<String>,
-    pub(crate) hash: ItemHash,
+    pub shop_id: ShopId,
+    pub shops_item_id: ShopsItemId,
+    pub shop_name: String,
+    pub title: HashMap<Language, String>,
+    pub description: HashMap<Language, String>,
+    pub price: Option<Price>,
+    pub state: ItemState,
+    pub url: String,
+    pub images: Vec<String>,
+    pub hash: ItemHash,
 }
 
 impl ItemCommonEventPayload for ItemCreatedEventPayload {
@@ -91,9 +91,9 @@ impl ItemCommonEventPayload for ItemCreatedEventPayload {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemStateChangeEventPayload {
-    pub(crate) shop_id: ShopId,
-    pub(crate) shops_item_id: ShopsItemId,
-    pub(crate) hash: ItemHash,
+    pub shop_id: ShopId,
+    pub shops_item_id: ShopsItemId,
+    pub hash: ItemHash,
 }
 
 impl ItemCommonEventPayload for ItemStateChangeEventPayload {
@@ -108,10 +108,10 @@ impl ItemCommonEventPayload for ItemStateChangeEventPayload {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemPriceChangeEventPayload {
-    pub(crate) shop_id: ShopId,
-    pub(crate) shops_item_id: ShopsItemId,
-    pub(crate) price: Price,
-    pub(crate) hash: ItemHash,
+    pub shop_id: ShopId,
+    pub shops_item_id: ShopsItemId,
+    pub price: Price,
+    pub hash: ItemHash,
 }
 
 impl ItemCommonEventPayload for ItemPriceChangeEventPayload {
