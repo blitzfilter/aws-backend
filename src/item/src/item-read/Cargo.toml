@@ -4,20 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common = { path = "../../../common", features = ["dynamodb"] }
-item-core = { path = "../item-core" }
-async-trait = "0.1.88"
-aws-sdk-dynamodb = "1.82.0"
-serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
-tracing = "0.1.41"
-thiserror = "2.0.12"
-mockall = "0.13.1"
+common = { workspace = true, features = ["dynamodb"] }
+item-core = { workspace = true }
+async-trait = { workspace = true }
+aws-sdk-dynamodb = { workspace = true }
+serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"] }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+mockall = { workspace = true }
 
 [dev-dependencies]
-test-api = { path = "../../../test-api" }
-serial_test = "3.2.0"
-rstest = "0.25.0"
-time = { version = "0.3.41", features = ["local-offset", "macros", "formatting"] }
+test-api = { workspace = true }
+serial_test = { workspace = true }
+rstest = { workspace = true }
+time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 
 [features]
 default = []

@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-item-api = { path = "src/item-api" }
-item-core = { path = "src/item-core" }
-item-read = { path = "src/item-read" }
-item-write = { path = "src/item-write" }
-item-index = { path = "src/item-index" }
-item-lambda = { path = "src/item-lambda" }
+item-api = { workspace = true }
+item-core = { workspace = true }
+item-read = { workspace = true }
+item-write = { workspace = true }
+item-index = { workspace = true }
+item-lambda = { workspace = true }

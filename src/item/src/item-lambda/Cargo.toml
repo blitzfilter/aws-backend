@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-item-lambda-write-new = { path = "src/item-lambda-write-new" }
-item-lambda-write-update = { path = "src/item-lambda-write-update" }
+item-lambda-write-new = { workspace = true }
+item-lambda-write-update = { workspace = true }

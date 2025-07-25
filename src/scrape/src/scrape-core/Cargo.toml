@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common = { path = "../../../common" }
-item-core = { path = "../../../item/src/item-core" }
-futures = { version = "0.3.31", default-features = false, features = ["async-await", "alloc"] }
-tokio = { version = "1.46.1", default-features = false, features = ["time"] }
-async-stream = { version = "0.3.6" }
-tracing = "0.1.41"
-async-trait = "0.1.88"
-thiserror = "2.0.12"
+common = { workspace = true }
+item-core = { workspace = true }
+futures = { workspace = true, features = ["async-await", "alloc"] }
+tokio = { workspace = true, features = ["time"] }
+async-stream = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.46.1", default-features = true, features = ["full"] }
-rstest = "0.25.0"
+tokio = { workspace = true, features = ["full"] }
+rstest = { workspace = true }

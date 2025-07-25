@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-scrape-core = { path = "src/scrape-core" }
-scrape-static = { path = "src/scrape-static" }
+scrape-core = { workspace = true }
+scrape-static = { workspace = true }

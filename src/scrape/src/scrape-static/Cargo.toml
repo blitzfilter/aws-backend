@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common = { path = "../../../common" }
-scrape-core = { path = "../scrape-core" }
-item-core = { path = "../../../item/src/item-core" }
-reqwest = { version = "0.12.22", features = ["json", "native-tls-vendored"] }
-async-trait = "0.1.88"
-scraper = { version = "0.23.1", default-features = false }
-tracing = "0.1.41"
+common = { workspace = true }
+scrape-core = { workspace = true }
+item-core = { workspace = true }
+reqwest = { workspace = true, features = ["json", "native-tls-vendored"] }
+async-trait = { workspace = true }
+scraper = { workspace = true }
+tracing = { workspace = true }
