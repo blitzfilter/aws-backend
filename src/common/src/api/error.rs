@@ -48,7 +48,7 @@ impl ApiError {
     pub fn with_header_field(mut self, field: &'static str) -> Self {
         self.source = Some(ApiErrorSource {
             field,
-            source_type: ApiErrorSourceType::HEADER,
+            source_type: ApiErrorSourceType::Header,
         });
         self
     }
@@ -56,7 +56,7 @@ impl ApiError {
     pub fn with_query_field(mut self, field: &'static str) -> Self {
         self.source = Some(ApiErrorSource {
             field,
-            source_type: ApiErrorSourceType::QUERY,
+            source_type: ApiErrorSourceType::Query,
         });
         self
     }
@@ -64,14 +64,14 @@ impl ApiError {
     pub fn with_path_field(mut self, field: &'static str) -> Self {
         self.source = Some(ApiErrorSource {
             field,
-            source_type: ApiErrorSourceType::PATH,
+            source_type: ApiErrorSourceType::Path,
         });
         self
     }
     pub fn with_body_field(mut self, field: &'static str) -> Self {
         self.source = Some(ApiErrorSource {
             field,
-            source_type: ApiErrorSourceType::BODY,
+            source_type: ApiErrorSourceType::Body,
         });
         self
     }
@@ -136,12 +136,12 @@ pub struct ApiErrorSource {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "UPPERCASE")]
 pub enum ApiErrorSourceType {
-    HEADER,
-    PATH,
-    QUERY,
-    BODY,
+    Header,
+    Path,
+    Query,
+    Body,
 }
 
 #[cfg(feature = "dynamodb")]
@@ -172,17 +172,132 @@ pub mod dynamodb {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::api::error::ApiError;
+    use crate::api::error::{ApiError, ApiErrorSource, ApiErrorSourceType};
     use crate::api::error_code::*;
     use serde_json::{Value, json};
 
     #[rstest::rstest]
-    #[case::bad_request(ApiError::bad_request(BAD_REQUEST), json!({ "status": 400, "error": "BAD_REQUEST" })
-    )]
-    #[case::bad_request_msg(ApiError::bad_request(BAD_REQUEST).with_message("foo"), json!({ "status": 400, "error": "BAD_REQUEST", "message": "foo" })
-    )]
+    #[case::bad_request(ApiError::bad_request(BAD_REQUEST), json!({ "status": 400, "error": "BAD_REQUEST" }))]
+    #[case::bad_request_msg(ApiError::bad_request(BAD_REQUEST).with_message("foo"), json!({ "status": 400, "error": "BAD_REQUEST", "message": "foo" }))]
+    #[case::unauthorized(ApiError::unauthorized(UNAUTHORIZED), json!({ "status": 401, "error": "UNAUTHORIZED" }))]
+    #[case::forbidden(ApiError::forbidden(FORBIDDEN), json!({ "status": 403, "error": "FORBIDDEN" }))]
+    #[case::not_found(ApiError::not_found(NOT_FOUND), json!({ "status": 404, "error": "NOT_FOUND" }))]
+    #[case::conflict(ApiError::conflict(CONFLICT), json!({ "status": 409, "error": "CONFLICT" }))]
+    #[case::unprocessable_entity(ApiError::unprocessable_entity(UNPROCESSABLE_ENTITY), json!({ "status": 422, "error": "UNPROCESSABLE_ENTITY" }))]
+    #[case::internal_server_error(ApiError::internal_server_error(INTERNAL_SERVER_ERROR), json!({ "status": 500, "error": "INTERNAL_SERVER_ERROR" }))]
+    #[case::service_unavailable(ApiError::service_unavailable(SERVICE_UNAVAILABLE), json!({ "status": 503, "error": "SERVICE_UNAVAILABLE" }))]
+    #[case::gateway_timeout(ApiError::gateway_time_out(GATEWAY_TIMEOUT), json!({ "status": 504, "error": "GATEWAY_TIMEOUT" }))]
     fn should_serialize_api_error(#[case] error: ApiError, #[case] expected: Value) {
         let actual = serde_json::to_value(error).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn should_serialize_api_error_with_query_field() {
+        let error = ApiError::bad_request(BAD_REQUEST).with_query_field("limit");
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "status": 400,
+                "error": "BAD_REQUEST",
+                "source": {
+                    "field": "limit",
+                    "type": "QUERY"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn should_serialize_api_error_with_header_field() {
+        let error = ApiError::unauthorized(UNAUTHORIZED).with_header_field("Authorization");
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "status": 401,
+                "error": "UNAUTHORIZED",
+                "source": {
+                    "field": "Authorization",
+                    "type": "HEADER"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn should_serialize_api_error_with_path_field() {
+        let error = ApiError::not_found(NOT_FOUND).with_path_field("user_id");
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "status": 404,
+                "error": "NOT_FOUND",
+                "source": {
+                    "field": "user_id",
+                    "type": "PATH"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn should_serialize_api_error_with_body_field() {
+        let error = ApiError::unprocessable_entity(UNPROCESSABLE_ENTITY).with_body_field("email");
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "status": 422,
+                "error": "UNPROCESSABLE_ENTITY",
+                "source": {
+                    "field": "email",
+                    "type": "BODY"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn should_serialize_api_error_with_source_struct() {
+        let source = ApiErrorSource {
+            field: "x-custom-header",
+            source_type: ApiErrorSourceType::Header,
+        };
+        let error = ApiError::bad_request(BAD_REQUEST).with_source(source);
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "status": 400,
+                "error": "BAD_REQUEST",
+                "source": {
+                    "field": "x-custom-header",
+                    "type": "HEADER"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn should_serialize_api_error_with_message_and_source() {
+        let error = ApiError::bad_request(BAD_REQUEST)
+            .with_message("Invalid format")
+            .with_body_field("username");
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "status": 400,
+                "error": "BAD_REQUEST",
+                "message": "Invalid format",
+                "source": {
+                    "field": "username",
+                    "type": "BODY"
+                }
+            })
+        );
     }
 }
