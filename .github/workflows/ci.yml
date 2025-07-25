@@ -146,6 +146,17 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install grcov
+        run: cargo install grcov
+
+      - name: Generate coverage
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+          LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
+        run: |
+          cargo test --workspace --all-features
+          grcov . --binary-path ./target/debug/deps/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" --ignore "*/target/*" --ignore "*/.cargo/*" -o coverage.lcov
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:
