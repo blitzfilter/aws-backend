@@ -2,7 +2,7 @@ use crate::currency::data::CurrencyData;
 use crate::price::domain::Price;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriceData {
     pub currency: CurrencyData,

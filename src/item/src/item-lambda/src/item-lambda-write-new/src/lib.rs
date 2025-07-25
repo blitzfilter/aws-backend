@@ -5,7 +5,7 @@ use item_core::item::command_data::CreateItemCommandData;
 use item_write::service::InboundWriteItems;
 use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tracing::instrument(skip(service, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
@@ -27,7 +27,7 @@ pub async fn handler(
             &mut skipped_count,
             &mut message_ids,
         ) {
-            commands.push(CreateItemCommand::from(command));
+            commands.push(command);
         }
     }
 
@@ -74,7 +74,7 @@ fn extract_message_data(
     failed_message_ids: &mut Vec<String>,
     skipped_count: &mut usize,
     message_ids: &mut HashMap<ItemKey, String>,
-) -> Option<CreateItemCommandData> {
+) -> Option<CreateItemCommand> {
     let message_id = message
         .message_id
         .expect("shouldn't receive an SQS-Message without 'message_id' because AWS sets it.");
@@ -86,10 +86,16 @@ fn extract_message_data(
             None
         }
         Some(item_json) => match serde_json::from_str::<CreateItemCommandData>(&item_json) {
-            Ok(command) => {
-                message_ids.insert(command.item_key(), message_id);
-                Some(command)
-            }
+            Ok(command_data) => match CreateItemCommand::try_from(command_data) {
+                Ok(command) => {
+                    message_ids.insert(command.item_key(), message_id);
+                    Some(command)
+                }
+                Err(err) => {
+                    warn!(err = %err, "Failed to convert CreateItemCommandData to CreateItemCommand.");
+                    None
+                }
+            },
             Err(e) => {
                 error!(
                     error = %e,

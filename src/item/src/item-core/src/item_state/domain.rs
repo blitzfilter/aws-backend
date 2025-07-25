@@ -1,4 +1,5 @@
 use crate::item_state::command_data::ItemStateCommandData;
+use crate::item_state::data::ItemStateData;
 use crate::item_state::record::ItemStateRecord;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -18,6 +19,18 @@ impl From<ItemStateCommandData> for ItemState {
             ItemStateCommandData::Reserved => ItemState::Reserved,
             ItemStateCommandData::Sold => ItemState::Sold,
             ItemStateCommandData::Removed => ItemState::Removed,
+        }
+    }
+}
+
+impl From<ItemStateData> for ItemState {
+    fn from(cmd: ItemStateData) -> Self {
+        match cmd {
+            ItemStateData::Listed => ItemState::Listed,
+            ItemStateData::Available => ItemState::Available,
+            ItemStateData::Reserved => ItemState::Reserved,
+            ItemStateData::Sold => ItemState::Sold,
+            ItemStateData::Removed => ItemState::Removed,
         }
     }
 }

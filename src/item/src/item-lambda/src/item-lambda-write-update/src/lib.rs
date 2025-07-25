@@ -5,7 +5,7 @@ use item_core::item::command_data::UpdateItemCommandData;
 use item_write::service::InboundWriteItems;
 use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tracing::instrument(skip(service, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
@@ -21,13 +21,13 @@ pub async fn handler(
     let mut message_ids: HashMap<ItemKey, String> = HashMap::with_capacity(records_count);
 
     for message in event.payload.records {
-        if let Some(command) = extract_message_data(
+        if let Some((item_key, command)) = extract_message_data(
             message,
             &mut failed_message_ids,
             &mut skipped_count,
             &mut message_ids,
         ) {
-            commands.insert(command.item_key(), UpdateItemCommand::from(command));
+            commands.insert(item_key, command);
         }
     }
 
@@ -74,7 +74,7 @@ fn extract_message_data(
     failed_message_ids: &mut Vec<String>,
     skipped_count: &mut usize,
     message_ids: &mut HashMap<ItemKey, String>,
-) -> Option<UpdateItemCommandData> {
+) -> Option<(ItemKey, UpdateItemCommand)> {
     let message_id = message
         .message_id
         .expect("shouldn't receive an SQS-Message without 'message_id' because AWS sets it.");
@@ -86,9 +86,18 @@ fn extract_message_data(
             None
         }
         Some(item_json) => match serde_json::from_str::<UpdateItemCommandData>(&item_json) {
-            Ok(command) => {
-                message_ids.insert(command.item_key(), message_id);
-                Some(command)
+            Ok(command_data) => {
+                let item_key = command_data.item_key();
+                match UpdateItemCommand::try_from(command_data) {
+                    Ok(command) => {
+                        message_ids.insert(item_key.clone(), message_id);
+                        Some((item_key, command))
+                    }
+                    Err(err) => {
+                        warn!(err = %err, "Failed to convert CreateItemCommandData to CreateItemCommand.");
+                        None
+                    }
+                }
             }
             Err(e) => {
                 error!(

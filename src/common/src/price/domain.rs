@@ -1,6 +1,7 @@
 use crate::currency::domain::Currency;
 use crate::currency::domain::Currency::*;
 use crate::price::command_data::PriceCommandData;
+use crate::price::data::PriceData;
 use crate::price::record::PriceRecord;
 use std::ops::{Add, Sub};
 
@@ -68,7 +69,8 @@ impl FxRate for FixedFxRate {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct MonetaryAmount(f32);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, thiserror::Error)]
+#[error("Monetary amount must be greater than 0.")]
 pub struct NegativeMonetaryAmountError;
 impl TryFrom<f32> for MonetaryAmount {
     type Error = NegativeMonetaryAmountError;
@@ -136,6 +138,28 @@ impl Price {
     }
 }
 
+impl TryFrom<PriceData> for Price {
+    type Error = NegativeMonetaryAmountError;
+
+    fn try_from(data: PriceData) -> Result<Self, Self::Error> {
+        Ok(Price {
+            monetary_amount: data.amount.try_into()?,
+            currency: data.currency.into(),
+        })
+    }
+}
+
+impl TryFrom<PriceCommandData> for Price {
+    type Error = NegativeMonetaryAmountError;
+
+    fn try_from(command_data: PriceCommandData) -> Result<Self, Self::Error> {
+        Ok(Price {
+            monetary_amount: command_data.amount.try_into()?,
+            currency: command_data.currency.into(),
+        })
+    }
+}
+
 impl From<PriceRecord> for Price {
     fn from(record: PriceRecord) -> Self {
         Price {
@@ -144,15 +168,6 @@ impl From<PriceRecord> for Price {
                         MonetaryAmount because by convention all persisted amounts are non-negative"
             ),
             currency: record.currency.into(),
-        }
-    }
-}
-
-impl From<PriceCommandData> for Price {
-    fn from(data: PriceCommandData) -> Self {
-        Price {
-            monetary_amount: MonetaryAmount(data.price),
-            currency: data.currency.into(),
         }
     }
 }

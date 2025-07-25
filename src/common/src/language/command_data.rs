@@ -1,3 +1,4 @@
+use crate::language::data::LanguageData;
 use serde::{Deserialize, Serialize};
 
 // ISO 639-1
@@ -8,6 +9,17 @@ pub enum LanguageCommandData {
     En,
     Fr,
     Es,
+}
+
+impl From<LanguageData> for LanguageCommandData {
+    fn from(data: LanguageData) -> Self {
+        match data {
+            LanguageData::De => LanguageCommandData::De,
+            LanguageData::En => LanguageCommandData::En,
+            LanguageData::Fr => LanguageCommandData::Fr,
+            LanguageData::Es => LanguageCommandData::Es,
+        }
+    }
 }
 
 #[cfg(test)]

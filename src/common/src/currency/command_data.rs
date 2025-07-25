@@ -1,3 +1,4 @@
+use crate::currency::data::CurrencyData;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug)]
@@ -9,6 +10,19 @@ pub enum CurrencyCommandData {
     Aud,
     Cad,
     Nzd,
+}
+
+impl From<CurrencyData> for CurrencyCommandData {
+    fn from(data: CurrencyData) -> Self {
+        match data {
+            CurrencyData::Eur => CurrencyCommandData::Eur,
+            CurrencyData::Gbp => CurrencyCommandData::Gbp,
+            CurrencyData::Usd => CurrencyCommandData::Usd,
+            CurrencyData::Aud => CurrencyCommandData::Aud,
+            CurrencyData::Cad => CurrencyCommandData::Cad,
+            CurrencyData::Nzd => CurrencyCommandData::Nzd,
+        }
+    }
 }
 
 #[cfg(test)]
