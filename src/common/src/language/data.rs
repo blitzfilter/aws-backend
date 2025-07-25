@@ -100,8 +100,10 @@ impl LocalizedTextData {
 
 #[cfg(test)]
 mod tests {
-    use super::LanguageData;
+    use super::{LanguageData, LocalizedTextData};
+    use crate::language::domain::Language;
     use rstest::rstest;
+    use std::collections::HashMap;
 
     #[rstest]
     #[case(LanguageData::De, "\"de\"")]
@@ -127,5 +129,61 @@ mod tests {
     ) {
         let actual = serde_json::from_str::<LanguageData>(language).unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[rstest::rstest]
+    #[case::empty_defaults_german(&[], Some("German text".into()))]
+    #[case::takes_preferred_from_singleton(&[Language::En], Some("English text".into()))]
+    #[case::takes_preferred_from_many(&[Language::Es, Language::Fr, Language::En], Some("Spanish text".into()))]
+    fn should_respect_language_priority_when_contains_all_for_from_domain_fallbacked(
+        #[case] languages: &[Language],
+        #[case] expected: Option<String>,
+    ) {
+        let domain = HashMap::from([
+            (Language::De, "German text".to_owned()),
+            (Language::En, "English text".to_owned()),
+            (Language::Fr, "French text".to_owned()),
+            (Language::Es, "Spanish text".to_owned()),
+        ]);
+
+        let actual = LocalizedTextData::from_domain_fallbacked(&domain, languages)
+            .map(|localized_text_data| localized_text_data.text);
+
+        assert_eq!(expected, actual);
+    }
+
+    #[rstest::rstest]
+    #[case::empty_defaults_german(&[], Some("English text".into()))]
+    #[case::takes_preferred_from_singleton(&[Language::En], Some("English text".into()))]
+    #[case::takes_preferred_from_many(&[Language::Es, Language::Fr, Language::En], Some("French text".into()))]
+    fn should_respect_language_priority_when_contains_some_for_from_domain_fallbacked(
+        #[case] languages: &[Language],
+        #[case] expected: Option<String>,
+    ) {
+        let domain = HashMap::from([
+            (Language::En, "English text".to_owned()),
+            (Language::Fr, "French text".to_owned()),
+        ]);
+
+        let actual = LocalizedTextData::from_domain_fallbacked(&domain, languages)
+            .map(|localized_text_data| localized_text_data.text);
+
+        assert_eq!(expected, actual);
+    }
+
+    #[rstest::rstest]
+    #[case::empty_defaults_german(&[], Some("French text".into()))]
+    #[case::takes_preferred_from_singleton(&[Language::En], Some("French text".into()))]
+    #[case::takes_preferred_from_many(&[Language::Es, Language::En], Some("French text".into()))]
+    fn should_resort_to_next_best_when_contains_no_match_nor_defaults_for_from_domain_fallbacked(
+        #[case] languages: &[Language],
+        #[case] expected: Option<String>,
+    ) {
+        let domain = HashMap::from([(Language::Fr, "French text".to_owned())]);
+
+        let actual = LocalizedTextData::from_domain_fallbacked(&domain, languages)
+            .map(|localized_text_data| localized_text_data.text);
+
+        assert_eq!(expected, actual);
     }
 }
