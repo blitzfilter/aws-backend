@@ -3129,6 +3129,8 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
+ "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
  "common",
  "futures",
  "item-core",
