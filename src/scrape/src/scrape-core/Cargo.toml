@@ -12,3 +12,7 @@ async-stream = { version = "0.3.6" }
 tracing = "0.1.41"
 async-trait = "0.1.88"
 thiserror = "2.0.12"
+
+[dev-dependencies]
+tokio = { version = "1.46.1", default-features = true, features = ["full"] }
+rstest = "0.25.0"
