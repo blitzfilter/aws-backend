@@ -372,11 +372,11 @@ pub mod dynamodb {
                 .collect()
         }
     }
-}
 
-pub struct BatchGetItemResult<T, Key> {
-    pub items: Vec<T>,
-    pub unprocessed: Option<Batch<Key, 100>>,
+    pub struct BatchGetItemResult<T, Key> {
+        pub items: Vec<T>,
+        pub unprocessed: Option<Batch<Key, 100>>,
+    }
 }
 
 #[cfg(test)]
