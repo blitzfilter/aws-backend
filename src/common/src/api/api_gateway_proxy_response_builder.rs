@@ -148,3 +148,26 @@ impl ApiGatewayProxyResponseBuilder {
         }
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use crate::api::api_gateway_proxy_response_builder::ApiGatewayProxyResponseBuilder;
+    use crate::language::data::LanguageData;
+    use std::time::SystemTime;
+
+    #[rstest::rstest]
+    #[case::minimal_100(ApiGatewayProxyResponseBuilder::new(100))]
+    #[case::minimal_200(ApiGatewayProxyResponseBuilder::new(200))]
+    #[case::minimal_300(ApiGatewayProxyResponseBuilder::new(300))]
+    #[case::minimal_400(ApiGatewayProxyResponseBuilder::new(400))]
+    #[case::minimal_500(ApiGatewayProxyResponseBuilder::new(500))]
+    #[case::json(ApiGatewayProxyResponseBuilder::json(200))]
+    #[case::plain_text(ApiGatewayProxyResponseBuilder::plain(200))]
+    #[case::content_language(ApiGatewayProxyResponseBuilder::new(200).content_language(LanguageData::De))]
+    #[case::try_content_language(ApiGatewayProxyResponseBuilder::new(200).try_content_language(Some(LanguageData::En)))]
+    #[case::e_tag(ApiGatewayProxyResponseBuilder::new(200).e_tag("123456"))]
+    #[case::last_modified(ApiGatewayProxyResponseBuilder::new(200).last_modified(SystemTime::now()))]
+    fn should_build_api_gateway_proxy_response(#[case] builder: ApiGatewayProxyResponseBuilder) {
+        let _ = builder.build();
+    }
+}
