@@ -3134,6 +3134,7 @@ dependencies = [
  "common",
  "futures",
  "item-core",
+ "item-read",
  "rstest",
  "thiserror",
  "tokio",

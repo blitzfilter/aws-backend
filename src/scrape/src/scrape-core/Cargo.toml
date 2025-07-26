@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 common = { workspace = true }
 item-core = { workspace = true }
+item-read = { workspace = true }
 futures = { workspace = true, features = ["async-await", "alloc"] }
 tokio = { workspace = true, features = ["time"] }
 async-stream = { workspace = true }

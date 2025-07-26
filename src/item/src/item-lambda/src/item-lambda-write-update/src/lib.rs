@@ -82,7 +82,7 @@ fn extract_message_data(
     match message.body {
         None => {
             info!("Received empty body. Skipping message.");
-            *skipped_count = 1;
+            *skipped_count += 1;
             None
         }
         Some(item_json) => match serde_json::from_str::<UpdateItemCommandData>(&item_json) {
@@ -94,7 +94,8 @@ fn extract_message_data(
                         Some((item_key, command))
                     }
                     Err(err) => {
-                        warn!(err = %err, "Failed to convert CreateItemCommandData to CreateItemCommand.");
+                        warn!(err = %err, "Failed to convert CreateItemCommandData to CreateItemCommand. Skipping message.");
+                        *skipped_count += 1;
                         None
                     }
                 }
