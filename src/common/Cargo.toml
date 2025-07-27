@@ -12,6 +12,7 @@ itertools = { workspace = true }
 
 # Optional dependencies via feature-flags
 aws-sdk-dynamodb = { workspace = true, optional = true }
+aws-sdk-sqs = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"], optional = true }
 aws_lambda_events = { workspace = true, optional = true }
@@ -26,4 +27,5 @@ serde_json = { workspace = true }
 [features]
 default = []
 dynamodb = ["serde_dynamo", "aws-sdk-dynamodb", "tracing"]
+sqs = ["aws-sdk-sqs", "serde_json", "tracing"]
 api = ["aws_lambda_events/apigw", "http", "serde_json", "httpdate"]

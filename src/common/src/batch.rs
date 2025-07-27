@@ -379,6 +379,46 @@ pub mod dynamodb {
     }
 }
 
+#[cfg(feature = "sqs")]
+pub mod sqs {
+    use crate::batch::Batch;
+    use aws_sdk_sqs::types::SendMessageBatchRequestEntry;
+    use itertools::Itertools;
+    use serde::Serialize;
+    use tracing::error;
+
+    impl<T: Serialize> Batch<T, 10> {
+        pub fn into_sqs_message_entries(self) -> Vec<SendMessageBatchRequestEntry> {
+            self.0
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, x)| match serde_json::to_string(&x) {
+                    Ok(payload) => Some(
+                        SendMessageBatchRequestEntry::builder()
+                            .message_body(payload)
+                            .id(i.to_string())
+                            .build()
+                            .expect("shouldn't fail because 'id' and 'message_body' have been set"),
+                    ),
+                    Err(err) => {
+                        error!(
+                            error = %err,
+                            type = %std::any::type_name::<T>(),
+                            "Failed to serialize record."
+                        );
+                        None
+                    }
+                })
+                .collect_vec()
+        }
+    }
+
+    pub struct BatchGetItemResult<T, Key> {
+        pub items: Vec<T>,
+        pub unprocessed: Option<Batch<Key, 100>>,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::batch::{Batch, BatchConstructionError};

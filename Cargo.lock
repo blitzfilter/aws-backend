@@ -849,6 +849,7 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
  "aws_lambda_events",
  "http 1.3.1",
  "httpdate",
@@ -3136,6 +3137,7 @@ dependencies = [
  "item-core",
  "item-read",
  "rstest",
+ "serde",
  "thiserror",
  "tokio",
  "tracing",

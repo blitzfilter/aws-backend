@@ -9,8 +9,10 @@ use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData
 use item_core::item::hash::ItemHash;
 use item_core::item_state::data::ItemStateData;
 use std::collections::HashMap;
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 pub enum ScrapeItemChangeCommandData {
     Create(CreateItemCommandData),
     Update(UpdateItemCommandData),

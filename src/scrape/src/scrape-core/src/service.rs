@@ -1,7 +1,9 @@
 use crate::data::{ScrapeItem, ScrapeItemChangeCommandData};
 use async_trait::async_trait;
 use aws_sdk_dynamodb::operation::query::QueryError;
+use aws_sdk_sqs::config::http::HttpResponse;
 use aws_sdk_sqs::error::SdkError;
+use aws_sdk_sqs::operation::send_message_batch::{SendMessageBatchError, SendMessageBatchOutput};
 use common::batch::Batch;
 use common::shop_id::ShopId;
 use item_read::repository::ReadItemRecords;
@@ -16,18 +18,21 @@ pub struct PublishScrapeItemsContext {
 
 #[async_trait]
 pub trait PublishScrapeItems {
-    async fn extract_changed_items(
+    async fn filter_changed_items(
         &self,
         scrape_items: impl Iterator<Item = ScrapeItem> + Send,
         shop_id: &ShopId,
     ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>>;
 
-    async fn publish_scrape_items(&self, scrape_items: Batch<ScrapeItem, 10>);
+    async fn publish_scrape_items(
+        &self,
+        scrape_items: Batch<ScrapeItemChangeCommandData, 10>,
+    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>>;
 }
 
 #[async_trait]
 impl PublishScrapeItems for PublishScrapeItemsContext {
-    async fn extract_changed_items(
+    async fn filter_changed_items(
         &self,
         scrape_items: impl Iterator<Item = ScrapeItem> + Send,
         shop_id: &ShopId,
@@ -45,7 +50,15 @@ impl PublishScrapeItems for PublishScrapeItemsContext {
         Ok(it)
     }
 
-    async fn publish_scrape_items(&self, _scrape_items: Batch<ScrapeItem, 10>) {
-        todo!();
+    async fn publish_scrape_items(
+        &self,
+        scrape_items: Batch<ScrapeItemChangeCommandData, 10>,
+    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>> {
+        self.sqs_client
+            .send_message_batch()
+            .set_entries(Some(scrape_items.into_sqs_message_entries()))
+            .queue_url(&self.sqs_url)
+            .send()
+            .await
     }
 }
