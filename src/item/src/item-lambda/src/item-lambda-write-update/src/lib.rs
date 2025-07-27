@@ -88,17 +88,9 @@ fn extract_message_data(
         Some(item_json) => match serde_json::from_str::<UpdateItemCommandData>(&item_json) {
             Ok(command_data) => {
                 let item_key = command_data.item_key();
-                match UpdateItemCommand::try_from(command_data) {
-                    Ok(command) => {
-                        message_ids.insert(item_key.clone(), message_id);
-                        Some((item_key, command))
-                    }
-                    Err(err) => {
-                        warn!(err = %err, "Failed to convert CreateItemCommandData to CreateItemCommand. Skipping message.");
-                        *skipped_count += 1;
-                        None
-                    }
-                }
+                let command = UpdateItemCommand::from(command_data);
+                message_ids.insert(item_key.clone(), message_id);
+                Some((item_key, command))
             }
             Err(e) => {
                 error!(
