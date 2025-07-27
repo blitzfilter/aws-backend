@@ -140,7 +140,7 @@ impl From<u32> for MonetaryAmount {
 
 impl From<u64> for MonetaryAmount {
     fn from(amount: u64) -> Self {
-        MonetaryAmount(amount as u64)
+        MonetaryAmount(amount)
     }
 }
 
