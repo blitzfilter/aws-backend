@@ -68,7 +68,7 @@ pub struct OpenSearch();
 
 #[async_trait]
 impl IntegrationTestService for OpenSearch {
-    const SERVICE_NAME: &'static str = "opensearch";
+    const SERVICE_NAMES: &'static [&'static str] = &["opensearch", "s3"];
 
     async fn set_up() {
         set_up_domain()

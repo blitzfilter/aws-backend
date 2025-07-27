@@ -40,7 +40,7 @@ use syn::{Expr, ExprArray, ItemFn, parse_macro_input};
 ///
 /// # Notes
 ///
-/// - Requires Tokio runtime (`#[tokio::test]`) test ex82ecution.
+/// - Requires Tokio runtime (`#[tokio::test]`) test execution.
 /// - The attribute must be in the format: `services = [ServiceA, ServiceB, ...]`.
 /// - Malformed input will panic at compile time.
 ///
@@ -73,7 +73,7 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let service_name_consts = services.iter().map(|ident| {
-        quote! { #ident::SERVICE_NAME }
+        quote! { #ident::SERVICE_NAMES }
     });
     let mut setup_code = quote! {};
     let mut teardown_code = quote! {};
@@ -101,7 +101,7 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         async fn #fn_name() {
             let __services: &[&str] = &[
                 #( #service_name_consts ),*
-            ];
+            ].concat();
             let __localstack = test_api::localstack::spin_up_localstack_with_services(__services).await;
 
             #setup_code

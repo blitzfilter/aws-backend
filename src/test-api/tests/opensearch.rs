@@ -4,7 +4,7 @@ use test_api::*;
 #[localstack_test(services = [OpenSearch])]
 async fn should_run_without_errors() {}
 
-#[localstack_test(services = [OpenSearch, S3])]
+#[localstack_test(services = [OpenSearch])]
 async fn should_set_up_indices() {
     let exists_response = get_opensearch_client()
         .await

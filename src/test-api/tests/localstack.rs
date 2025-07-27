@@ -35,22 +35,29 @@ async fn should_spin_up_localstack() {
 struct DynamoDB();
 struct Sqs();
 struct Lambda();
+struct Combined();
 
 #[async_trait]
 impl IntegrationTestService for DynamoDB {
-    const SERVICE_NAME: &'static str = "dynamodb";
+    const SERVICE_NAMES: &'static [&'static str] = &["dynamodb"];
     async fn set_up() {}
 }
 
 #[async_trait]
 impl IntegrationTestService for Sqs {
-    const SERVICE_NAME: &'static str = "sqs";
+    const SERVICE_NAMES: &'static [&'static str] = &["sqs"];
     async fn set_up() {}
 }
 
 #[async_trait]
 impl IntegrationTestService for Lambda {
-    const SERVICE_NAME: &'static str = "lambda";
+    const SERVICE_NAMES: &'static [&'static str] = &["lambda"];
+    async fn set_up() {}
+}
+
+#[async_trait]
+impl IntegrationTestService for Combined {
+    const SERVICE_NAMES: &'static [&'static str] = &["lambda", "dynamodb", "combined"];
     async fn set_up() {}
 }
 
@@ -73,4 +80,24 @@ async fn should_start_successfully_for_multiple_services() {
     dynamodb_client.list_tables().send().await.unwrap();
     sqs_client.list_queues().send().await.unwrap();
     lambda_client.list_functions().send().await.unwrap();
+}
+
+#[localstack_test(services = [Combined])]
+async fn should_start_successfully_for_combined_services() {
+    get_dynamodb_client()
+        .await
+        .list_tables()
+        .send()
+        .await
+        .unwrap();
+}
+
+#[localstack_test(services = [Combined, DynamoDB])]
+async fn should_start_successfully_for_overlapping_services() {
+    get_dynamodb_client()
+        .await
+        .list_tables()
+        .send()
+        .await
+        .unwrap();
 }

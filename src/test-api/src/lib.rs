@@ -33,7 +33,7 @@ pub use tokio;
 #[async_trait]
 pub trait IntegrationTestService: Sized {
     /// The name of the AWS service as expected by LocalStack (e.g., `"s3"`, `"dynamodb"`)
-    const SERVICE_NAME: &'static str;
+    const SERVICE_NAMES: &'static [&'static str];
     /// Prepares the service for the test (e.g., create buckets, tables, etc.)
     async fn set_up();
     /// Cleans up after the test (defaults to a no-op)
