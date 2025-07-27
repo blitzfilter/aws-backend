@@ -211,3 +211,46 @@ impl From<PriceRecord> for Price {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::currency::domain::Currency;
+    use crate::price::domain::{FxRate, MonetaryAmount, MonetaryAmountOverflowError, Price};
+
+    struct DummyFxRate;
+    impl FxRate for DummyFxRate {
+        fn exchange(
+            &self,
+            _: Currency,
+            _: Currency,
+            from_amount: MonetaryAmount,
+        ) -> Result<MonetaryAmount, MonetaryAmountOverflowError> {
+            Ok(MonetaryAmount(from_amount.0 * 2))
+        }
+    }
+
+    #[test]
+    fn should_into_exchanged() {
+        let price = Price {
+            monetary_amount: MonetaryAmount(500),
+            currency: Currency::Eur,
+        };
+
+        let exchanged = price.into_exchanged(&DummyFxRate, Currency::Gbp);
+
+        assert_eq!(1000, exchanged.unwrap().monetary_amount.0);
+    }
+
+    #[test]
+    fn should_exchange() {
+        let mut price = Price {
+            monetary_amount: MonetaryAmount(500),
+            currency: Currency::Eur,
+        };
+
+        let res = price.exchanged(&DummyFxRate, Currency::Gbp);
+
+        assert!(res.is_ok());
+        assert_eq!(1000, price.monetary_amount.0);
+    }
+}
