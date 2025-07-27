@@ -8,8 +8,8 @@ use common::shops_item_id::ShopsItemId;
 use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
 use item_core::item::hash::ItemHash;
 use item_core::item_state::data::ItemStateData;
-use std::collections::HashMap;
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
