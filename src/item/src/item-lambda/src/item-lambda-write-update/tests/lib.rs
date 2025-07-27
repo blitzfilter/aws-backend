@@ -12,7 +12,7 @@ use test_api::*;
 #[case::fifty(50)]
 #[case::fivehundred(500)]
 #[case::onethousand(1000)]
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_skip_all_when_they_dont_exist(#[case] n: usize) {
     let mk_message = |x: usize| {
         let command_data = UpdateItemCommandData {

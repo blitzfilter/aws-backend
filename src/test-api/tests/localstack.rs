@@ -39,29 +39,37 @@ struct Combined();
 
 #[async_trait]
 impl IntegrationTestService for DynamoDB {
-    const SERVICE_NAMES: &'static [&'static str] = &["dynamodb"];
-    async fn set_up() {}
+    fn service_names(&self) -> &'static [&'static str] {
+        &["dynamodb"]
+    }
+    async fn set_up(&self) {}
 }
 
 #[async_trait]
 impl IntegrationTestService for Sqs {
-    const SERVICE_NAMES: &'static [&'static str] = &["sqs"];
-    async fn set_up() {}
+    fn service_names(&self) -> &'static [&'static str] {
+        &["sqs"]
+    }
+    async fn set_up(&self) {}
 }
 
 #[async_trait]
 impl IntegrationTestService for Lambda {
-    const SERVICE_NAMES: &'static [&'static str] = &["lambda"];
-    async fn set_up() {}
+    fn service_names(&self) -> &'static [&'static str] {
+        &["lambda"]
+    }
+    async fn set_up(&self) {}
 }
 
 #[async_trait]
 impl IntegrationTestService for Combined {
-    const SERVICE_NAMES: &'static [&'static str] = &["lambda", "dynamodb", "combined"];
-    async fn set_up() {}
+    fn service_names(&self) -> &'static [&'static str] {
+        &["lambda", "dynamodb", "combined"]
+    }
+    async fn set_up(&self) {}
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_start_successfully_for_single_service() {
     get_dynamodb_client()
         .await
@@ -71,7 +79,7 @@ async fn should_start_successfully_for_single_service() {
         .unwrap();
 }
 
-#[localstack_test(services = [DynamoDB, Sqs, Lambda])]
+#[localstack_test(services = [DynamoDB(), Sqs(), Lambda()])]
 async fn should_start_successfully_for_multiple_services() {
     let dynamodb_client = get_dynamodb_client().await;
     let sqs_client = aws_sdk_sqs::Client::new(get_aws_config().await);
@@ -82,7 +90,7 @@ async fn should_start_successfully_for_multiple_services() {
     lambda_client.list_functions().send().await.unwrap();
 }
 
-#[localstack_test(services = [Combined])]
+#[localstack_test(services = [Combined()])]
 async fn should_start_successfully_for_combined_services() {
     get_dynamodb_client()
         .await
@@ -92,8 +100,53 @@ async fn should_start_successfully_for_combined_services() {
         .unwrap();
 }
 
-#[localstack_test(services = [Combined, DynamoDB])]
+#[localstack_test(services = [Combined(), DynamoDB()])]
 async fn should_start_successfully_for_overlapping_services() {
+    get_dynamodb_client()
+        .await
+        .list_tables()
+        .send()
+        .await
+        .unwrap();
+}
+
+#[allow(dead_code)]
+struct WithFieldsUnnamed(u8, &'static str);
+
+#[async_trait]
+impl IntegrationTestService for WithFieldsUnnamed {
+    fn service_names(&self) -> &'static [&'static str] {
+        &["dynamodb"]
+    }
+    async fn set_up(&self) {}
+}
+
+#[localstack_test(services = [WithFieldsUnnamed(42, "boop")])]
+async fn should_start_successfully_for_supplying_struct_with_unnamed_fields() {
+    get_dynamodb_client()
+        .await
+        .list_tables()
+        .send()
+        .await
+        .unwrap();
+}
+
+#[allow(dead_code)]
+struct WithFieldsNamed {
+    pub boop: &'static str,
+    pub beep: i32,
+}
+
+#[async_trait]
+impl IntegrationTestService for WithFieldsNamed {
+    fn service_names(&self) -> &'static [&'static str] {
+        &["dynamodb"]
+    }
+    async fn set_up(&self) {}
+}
+
+#[localstack_test(services = [WithFieldsNamed { boop: "meh", beep: 42 }])]
+async fn should_start_successfully_for_supplying_struct_with_named_fields() {
     get_dynamodb_client()
         .await
         .list_tables()

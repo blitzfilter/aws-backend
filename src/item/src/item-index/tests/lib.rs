@@ -35,7 +35,7 @@ async fn refresh_index() {
         .unwrap();
 }
 
-#[localstack_test(services = [OpenSearch])]
+#[localstack_test(services = [OpenSearch()])]
 async fn should_create_item_document() {
     let item_id = ItemId::new();
     let expected = ItemDocument {
@@ -73,7 +73,7 @@ async fn should_create_item_document() {
     assert_eq!(expected, actual);
 }
 
-#[localstack_test(services = [OpenSearch])]
+#[localstack_test(services = [OpenSearch()])]
 async fn should_create_item_documents() {
     let item_id1 = ItemId::new();
     let expected1 = ItemDocument {
@@ -137,7 +137,7 @@ async fn should_create_item_documents() {
     assert_eq!(expected2, actual2);
 }
 
-#[localstack_test(services = [OpenSearch])]
+#[localstack_test(services = [OpenSearch()])]
 async fn should_update_item_document() {
     let item_id = ItemId::new();
     let initial = ItemDocument {

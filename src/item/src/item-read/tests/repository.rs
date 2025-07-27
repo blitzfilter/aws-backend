@@ -19,7 +19,7 @@ use test_api::*;
 use time::OffsetDateTime;
 use time::format_description::well_known;
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_get_item_record_when_table_is_empty() {
     let client = get_dynamodb_client().await;
     let actual = client
@@ -30,7 +30,7 @@ async fn should_return_nothing_for_get_item_record_when_table_is_empty() {
     assert!(actual.is_none());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_record_for_get_item_record_when_exists() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -91,7 +91,7 @@ async fn should_return_item_record_for_get_item_record_when_exists() {
     assert_eq!(expected, actual.unwrap());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -148,7 +148,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
     assert!(actual.is_none());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -234,7 +234,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
     assert!(actual.is_none());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_query_item_diff_records_when_table_is_empty() {
     let client = get_dynamodb_client().await;
     let actual = client
@@ -245,7 +245,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_table_is_empty()
     assert!(actual.is_empty());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_diff_record_for_query_item_diff_records_when_exists() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -303,7 +303,7 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
     assert_eq!(vec![expected], actual);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_diff_records_for_query_item_diff_records_when_exists() {
     let now1 = OffsetDateTime::now_utc();
     let now1_str = now1.format(&well_known::Rfc3339).unwrap();
@@ -407,7 +407,7 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
     assert!(actual.contains(&expected2));
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item_diff_records_when_exists_and_scan_forward()
  {
     let now1 = OffsetDateTime::now_utc();
@@ -510,7 +510,7 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
     assert_eq!(vec![expected1, expected2], actual);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_query_item_diff_records_when_only_others_exist() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -570,7 +570,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     assert!(actual.is_empty());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_query_item_diff_records_when_only_others_exist_mix() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -659,7 +659,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     assert!(actual.is_empty());
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_records_for_batch_get_item_records_when_all_exist() {
     let client = get_dynamodb_client().await;
     let shop_id = ShopId::new();
@@ -739,7 +739,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_all_exist() 
     assert_eq!(actuals.items, expecteds);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_records_for_batch_get_item_records_when_some_do_not_exist() {
     let client = get_dynamodb_client().await;
     let shop_id = ShopId::new();
@@ -819,7 +819,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_some_do_not_
     assert_eq!(actuals.items, expecteds);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_records_for_batch_get_item_records_when_more_than_100_exist() {
     let client = get_dynamodb_client().await;
     let shop_id = ShopId::new();
@@ -901,7 +901,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_more_than_10
     assert_eq!(actuals.items, expecteds);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_keys_for_batch_exist_item_records_when_all_exist() {
     let client = get_dynamodb_client().await;
     let shop_id = ShopId::new();
@@ -979,7 +979,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_all_exist() {
     assert_eq!(actuals.items, expecteds);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_keys_for_batch_exist_item_records_when_some_do_not_exist() {
     let client = get_dynamodb_client().await;
     let shop_id = ShopId::new();
@@ -1057,7 +1057,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_some_do_not_e
     assert_eq!(actuals.items, expecteds);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_keys_for_batch_exist_item_records_when_more_than_100_exist() {
     let client = get_dynamodb_client().await;
     let shop_id = ShopId::new();

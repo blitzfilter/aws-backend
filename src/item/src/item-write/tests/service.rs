@@ -14,7 +14,7 @@ use item_write::service::InboundWriteItems;
 use test_api::*;
 use time::OffsetDateTime;
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_create_items_for_handle_create_items_with_one_command() {
     let shop_id = ShopId::new();
     let shops_item_id = ShopsItemId::new();
@@ -71,7 +71,7 @@ async fn should_create_items_for_handle_create_items_with_one_command() {
 #[case::onehundred(100)]
 #[case::fourhundredandtwenty(420)]
 #[case::fivehundred(500)]
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_create_items_for_handle_create_items_with_commands_count(#[case] count: i32) {
     let shop_id = ShopId::new();
     let mk_cmd = |x: i32| CreateItemCommand {
@@ -101,7 +101,7 @@ async fn should_create_items_for_handle_create_items_with_commands_count(#[case]
     assert_eq!(count, actual_count);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_partially_skip_existent_items_for_handle_create_items() {
     let shop_id = ShopId::new();
     let shops_item_id = ShopsItemId::new();
@@ -197,7 +197,7 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
 #[case::onehundred(100)]
 #[case::fourhundredandtwenty(420)]
 #[case::fivehundred(500)]
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_skip_non_existent_items_for_handle_update_items_with_commands_count(
     #[case] count: i32,
 ) {
@@ -235,7 +235,7 @@ async fn should_skip_non_existent_items_for_handle_update_items_with_commands_co
 #[case::onehundred(100)]
 #[case::fourhundredandtwenty(420)]
 #[case::fivehundred(500)]
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_partially_skip_non_existent_items_for_handle_update_items_with_commands_count(
     #[case] count: i32,
 ) {

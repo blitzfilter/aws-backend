@@ -16,7 +16,7 @@ use test_api::*;
 use time::OffsetDateTime;
 use time::format_description::well_known;
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_not_found_err_for_get_item_with_currency_when_table_is_empty() {
     let shop_id = ShopId::new();
     let shops_item_id = "non-existent".into();
@@ -35,7 +35,7 @@ async fn should_return_item_not_found_err_for_get_item_with_currency_when_table_
     }
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_record_for_get_item_with_currency_when_exists() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();

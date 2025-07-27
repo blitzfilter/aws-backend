@@ -1,9 +1,9 @@
 use test_api::*;
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_run_without_errors() {}
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_set_up_tables() {
     let list_tables_output = get_dynamodb_client()
         .await

@@ -40,9 +40,11 @@ pub struct DynamoDB();
 
 #[async_trait]
 impl IntegrationTestService for DynamoDB {
-    const SERVICE_NAMES: &'static [&'static str] = &["dynamodb"];
+    fn service_names(&self) -> &'static [&'static str] {
+        &["dynamodb"]
+    }
 
-    async fn set_up() {
+    async fn set_up(&self) {
         set_up_tables()
             .await
             .expect("shouldn't fail setting up tables");

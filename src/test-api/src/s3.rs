@@ -11,7 +11,9 @@ pub struct S3();
 
 #[async_trait]
 impl IntegrationTestService for S3 {
-    const SERVICE_NAMES: &'static [&'static str] = &["s3"];
+    fn service_names(&self) -> &'static [&'static str] {
+        &["s3"]
+    }
 
-    async fn set_up() {}
+    async fn set_up(&self) {}
 }

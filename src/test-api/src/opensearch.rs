@@ -68,9 +68,11 @@ pub struct OpenSearch();
 
 #[async_trait]
 impl IntegrationTestService for OpenSearch {
-    const SERVICE_NAMES: &'static [&'static str] = &["opensearch", "s3"];
+    fn service_names(&self) -> &'static [&'static str] {
+        &["opensearch", "s3"]
+    }
 
-    async fn set_up() {
+    async fn set_up(&self) {
         set_up_domain()
             .await
             .expect("shouldn't fail creating OpenSearch-Domain");

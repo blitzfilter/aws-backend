@@ -12,7 +12,7 @@ use test_api::*;
 #[case::fifty(50)]
 #[case::fivehundred(500)]
 #[case::onethousand(1000)]
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_create_new_items_when_all_valid(#[case] n: usize) {
     let mk_message = |x: usize| {
         let command_data = CreateItemCommandData {
@@ -61,7 +61,7 @@ async fn should_create_new_items_when_all_valid(#[case] n: usize) {
 #[case::fifty(50)]
 #[case::fivehundred(500)]
 #[case::onethousand(1000)]
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_skip_records_with_empty_body(#[case] n: usize) {
     let mk_message = |x: usize| {
         let command_data = CreateItemCommandData {

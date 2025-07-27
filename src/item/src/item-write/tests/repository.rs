@@ -19,7 +19,7 @@ use test_api::*;
 use time::OffsetDateTime;
 use time::format_description::well_known;
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_put_item_records_for_single_record() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -74,7 +74,7 @@ async fn should_put_item_records_for_single_record() {
     assert_eq!(expected, actual);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_put_item_records_for_multiple_records() {
     let now1 = OffsetDateTime::now_utc();
     let now1_str = now1.format(&well_known::Rfc3339).unwrap();
@@ -172,7 +172,7 @@ async fn should_put_item_records_for_multiple_records() {
     assert_eq!(expected2, actual2);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_put_item_event_records_for_single_record() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();
@@ -227,7 +227,7 @@ async fn should_put_item_event_records_for_single_record() {
     assert_eq!(vec![expected], actual);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_put_item_event_records_for_multiple_records() {
     let shop_id = ShopId::new();
     let now1 = OffsetDateTime::now_utc();
@@ -314,7 +314,7 @@ async fn should_put_item_event_records_for_multiple_records() {
     assert_eq!(vec![expected1, expected2], actual);
 }
 
-#[localstack_test(services = [DynamoDB])]
+#[localstack_test(services = [DynamoDB()])]
 async fn should_update_item_record() {
     let now = OffsetDateTime::now_utc();
     let now_str = now.format(&well_known::Rfc3339).unwrap();

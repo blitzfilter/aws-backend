@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
+use syn::spanned::Spanned;
 use syn::{Expr, ExprArray, ItemFn, parse_macro_input};
 
 /// Attribute macro for running async integration tests with LocalStack services.
@@ -53,18 +54,12 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(item as ItemFn);
     let attr_expr = attr.to_string();
 
-    // Parse the `services = [ServiceA, ServiceB]` syntax manually
-    let services: Vec<syn::Ident> = if let Some(eq_pos) = attr_expr.find('=') {
+    // Parse `services = [ServiceA(...), ServiceB, ...]`
+    let service_exprs: Vec<Expr> = if let Some(eq_pos) = attr_expr.find('=') {
         let expr_str = attr_expr[eq_pos + 1..].trim();
         let expr: Expr = syn::parse_str(expr_str).expect("Expected a Rust expression");
         if let Expr::Array(ExprArray { elems, .. }) = expr {
-            elems
-                .into_iter()
-                .filter_map(|elem| match elem {
-                    Expr::Path(path) => path.path.get_ident().cloned(),
-                    _ => None,
-                })
-                .collect()
+            elems.into_iter().collect()
         } else {
             panic!("Expected array expression for `services = [...]`");
         }
@@ -72,25 +67,36 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         panic!("Expected `services = [...]`");
     };
 
-    let service_name_consts = services.iter().map(|ident| {
-        quote! { #ident::SERVICE_NAMES }
+    // Generate bindings like: `let mut __svc_0 = Service(...)`
+    let service_bindings = service_exprs.iter().enumerate().map(|(i, expr)| {
+        let ident = syn::Ident::new(&format!("__svc_{i}"), expr.span());
+        quote! {
+            let mut #ident = #expr;
+        }
     });
-    let mut setup_code = quote! {};
-    let mut teardown_code = quote! {};
 
-    for (i, ident) in services.iter().enumerate() {
-        syn::Ident::new(&format!("__svc_{i}"), ident.span());
+    // Generate code to collect service names from each instance
+    let service_names = (0..service_exprs.len()).map(|i| {
+        let ident = syn::Ident::new(&format!("__svc_{i}"), proc_macro2::Span::call_site());
+        quote! {
+            #ident.service_names()
+        }
+    });
 
-        setup_code = quote! {
-            #setup_code
-            #ident::set_up().await;
-        };
+    // Generate setup and teardown calls
+    let setup_calls = (0..service_exprs.len()).map(|i| {
+        let ident = syn::Ident::new(&format!("__svc_{i}"), proc_macro2::Span::call_site());
+        quote! {
+            #ident.set_up().await;
+        }
+    });
 
-        teardown_code = quote! {
-            #teardown_code
-            #ident::tear_down().await;
-        };
-    }
+    let teardown_calls = (0..service_exprs.len()).map(|i| {
+        let ident = syn::Ident::new(&format!("__svc_{i}"), proc_macro2::Span::call_site());
+        quote! {
+            #ident.tear_down().await;
+        }
+    });
 
     let fn_name = &input_fn.sig.ident;
     let fn_block = &input_fn.block;
@@ -99,17 +105,29 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[tokio::test]
         #[test_api::serial]
         async fn #fn_name() {
-            let __services: &[&str] = &[
-                #( #service_name_consts ),*
-            ].concat();
-            let __localstack = test_api::localstack::spin_up_localstack_with_services(__services).await;
+            use std::collections::HashSet;
 
-            #setup_code
+            #( #service_bindings )*
+
+            let __services: Vec<&str> = {
+                let mut set = HashSet::new();
+                let mut result = Vec::new();
+                for name in [ #( #service_names ),* ].concat() {
+                    if set.insert(name) {
+                        result.push(name);
+                    }
+                }
+                result
+            };
+
+            let __localstack = test_api::localstack::spin_up_localstack_with_services(&__services).await;
+
+            #( #setup_calls )*
 
             let __test_fn = async #fn_block;
             __test_fn.await;
 
-            #teardown_code
+            #( #teardown_calls )*
 
             drop(__localstack);
         }
