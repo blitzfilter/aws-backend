@@ -94,8 +94,8 @@ impl ItemHashContributor for Currency {
 
 impl ItemHashContributor for MonetaryAmount {
     fn contribute(&self) -> ItemHashContribution {
-        let raw: f32 = (*self).into();
-        ItemHashContribution(format!("{raw:.2}"))
+        let raw: u64 = (*self).into();
+        ItemHashContribution(raw.to_string())
     }
 }
 

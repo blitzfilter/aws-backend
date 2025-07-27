@@ -2,7 +2,7 @@ use crate::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
 use crate::item_state::domain::ItemState;
 use common::item_id::ItemKey;
 use common::language::domain::Language;
-use common::price::domain::{NegativeMonetaryAmountError, Price};
+use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use std::collections::HashMap;
@@ -20,10 +20,9 @@ pub struct CreateItemCommand {
     pub images: Vec<String>,
 }
 
-impl TryFrom<CreateItemCommandData> for CreateItemCommand {
-    type Error = NegativeMonetaryAmountError;
-    fn try_from(data: CreateItemCommandData) -> Result<Self, Self::Error> {
-        let cmd = CreateItemCommand {
+impl From<CreateItemCommandData> for CreateItemCommand {
+    fn from(data: CreateItemCommandData) -> Self {
+        CreateItemCommand {
             shop_id: data.shop_id,
             shops_item_id: data.shops_item_id,
             shop_name: data.shop_name,
@@ -37,12 +36,11 @@ impl TryFrom<CreateItemCommandData> for CreateItemCommand {
                 .into_iter()
                 .map(|(language, text)| (language.into(), text))
                 .collect(),
-            price: data.price.map(Price::try_from).transpose()?,
+            price: data.price.map(Price::from),
             state: data.state.into(),
             url: data.url,
             images: data.images,
-        };
-        Ok(cmd)
+        }
     }
 }
 
@@ -67,12 +65,11 @@ impl UpdateItemCommand {
     }
 }
 
-impl TryFrom<UpdateItemCommandData> for UpdateItemCommand {
-    type Error = NegativeMonetaryAmountError;
-    fn try_from(data: UpdateItemCommandData) -> Result<Self, Self::Error> {
-        Ok(UpdateItemCommand {
-            price: data.price.map(Price::try_from).transpose()?,
+impl From<UpdateItemCommandData> for UpdateItemCommand {
+    fn from(data: UpdateItemCommandData) -> Self {
+        UpdateItemCommand {
+            price: data.price.map(Price::from),
             state: data.state.map(ItemState::from),
-        })
+        }
     }
 }

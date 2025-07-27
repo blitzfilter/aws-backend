@@ -2,7 +2,7 @@ use crate::data::ScrapeItemChangeCommandData::{Create, Update};
 use common::language::data::LanguageData;
 use common::price::command_data::PriceCommandData;
 use common::price::data::PriceData;
-use common::price::domain::{NegativeMonetaryAmountError, Price};
+use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
@@ -65,20 +65,20 @@ impl From<ScrapeItem> for UpdateItemCommandData {
 }
 
 impl ScrapeItem {
-    pub fn try_into_changes(
+    pub fn into_changes(
         self,
         shop_universe: &HashMap<ShopsItemId, ItemHash>,
-    ) -> Result<Option<ScrapeItemChangeCommandData>, NegativeMonetaryAmountError> {
+    ) -> Option<ScrapeItemChangeCommandData> {
         match shop_universe.get(&self.shops_item_id) {
-            None => Ok(Some(Create(self.into()))),
+            None => Some(Create(self.into())),
             Some(previous_hash) => {
-                let new_price = self.price.map(Price::try_from).transpose()?;
+                let new_price = self.price.map(Price::from);
                 let new_state = self.state.into();
                 let new_hash = ItemHash::new(&new_price, &new_state);
                 if previous_hash == &new_hash {
-                    Ok(None)
+                    None
                 } else {
-                    Ok(Some(Update(self.into())))
+                    Some(Update(self.into()))
                 }
             }
         }
@@ -93,7 +93,7 @@ mod tests {
     use common::currency::domain::Currency;
     use common::price::command_data::PriceCommandData;
     use common::price::data::PriceData;
-    use common::price::domain::{NegativeMonetaryAmountError, Price};
+    use common::price::domain::Price;
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
@@ -115,7 +115,7 @@ mod tests {
             description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
-                amount: 42.0,
+                amount: 42,
             }),
             state: ItemStateData::Reserved,
             url: "".to_string(),
@@ -129,16 +129,15 @@ mod tests {
             description: Default::default(),
             price: Some(PriceCommandData {
                 currency: CurrencyCommandData::Eur,
-                amount: 42.0,
+                amount: 42,
             }),
             state: ItemStateCommandData::Reserved,
             url: "".to_string(),
             images: vec![],
         };
-        let actual = scrape_item.try_into_changes(&HashMap::new());
+        let actual = scrape_item.into_changes(&HashMap::new());
 
-        assert!(actual.is_ok());
-        match actual.unwrap().unwrap() {
+        match actual.unwrap() {
             ScrapeItemChangeCommandData::Create(actual) => {
                 assert_eq!(expected, actual);
             }
@@ -146,38 +145,6 @@ mod tests {
                 panic!("Expected ScrapeItemChangeCommandData::Create")
             }
         }
-    }
-
-    #[test]
-    fn should_fail_when_item_exists_in_universe_and_changed_but_monetary_amount_is_negative() {
-        let shops_item_id = ShopsItemId::new();
-        let scrape_item = ScrapeItem {
-            shop_id: Default::default(),
-            shops_item_id: shops_item_id.clone(),
-            shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
-            price: Some(PriceData {
-                currency: CurrencyData::Eur,
-                amount: -42.0,
-            }),
-            state: ItemStateData::Listed,
-            url: "".to_string(),
-            images: vec![],
-        };
-        let actual = scrape_item.try_into_changes(&HashMap::from([(
-            shops_item_id,
-            ItemHash::new(
-                &Some(Price {
-                    monetary_amount: 100f32.try_into().unwrap(),
-                    currency: Currency::Eur,
-                }),
-                &ItemState::Listed,
-            ),
-        )]));
-
-        assert!(actual.is_err());
-        assert_eq!(actual.unwrap_err(), NegativeMonetaryAmountError);
     }
 
     #[test]
@@ -192,7 +159,7 @@ mod tests {
             description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
-                amount: 120.0,
+                amount: 120,
             }),
             state: ItemStateData::Listed,
             url: "".to_string(),
@@ -203,23 +170,22 @@ mod tests {
             shops_item_id: shops_item_id.clone(),
             price: Some(PriceCommandData {
                 currency: CurrencyCommandData::Eur,
-                amount: 120.0,
+                amount: 120,
             }),
             state: Some(ItemStateCommandData::Listed),
         };
-        let actual = scrape_item.try_into_changes(&HashMap::from([(
+        let actual = scrape_item.into_changes(&HashMap::from([(
             shops_item_id,
             ItemHash::new(
                 &Some(Price {
-                    monetary_amount: 100f32.try_into().unwrap(),
+                    monetary_amount: 100u64.into(),
                     currency: Currency::Eur,
                 }),
                 &ItemState::Listed,
             ),
         )]));
 
-        assert!(actual.is_ok());
-        match actual.unwrap().unwrap() {
+        match actual.unwrap() {
             ScrapeItemChangeCommandData::Create(_) => {
                 panic!("Expected ScrapeItemChangeCommandData::Update")
             }
@@ -241,7 +207,7 @@ mod tests {
             description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
-                amount: 100.0,
+                amount: 100,
             }),
             state: ItemStateData::Sold,
             url: "".to_string(),
@@ -252,23 +218,22 @@ mod tests {
             shops_item_id: shops_item_id.clone(),
             price: Some(PriceCommandData {
                 currency: CurrencyCommandData::Eur,
-                amount: 100.0,
+                amount: 100,
             }),
             state: Some(ItemStateCommandData::Sold),
         };
-        let actual = scrape_item.try_into_changes(&HashMap::from([(
+        let actual = scrape_item.into_changes(&HashMap::from([(
             shops_item_id,
             ItemHash::new(
                 &Some(Price {
-                    monetary_amount: 100f32.try_into().unwrap(),
+                    monetary_amount: 100u64.into(),
                     currency: Currency::Eur,
                 }),
                 &ItemState::Reserved,
             ),
         )]));
 
-        assert!(actual.is_ok());
-        match actual.unwrap().unwrap() {
+        match actual.unwrap() {
             ScrapeItemChangeCommandData::Create(_) => {
                 panic!("Expected ScrapeItemChangeCommandData::Update")
             }
@@ -290,24 +255,23 @@ mod tests {
             description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
-                amount: 100.0,
+                amount: 100,
             }),
             state: ItemStateData::Reserved,
             url: "".to_string(),
             images: vec![],
         };
-        let actual = scrape_item.try_into_changes(&HashMap::from([(
+        let actual = scrape_item.into_changes(&HashMap::from([(
             shops_item_id,
             ItemHash::new(
                 &Some(Price {
-                    monetary_amount: 100f32.try_into().unwrap(),
+                    monetary_amount: 100u64.into(),
                     currency: Currency::Eur,
                 }),
                 &ItemState::Reserved,
             ),
         )]));
 
-        assert!(actual.is_ok());
-        assert!(actual.unwrap().is_none());
+        assert!(actual.is_none());
     }
 }

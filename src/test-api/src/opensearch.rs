@@ -172,9 +172,23 @@ async fn set_up_indices() -> Result<Response, Error> {
             "type": "text",
             "analyzer": "english",
           },
-          "price": {
-            "type": "scaled_float",
-            "scaling_factor": 100
+          "price_eur": {
+            "type": "unsigned_long",
+          },
+          "price_usd": {
+            "type": "unsigned_long",
+          },
+          "price_gbp": {
+            "type": "unsigned_long",
+          },
+          "price_aud": {
+            "type": "unsigned_long",
+          },
+          "price_cad": {
+            "type": "unsigned_long",
+          },
+          "price_nze": {
+            "type": "unsigned_long",
           },
           "state": {
             "type": "keyword"

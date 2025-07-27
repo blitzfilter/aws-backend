@@ -1,87 +1,104 @@
 use crate::currency::domain::Currency;
-use crate::currency::domain::Currency::*;
 use crate::price::command_data::PriceCommandData;
 use crate::price::data::PriceData;
 use crate::price::record::PriceRecord;
 use std::ops::{Add, Sub};
 
+type Rate = u64;
+const FX_RATE_SCALE: Rate = 1_000_000;
+
 pub trait FxRate {
-    fn exchange(&self, from_currency: Currency, to_currency: Currency, from_amount: f32) -> f32;
-    fn exchange_for_eur(&self, from_currency: Currency, from_amount: f32) -> f32 {
-        self.exchange(from_currency, Eur, from_amount)
-    }
+    fn exchange(
+        &self,
+        from_currency: Currency,
+        to_currency: Currency,
+        from_amount: MonetaryAmount,
+    ) -> Result<MonetaryAmount, MonetaryAmountOverflowError>;
 }
 
 /// as of 2025-07-15
 #[derive(Default)]
 pub struct FixedFxRate();
 
+impl FixedFxRate {
+    fn get_rate(&self, from: Currency, to: Currency) -> Rate {
+        match (from, to) {
+            (Currency::Eur, Currency::Eur) => 1_000_000,
+            (Currency::Eur, Currency::Usd) => 1_167_000,
+            (Currency::Eur, Currency::Gbp) => 867_800,
+            (Currency::Eur, Currency::Aud) => 1_778_000,
+            (Currency::Eur, Currency::Cad) => 1_597_000,
+            (Currency::Eur, Currency::Nzd) => 1_947_000,
+
+            (Currency::Usd, Currency::Eur) => 856_900,
+            (Currency::Usd, Currency::Gbp) => 743_700,
+            (Currency::Usd, Currency::Aud) => 1_523_000,
+            (Currency::Usd, Currency::Cad) => 1_368_000,
+            (Currency::Usd, Currency::Nzd) => 1_668_000,
+            (Currency::Usd, Currency::Usd) => 1_000_000,
+
+            (Currency::Gbp, Currency::Eur) => 1_152_000,
+            (Currency::Gbp, Currency::Usd) => 1_344_000,
+            (Currency::Gbp, Currency::Aud) => 2_049_000,
+            (Currency::Gbp, Currency::Cad) => 1_840_000,
+            (Currency::Gbp, Currency::Nzd) => 2_243_000,
+            (Currency::Gbp, Currency::Gbp) => 1_000_000,
+
+            (Currency::Aud, Currency::Eur) => 562_300,
+            (Currency::Aud, Currency::Usd) => 656_100,
+            (Currency::Aud, Currency::Gbp) => 488_000,
+            (Currency::Aud, Currency::Cad) => 898_200,
+            (Currency::Aud, Currency::Nzd) => 1_095_000,
+            (Currency::Aud, Currency::Aud) => 1_000_000,
+
+            (Currency::Cad, Currency::Eur) => 626_000,
+            (Currency::Cad, Currency::Usd) => 730_500,
+            (Currency::Cad, Currency::Gbp) => 543_300,
+            (Currency::Cad, Currency::Aud) => 1_113_000,
+            (Currency::Cad, Currency::Nzd) => 1_219_000,
+            (Currency::Cad, Currency::Cad) => 1_000_000,
+
+            (Currency::Nzd, Currency::Eur) => 513_500,
+            (Currency::Nzd, Currency::Usd) => 599_300,
+            (Currency::Nzd, Currency::Gbp) => 445_700,
+            (Currency::Nzd, Currency::Aud) => 913_200,
+            (Currency::Nzd, Currency::Cad) => 820_300,
+            (Currency::Nzd, Currency::Nzd) => 1_000_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, thiserror::Error)]
+#[error("Monetary amount overflowed during an internal operation.")]
+pub struct MonetaryAmountOverflowError;
+
 impl FxRate for FixedFxRate {
-    fn exchange(&self, from_currency: Currency, to_currency: Currency, from_amount: f32) -> f32 {
-        let rate = match (from_currency, to_currency) {
-            (Eur, Eur) => 1.0,
-            (Eur, Usd) => 1.167,
-            (Eur, Gbp) => 0.8678,
-            (Eur, Aud) => 1.778,
-            (Eur, Cad) => 1.597,
-            (Eur, Nzd) => 1.947,
+    fn exchange(
+        &self,
+        from_currency: Currency,
+        to_currency: Currency,
+        from_amount: MonetaryAmount,
+    ) -> Result<MonetaryAmount, MonetaryAmountOverflowError> {
+        let rate = self.get_rate(from_currency, to_currency);
 
-            (Usd, Eur) => 0.8569,
-            (Usd, Gbp) => 0.7437,
-            (Usd, Aud) => 1.523,
-            (Usd, Cad) => 1.368,
-            (Usd, Nzd) => 1.668,
-            (Usd, Usd) => 1.0,
+        // Half-Up Rounding
+        let numerator = from_amount
+            .0
+            .checked_mul(rate)
+            .ok_or(MonetaryAmountOverflowError)?;
+        let half = FX_RATE_SCALE / 2;
+        let converted = (numerator + half) / FX_RATE_SCALE;
 
-            (Gbp, Eur) => 1.152,
-            (Gbp, Usd) => 1.344,
-            (Gbp, Aud) => 2.049,
-            (Gbp, Cad) => 1.840,
-            (Gbp, Nzd) => 2.243,
-            (Gbp, Gbp) => 1.0,
-
-            (Aud, Eur) => 0.5623,
-            (Aud, Usd) => 0.6561,
-            (Aud, Gbp) => 0.4880,
-            (Aud, Cad) => 0.8982,
-            (Aud, Nzd) => 1.095,
-            (Aud, Aud) => 1.0,
-
-            (Cad, Eur) => 0.6260,
-            (Cad, Usd) => 0.7305,
-            (Cad, Gbp) => 0.5433,
-            (Cad, Aud) => 1.113,
-            (Cad, Nzd) => 1.219,
-            (Cad, Cad) => 1.0,
-
-            (Nzd, Eur) => 0.5135,
-            (Nzd, Usd) => 0.5993,
-            (Nzd, Gbp) => 0.4457,
-            (Nzd, Aud) => 0.9132,
-            (Nzd, Cad) => 0.8203,
-            (Nzd, Nzd) => 1.0,
-        };
-
-        from_amount * rate
+        Ok(MonetaryAmount(converted))
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct MonetaryAmount(f32);
+pub struct MonetaryAmount(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, thiserror::Error)]
-#[error("Monetary amount must be greater than 0.")]
+#[error("Monetary amount cannot be negative.")]
 pub struct NegativeMonetaryAmountError;
-impl TryFrom<f32> for MonetaryAmount {
-    type Error = NegativeMonetaryAmountError;
-    fn try_from(value: f32) -> Result<Self, Self::Error> {
-        if value < 0.0 {
-            Err(NegativeMonetaryAmountError)
-        } else {
-            Ok(MonetaryAmount(value))
-        }
-    }
-}
 
 impl Add for MonetaryAmount {
     type Output = MonetaryAmount;
@@ -95,16 +112,39 @@ impl Sub for MonetaryAmount {
     type Output = Result<MonetaryAmount, NegativeMonetaryAmountError>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        let value = self.0 - rhs.0;
-        if value < 0.0 {
+        if self.0 < rhs.0 {
             Err(NegativeMonetaryAmountError)
         } else {
-            Ok(MonetaryAmount(value))
+            Ok(MonetaryAmount(self.0 - rhs.0))
         }
     }
 }
 
-impl From<MonetaryAmount> for f32 {
+impl From<u8> for MonetaryAmount {
+    fn from(amount: u8) -> Self {
+        MonetaryAmount(amount as u64)
+    }
+}
+
+impl From<u16> for MonetaryAmount {
+    fn from(amount: u16) -> Self {
+        MonetaryAmount(amount as u64)
+    }
+}
+
+impl From<u32> for MonetaryAmount {
+    fn from(amount: u32) -> Self {
+        MonetaryAmount(amount as u64)
+    }
+}
+
+impl From<u64> for MonetaryAmount {
+    fn from(amount: u64) -> Self {
+        MonetaryAmount(amount as u64)
+    }
+}
+
+impl From<MonetaryAmount> for u64 {
     fn from(price: MonetaryAmount) -> Self {
         price.0
     }
@@ -117,56 +157,56 @@ pub struct Price {
 }
 
 impl Price {
-    pub fn into_exchanged(self, fx_rate: &impl FxRate, currency: Currency) -> Self {
-        Price {
-            monetary_amount: MonetaryAmount(fx_rate.exchange(
+    pub fn into_exchanged(
+        self,
+        fx_rate: &impl FxRate,
+        currency: Currency,
+    ) -> Result<Price, MonetaryAmountOverflowError> {
+        let exchanged = Price {
+            monetary_amount: fx_rate.exchange(
                 self.currency,
                 self.currency,
-                self.monetary_amount.into(),
-            )),
+                self.monetary_amount,
+            )?,
             currency,
+        };
+        Ok(exchanged)
+    }
+
+    pub fn exchanged(
+        &mut self,
+        fx_rate: &impl FxRate,
+        currency: Currency,
+    ) -> Result<(), MonetaryAmountOverflowError> {
+        self.monetary_amount =
+            fx_rate.exchange(self.currency, self.currency, self.monetary_amount)?;
+        self.currency = currency;
+        Ok(())
+    }
+}
+
+impl From<PriceData> for Price {
+    fn from(data: PriceData) -> Self {
+        Price {
+            monetary_amount: data.amount.into(),
+            currency: data.currency.into(),
         }
     }
-
-    pub fn exchanged(&mut self, fx_rate: &impl FxRate, currency: Currency) {
-        self.monetary_amount = MonetaryAmount(fx_rate.exchange(
-            self.currency,
-            self.currency,
-            self.monetary_amount.into(),
-        ));
-        self.currency = currency;
-    }
 }
 
-impl TryFrom<PriceData> for Price {
-    type Error = NegativeMonetaryAmountError;
-
-    fn try_from(data: PriceData) -> Result<Self, Self::Error> {
-        Ok(Price {
-            monetary_amount: data.amount.try_into()?,
-            currency: data.currency.into(),
-        })
-    }
-}
-
-impl TryFrom<PriceCommandData> for Price {
-    type Error = NegativeMonetaryAmountError;
-
-    fn try_from(command_data: PriceCommandData) -> Result<Self, Self::Error> {
-        Ok(Price {
-            monetary_amount: command_data.amount.try_into()?,
+impl From<PriceCommandData> for Price {
+    fn from(command_data: PriceCommandData) -> Self {
+        Price {
+            monetary_amount: command_data.amount.into(),
             currency: command_data.currency.into(),
-        })
+        }
     }
 }
 
 impl From<PriceRecord> for Price {
     fn from(record: PriceRecord) -> Self {
         Price {
-            monetary_amount: record.amount.try_into().expect(
-                "shouldn't fail converting persisted 'monetary_amount' from f32 to \
-                        MonetaryAmount because by convention all persisted amounts are non-negative"
-            ),
+            monetary_amount: record.amount.into(),
             currency: record.currency.into(),
         }
     }

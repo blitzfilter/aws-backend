@@ -8,7 +8,7 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
-use item_core::item::update_record::ItemUpdateRecord;
+use item_core::item::update_record::ItemRecordUpdate;
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
 use item_core::item_state::domain::ItemState;
@@ -42,9 +42,15 @@ async fn should_put_item_records_for_single_record() {
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
         price: Some(PriceRecord {
-            amount: 110.5,
+            amount: 110,
             currency: CurrencyRecord::Eur,
         }),
+        price_eur: None,
+        price_usd: None,
+        price_gbp: None,
+        price_aud: None,
+        price_cad: None,
+        price_nzd: None,
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -91,9 +97,15 @@ async fn should_put_item_records_for_multiple_records() {
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
         price: Some(PriceRecord {
-            amount: 110.5,
+            amount: 110,
             currency: CurrencyRecord::Eur,
         }),
+        price_eur: None,
+        price_usd: None,
+        price_gbp: None,
+        price_aud: None,
+        price_cad: None,
+        price_nzd: None,
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -121,9 +133,15 @@ async fn should_put_item_records_for_multiple_records() {
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
         price: Some(PriceRecord {
-            amount: 110.5,
+            amount: 110,
             currency: CurrencyRecord::Eur,
         }),
+        price_eur: None,
+        price_usd: None,
+        price_gbp: None,
+        price_aud: None,
+        price_cad: None,
+        price_nzd: None,
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -161,7 +179,7 @@ async fn should_put_item_event_records_for_single_record() {
     let shop_id = ShopId::new();
     let shops_item_id: ShopsItemId = "123465".into();
     let price = Some(PriceRecord {
-        amount: 110.5,
+        amount: 110,
         currency: CurrencyRecord::Eur,
     });
     let expected = ItemEventRecord {
@@ -216,7 +234,7 @@ async fn should_put_item_event_records_for_multiple_records() {
     let now_str1 = now1.format(&well_known::Rfc3339).unwrap();
     let shops_item_id1: ShopsItemId = "123465".into();
     let price = Some(PriceRecord {
-        amount: 110.5,
+        amount: 110,
         currency: CurrencyRecord::Eur,
     });
     let expected1 = ItemEventRecord {
@@ -303,7 +321,7 @@ async fn should_update_item_record() {
     let shop_id = ShopId::new();
     let shops_item_id: ShopsItemId = "123465".into();
     let price = PriceRecord {
-        amount: 110.5,
+        amount: 110,
         currency: CurrencyRecord::Eur,
     };
     let initial = ItemRecord {
@@ -323,6 +341,12 @@ async fn should_update_item_record() {
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
         price: Some(price),
+        price_eur: None,
+        price_usd: None,
+        price_gbp: None,
+        price_aud: None,
+        price_cad: None,
+        price_nzd: None,
         state: ItemStateRecord::Available,
         url: "https:://foo.bar/123456".to_string(),
         images: vec!["https:://foo.bar/123456/image".to_string()],
@@ -332,7 +356,7 @@ async fn should_update_item_record() {
     };
     let now2 = OffsetDateTime::now_utc();
     let event_id2 = EventId::new();
-    let update = ItemUpdateRecord {
+    let update = ItemRecordUpdate {
         event_id: event_id2,
         price: None,
         state: Some(ItemStateRecord::Sold),

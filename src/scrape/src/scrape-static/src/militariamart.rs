@@ -10,7 +10,7 @@ use scrape_core::data::ScrapeItem;
 use scrape_core::spec::{ScrapeError, Scraper, ScraperConfig};
 use scraper::{ElementRef, Html, Selector};
 use std::collections::HashMap;
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Debug)]
 pub struct MilitariaMart {
@@ -144,7 +144,7 @@ fn extract_price(
                 let mut words = price_text.split_whitespace();
                 let amount = words
                     .next()
-                    .and_then(|price_str| price_str.parse::<f32>().ok());
+                    .and_then(|price_str| price_str.parse::<f64>().ok());
                 let currency = words.next().and_then(|currency_str| match currency_str {
                     "EUR" => Some(CurrencyData::Eur),
                     "GBP" => Some(CurrencyData::Gbp),
@@ -163,7 +163,19 @@ fn extract_price(
                     }
                 });
                 if let (Some(amount), Some(currency)) = (amount, currency) {
-                    Some(PriceData { currency, amount })
+                    match PriceData::new_f64(currency, amount) {
+                        Ok(price_data) => Some(price_data),
+                        Err(err) => {
+                            info!(
+                                error = %err,
+                                shopId = shop_id.to_string(),
+                                shopsItemId = shops_item_id.to_string(),
+                                payload = amount,
+                                "Found negative monetary amount."
+                            );
+                            None
+                        }
+                    }
                 } else {
                     None
                 }

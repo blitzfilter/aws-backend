@@ -20,6 +20,7 @@ pub const BAD_HEADER_VALUE: ApiErrorCode = ApiErrorCode("BAD_HEADER_VALUE");
 pub const BAD_PARAMETER: ApiErrorCode = ApiErrorCode("BAD_PARAMETER_VALUE");
 
 pub const ITEM_NOT_FOUND: ApiErrorCode = ApiErrorCode("ITEM_NOT_FOUND");
+pub const MONETARY_AMOUNT_OVERFLOW: ApiErrorCode = ApiErrorCode("MONETARY_AMOUNT_OVERFLOW");
 
 // region impl ApiErrorCode
 

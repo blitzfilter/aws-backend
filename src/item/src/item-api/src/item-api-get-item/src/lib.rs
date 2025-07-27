@@ -681,7 +681,7 @@ mod tests {
                     description,
                     price: Some(Price {
                         currency: Currency::Eur,
-                        monetary_amount: MonetaryAmount::try_from(100f32).unwrap(),
+                        monetary_amount: MonetaryAmount::from(100u64),
                     }),
                     state: ItemState::Listed,
                     url: "".to_string(),

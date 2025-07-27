@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PriceCommandData {
     pub currency: CurrencyCommandData,
-    pub amount: f32,
+    pub amount: u64,
 }
 
 impl From<PriceData> for PriceCommandData {

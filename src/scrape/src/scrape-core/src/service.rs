@@ -6,7 +6,6 @@ use common::batch::Batch;
 use common::shop_id::ShopId;
 use item_read::repository::ReadItemRecords;
 use std::collections::HashMap;
-use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct PublishScrapeItemsContext {
@@ -19,7 +18,7 @@ pub struct PublishScrapeItemsContext {
 pub trait PublishScrapeItems {
     async fn extract_changed_items(
         &self,
-        scrape_items: impl Iterator<Item = ScrapeItem>,
+        scrape_items: impl Iterator<Item = ScrapeItem> + Send,
         shop_id: &ShopId,
     ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>>;
 
@@ -30,7 +29,7 @@ pub trait PublishScrapeItems {
 impl PublishScrapeItems for PublishScrapeItemsContext {
     async fn extract_changed_items(
         &self,
-        scrape_items: impl Iterator<Item = ScrapeItem>,
+        scrape_items: impl Iterator<Item = ScrapeItem> + Send,
         shop_id: &ShopId,
     ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>> {
         let shop_universe = self
@@ -41,16 +40,8 @@ impl PublishScrapeItems for PublishScrapeItemsContext {
             .map(|item_summary_hash| (item_summary_hash.shops_item_id, item_summary_hash.hash))
             .collect::<HashMap<_, _>>();
 
-        let it = scrape_items
-            .map(|scrape_item| scrape_item.try_into_changes(&shop_universe))
-            .filter_map(|change_res| match change_res {
-                Ok(Some(change)) => Some(change),
-                Ok(None) => None,
-                Err(err) => {
-                    warn!(error = %err, "Cannot detect change for scraped item with negative monetary amount.");
-                    None
-                }
-            });
+        let it =
+            scrape_items.filter_map(move |scrape_item| scrape_item.into_changes(&shop_universe));
         Ok(it)
     }
 

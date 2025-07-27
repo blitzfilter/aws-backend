@@ -9,7 +9,7 @@ use common::has::Has;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::record::ItemRecord;
-use item_core::item::update_record::ItemUpdateRecord;
+use item_core::item::update_record::ItemRecordUpdate;
 use item_core::item_event::record::ItemEventRecord;
 use std::collections::HashMap;
 
@@ -30,7 +30,7 @@ pub trait WriteItemRecords {
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
-        event_records: ItemUpdateRecord,
+        event_records: ItemRecordUpdate,
     ) -> Result<UpdateItemOutput, SdkError<UpdateItemError, HttpResponse>>;
 }
 
@@ -71,7 +71,7 @@ where
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
-        item_update_record: ItemUpdateRecord,
+        item_update_record: ItemRecordUpdate,
     ) -> Result<UpdateItemOutput, SdkError<UpdateItemError, HttpResponse>> {
         let pk = format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}");
         let sk = "item#materialized".to_string();

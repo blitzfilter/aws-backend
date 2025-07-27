@@ -1,9 +1,7 @@
-use crate::item::domain::Item;
 use crate::item::hash::ItemHash;
 use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
 use common::item_id::{ItemId, ItemKey};
-use common::language::domain::Language;
 use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
@@ -52,6 +50,24 @@ pub struct ItemRecord {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price: Option<PriceRecord>,
 
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_eur: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_usd: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_gbp: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_aud: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_cad: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_nzd: Option<u64>,
+
     pub state: ItemStateRecord,
 
     pub url: String,
@@ -73,55 +89,6 @@ impl ItemRecord {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),
-        }
-    }
-}
-
-impl From<Item> for ItemRecord {
-    fn from(item: Item) -> Self {
-        let mut domain = item;
-        let title_de = domain.title.remove(&Language::De);
-        let title_en = domain.title.remove(&Language::En);
-        let title = domain
-            .title
-            .into_iter()
-            .next()
-            .map(|(lang, s)| TextRecord::new(s, lang.into()));
-
-        let description_de = domain.description.remove(&Language::De);
-        let description_en = domain.description.remove(&Language::En);
-        let description = domain
-            .description
-            .into_iter()
-            .next()
-            .map(|(lang, s)| TextRecord::new(s, lang.into()));
-
-        ItemRecord {
-            pk: format!(
-                "item#shop_id#{}#shops_item_id#{}",
-                &domain.shop_id, &domain.shops_item_id
-            ),
-            sk: "item#materialized".to_string(),
-            gsi_1_pk: format!("shop_id#{}", &domain.shop_id),
-            gsi_1_sk: format!("updated#{}", &domain.updated),
-            item_id: domain.item_id,
-            event_id: domain.event_id,
-            shop_id: domain.shop_id,
-            shops_item_id: domain.shops_item_id,
-            shop_name: domain.shop_name,
-            title,
-            title_de,
-            title_en,
-            description,
-            description_de,
-            description_en,
-            price: domain.price.map(Into::into),
-            state: domain.state.into(),
-            url: domain.url,
-            images: domain.images,
-            hash: domain.hash,
-            created: domain.created,
-            updated: domain.updated,
         }
     }
 }

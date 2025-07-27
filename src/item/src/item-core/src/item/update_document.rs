@@ -1,8 +1,5 @@
-use crate::item_event::record::ItemEventRecord;
 use crate::item_state::document::ItemStateDocument;
-use common::currency::domain::Currency;
 use common::event_id::EventId;
-use common::price::domain::FxRate;
 use serde::Serialize;
 use time::OffsetDateTime;
 
@@ -11,8 +8,23 @@ use time::OffsetDateTime;
 pub struct ItemUpdateDocument {
     pub event_id: EventId,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub price: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_eur: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_usd: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_gbp: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_aud: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_cad: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_nzd: Option<u64>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<ItemStateDocument>,
@@ -22,21 +34,4 @@ pub struct ItemUpdateDocument {
 
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
-}
-
-impl ItemUpdateDocument {
-    pub fn from_record(record: ItemEventRecord, fx_rate: &impl FxRate) -> Self {
-        let price = record
-            .price
-            .map(|price| fx_rate.exchange(price.currency.into(), Currency::Eur, price.amount));
-        let state = record.state.map(ItemStateDocument::from);
-        let is_available = state.map(|state| matches!(state, ItemStateDocument::Available));
-        ItemUpdateDocument {
-            event_id: record.event_id,
-            price,
-            state,
-            is_available,
-            updated: record.timestamp,
-        }
-    }
 }

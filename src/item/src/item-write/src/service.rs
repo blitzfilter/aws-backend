@@ -341,7 +341,7 @@ pub mod tests {
                 ItemKey::new("456".into(), "def".into()),
                 UpdateItemCommand {
                     price: Some(Price {
-                        monetary_amount: 42f32.try_into().unwrap(),
+                        monetary_amount: 42u64.into(),
                         currency: Currency::Eur,
                     }),
                     state: Some(ItemState::Available),
@@ -365,6 +365,12 @@ pub mod tests {
             description_de: None,
             description_en: None,
             price: None,
+            price_eur: None,
+            price_usd: None,
+            price_gbp: None,
+            price_aud: None,
+            price_cad: None,
+            price_nzd: None,
             state: ItemStateRecord::Listed,
             url: "".to_string(),
             images: vec![],
@@ -402,7 +408,7 @@ pub mod tests {
                 ItemKey::new("456".into(), "def".into()),
                 UpdateItemCommand {
                     price: Some(Price {
-                        monetary_amount: 42f32.try_into().unwrap(),
+                        monetary_amount: 42u64.into(),
                         currency: Currency::Eur,
                     }),
                     state: Some(ItemState::Available),
@@ -432,7 +438,7 @@ pub mod tests {
                 ItemKey::new("456".into(), "def".into()),
                 UpdateItemCommand {
                     price: Some(Price {
-                        monetary_amount: 42f32.try_into().unwrap(),
+                        monetary_amount: 42u64.into(),
                         currency: Currency::Eur,
                     }),
                     state: Some(ItemState::Available),
@@ -456,6 +462,12 @@ pub mod tests {
             description_de: None,
             description_en: None,
             price: None,
+            price_eur: None,
+            price_usd: None,
+            price_gbp: None,
+            price_aud: None,
+            price_cad: None,
+            price_nzd: None,
             state: ItemStateRecord::Listed,
             url: "".to_string(),
             images: vec![],

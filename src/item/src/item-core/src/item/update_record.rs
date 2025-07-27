@@ -7,7 +7,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ItemUpdateRecord {
+pub struct ItemRecordUpdate {
     pub event_id: EventId,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -22,9 +22,9 @@ pub struct ItemUpdateRecord {
     pub updated: OffsetDateTime,
 }
 
-impl From<ItemEventRecord> for ItemUpdateRecord {
+impl From<ItemEventRecord> for ItemRecordUpdate {
     fn from(event: ItemEventRecord) -> Self {
-        ItemUpdateRecord {
+        ItemRecordUpdate {
             event_id: event.event_id,
             price: event.price,
             state: event.state,
