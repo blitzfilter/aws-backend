@@ -128,7 +128,7 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
 
     fs::create_dir_all(&cache_dir).unwrap();
 
-    let output = Command::new("cargo")
+    let status = Command::new("cargo")
         .arg("lambda")
         .arg("build")
         .arg("--release")
@@ -143,12 +143,10 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .arg("--bin")
         .arg(lambda_name)
         .current_dir(lambda_src_dir)
-        .output()
+        .status()
         .unwrap_or_else(|err| panic!("shouldn't fail building lambda '{lambda_name}': {err}"));
-    debug!(status = %output.status, "Finished building lambda");
-    eprintln!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-    assert!(output.status.success(), "Lambda build failed");
+    debug!(status = %status, "Finished building lambda");
+    assert!(status.success(), "Lambda build failed");
 
     // Clean up old cached zips for this lambda
     if let Ok(entries) = fs::read_dir(&cache_dir) {
@@ -161,6 +159,8 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
             }
         }
     }
+
+    debug!("{}", env::current_dir().unwrap().display());
 
     // thanks to: https://github.com/rust-lang/cargo/issues/3946#issuecomment-973132993
     let workspace_root = env::var("CARGO_WORKSPACE_DIR")
