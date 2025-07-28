@@ -168,8 +168,14 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .join(lambda_name)
         .join("bootstrap.zip");
 
-    fs::copy(&built_zip, &output_zip).unwrap_or_else(|err| {
-        panic!("shouldn't fail copying zip for lambda '{lambda_name}': {err}")
+    fs::copy(&built_zip, &output_zip).unwrap_or_else(|_| {
+        let ci_path = Path::new("./")
+            .join("target/lambda")
+            .join(lambda_name)
+            .join("bootstrap.zip");
+        fs::copy(&ci_path, &output_zip).unwrap_or_else(|err| {
+            panic!("shouldn't fail copying zip for lambda '{lambda_name}': {err}")
+        })
     });
 
     output_zip
