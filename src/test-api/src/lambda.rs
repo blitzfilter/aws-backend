@@ -13,7 +13,7 @@ use std::process::Command;
 use std::time::Duration;
 use std::{env, fs};
 use tokio::sync::OnceCell;
-use tracing::{debug, info};
+use tracing::debug;
 use walkdir::WalkDir;
 
 /// A lazily-initialized, globally shared Lambda client for integration testing.
@@ -128,7 +128,7 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
 
     fs::create_dir_all(&cache_dir).unwrap();
 
-    let output = Command::new("cargo")
+    let status = Command::new("cargo")
         .arg("lambda")
         .arg("build")
         .arg("--release")
@@ -143,15 +143,10 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .arg("--bin")
         .arg(lambda_name)
         .current_dir(lambda_src_dir)
-        .output()
+        .status()
         .unwrap_or_else(|err| panic!("shouldn't fail building lambda '{lambda_name}': {err}"));
-    info!(
-        status = %output.status,
-        stdOut = %String::from_utf8_lossy(&output.stdout),
-        stdErr = %String::from_utf8_lossy(&output.stderr),
-        "Finished building lambda"
-    );
-    assert!(output.status.success(), "Lambda build failed");
+    debug!(status = %status, "Finished building lambda");
+    assert!(status.success(), "Lambda build failed");
 
     // Clean up old cached zips for this lambda
     if let Ok(entries) = fs::read_dir(&cache_dir) {
@@ -172,6 +167,26 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .join("target/lambda")
         .join(lambda_name)
         .join("bootstrap.zip");
+
+    Command::new("ls")
+        .arg("-ll")
+        .current_dir(
+            Path::new(lambda_src_dir)
+                .join("target/lambda")
+                .join(lambda_name),
+        )
+        .status()
+        .unwrap();
+
+    Command::new("ls")
+        .arg("-ll")
+        .current_dir(
+            Path::new(&workspace_root)
+                .join("target/lambda")
+                .join(lambda_name),
+        )
+        .status()
+        .unwrap();
 
     fs::copy(&built_zip, &output_zip).unwrap_or_else(|err| {
         panic!("shouldn't fail copying zip for lambda '{lambda_name}': {err}")
