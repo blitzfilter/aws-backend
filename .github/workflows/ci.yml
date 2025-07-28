@@ -114,8 +114,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda
+          fi
 
       - name: Test ${{ matrix.crate }}
         working-directory: ${{ matrix.crate }}
@@ -143,8 +150,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda
+          fi
 
       - name: Install grcov
         run: cargo install grcov
