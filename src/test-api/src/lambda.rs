@@ -160,8 +160,6 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         }
     }
 
-    debug!("{}", env::current_dir().unwrap().display());
-
     // thanks to: https://github.com/rust-lang/cargo/issues/3946#issuecomment-973132993
     let workspace_root = env::var("CARGO_WORKSPACE_DIR")
         .expect("shouldn't fail because environment-variable 'CARGO_WORKSPACE_DIR' is set.");
@@ -169,8 +167,6 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .join("target/lambda")
         .join(lambda_name)
         .join("bootstrap.zip");
-
-    debug!("{}", built_zip.as_path().as_os_str().to_str().unwrap());
 
     fs::copy(&built_zip, &output_zip).unwrap_or_else(|err| {
         panic!("shouldn't fail copying zip for lambda '{lambda_name}': {err}")

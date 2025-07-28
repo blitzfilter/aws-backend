@@ -7,3 +7,7 @@ edition = "2024"
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 lambda_runtime = { workspace = true }
+
+[[bin]]
+name = "test_lambda"
+path = "src/main.rs"

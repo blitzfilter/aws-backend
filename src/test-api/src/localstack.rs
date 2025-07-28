@@ -65,7 +65,7 @@ pub async fn get_aws_config() -> &'static SdkConfig {
 pub async fn spin_up_localstack(env_vars: HashMap<&str, &str>) -> ContainerAsync<LocalStack> {
     let _ = tracing_subscriber::fmt()
         .json()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .with_current_span(true)
         .with_ansi(false)
         .try_init();
