@@ -134,14 +134,14 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .arg("--release")
         .arg("--output-format")
         .arg("zip")
-        .arg("--manifest-path")
-        .arg("Cargo.toml")
-        .arg("--target-dir")
-        .arg("target")
-        .arg("--package")
-        .arg(lambda_name)
-        .arg("--bin")
-        .arg(lambda_name)
+        // .arg("--manifest-path")
+        // .arg("Cargo.toml")
+        // .arg("--target-dir")
+        // .arg("target")
+        // .arg("--package")
+        // .arg(lambda_name)
+        // .arg("--bin")
+        // .arg(lambda_name)
         .current_dir(lambda_src_dir)
         .status()
         .unwrap_or_else(|err| panic!("shouldn't fail building lambda '{lambda_name}': {err}"));
@@ -167,16 +167,6 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .join("target/lambda")
         .join(lambda_name)
         .join("bootstrap.zip");
-
-    Command::new("ls")
-        .arg("-ll")
-        .current_dir(
-            Path::new(&workspace_root)
-                .join("target/lambda")
-                .join(lambda_name),
-        )
-        .status()
-        .unwrap();
 
     fs::copy(&built_zip, &output_zip).unwrap_or_else(|err| {
         panic!("shouldn't fail copying zip for lambda '{lambda_name}': {err}")
