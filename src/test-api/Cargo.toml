@@ -23,3 +23,4 @@ aws-sdk-lambda = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
 tracing = { workspace = true }
 walkdir = { workspace = true }
+test_lambda = { path = "src/test_lambda" }
