@@ -118,6 +118,10 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install Zig via npm
+        run: |
+          npm install -g @ziglang/cli
+
       - name: Install cargo-lambda
         run: |
           if ! command -v cargo-lambda &> /dev/null; then
@@ -153,6 +157,10 @@ jobs:
             ~/.cargo/bin
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Zig via npm
+        run: |
+          npm install -g @ziglang/cli
 
       - name: Install cargo-lambda
         run: |
