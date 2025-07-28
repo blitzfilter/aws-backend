@@ -171,16 +171,6 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
     Command::new("ls")
         .arg("-ll")
         .current_dir(
-            Path::new(lambda_src_dir)
-                .join("target/lambda")
-                .join(lambda_name),
-        )
-        .status()
-        .unwrap();
-
-    Command::new("ls")
-        .arg("-ll")
-        .current_dir(
             Path::new(&workspace_root)
                 .join("target/lambda")
                 .join(lambda_name),
