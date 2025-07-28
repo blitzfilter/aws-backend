@@ -138,6 +138,8 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .arg("Cargo.toml")
         .arg("--target-dir")
         .arg("target")
+        .arg("--package")
+        .arg(lambda_name)
         .arg("--bin")
         .arg(lambda_name)
         .current_dir(lambda_src_dir)
