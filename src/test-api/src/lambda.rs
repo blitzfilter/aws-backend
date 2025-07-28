@@ -135,6 +135,9 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
         .arg("--output-format")
         .arg("zip")
         .current_dir(lambda_src_dir)
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("LLVM_PROFILE_FILE")
         .status()
         .unwrap_or_else(|err| panic!("shouldn't fail building lambda '{lambda_name}': {err}"));
     debug!(status = %status, "Finished building lambda");
