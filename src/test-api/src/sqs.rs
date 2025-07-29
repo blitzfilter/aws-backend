@@ -1,5 +1,8 @@
 use crate::localstack::get_aws_config;
+use crate::{IntegrationTestService, Lambda, get_lambda_client};
+use async_trait::async_trait;
 use aws_sdk_sqs::Client;
+use aws_sdk_sqs::types::QueueAttributeName;
 use derive_builder::Builder;
 use tokio::sync::OnceCell;
 use tracing::debug;
@@ -31,9 +34,66 @@ pub async fn get_sqs_client() -> &'static Client {
 /// Implements the [`IntegrationTestService`] trait to support lifecycle management
 /// when used with the `#[localstack_test]` macro.
 #[derive(Debug, Builder)]
-pub struct Sqs {
+pub struct SqsWithLambda {
     pub name: &'static str,
-    pub path: &'static str,
-    #[builder(setter(strip_option), default)]
-    pub role: Option<&'static str>,
+    pub lambda: &'static Lambda,
+}
+
+#[async_trait]
+impl IntegrationTestService for SqsWithLambda {
+    fn service_names(&self) -> &'static [&'static str] {
+        &["sqs", "lambda"]
+    }
+
+    async fn set_up(&self) {
+        self.lambda.set_up().await;
+        let sqs_client = get_sqs_client().await;
+        let queue_url = sqs_client
+            .create_queue()
+            .queue_name(self.name)
+            .send()
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "shouldn't fail creating SQS with name '{}'.: {e}",
+                    self.name
+                )
+            })
+            .queue_url()
+            .expect("queue URL not returned")
+            .to_string();
+
+        let queue_arn = sqs_client
+            .get_queue_attributes()
+            .queue_url(&queue_url)
+            .attribute_names(QueueAttributeName::QueueArn)
+            .send()
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "shouldn't fail retrieving ARN for queue '{}': {e}",
+                    self.name
+                )
+            })
+            .attributes()
+            .unwrap()
+            .get(&QueueAttributeName::QueueArn)
+            .expect("Missing QueueArn")
+            .to_string();
+
+        let lambda_client = get_lambda_client().await;
+        lambda_client
+            .create_event_source_mapping()
+            .event_source_arn(queue_arn)
+            .function_name(self.lambda.name)
+            .enabled(true)
+            .send()
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "shouldn't fail creating event-source-mapping for Lambda '{}' with SQS '{}': {e}",
+                    self.lambda.name, self.name
+                )
+            });
+    }
 }
