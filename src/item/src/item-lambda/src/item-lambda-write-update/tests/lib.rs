@@ -6,6 +6,7 @@ use lambda_runtime::{Context, LambdaEvent};
 use test_api::*;
 
 #[rstest::rstest]
+#[test_attr(apply(test))]
 #[case::one(1)]
 #[case::five(5)]
 #[case::ten(10)]

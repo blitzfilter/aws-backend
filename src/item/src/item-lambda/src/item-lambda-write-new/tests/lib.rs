@@ -6,6 +6,7 @@ use lambda_runtime::{Context, LambdaEvent};
 use test_api::*;
 
 #[rstest::rstest]
+#[test_attr(apply(test))]
 #[case::one(1)]
 #[case::five(5)]
 #[case::ten(10)]
@@ -55,6 +56,7 @@ async fn should_create_new_items_when_all_valid(#[case] n: usize) {
 }
 
 #[rstest::rstest]
+#[test_attr(apply(test))]
 #[case::one(1)]
 #[case::five(5)]
 #[case::ten(10)]

@@ -63,6 +63,7 @@ async fn should_create_items_for_handle_create_items_with_one_command() {
 }
 
 #[rstest::rstest]
+#[test_attr(apply(test))]
 #[case::ten(10)]
 #[case::twentyfive(25)]
 #[case::fortytwo(42)]
@@ -189,6 +190,7 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
 }
 
 #[rstest::rstest]
+#[test_attr(apply(test))]
 #[case::ten(10)]
 #[case::twentyfive(25)]
 #[case::fortytwo(42)]
@@ -227,6 +229,7 @@ async fn should_skip_non_existent_items_for_handle_update_items_with_commands_co
 }
 
 #[rstest::rstest]
+#[test_attr(apply(test))]
 #[case::ten(10)]
 #[case::twentyfive(25)]
 #[case::fortytwo(42)]
