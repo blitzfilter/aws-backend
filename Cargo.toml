@@ -23,11 +23,11 @@ members = [
 accept-language = "3.1.0"
 async-stream = "0.3.6"
 async-trait = "0.1.88"
-aws-config = "1.6.3"
-aws-sdk-dynamodb = "1.82.0"
-aws-sdk-lambda = "1.82.0"
-aws-sdk-opensearch = "1.85.0"
-aws-sdk-sqs = "1.71.0"
+aws-config = "1.8.3"
+aws-sdk-dynamodb = "1.86.0"
+aws-sdk-lambda = "1.91.0"
+aws-sdk-opensearch = "1.91.0"
+aws-sdk-sqs = "1.78.0"
 aws_lambda_events = { version = "0.17.0", default-features = false }
 blake3 = "1.8.2"
 common = { path = "src/common" }
@@ -53,9 +53,9 @@ itertools = "0.14.0"
 lambda_runtime = "0.14.3"
 mockall = "0.13.1"
 opensearch = "2.3.0"
-quote = "1.0"
+quote = "1.0.40"
 reqwest = "0.12.22"
-rstest = "0.25.0"
+rstest = "0.26.1"
 scrape = { path = "src/scrape" }
 scrape-core = { path = "src/scrape/src/scrape-core" }
 scrape-static = { path = "src/scrape/src/scrape-static" }
@@ -65,14 +65,14 @@ serde_dynamo = "4.2.14"
 serde_json = "1.0.141"
 serial_test = "3.2.0"
 sha2 = "0.10.9"
-syn = "2.0"
+syn = "2.0.104"
 test-api = { path = "src/test-api" }
 test-api-macros = { path = "src/test-api/src/test-api-macros" }
 testcontainers = "0.24.0"
-testcontainers-modules = "0.12.0"
+testcontainers-modules = "0.12.1"
 thiserror = "2.0.12"
 time = "0.3.41"
-tokio = { version = "1.46.1", default-features = false }
+tokio = { version = "1.47.0", default-features = false }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 uuid = "1.17.0"
