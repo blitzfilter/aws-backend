@@ -8,6 +8,8 @@ const SQS_WITH_LAMBDA: SqsWithLambda = SqsWithLambda {
         path: "src/test_lambda",
         role: None,
     },
+    max_batch_size: 1000,
+    max_batch_window_seconds: 3,
 };
 
 #[localstack_test(services = [SQS_WITH_LAMBDA])]

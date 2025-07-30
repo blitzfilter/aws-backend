@@ -37,6 +37,8 @@ pub async fn get_sqs_client() -> &'static Client {
 pub struct SqsWithLambda {
     pub name: &'static str,
     pub lambda: &'static Lambda,
+    pub max_batch_size: i32,
+    pub max_batch_window_seconds: i32,
 }
 
 #[async_trait]
@@ -86,6 +88,8 @@ impl IntegrationTestService for SqsWithLambda {
             .create_event_source_mapping()
             .event_source_arn(queue_arn)
             .function_name(self.lambda.name)
+            .batch_size(self.max_batch_size)
+            .maximum_batching_window_in_seconds(self.max_batch_window_seconds)
             .enabled(true)
             .send()
             .await
