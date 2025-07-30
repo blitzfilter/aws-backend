@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 scrape-core = { workspace = true }
 scrape-static = { workspace = true }
+
+[dev-dependencies]
+test-api = { workspace = true }
