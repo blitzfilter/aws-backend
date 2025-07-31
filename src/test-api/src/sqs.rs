@@ -90,7 +90,7 @@ impl IntegrationTestService for SqsWithLambda {
             .unwrap()
             .get(&QueueAttributeName::QueueArn)
             .expect("Missing QueueArn")
-            .to_string();
+            .to_owned();
 
         let lambda_client = get_lambda_client().await;
         lambda_client
