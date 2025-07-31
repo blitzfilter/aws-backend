@@ -4,6 +4,7 @@ pub mod localstack;
 mod opensearch;
 mod s3;
 mod sqs;
+mod sqs_lambda;
 
 use async_trait::async_trait;
 pub use dynamodb::{DynamoDB, get_dynamodb_client};
@@ -11,7 +12,11 @@ pub use lambda::{Lambda, get_lambda_client};
 pub use opensearch::{OpenSearch, get_opensearch_client};
 pub use s3::S3;
 pub use serial_test::serial;
-pub use sqs::{SqsWithLambda, SqsWithLambdaBuilder, SqsWithLambdaBuilderError, get_sqs_client};
+pub use sqs::{Sqs, SqsBuilder, SqsBuilderError, get_sqs_client};
+pub use sqs_lambda::{
+    SqsLambdaEventSourceMapping, SqsLambdaEventSourceMappingBuilder,
+    SqsLambdaEventSourceMappingBuilderError,
+};
 pub use test_api_macros::localstack_test;
 pub use tokio;
 

@@ -1,26 +1,16 @@
 use test_api::*;
-use tracing::info;
 
-const SQS_WITH_LAMBDA: SqsWithLambda = SqsWithLambda {
-    name: "test_sqs",
-    lambda: &Lambda {
-        name: "test_lambda",
-        path: "src/test_lambda",
-        role: None,
-    },
-    max_batch_size: 1000,
-    max_batch_window_seconds: 3,
-};
+const SQS: Sqs = Sqs { name: "test_sqs" };
 
-#[localstack_test(services = [SQS_WITH_LAMBDA])]
+#[localstack_test(services = [SQS])]
 async fn should_run_without_errors() {}
 
-#[localstack_test(services = [SQS_WITH_LAMBDA])]
+#[localstack_test(services = [SQS])]
 async fn should_post_to_sqs() {
-    let res = get_sqs_client()
+    let _ = get_sqs_client()
         .await
         .send_message()
-        .queue_url(SQS_WITH_LAMBDA.queue_url())
+        .queue_url(SQS.queue_url())
         .message_body("{}")
         .send()
         .await

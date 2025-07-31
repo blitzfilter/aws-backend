@@ -1,8 +1,7 @@
+use crate::IntegrationTestService;
 use crate::localstack::get_aws_config;
-use crate::{IntegrationTestService, Lambda, get_lambda_client};
 use async_trait::async_trait;
 use aws_sdk_sqs::Client;
-use aws_sdk_sqs::types::QueueAttributeName;
 use derive_builder::Builder;
 use tokio::sync::OnceCell;
 use tracing::debug;
@@ -34,14 +33,11 @@ pub async fn get_sqs_client() -> &'static Client {
 /// Implements the [`IntegrationTestService`] trait to support lifecycle management
 /// when used with the `#[localstack_test]` macro.
 #[derive(Debug, Builder)]
-pub struct SqsWithLambda {
+pub struct Sqs {
     pub name: &'static str,
-    pub lambda: &'static Lambda,
-    pub max_batch_size: i32,
-    pub max_batch_window_seconds: i32,
 }
 
-impl SqsWithLambda {
+impl Sqs {
     pub fn queue_url(&self) -> String {
         format!(
             "http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/{}",
@@ -51,13 +47,12 @@ impl SqsWithLambda {
 }
 
 #[async_trait]
-impl IntegrationTestService for SqsWithLambda {
+impl IntegrationTestService for Sqs {
     fn service_names(&self) -> &'static [&'static str] {
-        &["sqs", "lambda"]
+        &["sqs"]
     }
 
     async fn set_up(&self) {
-        self.lambda.set_up().await;
         let sqs_client = get_sqs_client().await;
         let queue_url = sqs_client
             .create_queue()
@@ -74,39 +69,11 @@ impl IntegrationTestService for SqsWithLambda {
             .expect("queue URL not returned")
             .to_string();
 
-        let queue_arn = sqs_client
-            .get_queue_attributes()
-            .queue_url(&queue_url)
-            .attribute_names(QueueAttributeName::QueueArn)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "shouldn't fail retrieving ARN for queue '{}': {e}",
-                    self.name
-                )
-            })
-            .attributes()
-            .unwrap()
-            .get(&QueueAttributeName::QueueArn)
-            .expect("Missing QueueArn")
-            .to_owned();
-
-        let lambda_client = get_lambda_client().await;
-        lambda_client
-            .create_event_source_mapping()
-            .event_source_arn(queue_arn)
-            .function_name(self.lambda.name)
-            .batch_size(self.max_batch_size)
-            .maximum_batching_window_in_seconds(self.max_batch_window_seconds)
-            .enabled(true)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "shouldn't fail creating event-source-mapping for Lambda '{}' with SQS '{}': {e}",
-                    self.lambda.name, self.name
-                )
-            });
+        assert_eq!(
+            self.queue_url(),
+            queue_url,
+            "Expected Queue-URL '{}' and actual differ '{queue_url}'.",
+            self.queue_url()
+        );
     }
 }
