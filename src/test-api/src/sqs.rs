@@ -41,6 +41,15 @@ pub struct SqsWithLambda {
     pub max_batch_window_seconds: i32,
 }
 
+impl SqsWithLambda {
+    pub fn queue_url(&self) -> String {
+        format!(
+            "http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/{}",
+            self.name
+        )
+    }
+}
+
 #[async_trait]
 impl IntegrationTestService for SqsWithLambda {
     fn service_names(&self) -> &'static [&'static str] {

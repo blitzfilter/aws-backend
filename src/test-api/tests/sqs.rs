@@ -17,15 +17,12 @@ async fn should_run_without_errors() {}
 
 #[localstack_test(services = [SQS_WITH_LAMBDA])]
 async fn should_post_to_sqs() {
-    let queue_url = "http://sqs.eu-central-1.localhost.localstack.cloud:4566/000000000000/test_sqs";
     let res = get_sqs_client()
         .await
         .send_message()
-        .queue_url(queue_url)
+        .queue_url(SQS_WITH_LAMBDA.queue_url())
         .message_body("{}")
         .send()
         .await
         .unwrap();
-
-    info!(messageOutput = ?res);
 }
