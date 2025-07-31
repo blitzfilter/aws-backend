@@ -1,7 +1,8 @@
 use crate::item::domain::Item;
 use crate::item_state::data::ItemStateData;
 use common::event_id::EventId;
-use common::item_id::ItemId;
+use common::has::HasKey;
+use common::item_id::{ItemId, ItemKey};
 use common::language::data::LocalizedTextData;
 use common::language::domain::Language;
 use common::price::data::PriceData;
@@ -44,6 +45,17 @@ pub struct GetItemData {
 
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
+}
+
+impl HasKey for GetItemData {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
+        }
+    }
 }
 
 impl GetItemData {

@@ -7,6 +7,7 @@ use crate::item_event::domain::{
 use crate::item_state::domain::ItemState;
 use common::event::Event;
 use common::event_id::EventId;
+use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::price::domain::Price;
@@ -169,15 +170,19 @@ impl Item {
         }
     }
 
-    pub fn item_key(&self) -> ItemKey {
+    fn hash(&mut self) {
+        self.hash = ItemHash::new(&self.price, &self.state);
+    }
+}
+
+impl HasKey for Item {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),
         }
-    }
-
-    fn hash(&mut self) {
-        self.hash = ItemHash::new(&self.price, &self.state);
     }
 }
 

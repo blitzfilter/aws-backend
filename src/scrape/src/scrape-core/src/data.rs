@@ -1,4 +1,6 @@
 use crate::data::ScrapeItemChangeCommandData::{Create, Update};
+use common::has::HasKey;
+use common::item_id::ItemKey;
 use common::language::data::LanguageData;
 use common::price::command_data::PriceCommandData;
 use common::price::data::PriceData;
@@ -29,6 +31,17 @@ pub struct ScrapeItem {
     pub state: ItemStateData,
     pub url: String,
     pub images: Vec<String>,
+}
+
+impl HasKey for ScrapeItem {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
+        }
+    }
 }
 
 impl From<ScrapeItem> for CreateItemCommandData {
@@ -83,6 +96,13 @@ impl ScrapeItem {
                     Some(Update(self.into()))
                 }
             }
+        }
+    }
+
+    pub fn item_key(&self) -> ItemKey {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
         }
     }
 }

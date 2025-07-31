@@ -1,4 +1,5 @@
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
+use common::has::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::command::UpdateItemCommand;
 use item_core::item::command_data::UpdateItemCommandData;
@@ -87,7 +88,7 @@ fn extract_message_data(
         }
         Some(item_json) => match serde_json::from_str::<UpdateItemCommandData>(&item_json) {
             Ok(command_data) => {
-                let item_key = command_data.item_key();
+                let item_key = command_data.key();
                 let command = UpdateItemCommand::from(command_data);
                 message_ids.insert(item_key.clone(), message_id);
                 Some((item_key, command))

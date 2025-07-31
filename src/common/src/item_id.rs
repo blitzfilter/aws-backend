@@ -19,6 +19,12 @@ impl ItemKey {
     }
 }
 
+impl From<ItemKey> for String {
+    fn from(key: ItemKey) -> Self {
+        format!("{}#{}", key.shop_id, key.shops_item_id)
+    }
+}
+
 impl Display for ItemKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}#{}", self.shop_id, self.shops_item_id)

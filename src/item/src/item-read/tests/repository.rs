@@ -1,6 +1,7 @@
 use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
+use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::record::{LanguageRecord, TextRecord};
 use common::price::record::PriceRecord;
@@ -956,7 +957,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_all_exist() {
             .send()
             .await
             .unwrap();
-        expecteds.push(expected.item_key());
+        expecteds.push(expected.key());
     }
 
     let mut actuals = client
@@ -1034,7 +1035,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_some_do_not_e
             .send()
             .await
             .unwrap();
-        expecteds.push(expected.item_key());
+        expecteds.push(expected.key());
     }
 
     let mut actuals = client
@@ -1113,7 +1114,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_more_than_100
             .await
             .unwrap();
         if n <= 100 {
-            expecteds.push(expected.item_key());
+            expecteds.push(expected.key());
         }
     }
 

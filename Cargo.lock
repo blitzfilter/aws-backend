@@ -3177,6 +3177,8 @@ dependencies = [
  "item-read",
  "rstest",
  "serde",
+ "serial_test",
+ "test-api",
  "thiserror",
  "tokio",
  "tracing",

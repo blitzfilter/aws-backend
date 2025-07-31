@@ -4,6 +4,7 @@ use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::domain::ItemState;
 use common::error::missing_field::MissingPersistenceField;
 use common::event::Event;
+use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::price::domain::Price;
@@ -27,12 +28,17 @@ pub enum ItemEventPayload {
     PriceIncreased(ItemPriceChangeEventPayload),
 }
 
+impl HasKey for ItemEventPayload {
+    type Key = ItemKey;
+
+    fn key(&self) -> ItemKey {
+        ItemKey::new(self.shop_id().clone(), self.shops_item_id().clone())
+    }
+}
+
 pub trait ItemCommonEventPayload {
     fn shop_id(&self) -> &ShopId;
     fn shops_item_id(&self) -> &ShopsItemId;
-    fn item_key(&self) -> ItemKey {
-        ItemKey::new(self.shop_id().clone(), self.shops_item_id().clone())
-    }
 }
 
 impl ItemCommonEventPayload for ItemEventPayload {

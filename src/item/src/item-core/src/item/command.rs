@@ -1,5 +1,6 @@
 use crate::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
 use crate::item_state::domain::ItemState;
+use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::language::domain::Language;
 use common::price::domain::Price;
@@ -44,8 +45,10 @@ impl From<CreateItemCommandData> for CreateItemCommand {
     }
 }
 
-impl CreateItemCommand {
-    pub fn item_key(&self) -> ItemKey {
+impl HasKey for CreateItemCommand {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),

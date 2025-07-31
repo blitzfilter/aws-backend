@@ -1,6 +1,7 @@
 use crate::item::record::ItemRecord;
 use crate::item_state::domain::ItemState;
 use common::currency::domain::Currency;
+use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::price::domain::{MonetaryAmount, Price};
 use common::shop_id::ShopId;
@@ -115,8 +116,10 @@ pub struct ItemSummaryHash {
     pub hash: ItemHash,
 }
 
-impl ItemSummaryHash {
-    pub fn item_key(&self) -> ItemKey {
+impl HasKey for ItemSummaryHash {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),

@@ -1,8 +1,8 @@
 use crate::item_state::document::ItemStateDocument;
-use common::event_id::EventId;
-use common::item_id::ItemId;
+use common::item_id::{ItemId, ItemKey};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use common::{event_id::EventId, has::HasKey};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -68,5 +68,16 @@ pub struct ItemDocument {
 impl ItemDocument {
     pub fn _id(&self) -> ItemId {
         self.item_id
+    }
+}
+
+impl HasKey for ItemDocument {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
+        }
     }
 }

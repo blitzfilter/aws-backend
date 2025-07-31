@@ -2,12 +2,12 @@ use crate::repository::WriteItemRecords;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
 use common::batch::Batch;
-use common::has::Has;
+use common::has::{Has, HasKey};
 use common::item_id::ItemKey;
 use item_core::item::command::{CreateItemCommand, UpdateItemCommand};
 use item_core::item::domain::Item;
 use item_core::item::record::ItemRecord;
-use item_core::item_event::domain::{ItemCommonEventPayload, ItemEvent};
+use item_core::item_event::domain::ItemEvent;
 use item_core::item_event::record::ItemEventRecord;
 use item_read::repository::ReadItemRecords;
 use itertools::Itertools;
@@ -103,7 +103,7 @@ async fn handle_create_chunk(
 ) {
     let create_item_keys = Batch::try_from(
         create_chunk.iter()
-            .map(CreateItemCommand::item_key)
+            .map(CreateItemCommand::key)
             .collect::<Vec<_>>()
     ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
 
@@ -118,10 +118,10 @@ async fn handle_create_chunk(
             }
             let existing_item_keys: HashSet<ItemKey> = HashSet::from_iter(existing_item_keys.items);
             let events = create_chunk.into_iter().filter_map(|cmd| {
-                if existing_item_keys.contains(&cmd.item_key()) {
+                if existing_item_keys.contains(&cmd.key()) {
                     warn!(
-                        shopId = &cmd.item_key().shop_id.to_string(),
-                        shopsItemId = &cmd.item_key().shops_item_id.to_string(),
+                        shopId = &cmd.key().shop_id.to_string(),
+                        shopsItemId = &cmd.key().shops_item_id.to_string(),
                         "Cannot create item because it already exists."
                     );
                     *skipped_count += 1;
@@ -141,7 +141,7 @@ async fn handle_create_chunk(
                 }
             });
             let event_records = events.into_iter().filter_map(|event| {
-                let item_key = event.payload.item_key();
+                let item_key = event.payload.key();
                 let record_res = ItemEventRecord::try_from(event);
                 match record_res {
                     Ok(record_event) => Some(record_event),
@@ -155,10 +155,7 @@ async fn handle_create_chunk(
             let batches = Batch::<_, 25>::chunked_from(event_records);
 
             for batch in batches {
-                let item_keys = batch
-                    .iter()
-                    .map(ItemEventRecord::item_key)
-                    .collect::<Vec<_>>();
+                let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
                 let res = repository.put_item_event_records(batch).await;
                 match res {
                     Ok(output) => handle_batch_output(output, failures),
@@ -204,7 +201,7 @@ async fn handle_update_chunk(
                 skipped_count,
             );
             let event_records = events.into_iter().filter_map(|event| {
-                let item_key = event.payload.item_key();
+                let item_key = event.payload.key();
                 let record_res = ItemEventRecord::try_from(event);
                 match record_res {
                     Ok(record_event) => Some(record_event),
@@ -218,10 +215,7 @@ async fn handle_update_chunk(
             let batches = Batch::<_, 25>::chunked_from(event_records);
 
             for batch in batches {
-                let item_keys = batch
-                    .iter()
-                    .map(ItemEventRecord::item_key)
-                    .collect::<Vec<_>>();
+                let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
                 let res = repository.put_item_event_records(batch).await;
                 match res {
                     Ok(output) => handle_batch_output(output, failures),
@@ -274,7 +268,7 @@ fn find_update_events_with_existing_items(
     let mut events = Vec::with_capacity(existing_records.len());
     // consumes (remove) all existing items, leaving behind non-existent
     for mut existing_item in existing_records.into_iter().map(Item::from) {
-        if let Some((item_key, update)) = update_chunk.remove_entry(&existing_item.item_key()) {
+        if let Some((item_key, update)) = update_chunk.remove_entry(&existing_item.key()) {
             let mut any_changes = false;
             if let Some(price_update) = update.price {
                 if let Some(price_event) = existing_item.change_price(price_update) {

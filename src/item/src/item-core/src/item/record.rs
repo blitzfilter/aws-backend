@@ -1,6 +1,7 @@
 use crate::item::hash::ItemHash;
 use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
+use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
@@ -84,8 +85,10 @@ pub struct ItemRecord {
     pub updated: OffsetDateTime,
 }
 
-impl ItemRecord {
-    pub fn item_key(&self) -> ItemKey {
+impl HasKey for ItemRecord {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),

@@ -1,4 +1,5 @@
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
+use common::has::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::command::CreateItemCommand;
 use item_core::item::command_data::CreateItemCommandData;
@@ -88,7 +89,7 @@ fn extract_message_data(
         Some(item_json) => match serde_json::from_str::<CreateItemCommandData>(&item_json) {
             Ok(command_data) => {
                 let command = CreateItemCommand::from(command_data);
-                message_ids.insert(command.item_key(), message_id);
+                message_ids.insert(command.key(), message_id);
                 Some(command)
             }
             Err(e) => {

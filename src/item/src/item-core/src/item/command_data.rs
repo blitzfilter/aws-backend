@@ -1,9 +1,9 @@
 use crate::item_state::command_data::ItemStateCommandData;
-use common::item_id::ItemKey;
 use common::language::command_data::LanguageCommandData;
 use common::price::command_data::PriceCommandData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use common::{has::HasKey, item_id::ItemKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -32,8 +32,10 @@ pub struct CreateItemCommandData {
     pub images: Vec<String>,
 }
 
-impl CreateItemCommandData {
-    pub fn item_key(&self) -> ItemKey {
+impl HasKey for CreateItemCommandData {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),
@@ -54,8 +56,10 @@ pub struct UpdateItemCommandData {
     pub state: Option<ItemStateCommandData>,
 }
 
-impl UpdateItemCommandData {
-    pub fn item_key(&self) -> ItemKey {
+impl HasKey for UpdateItemCommandData {
+    type Key = ItemKey;
+
+    fn key(&self) -> Self::Key {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),

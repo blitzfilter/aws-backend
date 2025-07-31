@@ -3,6 +3,7 @@ use crate::item_event::domain::{ItemCommonEventPayload, ItemEvent, ItemEventPayl
 use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
+use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::language::record::TextRecord;
@@ -69,12 +70,19 @@ pub struct ItemEventRecord {
 }
 
 impl ItemEventRecord {
-    pub fn item_key(&self) -> ItemKey {
-        ItemKey::new(self.shop_id.clone(), self.shops_item_id.clone())
-    }
-
     pub fn into_item_key(self) -> ItemKey {
         ItemKey::new(self.shop_id, self.shops_item_id)
+    }
+}
+
+impl HasKey for ItemEventRecord {
+    type Key = ItemKey;
+
+    fn key(&self) -> ItemKey {
+        ItemKey {
+            shop_id: self.shop_id.clone(),
+            shops_item_id: self.shops_item_id.clone(),
+        }
     }
 }
 
