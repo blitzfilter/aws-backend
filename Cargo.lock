@@ -3175,11 +3175,13 @@ dependencies = [
  "futures",
  "item-core",
  "item-read",
+ "item-write",
  "rstest",
  "serde",
  "serial_test",
  "test-api",
  "thiserror",
+ "time",
  "tokio",
  "tracing",
 ]
