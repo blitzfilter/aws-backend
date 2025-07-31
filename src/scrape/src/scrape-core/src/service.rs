@@ -11,7 +11,7 @@ use common::shop_id::ShopId;
 use item_read::repository::ReadItemRecords;
 use serde::Serialize;
 use std::collections::HashMap;
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Debug, Clone)]
 pub struct PublishScrapeItemsContext<'a> {
@@ -25,7 +25,7 @@ pub struct PublishScrapeItemsContext<'a> {
 pub trait PublishScrapeItems {
     async fn publish_scrape_items(
         &self,
-        scrape_items: impl IntoIterator<Item = ScrapeItem> + Send,
+        scrape_items: Vec<ScrapeItem>,
     ) -> Result<(), impl IntoIterator<Item = ItemKey>>;
 }
 
@@ -33,11 +33,9 @@ pub trait PublishScrapeItems {
 impl<'a> PublishScrapeItems for PublishScrapeItemsContext<'a> {
     async fn publish_scrape_items(
         &self,
-        scrape_items: impl IntoIterator<Item = ScrapeItem> + Send,
+        scrape_items: Vec<ScrapeItem>,
     ) -> Result<(), impl IntoIterator<Item = ItemKey>> {
-        let mut failures = Vec::new();
-        let mut assessed_create = Vec::new();
-        let mut assessed_update = Vec::new();
+        let total_count = scrape_items.len();
         let grouped: HashMap<ShopId, Vec<ScrapeItem>> =
             scrape_items
                 .into_iter()
@@ -46,9 +44,12 @@ impl<'a> PublishScrapeItems for PublishScrapeItemsContext<'a> {
                     acc
                 });
 
+        let mut failures = Vec::new();
+        let mut assessed_create = Vec::new();
+        let mut assessed_update = Vec::new();
         for (shop_id, items) in grouped {
             let keys = items.iter().map(|item| item.key()).collect::<Vec<_>>();
-            let assessed_res = self.assess(items.into_iter(), &shop_id).await;
+            let assessed_res = self.assess(items, &shop_id).await;
             match assessed_res {
                 Ok(assessed_items) => {
                     assessed_items.into_iter().for_each(|item| match item {
@@ -63,23 +64,36 @@ impl<'a> PublishScrapeItems for PublishScrapeItemsContext<'a> {
             }
         }
 
+        let skipped_count =
+            total_count - assessed_create.len() - assessed_update.len() - failures.len();
+
         for batch_create in Batch::<_, 10>::chunked_from(assessed_create.into_iter()) {
-            let keys = batch_create
+            let ids_keys = batch_create
                 .iter()
-                .map(|item| item.key())
-                .collect::<Vec<_>>();
+                .enumerate()
+                .map(|(i, item)| (i.to_string(), item.key()))
+                .collect::<HashMap<_, _>>();
             let send_msg_batch_res = self.publish(&self.sqs_create_url, batch_create).await;
-            handle_message_batch_result(send_msg_batch_res, keys, &mut failures);
+            handle_message_batch_result(send_msg_batch_res, ids_keys, &mut failures);
         }
 
         for batch_update in Batch::<_, 10>::chunked_from(assessed_update.into_iter()) {
-            let keys = batch_update
+            let ids_keys = batch_update
                 .iter()
-                .map(|item| item.key())
-                .collect::<Vec<_>>();
+                .enumerate()
+                .map(|(i, item)| (i.to_string(), item.key()))
+                .collect::<HashMap<_, _>>();
             let send_msg_batch_res = self.publish(&self.sqs_update_url, batch_update).await;
-            handle_message_batch_result(send_msg_batch_res, keys, &mut failures);
+            handle_message_batch_result(send_msg_batch_res, ids_keys, &mut failures);
         }
+
+        let failures_len = failures.len();
+        info!(
+            successful = total_count - failures_len - skipped_count,
+            failures = failures_len,
+            skipped = skipped_count,
+            "Handled multiple ScrapeItems."
+        );
 
         if failures.is_empty() {
             Ok(())
@@ -91,31 +105,31 @@ impl<'a> PublishScrapeItems for PublishScrapeItemsContext<'a> {
 
 fn handle_message_batch_result(
     res: Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>>,
-    target_keys: Vec<ItemKey>,
+    ids_keys: HashMap<String, ItemKey>,
     failures: &mut Vec<ItemKey>,
 ) {
     match res {
         Ok(send_msg_batch_res) => {
             for failure in send_msg_batch_res.failed {
-                match ItemKey::try_from(failure.id.as_str()) {
-                    Ok(key) => {
+                match ids_keys.get(failure.id()) {
+                    Some(key) => {
                         error!(
                             itemKey = %key,
                             errorCode = failure.code,
                             errorMessage = failure.message,
                             "Failed publishing ScrapeItem."
                         );
-                        failures.push(key);
+                        failures.push(key.clone());
                     }
-                    Err(err) => {
-                        error!(error = %err, payload = ?failure, "Failed converting ItemKey from Batch-ID of partially failed SQS Message-Batch.");
+                    None => {
+                        error!(payload = ?failure, "Failed re-mapping BatchEntryId from SQS-MessageBatch to internal ItemKey.");
                     }
                 }
             }
         }
         Err(err) => {
-            error!(error = %err, "Failed publishing ScrapeItems.");
-            failures.extend(target_keys);
+            error!(error = ?err, "Failed publishing ScrapeItems.");
+            failures.extend(ids_keys.into_values());
         }
     }
 }
@@ -123,7 +137,7 @@ fn handle_message_batch_result(
 impl<'a> PublishScrapeItemsContext<'a> {
     async fn assess(
         &self,
-        scrape_items: impl Iterator<Item = ScrapeItem> + Send,
+        scrape_items: Vec<ScrapeItem>,
         shop_id: &ShopId,
     ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>> {
         let shop_universe = self
@@ -134,8 +148,9 @@ impl<'a> PublishScrapeItemsContext<'a> {
             .map(|item_summary_hash| (item_summary_hash.shops_item_id, item_summary_hash.hash))
             .collect::<HashMap<_, _>>();
 
-        let it =
-            scrape_items.filter_map(move |scrape_item| scrape_item.into_changes(&shop_universe));
+        let it = scrape_items
+            .into_iter()
+            .filter_map(move |scrape_item| scrape_item.into_changes(&shop_universe));
         Ok(it)
     }
 

@@ -381,25 +381,22 @@ pub mod dynamodb {
 
 #[cfg(feature = "sqs")]
 pub mod sqs {
-    use crate::{batch::Batch, has::HasKey};
+    use crate::batch::Batch;
     use aws_sdk_sqs::types::SendMessageBatchRequestEntry;
     use itertools::Itertools;
     use serde::Serialize;
     use tracing::error;
 
-    impl<T> Batch<T, 10>
-    where
-        T: Serialize + HasKey,
-        T::Key: Into<String>,
-    {
+    impl<T: Serialize> Batch<T, 10> {
         pub fn into_sqs_message_entries(self) -> Vec<SendMessageBatchRequestEntry> {
             self.0
                 .into_iter()
-                .filter_map(|x| match serde_json::to_string(&x) {
+                .enumerate()
+                .filter_map(|(i, x)| match serde_json::to_string(&x) {
                     Ok(payload) => Some(
                         SendMessageBatchRequestEntry::builder()
                             .message_body(payload)
-                            .id(x.key_string())
+                            .id(i.to_string())
                             .build()
                             .expect("shouldn't fail because 'id' and 'message_body' have been set"),
                     ),
