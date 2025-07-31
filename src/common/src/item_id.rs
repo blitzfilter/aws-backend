@@ -21,13 +21,38 @@ impl ItemKey {
 
 impl From<ItemKey> for String {
     fn from(key: ItemKey) -> Self {
-        format!("{}#{}", key.shop_id, key.shops_item_id)
+        format!(
+            "shop_id#{}#shops_item_id#{}",
+            key.shop_id, key.shops_item_id
+        )
     }
 }
 
 impl Display for ItemKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}#{}", self.shop_id, self.shops_item_id)
+        write!(
+            f,
+            "shop_id#{}#shops_item_id#{}",
+            self.shop_id, self.shops_item_id
+        )
+    }
+}
+
+impl TryFrom<&str> for ItemKey {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        if let Some((shop_id, shops_item_id)) = value
+            .trim_start_matches("shop_id#")
+            .split_once("#shops_item_id#")
+        {
+            Ok(ItemKey {
+                shop_id: shop_id.into(),
+                shops_item_id: shops_item_id.into(),
+            })
+        } else {
+            Err(format!("Parsing ItemKey '{value}' failed."))
+        }
     }
 }
 

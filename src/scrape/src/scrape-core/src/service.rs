@@ -6,11 +6,12 @@ use aws_sdk_sqs::error::SdkError;
 use aws_sdk_sqs::operation::send_message_batch::{SendMessageBatchError, SendMessageBatchOutput};
 use common::batch::Batch;
 use common::has::HasKey;
+use common::item_id::ItemKey;
 use common::shop_id::ShopId;
-use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
 use item_read::repository::ReadItemRecords;
 use serde::Serialize;
 use std::collections::HashMap;
+use tracing::error;
 
 #[derive(Debug, Clone)]
 pub struct PublishScrapeItemsContext {
@@ -22,26 +23,105 @@ pub struct PublishScrapeItemsContext {
 
 #[async_trait]
 pub trait PublishScrapeItems {
-    async fn filter_changed_items(
+    async fn publish_scrape_items(
         &self,
-        scrape_items: impl Iterator<Item = ScrapeItem> + Send,
-        shop_id: &ShopId,
-    ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>>;
-
-    async fn publish_scrape_items_create(
-        &self,
-        scrape_items: Batch<CreateItemCommandData, 10>,
-    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>>;
-
-    async fn publish_scrape_items_update(
-        &self,
-        scrape_items: Batch<UpdateItemCommandData, 10>,
-    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>>;
+        scrape_items: impl IntoIterator<Item = ScrapeItem> + Send,
+    ) -> Result<(), impl IntoIterator<Item = ItemKey>>;
 }
 
 #[async_trait]
 impl PublishScrapeItems for PublishScrapeItemsContext {
-    async fn filter_changed_items(
+    async fn publish_scrape_items(
+        &self,
+        scrape_items: impl IntoIterator<Item = ScrapeItem> + Send,
+    ) -> Result<(), impl IntoIterator<Item = ItemKey>> {
+        let mut failures = Vec::new();
+        let mut assessed_create = Vec::new();
+        let mut assessed_update = Vec::new();
+        let grouped: HashMap<ShopId, Vec<ScrapeItem>> =
+            scrape_items
+                .into_iter()
+                .fold(HashMap::new(), |mut acc, item| {
+                    acc.entry(item.shop_id.clone()).or_default().push(item);
+                    acc
+                });
+
+        for (shop_id, items) in grouped {
+            let keys = items.iter().map(|item| item.key()).collect::<Vec<_>>();
+            let assessed_res = self.assess(items.into_iter(), &shop_id).await;
+            match assessed_res {
+                Ok(assessed_items) => {
+                    assessed_items.into_iter().for_each(|item| match item {
+                        ScrapeItemChangeCommandData::Create(item) => assessed_create.push(item),
+                        ScrapeItemChangeCommandData::Update(item) => assessed_update.push(item),
+                    });
+                }
+                Err(err) => {
+                    error!(error = %err, shopId = %shop_id, "Failed assessing ScrapeItems.");
+                    failures.extend(keys);
+                }
+            }
+        }
+
+        for batch_create in Batch::<_, 10>::chunked_from(assessed_create.into_iter()) {
+            let keys = batch_create
+                .iter()
+                .map(|item| item.key())
+                .collect::<Vec<_>>();
+            let send_msg_batch_res = self.publish(&self.sqs_create_url, batch_create).await;
+            handle_message_batch_result(send_msg_batch_res, keys, &mut failures);
+        }
+
+        for batch_update in Batch::<_, 10>::chunked_from(assessed_update.into_iter()) {
+            let keys = batch_update
+                .iter()
+                .map(|item| item.key())
+                .collect::<Vec<_>>();
+            let send_msg_batch_res = self.publish(&self.sqs_update_url, batch_update).await;
+            handle_message_batch_result(send_msg_batch_res, keys, &mut failures);
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures)
+        }
+    }
+}
+
+fn handle_message_batch_result(
+    res: Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>>,
+    target_keys: Vec<ItemKey>,
+    failures: &mut Vec<ItemKey>,
+) {
+    match res {
+        Ok(send_msg_batch_res) => {
+            for failure in send_msg_batch_res.failed {
+                match ItemKey::try_from(failure.id.as_str()) {
+                    Ok(key) => {
+                        error!(
+                            itemKey = %key,
+                            errorCode = failure.code,
+                            errorMessage = failure.message,
+                            "Failed publishing ScrapeItem."
+                        );
+                        failures.push(key);
+                    }
+                    Err(err) => {
+                        error!(error = %err, payload = ?failure, "Failed converting ItemKey from Batch-ID of partially failed SQS Message-Batch.");
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            error!(error = %err, "Failed publishing ScrapeItems.");
+            failures.extend(target_keys);
+        }
+    }
+}
+
+impl PublishScrapeItemsContext {
+    async fn assess(
         &self,
         scrape_items: impl Iterator<Item = ScrapeItem> + Send,
         shop_id: &ShopId,
@@ -59,25 +139,7 @@ impl PublishScrapeItems for PublishScrapeItemsContext {
         Ok(it)
     }
 
-    async fn publish_scrape_items_create(
-        &self,
-        scrape_items: Batch<CreateItemCommandData, 10>,
-    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>> {
-        self.publish_scrape_items(&self.sqs_create_url, scrape_items)
-            .await
-    }
-
-    async fn publish_scrape_items_update(
-        &self,
-        scrape_items: Batch<UpdateItemCommandData, 10>,
-    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>> {
-        self.publish_scrape_items(&self.sqs_update_url, scrape_items)
-            .await
-    }
-}
-
-impl PublishScrapeItemsContext {
-    async fn publish_scrape_items<T>(
+    async fn publish<T>(
         &self,
         queue_url: &str,
         scrape_items: Batch<T, 10>,
@@ -92,13 +154,5 @@ impl PublishScrapeItemsContext {
             .queue_url(queue_url)
             .send()
             .await
-    }
-
-    pub async fn filter_and_publish_scrape_items<T: IntoIterator<Item = ScrapeItem> + Send>(
-        &self,
-        scrape_items: T,
-        shop_id: &ShopId,
-    ) -> Result<(), T> {
-        Err(scrape_items)
     }
 }

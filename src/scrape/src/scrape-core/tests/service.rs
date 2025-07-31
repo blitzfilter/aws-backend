@@ -23,6 +23,20 @@ const CREATE_ITEM_SQS_LAMBDA: SqsWithLambda = SqsWithLambda {
     max_batch_window_seconds: 3,
 };
 
+const UPDATE_ITEM_SQS_LAMBDA: SqsWithLambda = SqsWithLambda {
+    name: "item-lambda-write-update-queue",
+    lambda: &Lambda {
+        name: "item-lambda-write-update",
+        path: concat!(
+            env!("CARGO_WORKSPACE_DIR"),
+            "src/item/src/item-lambda/src/item-lambda-write-update"
+        ),
+        role: None,
+    },
+    max_batch_size: 1000,
+    max_batch_window_seconds: 3,
+};
+
 fn mk_create_item_command_data(id: usize) -> CreateItemCommandData {
     CreateItemCommandData {
         shop_id: ShopId::new(),
