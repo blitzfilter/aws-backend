@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use tracing::error;
 
 #[derive(Debug, Clone)]
-pub struct PublishScrapeItemsContext {
-    pub dynamodb_client: aws_sdk_dynamodb::Client,
-    pub sqs_client: aws_sdk_sqs::Client,
+pub struct PublishScrapeItemsContext<'a> {
+    pub dynamodb_client: &'a aws_sdk_dynamodb::Client,
+    pub sqs_client: &'a aws_sdk_sqs::Client,
     pub sqs_create_url: String,
     pub sqs_update_url: String,
 }
@@ -30,7 +30,7 @@ pub trait PublishScrapeItems {
 }
 
 #[async_trait]
-impl PublishScrapeItems for PublishScrapeItemsContext {
+impl<'a> PublishScrapeItems for PublishScrapeItemsContext<'a> {
     async fn publish_scrape_items(
         &self,
         scrape_items: impl IntoIterator<Item = ScrapeItem> + Send,
@@ -120,7 +120,7 @@ fn handle_message_batch_result(
     }
 }
 
-impl PublishScrapeItemsContext {
+impl<'a> PublishScrapeItemsContext<'a> {
     async fn assess(
         &self,
         scrape_items: impl Iterator<Item = ScrapeItem> + Send,
