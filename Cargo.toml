@@ -26,7 +26,7 @@ async-trait = "0.1.88"
 aws-config = "1.8.3"
 aws-sdk-dynamodb = "1.86.0"
 aws-sdk-lambda = "1.91.0"
-aws-sdk-opensearch = "1.91.0"
+aws-sdk-opensearch = "1.92.0"
 aws-sdk-sqs = "1.78.0"
 aws_lambda_events = { version = "0.17.0", default-features = false }
 blake3 = "1.8.2"
@@ -62,7 +62,7 @@ scrape-static = { path = "src/scrape/src/scrape-static" }
 scraper = { version = "0.23.1", default-features = false }
 serde = "1.0.219"
 serde_dynamo = "4.2.14"
-serde_json = "1.0.141"
+serde_json = "1.0.142"
 serial_test = "3.2.0"
 sha2 = "0.10.9"
 syn = "2.0.104"
