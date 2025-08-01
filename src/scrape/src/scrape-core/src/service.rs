@@ -154,15 +154,11 @@ impl<'a> PublishScrapeItemsContext<'a> {
         Ok(it)
     }
 
-    async fn publish<T>(
+    async fn publish<T: Serialize>(
         &self,
         queue_url: &str,
         scrape_items: Batch<T, 10>,
-    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>>
-    where
-        T: Serialize + HasKey,
-        T::Key: Into<String>,
-    {
+    ) -> Result<SendMessageBatchOutput, SdkError<SendMessageBatchError, HttpResponse>> {
         self.sqs_client
             .send_message_batch()
             .set_entries(Some(scrape_items.into_sqs_message_entries()))
