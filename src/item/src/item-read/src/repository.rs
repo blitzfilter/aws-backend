@@ -241,7 +241,10 @@ where
             .index_name("gsi_1")
             .key_condition_expression("#gsi_1_pk = :gsi_1_pk_val")
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")
-            .expression_attribute_values(":gsi_1_pk_val", AttributeValue::S(shop_id.to_string()))
+            .expression_attribute_values(
+                ":gsi_1_pk_val",
+                AttributeValue::S(format!("shop_id#{shop_id}")),
+            )
             .scan_index_forward(scan_index_forward)
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")
             .into_paginator()
@@ -254,7 +257,7 @@ where
             .filter_map(|result| match result {
                 Ok(event) => Some(event),
                 Err(err) => {
-                    error!(error = %err, "Failed deserializing ItemDiffRecord.");
+                    error!(error = %err, "Failed deserializing ItemSummaryHash.");
                     None
                 }
             })

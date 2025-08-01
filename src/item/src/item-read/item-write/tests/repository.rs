@@ -29,7 +29,7 @@ async fn should_put_item_records_for_single_record() {
         pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
         sk: "item#materialized".to_string(),
         gsi_1_pk: format!("shop_id#{}", shop_id.clone()),
-        gsi_1_sk: now_str.clone(),
+        gsi_1_sk: format!("updated#{now_str}"),
         item_id: ItemId::new(),
         event_id: EventId::new(),
         shop_id: shop_id.clone(),
