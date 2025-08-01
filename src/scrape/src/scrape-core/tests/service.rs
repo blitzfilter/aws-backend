@@ -19,7 +19,7 @@ const CREATE_ITEM_SQS: Sqs = Sqs {
     name: "item-lambda-write-new-queue",
 };
 const UPDATE_ITEM_SQS: Sqs = Sqs {
-    name: "item-lambda-write-new-queue",
+    name: "item-lambda-write-update-queue",
 };
 
 fn mk_scrape_item(id: usize, shop_id: &ShopId) -> ScrapeItem {
@@ -189,7 +189,7 @@ async fn should_publish_scrape_items_for_create_for_multiple_shop_ids(#[case] n:
 #[case::ten(10)]
 #[case::onehundred(100)]
 #[case::onethousand(1000)]
-#[localstack_test(services = [DynamoDB(), CREATE_ITEM_SQS])]
+#[localstack_test(services = [DynamoDB(), UPDATE_ITEM_SQS])]
 async fn should_publish_scrape_items_for_update_for_single_shop_id(#[case] n: usize) {
     let service = PublishScrapeItemsContext {
         dynamodb_client: get_dynamodb_client().await,
@@ -244,7 +244,7 @@ async fn should_publish_scrape_items_for_update_for_single_shop_id(#[case] n: us
 #[case::ten(10)]
 #[case::onehundred(100)]
 #[case::onethousand(1000)]
-#[localstack_test(services = [DynamoDB(), CREATE_ITEM_SQS])]
+#[localstack_test(services = [DynamoDB(), UPDATE_ITEM_SQS])]
 async fn should_publish_scrape_items_for_update_for_multiple_shop_ids(#[case] n: usize) {
     let service = PublishScrapeItemsContext {
         dynamodb_client: get_dynamodb_client().await,
@@ -302,4 +302,83 @@ async fn should_publish_scrape_items_for_update_for_multiple_shop_ids(#[case] n:
     }
 
     assert_eq!(n, actual_count)
+}
+
+#[rstest::rstest]
+#[test_attr(apply(test))]
+#[case::one(1)]
+#[case::five(5)]
+#[case::ten(10)]
+#[case::onehundred(100)]
+#[case::onethousand(1000)]
+#[localstack_test(services = [DynamoDB(), CREATE_ITEM_SQS, UPDATE_ITEM_SQS])]
+async fn should_publish_scrape_items_for_downstream_command_mix_for_single_shop_id(
+    #[case] n: usize,
+) {
+    let service = PublishScrapeItemsContext {
+        dynamodb_client: get_dynamodb_client().await,
+        sqs_client: get_sqs_client().await,
+        sqs_create_url: CREATE_ITEM_SQS.queue_url(),
+        sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
+    };
+
+    // Simulate materialized view
+    let shop_id = ShopId::new();
+    for batch in Batch::<_, 25>::chunked_from(
+        (1..=n)
+            .filter(|i| i % 3 == 0)
+            .map(|i| mk_item_record(i, &shop_id)),
+    ) {
+        service
+            .dynamodb_client
+            .put_item_records(batch)
+            .await
+            .unwrap();
+    }
+
+    // Publish updates
+    let scrape_items = (1..=n)
+        .map(|i| mk_scrape_item(i, &shop_id))
+        .collect::<Vec<_>>();
+
+    let publish_res = service.publish_scrape_items(scrape_items).await;
+    assert!(publish_res.is_ok());
+
+    // Verify Queue-Contents
+    let mut actual_count_create: usize = 0;
+    loop {
+        let received = service
+            .sqs_client
+            .receive_message()
+            .queue_url(CREATE_ITEM_SQS.queue_url())
+            .max_number_of_messages(10)
+            .send()
+            .await
+            .unwrap();
+        if received.messages().is_empty() {
+            break;
+        } else {
+            actual_count_create += received.messages().len();
+        }
+    }
+
+    let mut actual_count_update: usize = 0;
+    loop {
+        let received = service
+            .sqs_client
+            .receive_message()
+            .queue_url(UPDATE_ITEM_SQS.queue_url())
+            .max_number_of_messages(10)
+            .send()
+            .await
+            .unwrap();
+        if received.messages().is_empty() {
+            break;
+        } else {
+            actual_count_update += received.messages().len();
+        }
+    }
+
+    assert_eq!(n / 3, actual_count_update);
+    assert_eq!(n, actual_count_create + actual_count_update);
 }
