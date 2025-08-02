@@ -1,2 +1,4 @@
+pub use item_lambda_materialize_dynamodb_new;
+pub use item_lambda_materialize_dynamodb_update;
 pub use item_lambda_write_new;
 pub use item_lambda_write_update;

@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 item-lambda-write-new = { workspace = true }
 item-lambda-write-update = { workspace = true }
+item-lambda-materialize-dynamodb-new = { workspace = true }
+item-lambda-materialize-dynamodb-update = { workspace = true }

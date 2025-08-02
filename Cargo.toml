@@ -45,6 +45,8 @@ item-api-get-item = { path = "src/item/src/item-api/src/item-api-get-item" }
 item-core = { path = "src/item/src/item-core" }
 item-index = { path = "src/item/src/item-index" }
 item-lambda = { path = "src/item/src/item-lambda" }
+item-lambda-materialize-dynamodb-new = { path = "src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new" }
+item-lambda-materialize-dynamodb-update = { path = "src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update" }
 item-lambda-write-new = { path = "src/item/src/item-lambda/src/item-lambda-write-new" }
 item-lambda-write-update = { path = "src/item/src/item-lambda/src/item-lambda-write-update" }
 item-read = { path = "src/item/src/item-read" }
