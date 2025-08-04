@@ -11,21 +11,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  YAML_KEY: &all-crates
-    - src/common
-    - src/filter
-    - src/item/src/item-api/src/item-api-get-item
-    - src/item/src/item-core
-    - src/item/src/item-index
-    - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
-    - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
-    - src/item/src/item-lambda/src/item-lambda-write-new
-    - src/item/src/item-lambda/src/item-lambda-write-update
-    - src/item/src/item-write
-    - src/item/src/item-read
-    - src/scrape/src/scrape-core
-    - src/scrape/src/scrape-static
-    - src/test-api
 
 jobs:
   lint:
@@ -64,7 +49,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate: *all-crates
+        crate:
+          - src/common
+          - src/filter
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-core
+          - src/item/src/item-index
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+          - src/item/src/item-write
+          - src/item/src/item-read
+          - src/scrape/src/scrape-core
+          - src/scrape/src/scrape-static
+          - src/test-api
     steps:
       - uses: actions/checkout@v4
 
@@ -92,7 +91,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate: *all-crates
+        crate:
+          - src/common
+          - src/filter
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-core
+          - src/item/src/item-index
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+          - src/item/src/item-write
+          - src/item/src/item-read
+          - src/scrape/src/scrape-core
+          - src/scrape/src/scrape-static
+          - src/test-api
     steps:
       - uses: actions/checkout@v4
 
@@ -121,7 +134,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate: *all-crates
+        crate:
+          - src/common
+          - src/filter
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-core
+          - src/item/src/item-index
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+          - src/item/src/item-write
+          - src/item/src/item-read
+          - src/scrape/src/scrape-core
+          - src/scrape/src/scrape-static
+          - src/test-api
     steps:
       - uses: actions/checkout@v4
 
