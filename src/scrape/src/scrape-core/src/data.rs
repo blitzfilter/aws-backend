@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum ScrapeItemChangeCommandData {
     Create(CreateItemCommandData),
     Update(UpdateItemCommandData),
