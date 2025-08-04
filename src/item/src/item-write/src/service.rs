@@ -1,4 +1,4 @@
-use crate::repository::WriteItemRecords;
+use crate::repository::PersistItemRepository;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
@@ -11,7 +11,7 @@ use item_core::item::domain::Item;
 use item_core::item::record::ItemRecord;
 use item_core::item_event::domain::ItemEvent;
 use item_core::item_event::record::ItemEventRecord;
-use item_read::repository::ReadItemRecords;
+use item_read::repository::QueryItemRepository;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info, warn};

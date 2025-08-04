@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use tracing::error;
 
 #[async_trait]
-pub trait ReadItemRecords {
+pub trait QueryItemRepository {
     async fn get_item_record(
         &self,
         shop_id: &ShopId,
@@ -42,7 +42,7 @@ pub trait ReadItemRecords {
 }
 
 #[async_trait]
-impl<T> ReadItemRecords for T
+impl<T> QueryItemRepository for T
 where
     T: Has<aws_sdk_dynamodb::Client> + Sync,
 {

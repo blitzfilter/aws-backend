@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 #[async_trait]
 #[allow(clippy::result_large_err)]
-pub trait WriteItemRecords {
+pub trait PersistItemRepository {
     async fn put_item_event_records(
         &self,
         item_event_records: Batch<ItemEventRecord, 25>,
@@ -35,7 +35,7 @@ pub trait WriteItemRecords {
 }
 
 #[async_trait]
-impl<T> WriteItemRecords for T
+impl<T> PersistItemRepository for T
 where
     T: Has<aws_sdk_dynamodb::Client> + Sync,
 {

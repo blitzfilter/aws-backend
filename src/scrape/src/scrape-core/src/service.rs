@@ -8,7 +8,7 @@ use common::batch::Batch;
 use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
-use item_read::repository::ReadItemRecords;
+use item_read::repository::QueryItemRepository;
 use serde::Serialize;
 use std::collections::HashMap;
 use tracing::{error, info};
@@ -22,7 +22,7 @@ pub struct PublishScrapeItemsContext<'a> {
 }
 
 #[async_trait]
-pub trait PublishScrapeItems {
+pub trait PublishScrapeItemService {
     async fn publish_scrape_items(
         &self,
         scrape_items: Vec<ScrapeItem>,
@@ -30,7 +30,7 @@ pub trait PublishScrapeItems {
 }
 
 #[async_trait]
-impl<'a> PublishScrapeItems for PublishScrapeItemsContext<'a> {
+impl<'a> PublishScrapeItemService for PublishScrapeItemsContext<'a> {
     async fn publish_scrape_items(
         &self,
         scrape_items: Vec<ScrapeItem>,

@@ -9,10 +9,10 @@ use item_core::{
     item::{hash::ItemHash, record::ItemRecord},
     item_state::{data::ItemStateData, domain::ItemState, record::ItemStateRecord},
 };
-use item_write::repository::WriteItemRecords;
+use item_write::repository::PersistItemRepository;
 use scrape_core::{
     data::ScrapeItem,
-    service::{PublishScrapeItems, PublishScrapeItemsContext},
+    service::{PublishScrapeItemService, PublishScrapeItemsContext},
 };
 use std::{collections::HashMap, time::Duration};
 use test_api::*;

@@ -1,4 +1,4 @@
-use crate::repository::ReadItemRecords;
+use crate::repository::QueryItemRepository;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::config::http::HttpResponse;
 use aws_sdk_dynamodb::error::SdkError;

@@ -12,7 +12,7 @@ use item_core::item::record::ItemRecord;
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
-use item_write::repository::WriteItemRecords;
+use item_write::repository::PersistItemRepository;
 use item_write::service::{CommandItemService, CommandItemServiceContext};
 use test_api::*;
 use time::OffsetDateTime;
