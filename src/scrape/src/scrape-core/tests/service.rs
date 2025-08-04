@@ -86,7 +86,7 @@ fn mk_item_record(id: usize, shop_id: &ShopId) -> ItemRecord {
         price_cad: None,
         price_nzd: None,
         state: ItemStateRecord::Listed,
-        url: Url::parse(&format!("https://example.com/{}", id)).unwrap(),
+        url: Url::parse(&format!("https://example.com/{id}")).unwrap(),
         images: vec![],
         hash: ItemHash::new(&None, &ItemState::Listed),
         created: datetime!(2007 - 12 - 24 18:21 UTC),

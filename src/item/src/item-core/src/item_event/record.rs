@@ -219,7 +219,7 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                         .copied()
                         .map(u64::from),
                     state: Some(payload.state.into()),
-                    url: Some(payload.url.into()),
+                    url: Some(payload.url),
                     images: Some(payload.images),
                     hash: payload.hash,
                     timestamp: domain.timestamp,

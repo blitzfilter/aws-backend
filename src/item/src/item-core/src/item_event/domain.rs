@@ -18,6 +18,7 @@ use url::Url;
 pub type ItemEvent = Event<ItemId, ItemEventPayload>;
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ItemEventPayload {
     Created(ItemCreatedEventPayload),
     StateListed(ItemStateChangeEventPayload),
