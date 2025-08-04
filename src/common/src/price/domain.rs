@@ -2,7 +2,9 @@ use crate::currency::domain::Currency;
 use crate::price::command_data::PriceCommandData;
 use crate::price::data::PriceData;
 use crate::price::record::PriceRecord;
+use std::collections::HashMap;
 use std::ops::{Add, Sub};
+use strum::{EnumCount, IntoEnumIterator};
 
 type Rate = u64;
 const FX_RATE_SCALE: Rate = 1_000_000;
@@ -14,6 +16,21 @@ pub trait FxRate {
         to_currency: Currency,
         from_amount: MonetaryAmount,
     ) -> Result<MonetaryAmount, MonetaryAmountOverflowError>;
+
+    fn exchange_all(
+        &self,
+        from_currency: Currency,
+        from_amount: MonetaryAmount,
+    ) -> Result<HashMap<Currency, MonetaryAmount>, MonetaryAmountOverflowError> {
+        let mut exchanged = HashMap::with_capacity(Currency::COUNT);
+        for currency in Currency::iter() {
+            exchanged.insert(
+                currency,
+                self.exchange(from_currency, currency, from_amount)?,
+            );
+        }
+        Ok(exchanged)
+    }
 }
 
 /// as of 2025-07-15
@@ -157,6 +174,13 @@ pub struct Price {
 }
 
 impl Price {
+    pub fn new(monetary_amount: MonetaryAmount, currency: Currency) -> Self {
+        Price {
+            monetary_amount,
+            currency,
+        }
+    }
+
     pub fn into_exchanged(
         self,
         fx_rate: &impl FxRate,

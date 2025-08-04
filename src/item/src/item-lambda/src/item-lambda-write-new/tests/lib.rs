@@ -1,7 +1,10 @@
 use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
+use common::language::data::{LanguageData, LocalizedTextData};
+use common::price::domain::FixedFxRate;
 use item_core::item::command_data::CreateItemCommandData;
 use item_core::item_state::command_data::ItemStateCommandData;
 use item_lambda_write_new::handler;
+use item_write::service::CommandItemServiceContext;
 use lambda_runtime::{Context, LambdaEvent};
 use test_api::*;
 
@@ -20,8 +23,10 @@ async fn should_create_new_items_when_all_valid(#[case] n: usize) {
             shop_id: Default::default(),
             shops_item_id: Default::default(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData::new("Boop".to_string(), LanguageData::En),
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: None,
             state: ItemStateCommandData::Listed,
             url: "".to_string(),
@@ -47,7 +52,11 @@ async fn should_create_new_items_when_all_valid(#[case] n: usize) {
     };
 
     let client = get_dynamodb_client().await;
-    let response = handler(client, lambda_event).await.unwrap();
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let response = handler(service_context, lambda_event).await.unwrap();
 
     assert!(response.batch_item_failures.is_empty());
 
@@ -70,8 +79,10 @@ async fn should_skip_records_with_empty_body(#[case] n: usize) {
             shop_id: Default::default(),
             shops_item_id: Default::default(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData::new("Boop".to_string(), LanguageData::En),
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: None,
             state: ItemStateCommandData::Listed,
             url: "".to_string(),
@@ -101,7 +112,11 @@ async fn should_skip_records_with_empty_body(#[case] n: usize) {
     };
 
     let client = get_dynamodb_client().await;
-    let response = handler(client, lambda_event).await.unwrap();
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let response = handler(service_context, lambda_event).await.unwrap();
 
     assert!(response.batch_item_failures.is_empty());
 

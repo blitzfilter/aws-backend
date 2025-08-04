@@ -3,14 +3,14 @@ use common::has::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::command::UpdateItemCommand;
 use item_core::item::command_data::UpdateItemCommandData;
-use item_write::service::InboundWriteItems;
+use item_write::service::CommandItemService;
 use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 #[tracing::instrument(skip(service, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
-    service: &impl InboundWriteItems,
+    service: &impl CommandItemService,
     event: LambdaEvent<SqsEvent>,
 ) -> Result<SqsBatchResponse, lambda_runtime::Error> {
     let records_count = event.payload.records.len();
@@ -114,7 +114,7 @@ mod tests {
     use common::shop_id::ShopId;
     use item_core::item::command_data::UpdateItemCommandData;
     use item_core::item_state::command_data::ItemStateCommandData;
-    use item_write::service::MockInboundWriteItems;
+    use item_write::service::MockCommandItemService;
     use lambda_runtime::{Context, LambdaEvent};
 
     #[rstest::rstest]
@@ -154,7 +154,7 @@ mod tests {
             context: Context::default(),
         };
 
-        let mut service_mock = MockInboundWriteItems::default();
+        let mut service_mock = MockCommandItemService::default();
         service_mock
             .expect_handle_update_items()
             .return_once(move |_| {

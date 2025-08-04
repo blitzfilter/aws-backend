@@ -1,10 +1,9 @@
-use crate::item::domain::Item;
+use crate::item::domain::LocalizedItemView;
 use crate::item_state::data::ItemStateData;
 use common::event_id::EventId;
 use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::data::LocalizedTextData;
-use common::language::domain::Language;
 use common::price::data::PriceData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -24,8 +23,7 @@ pub struct GetItemData {
 
     pub shop_name: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<LocalizedTextData>,
+    pub title: LocalizedTextData,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<LocalizedTextData>,
@@ -58,22 +56,22 @@ impl HasKey for GetItemData {
     }
 }
 
-impl GetItemData {
-    pub fn from_domain_localized(domain: Item, languages: Vec<Language>) -> GetItemData {
+impl From<LocalizedItemView> for GetItemData {
+    fn from(item_view: LocalizedItemView) -> Self {
         GetItemData {
-            item_id: domain.item_id,
-            event_id: domain.event_id,
-            shop_id: domain.shop_id,
-            shops_item_id: domain.shops_item_id,
-            shop_name: domain.shop_name,
-            title: LocalizedTextData::from_domain_fallbacked(&domain.title, &languages),
-            description: LocalizedTextData::from_domain_fallbacked(&domain.description, &languages),
-            price: domain.price.map(Into::into),
-            state: domain.state.into(),
-            url: domain.url,
-            images: domain.images,
-            created: domain.created,
-            updated: domain.updated,
+            item_id: item_view.item_id,
+            event_id: item_view.event_id,
+            shop_id: item_view.shop_id,
+            shops_item_id: item_view.shops_item_id,
+            shop_name: item_view.shop_name.into(),
+            title: item_view.title.into(),
+            description: item_view.description.map(LocalizedTextData::from),
+            price: item_view.price.map(PriceData::from),
+            state: item_view.state.into(),
+            url: item_view.url.into(),
+            images: item_view.images.into_iter().map(String::from).collect(),
+            created: item_view.created,
+            updated: item_view.updated,
         }
     }
 }

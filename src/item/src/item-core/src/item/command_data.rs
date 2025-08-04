@@ -1,5 +1,6 @@
 use crate::item_state::command_data::ItemStateCommandData;
 use common::language::command_data::LanguageCommandData;
+use common::language::data::LocalizedTextData;
 use common::price::command_data::PriceCommandData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -15,11 +16,16 @@ pub struct CreateItemCommandData {
 
     pub shop_name: String,
 
-    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
-    pub title: HashMap<LanguageCommandData, String>,
+    pub native_title: LocalizedTextData,
 
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
-    pub description: HashMap<LanguageCommandData, String>,
+    pub other_title: HashMap<LanguageCommandData, String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub native_description: Option<LocalizedTextData>,
+
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub other_description: HashMap<LanguageCommandData, String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price: Option<PriceCommandData>,

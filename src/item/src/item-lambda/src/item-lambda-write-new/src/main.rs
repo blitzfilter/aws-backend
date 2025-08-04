@@ -1,7 +1,9 @@
 use aws_config::BehaviorVersion;
 use aws_lambda_events::sqs::SqsEvent;
 use aws_sdk_dynamodb::Client;
+use common::price::domain::FixedFxRate;
 use item_lambda_write_new::handler;
+use item_write::service::CommandItemServiceContext;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use std::env;
 use tracing::info;
@@ -31,11 +33,15 @@ async fn main() -> Result<(), Error> {
     }
 
     let ddb_client = &Client::new(&aws_config_builder.build());
+    let service_context = CommandItemServiceContext {
+        dynamodb_client: ddb_client,
+        fx_rate: &FixedFxRate::default(),
+    };
 
     info!("Lambda cold start completed, DynamoDB-Client initialized.");
 
-    run(service_fn(move |event: LambdaEvent<SqsEvent>| async move {
-        handler(ddb_client, event).await
+    run(service_fn(|event: LambdaEvent<SqsEvent>| async {
+        handler(&service_context, event).await
     }))
     .await
 }

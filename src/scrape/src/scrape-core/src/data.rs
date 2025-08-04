@@ -1,7 +1,7 @@
 use crate::data::ScrapeItemChangeCommandData::{Create, Update};
 use common::has::HasKey;
 use common::item_id::ItemKey;
-use common::language::data::LanguageData;
+use common::language::data::{LanguageData, LocalizedTextData};
 use common::price::command_data::PriceCommandData;
 use common::price::data::PriceData;
 use common::price::domain::Price;
@@ -25,8 +25,10 @@ pub struct ScrapeItem {
     pub shop_id: ShopId,
     pub shops_item_id: ShopsItemId,
     pub shop_name: String,
-    pub title: HashMap<LanguageData, String>,
-    pub description: HashMap<LanguageData, String>,
+    pub native_title: LocalizedTextData,
+    pub other_title: HashMap<LanguageData, String>,
+    pub native_description: Option<LocalizedTextData>,
+    pub other_description: HashMap<LanguageData, String>,
     pub price: Option<PriceData>,
     pub state: ItemStateData,
     pub url: String,
@@ -50,13 +52,15 @@ impl From<ScrapeItem> for CreateItemCommandData {
             shop_id: scrape_item.shop_id,
             shops_item_id: scrape_item.shops_item_id,
             shop_name: scrape_item.shop_name,
-            title: scrape_item
-                .title
+            native_title: scrape_item.native_title,
+            other_title: scrape_item
+                .other_title
                 .into_iter()
                 .map(|(lang, text)| (lang.into(), text))
                 .collect(),
-            description: scrape_item
-                .description
+            native_description: scrape_item.native_description,
+            other_description: scrape_item
+                .other_description
                 .into_iter()
                 .map(|(lang, text)| (lang.into(), text))
                 .collect(),
@@ -113,6 +117,7 @@ mod tests {
     use common::currency::command_data::CurrencyCommandData;
     use common::currency::data::CurrencyData;
     use common::currency::domain::Currency;
+    use common::language::data::{LanguageData, LocalizedTextData};
     use common::price::command_data::PriceCommandData;
     use common::price::data::PriceData;
     use common::price::domain::Price;
@@ -133,8 +138,13 @@ mod tests {
             shop_id: shop_id.clone(),
             shops_item_id: shops_item_id.clone(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData {
+                text: "boop".to_string(),
+                language: LanguageData::De,
+            },
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
                 amount: 42,
@@ -147,8 +157,13 @@ mod tests {
             shop_id: shop_id.clone(),
             shops_item_id: shops_item_id.clone(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData {
+                text: "boop".to_string(),
+                language: LanguageData::De,
+            },
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: Some(PriceCommandData {
                 currency: CurrencyCommandData::Eur,
                 amount: 42,
@@ -177,8 +192,13 @@ mod tests {
             shop_id: shop_id.clone(),
             shops_item_id: shops_item_id.clone(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData {
+                text: "boop".to_string(),
+                language: LanguageData::De,
+            },
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
                 amount: 120,
@@ -225,8 +245,13 @@ mod tests {
             shop_id: shop_id.clone(),
             shops_item_id: shops_item_id.clone(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData {
+                text: "boop".to_string(),
+                language: LanguageData::De,
+            },
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
                 amount: 100,
@@ -273,8 +298,13 @@ mod tests {
             shop_id: shop_id.clone(),
             shops_item_id: shops_item_id.clone(),
             shop_name: "".to_string(),
-            title: Default::default(),
-            description: Default::default(),
+            native_title: LocalizedTextData {
+                text: "boop".to_string(),
+                language: LanguageData::De,
+            },
+            other_title: Default::default(),
+            native_description: None,
+            other_description: Default::default(),
             price: Some(PriceData {
                 currency: CurrencyData::Eur,
                 amount: 100,

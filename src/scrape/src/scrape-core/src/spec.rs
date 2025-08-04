@@ -66,6 +66,7 @@ mod tests {
     use crate::data::ScrapeItem;
     use crate::spec::{ScrapeError, Scraper, ScraperConfig};
     use async_trait::async_trait;
+    use common::language::data::{LanguageData, LocalizedTextData};
     use futures::StreamExt;
     use item_core::item_state::data::ItemStateData;
     use std::time::{Duration, SystemTime};
@@ -93,8 +94,13 @@ mod tests {
                 shop_id: Default::default(),
                 shops_item_id: Default::default(),
                 shop_name: "".to_string(),
-                title: Default::default(),
-                description: Default::default(),
+                native_title: LocalizedTextData {
+                    text: "boop".to_string(),
+                    language: LanguageData::De,
+                },
+                other_title: Default::default(),
+                native_description: None,
+                other_description: Default::default(),
                 price: None,
                 state: ItemStateData::Listed,
                 url: "".to_string(),

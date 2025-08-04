@@ -19,3 +19,4 @@ test-api = { workspace = true }
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 serial_test = { workspace = true }
 rstest = { workspace = true }
+url = { workspace = true, features = ["serde"] }

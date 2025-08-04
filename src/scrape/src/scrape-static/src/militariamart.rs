@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use common::currency::data::CurrencyData;
-use common::language::data::LanguageData;
+use common::language::data::{LanguageData, LocalizedTextData};
 use common::price::data::PriceData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -9,7 +9,6 @@ use reqwest::Client;
 use scrape_core::data::ScrapeItem;
 use scrape_core::spec::{ScrapeError, Scraper, ScraperConfig};
 use scraper::{ElementRef, Html, Selector};
-use std::collections::HashMap;
 use tracing::{info, warn};
 
 #[derive(Debug)]
@@ -64,35 +63,42 @@ impl Scraper<Client> for MilitariaMart {
                 }
                 Some(shops_item_id) => {
                     let shop_id = self.shop_id_str().into();
-                    let item = ScrapeItem {
-                        shop_name: self.shop_name_str().into(),
-                        title: extract_title(shop_item)
-                            .map(|name| HashMap::from([(self.language, name)]))
-                            .unwrap_or_default(),
-                        description: extract_description(shop_item)
-                            .map(|description| HashMap::from([(self.language, description)]))
-                            .unwrap_or_default(),
-                        price: extract_price(shop_item, &shop_id, &shops_item_id),
-                        state: extract_state(shop_item).unwrap_or_else(|| {
-                            warn!(
+                    let title_opt = extract_title(shop_item)
+                        .map(|name| LocalizedTextData::new(name, self.language));
+                    match title_opt {
+                        None => None,
+                        Some(title) => {
+                            let item = ScrapeItem {
+                                shop_name: self.shop_name_str().into(),
+                                native_title: title,
+                                other_title: Default::default(),
+                                native_description: extract_description(shop_item).map(|descr| {
+                                    LocalizedTextData::new(descr, self.language)
+                                }),
+                                other_description: Default::default(),
+                                price: extract_price(shop_item, &shop_id, &shops_item_id),
+                                state: extract_state(shop_item).unwrap_or_else(|| {
+                                    warn!(
                                 shopId = self.shop_id_str(),
                                 shopsItemId = shops_item_id.to_string(),
                                 page = page_num,
                                 "Failed extracting ItemStateData. Defaulting to ItemStateData::Listed."
                             );
-                            ItemStateData::Listed
-                        }),
-                        url: format!("{}/shop.php?code={}", &self.url, shops_item_id),
-                        images: extract_relative_image_urls(shop_item)
-                            .into_iter()
-                            .map(|relative_url| {
-                                format!("{}/{}", &self.url, relative_url)
-                            })
-                            .collect(),
-                        shop_id,
-                        shops_item_id,
-                    };
-                    Some(item)
+                                    ItemStateData::Listed
+                                }),
+                                url: format!("{}/shop.php?code={}", &self.url, shops_item_id),
+                                images: extract_relative_image_urls(shop_item)
+                                    .into_iter()
+                                    .map(|relative_url| {
+                                        format!("{}/{}", &self.url, relative_url)
+                                    })
+                                    .collect(),
+                                shop_id,
+                                shops_item_id,
+                            };
+                            Some(item)
+                        }
+                    }
                 }
             })
             .collect::<Vec<_>>();

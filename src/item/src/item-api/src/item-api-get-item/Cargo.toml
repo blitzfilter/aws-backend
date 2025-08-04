@@ -24,3 +24,4 @@ mockall = { workspace = true }
 rstest = { workspace = true }
 time = { workspace = true }
 http = { workspace = true }
+url = { workspace = true }

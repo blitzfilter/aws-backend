@@ -1,7 +1,9 @@
 use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
+use common::price::domain::FixedFxRate;
 use item_core::item::command_data::UpdateItemCommandData;
 use item_core::item_state::command_data::ItemStateCommandData;
 use item_lambda_write_update::handler;
+use item_write::service::CommandItemServiceContext;
 use lambda_runtime::{Context, LambdaEvent};
 use test_api::*;
 
@@ -42,7 +44,11 @@ async fn should_skip_all_when_they_dont_exist(#[case] n: usize) {
     };
 
     let client = get_dynamodb_client().await;
-    let response = handler(client, lambda_event).await.unwrap();
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let response = handler(service_context, lambda_event).await.unwrap();
 
     assert!(response.batch_item_failures.is_empty());
 

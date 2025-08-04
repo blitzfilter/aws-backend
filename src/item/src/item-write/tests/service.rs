@@ -1,18 +1,22 @@
 use common::batch::Batch;
 use common::item_id::ItemKey;
+use common::language::domain::Language;
+use common::language::record::{LanguageRecord, TextRecord};
+use common::localized::Localized;
+use common::price::domain::FixedFxRate;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::command::{CreateItemCommand, UpdateItemCommand};
 use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
-use item_core::item_event::domain::{ItemEvent, ItemEventPayload};
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
 use item_write::repository::WriteItemRecords;
-use item_write::service::InboundWriteItems;
+use item_write::service::{CommandItemService, CommandItemServiceContext};
 use test_api::*;
 use time::OffsetDateTime;
+use url::Url;
 
 #[localstack_test(services = [DynamoDB()])]
 async fn should_create_items_for_handle_create_items_with_one_command() {
@@ -21,17 +25,26 @@ async fn should_create_items_for_handle_create_items_with_one_command() {
     let cmd = CreateItemCommand {
         shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),
-        shop_name: "Boop".to_string(),
-        title: Default::default(),
-        description: Default::default(),
+        shop_name: "Boop".into(),
+        native_title: Localized {
+            localization: Language::De,
+            payload: "Boop".into(),
+        },
+        other_title: Default::default(),
+        native_description: None,
         price: None,
         state: ItemState::Listed,
-        url: "https://beep.boop.com/baap".to_string(),
+        url: Url::parse("https://beep.boop.com/baap").unwrap(),
         images: vec![],
+        other_description: Default::default(),
     };
 
     let client = get_dynamodb_client().await;
-    let write_res = client.handle_create_items(vec![cmd.clone()]).await;
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let write_res = service_context.handle_create_items(vec![cmd.clone()]).await;
     assert!(write_res.is_ok());
 
     let event_record_attr_map = client
@@ -45,21 +58,15 @@ async fn should_create_items_for_handle_create_items_with_one_command() {
         .clone();
     let event_record =
         serde_dynamo::from_item::<_, ItemEventRecord>(event_record_attr_map).unwrap();
-    let event: ItemEvent = event_record.try_into().unwrap();
-    match event.payload {
-        ItemEventPayload::Created(payload) => {
-            assert_eq!(cmd.shop_id, payload.shop_id);
-            assert_eq!(cmd.shops_item_id, payload.shops_item_id);
-            assert_eq!(cmd.shop_name, payload.shop_name);
-            assert_eq!(cmd.title, payload.title);
-            assert_eq!(cmd.description, payload.description);
-            assert_eq!(cmd.price, payload.price);
-            assert_eq!(cmd.state, payload.state);
-            assert_eq!(cmd.url, payload.url);
-            assert_eq!(cmd.images, payload.images);
-        }
-        _ => panic!("Expected ItemEventPayload::Created."),
-    }
+    assert_eq!(cmd.shop_id, event_record.shop_id);
+    assert_eq!(cmd.shops_item_id, event_record.shops_item_id);
+    assert_eq!(
+        cmd.shop_name.to_string(),
+        event_record.shop_name.unwrap().to_string()
+    );
+    assert_eq!(cmd.state, event_record.state.unwrap().into());
+    assert_eq!(cmd.url, event_record.url.unwrap());
+    assert_eq!(cmd.images, event_record.images.unwrap());
 }
 
 #[rstest::rstest]
@@ -78,17 +85,26 @@ async fn should_create_items_for_handle_create_items_with_commands_count(#[case]
     let mk_cmd = |x: i32| CreateItemCommand {
         shop_id: shop_id.clone(),
         shops_item_id: ShopsItemId::from(x.to_string()),
-        shop_name: "Boop".to_string(),
-        title: Default::default(),
-        description: Default::default(),
+        shop_name: "Boop".into(),
+        native_title: Localized {
+            localization: Language::De,
+            payload: "Boop".into(),
+        },
+        other_title: Default::default(),
+        native_description: None,
+        other_description: Default::default(),
         price: None,
         state: ItemState::Listed,
-        url: "https://beep.boop.com/baap".to_string(),
+        url: Url::parse("https://beep.boop.com/baap").unwrap(),
         images: vec![],
     };
     let cmds = (1..=count).map(mk_cmd).collect();
     let client = get_dynamodb_client().await;
-    let write_res = client.handle_create_items(cmds).await;
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let write_res = service_context.handle_create_items(cmds).await;
     assert!(write_res.is_ok());
 
     let actual_count = client
@@ -109,17 +125,26 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
     let cmd = CreateItemCommand {
         shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),
-        shop_name: "Boop".to_string(),
-        title: Default::default(),
-        description: Default::default(),
+        shop_name: "Boop".into(),
+        native_title: Localized {
+            localization: Language::De,
+            payload: "Boop".into(),
+        },
+        other_title: Default::default(),
+        native_description: None,
+        other_description: Default::default(),
         price: None,
         state: ItemState::Reserved,
-        url: "https://beep.boop.com/baap".to_string(),
+        url: Url::parse("https://beep.boop.com/baap").unwrap(),
         images: vec![],
     };
 
     let client = get_dynamodb_client().await;
-    let write_res_1 = client.handle_create_items(vec![cmd.clone()]).await;
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let write_res_1 = service_context.handle_create_items(vec![cmd.clone()]).await;
     assert!(write_res_1.is_ok());
 
     // manually insert the materialized one
@@ -137,13 +162,13 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
         shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),
         shop_name: "".to_string(),
-        title: None,
+        title_native: TextRecord::new("Booooop", LanguageRecord::De),
         title_de: None,
         title_en: None,
-        description: None,
+        description_native: None,
         description_de: None,
         description_en: None,
-        price: None,
+        price_native: None,
         price_eur: None,
         price_usd: None,
         price_gbp: None,
@@ -151,7 +176,7 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
         price_cad: None,
         price_nzd: None,
         state: ItemStateRecord::Reserved,
-        url: "".to_string(),
+        url: Url::parse("https://beep.boop.com/baap").unwrap(),
         images: vec![],
         hash: ItemHash::new(&None, &ItemState::Reserved),
         created: OffsetDateTime::now_utc(),
@@ -177,7 +202,7 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
     assert_eq!(2, actual_count_1);
 
     // Attempting to write created-event again is successful, but skipped
-    let write_res_2 = client.handle_create_items(vec![cmd.clone()]).await;
+    let write_res_2 = service_context.handle_create_items(vec![cmd.clone()]).await;
     assert!(write_res_2.is_ok());
     let actual_count_2 = client
         .scan()
@@ -215,7 +240,11 @@ async fn should_skip_non_existent_items_for_handle_update_items_with_commands_co
     };
     let cmds = (1..=count).map(mk_entry).collect();
     let client = get_dynamodb_client().await;
-    let write_res = client.handle_update_items(cmds).await;
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let write_res = service_context.handle_update_items(cmds).await;
     assert!(write_res.is_ok());
 
     let actual_count = client
@@ -246,18 +275,27 @@ async fn should_partially_skip_non_existent_items_for_handle_update_items_with_c
     let cmd = CreateItemCommand {
         shop_id: shop_id.clone(),
         shops_item_id: ShopsItemId::from(count.to_string()),
-        shop_name: "Boop".to_string(),
-        title: Default::default(),
-        description: Default::default(),
+        shop_name: "Boop".into(),
+        native_title: Localized {
+            localization: Language::De,
+            payload: "Boop".into(),
+        },
+        other_title: Default::default(),
+        native_description: None,
+        other_description: Default::default(),
         price: None,
         state: ItemState::Reserved,
-        url: "https://beep.boop.com/baap".to_string(),
+        url: Url::parse("https://beep.boop.com/baap").unwrap(),
         images: vec![],
     };
 
     // create only the last item
     let client = get_dynamodb_client().await;
-    let write_res = client.handle_create_items(vec![cmd.clone()]).await;
+    let service_context = &CommandItemServiceContext {
+        dynamodb_client: client,
+        fx_rate: &FixedFxRate::default(),
+    };
+    let write_res = service_context.handle_create_items(vec![cmd.clone()]).await;
     assert!(write_res.is_ok());
 
     // manually insert the materialized one
@@ -271,13 +309,13 @@ async fn should_partially_skip_non_existent_items_for_handle_update_items_with_c
         shop_id: shop_id.clone(),
         shops_item_id: ShopsItemId::from(count.to_string()),
         shop_name: "".to_string(),
-        title: None,
+        title_native: TextRecord::new("Boop", LanguageRecord::De),
         title_de: None,
         title_en: None,
-        description: None,
+        description_native: None,
         description_de: None,
         description_en: None,
-        price: None,
+        price_native: None,
         price_eur: None,
         price_usd: None,
         price_gbp: None,
@@ -285,7 +323,7 @@ async fn should_partially_skip_non_existent_items_for_handle_update_items_with_c
         price_cad: None,
         price_nzd: None,
         state: ItemStateRecord::Reserved,
-        url: "".to_string(),
+        url: Url::parse("https://beep.boop.com/baap").unwrap(),
         images: vec![],
         hash: ItemHash::new(&None, &ItemState::Reserved),
         created: OffsetDateTime::now_utc(),
@@ -313,8 +351,7 @@ async fn should_partially_skip_non_existent_items_for_handle_update_items_with_c
         )
     };
     let cmds = (1..=count).map(mk_entry).collect();
-    let client = get_dynamodb_client().await;
-    let write_res = client.handle_update_items(cmds).await;
+    let write_res = service_context.handle_update_items(cmds).await;
     assert!(write_res.is_ok());
 
     let actual_count = client

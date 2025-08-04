@@ -9,6 +9,7 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemRecord {
@@ -30,8 +31,7 @@ pub struct ItemRecord {
 
     pub shop_name: String,
 
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title: Option<TextRecord>,
+    pub title_native: TextRecord,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub title_de: Option<String>,
@@ -40,7 +40,7 @@ pub struct ItemRecord {
     pub title_en: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub description: Option<TextRecord>,
+    pub description_native: Option<TextRecord>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description_de: Option<String>,
@@ -49,7 +49,7 @@ pub struct ItemRecord {
     pub description_en: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub price: Option<PriceRecord>,
+    pub price_native: Option<PriceRecord>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price_eur: Option<u64>,
@@ -71,10 +71,10 @@ pub struct ItemRecord {
 
     pub state: ItemStateRecord,
 
-    pub url: String,
+    pub url: Url,
 
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub images: Vec<String>,
+    pub images: Vec<Url>,
 
     pub hash: ItemHash,
 

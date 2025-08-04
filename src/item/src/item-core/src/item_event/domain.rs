@@ -1,17 +1,19 @@
+use crate::item::domain::description::Description;
+use crate::item::domain::shop_name::ShopName;
+use crate::item::domain::title::Title;
 use crate::item::hash::ItemHash;
-use crate::item_event::record::ItemEventRecord;
-use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::domain::ItemState;
-use common::error::missing_field::MissingPersistenceField;
+use common::currency::domain::Currency;
 use common::event::Event;
 use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
-use common::price::domain::Price;
+use common::localized::Localized;
+use common::price::domain::{MonetaryAmount, Price};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use field::field;
 use std::collections::HashMap;
+use url::Url;
 
 pub type ItemEvent = Event<ItemId, ItemEventPayload>;
 
@@ -75,13 +77,16 @@ impl ItemCommonEventPayload for ItemEventPayload {
 pub struct ItemCreatedEventPayload {
     pub shop_id: ShopId,
     pub shops_item_id: ShopsItemId,
-    pub shop_name: String,
-    pub title: HashMap<Language, String>,
-    pub description: HashMap<Language, String>,
-    pub price: Option<Price>,
+    pub shop_name: ShopName,
+    pub native_title: Localized<Language, Title>,
+    pub other_title: HashMap<Language, Title>,
+    pub native_description: Option<Localized<Language, Description>>,
+    pub other_description: HashMap<Language, Description>,
+    pub native_price: Option<Price>,
+    pub other_price: HashMap<Currency, MonetaryAmount>,
     pub state: ItemState,
-    pub url: String,
-    pub images: Vec<String>,
+    pub url: Url,
+    pub images: Vec<Url>,
     pub hash: ItemHash,
 }
 
@@ -117,6 +122,7 @@ pub struct ItemPriceChangeEventPayload {
     pub shop_id: ShopId,
     pub shops_item_id: ShopsItemId,
     pub price: Price,
+    pub other_price: HashMap<Currency, MonetaryAmount>,
     pub hash: ItemHash,
 }
 
@@ -127,132 +133,5 @@ impl ItemCommonEventPayload for ItemPriceChangeEventPayload {
 
     fn shops_item_id(&self) -> &ShopsItemId {
         &self.shops_item_id
-    }
-}
-
-impl TryFrom<ItemEventRecord> for ItemEvent {
-    type Error = MissingPersistenceField;
-    fn try_from(record: ItemEventRecord) -> Result<Self, Self::Error> {
-        let payload = match record.event_type {
-            ItemEventTypeRecord::Created => {
-                let state = record
-                    .state
-                    .ok_or::<MissingPersistenceField>(field!(state@ItemEventRecord).into())?
-                    .into();
-                let mut title = HashMap::with_capacity(2);
-                if let Some(title_en) = record.title_en {
-                    title.insert(Language::En, title_en);
-                }
-                if let Some(title_de) = record.title_de {
-                    title.insert(Language::De, title_de);
-                }
-                if let Some(title_record) = record.title {
-                    title.insert(title_record.language.into(), title_record.text);
-                }
-
-                let mut description = HashMap::with_capacity(2);
-                if let Some(description_en) = record.description_en {
-                    description.insert(Language::En, description_en);
-                }
-                if let Some(description_de) = record.description_de {
-                    description.insert(Language::De, description_de);
-                }
-                if let Some(description_record) = record.description {
-                    title.insert(description_record.language.into(), description_record.text);
-                }
-
-                ItemEventPayload::Created(ItemCreatedEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    shop_name: record.shop_name.ok_or::<MissingPersistenceField>(
-                        field!(shop_name@ItemEventRecord).into(),
-                    )?,
-                    title,
-                    description,
-                    price: record.price.map(Price::from),
-                    state,
-                    url: record
-                        .url
-                        .ok_or::<MissingPersistenceField>(field!(url@ItemEventRecord).into())?,
-                    images: record.images.unwrap_or_default(),
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::StateListed => {
-                ItemEventPayload::StateListed(ItemStateChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::StateAvailable => {
-                ItemEventPayload::StateAvailable(ItemStateChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::StateReserved => {
-                ItemEventPayload::StateReserved(ItemStateChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::StateSold => {
-                ItemEventPayload::StateSold(ItemStateChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::StateRemoved => {
-                ItemEventPayload::StateRemoved(ItemStateChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::PriceDiscovered => {
-                ItemEventPayload::PriceDiscovered(ItemPriceChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    price: record
-                        .price
-                        .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
-                        .into(),
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::PriceDropped => {
-                ItemEventPayload::PriceDropped(ItemPriceChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    price: record
-                        .price
-                        .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
-                        .into(),
-                    hash: record.hash,
-                })
-            }
-            ItemEventTypeRecord::PriceIncreased => {
-                ItemEventPayload::PriceIncreased(ItemPriceChangeEventPayload {
-                    shop_id: record.shop_id,
-                    shops_item_id: record.shops_item_id,
-                    price: record
-                        .price
-                        .ok_or::<MissingPersistenceField>(field!(price@ItemEventRecord).into())?
-                        .into(),
-                    hash: record.hash,
-                })
-            }
-        };
-        let event = Event {
-            aggregate_id: record.item_id,
-            event_id: record.event_id,
-            timestamp: record.timestamp,
-            payload,
-        };
-        Ok(event)
     }
 }

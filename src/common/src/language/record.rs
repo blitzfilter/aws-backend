@@ -1,4 +1,5 @@
 use crate::language::domain::Language;
+use crate::localized::Localized;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -32,6 +33,15 @@ impl TextRecord {
         TextRecord {
             text: text.into(),
             language,
+        }
+    }
+}
+
+impl<T: Into<String>> From<Localized<Language, T>> for TextRecord {
+    fn from(value: Localized<Language, T>) -> Self {
+        TextRecord {
+            text: value.payload.into(),
+            language: value.localization.into(),
         }
     }
 }

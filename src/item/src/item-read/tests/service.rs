@@ -1,4 +1,3 @@
-use common::currency::domain::Currency;
 use common::currency::record::CurrencyRecord;
 use common::event_id::EventId;
 use common::item_id::ItemId;
@@ -11,19 +10,18 @@ use item_core::item::hash::ItemHash;
 use item_core::item::record::ItemRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
-use item_read::service::{GetItemError, ReadItem};
+use item_read::service::{GetItemError, QueryItemService};
 use test_api::*;
 use time::OffsetDateTime;
 use time::format_description::well_known;
+use url::Url;
 
 #[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_not_found_err_for_get_item_with_currency_when_table_is_empty() {
     let shop_id = ShopId::new();
     let shops_item_id = "non-existent".into();
     let client = get_dynamodb_client().await;
-    let actual = client
-        .get_item_with_currency(&shop_id, &shops_item_id, Currency::Eur)
-        .await;
+    let actual = client.find_item(&shop_id, &shops_item_id).await;
 
     assert!(actual.is_err());
     match actual.unwrap_err() {
@@ -51,13 +49,13 @@ async fn should_return_item_record_for_get_item_with_currency_when_exists() {
         shop_id: shop_id.clone(),
         shops_item_id: shops_item_id.clone(),
         shop_name: "Foo".to_string(),
-        title: Some(TextRecord::new("Bar", LanguageRecord::De)),
+        title_native: TextRecord::new("Bar", LanguageRecord::De),
         title_de: Some("Bar".to_string()),
         title_en: Some("Barr".to_string()),
-        description: Some(TextRecord::new("Baz", LanguageRecord::De)),
+        description_native: Some(TextRecord::new("Baz", LanguageRecord::De)),
         description_de: Some("Baz".to_string()),
         description_en: Some("Bazz".to_string()),
-        price: Some(PriceRecord {
+        price_native: Some(PriceRecord {
             amount: 110,
             currency: CurrencyRecord::Eur,
         }),
@@ -68,8 +66,8 @@ async fn should_return_item_record_for_get_item_with_currency_when_exists() {
         price_cad: None,
         price_nzd: None,
         state: ItemStateRecord::Available,
-        url: "https:://foo.bar/123456".to_string(),
-        images: vec!["https:://foo.bar/123456/image".to_string()],
+        url: Url::parse("https://foo.bar/123456").unwrap(),
+        images: vec![Url::parse("https://foo.bar/123456/image").unwrap()],
         hash: ItemHash::new(&None, &ItemState::Available),
         created: now,
         updated: now,
@@ -85,10 +83,7 @@ async fn should_return_item_record_for_get_item_with_currency_when_exists() {
         .unwrap();
 
     let expected: Item = inserted.into();
-    let actual = client
-        .get_item_with_currency(&shop_id, &shops_item_id, Currency::Eur)
-        .await
-        .unwrap();
+    let actual = client.find_item(&shop_id, &shops_item_id).await.unwrap();
 
     assert_eq!(expected, actual);
 }

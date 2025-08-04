@@ -18,7 +18,17 @@ impl From<MinorUnitExponent> for u8 {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Debug,
+    Hash,
+    strum_macros::EnumIter,
+    strum_macros::Display,
+    strum_macros::EnumCount,
+)]
 pub enum Currency {
     Eur,
     Gbp,

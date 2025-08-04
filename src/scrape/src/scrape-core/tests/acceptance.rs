@@ -1,4 +1,6 @@
 use common::batch::Batch;
+use common::language::data::LocalizedTextData;
+use common::language::record::{LanguageRecord, TextRecord};
 use common::{
     currency::data::CurrencyData, event_id::EventId, item_id::ItemId, language::data::LanguageData,
     price::data::PriceData, shop_id::ShopId,
@@ -15,6 +17,7 @@ use scrape_core::{
 use std::{collections::HashMap, time::Duration};
 use test_api::*;
 use time::macros::datetime;
+use url::Url;
 
 const CREATE_ITEM_SQS: Sqs = Sqs {
     name: "item-lambda-write-new-queue",
@@ -57,13 +60,18 @@ fn mk_scrape_item(id: usize, shop_id: &ShopId) -> ScrapeItem {
         shop_id: shop_id.clone(),
         shops_item_id: id.to_string().into(),
         shop_name: "Lorem ipsum".to_owned(),
-        title: HashMap::from([
+        native_title: LocalizedTextData {
+            text: "boop".to_string(),
+            language: LanguageData::De,
+        },
+        other_title: HashMap::from([
             (LanguageData::De, "Deutscher Titel".to_owned()),
             (LanguageData::En, "English title".to_owned()),
             (LanguageData::Fr, "Français titre".to_owned()),
             (LanguageData::Es, "Español título".to_owned()),
         ]),
-        description: HashMap::from([
+        native_description: None,
+        other_description: HashMap::from([
             (LanguageData::De, "Deutsche Beschreibung".to_owned()),
             (LanguageData::En, "English description".to_owned()),
             (LanguageData::Fr, "Français description".to_owned()),
@@ -94,13 +102,13 @@ fn mk_item_record(id: usize, shop_id: &ShopId) -> ItemRecord {
         shop_id: shop_id.clone(),
         shops_item_id: id.to_string().into(),
         shop_name: "Lorem ipsum".into(),
-        title: None,
+        title_native: TextRecord::new("Boopsie whoop", LanguageRecord::En),
         title_de: None,
         title_en: None,
-        description: None,
+        description_native: None,
         description_de: None,
         description_en: None,
-        price: None,
+        price_native: None,
         price_eur: None,
         price_usd: None,
         price_gbp: None,
@@ -108,7 +116,7 @@ fn mk_item_record(id: usize, shop_id: &ShopId) -> ItemRecord {
         price_cad: None,
         price_nzd: None,
         state: ItemStateRecord::Listed,
-        url: "https://example.com/Lorem".to_owned(),
+        url: Url::parse(&format!("https://example.com/{}", id)).unwrap(),
         images: vec![],
         hash: ItemHash::new(&None, &ItemState::Listed),
         created: datetime!(2007 - 12 - 24 18:21 UTC),

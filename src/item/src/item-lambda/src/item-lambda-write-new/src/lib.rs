@@ -3,14 +3,14 @@ use common::has::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::command::CreateItemCommand;
 use item_core::item::command_data::CreateItemCommandData;
-use item_write::service::InboundWriteItems;
+use item_write::service::CommandItemService;
 use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 #[tracing::instrument(skip(service, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
-    service: &impl InboundWriteItems,
+    service: &impl CommandItemService,
     event: LambdaEvent<SqsEvent>,
 ) -> Result<SqsBatchResponse, lambda_runtime::Error> {
     let records_count = event.payload.records.len();
@@ -87,11 +87,17 @@ fn extract_message_data(
             None
         }
         Some(item_json) => match serde_json::from_str::<CreateItemCommandData>(&item_json) {
-            Ok(command_data) => {
-                let command = CreateItemCommand::from(command_data);
-                message_ids.insert(command.key(), message_id);
-                Some(command)
-            }
+            Ok(command_data) => match CreateItemCommand::try_from(command_data) {
+                Ok(command) => {
+                    message_ids.insert(command.key(), message_id);
+                    Some(command)
+                }
+                Err(err) => {
+                    warn!(error = %err, payload = %item_json, "Failed parsing URL for CreateItemCommand");
+                    failed_message_ids.push(message_id);
+                    None
+                }
+            },
             Err(e) => {
                 error!(
                     error = %e,
@@ -110,10 +116,11 @@ mod tests {
     use crate::handler;
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use common::item_id::ItemKey;
+    use common::language::data::{LanguageData, LocalizedTextData};
     use common::shop_id::ShopId;
     use item_core::item::command_data::CreateItemCommandData;
     use item_core::item_state::command_data::ItemStateCommandData;
-    use item_write::service::MockInboundWriteItems;
+    use item_write::service::MockCommandItemService;
     use lambda_runtime::{Context, LambdaEvent};
 
     #[rstest::rstest]
@@ -132,11 +139,13 @@ mod tests {
                 shop_id: shop_id.clone(),
                 shops_item_id: x.to_string().into(),
                 shop_name: "".to_string(),
-                title: Default::default(),
-                description: Default::default(),
+                native_title: LocalizedTextData::new("Boop".to_string(), LanguageData::En),
+                other_title: Default::default(),
+                native_description: None,
+                other_description: Default::default(),
                 price: None,
                 state: ItemStateCommandData::Listed,
-                url: "".to_string(),
+                url: "https://boop.beep.bap.com".to_string(),
                 images: vec![],
             };
             SqsMessage {
@@ -158,7 +167,7 @@ mod tests {
             context: Context::default(),
         };
 
-        let mut service_mock = MockInboundWriteItems::default();
+        let mut service_mock = MockCommandItemService::default();
         service_mock
             .expect_handle_create_items()
             .return_once(move |_| {

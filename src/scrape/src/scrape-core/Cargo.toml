@@ -24,3 +24,4 @@ test-api = { workspace = true }
 serial_test = { workspace = true }
 item-write = { workspace = true }
 time = { workspace = true }
+url = { workspace = true, features = ["serde"] }

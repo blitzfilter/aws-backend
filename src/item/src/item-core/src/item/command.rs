@@ -1,47 +1,68 @@
 use crate::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
+use crate::item::domain::description::Description;
+use crate::item::domain::shop_name::ShopName;
+use crate::item::domain::title::Title;
 use crate::item_state::domain::ItemState;
 use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::language::domain::Language;
+use common::localized::Localized;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use std::collections::HashMap;
+use url::Url;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateItemCommand {
     pub shop_id: ShopId,
     pub shops_item_id: ShopsItemId,
-    pub shop_name: String,
-    pub title: HashMap<Language, String>,
-    pub description: HashMap<Language, String>,
+    pub shop_name: ShopName,
+    pub native_title: Localized<Language, Title>,
+    pub other_title: HashMap<Language, Title>,
+    pub native_description: Option<Localized<Language, Description>>,
+    pub other_description: HashMap<Language, Description>,
     pub price: Option<Price>,
     pub state: ItemState,
-    pub url: String,
-    pub images: Vec<String>,
+    pub url: Url,
+    pub images: Vec<Url>,
 }
 
-impl From<CreateItemCommandData> for CreateItemCommand {
-    fn from(data: CreateItemCommandData) -> Self {
-        CreateItemCommand {
+impl TryFrom<CreateItemCommandData> for CreateItemCommand {
+    type Error = url::ParseError;
+    fn try_from(data: CreateItemCommandData) -> Result<Self, Self::Error> {
+        let cmd = CreateItemCommand {
             shop_id: data.shop_id,
             shops_item_id: data.shops_item_id,
-            shop_name: data.shop_name,
-            title: data
-                .title
+            shop_name: data.shop_name.into(),
+            native_title: Localized {
+                localization: data.native_title.language.into(),
+                payload: data.native_title.text.into(),
+            },
+            other_title: data
+                .other_title
                 .into_iter()
-                .map(|(language, text)| (language.into(), text))
+                .map(|(language, text)| (language.into(), text.into()))
                 .collect(),
-            description: data
-                .description
+            native_description: data.native_description.map(|text| Localized {
+                localization: text.language.into(),
+                payload: text.text.into(),
+            }),
+            other_description: data
+                .other_description
                 .into_iter()
-                .map(|(language, text)| (language.into(), text))
+                .map(|(language, text)| (language.into(), text.into()))
                 .collect(),
             price: data.price.map(Price::from),
             state: data.state.into(),
-            url: data.url,
-            images: data.images,
-        }
+            url: Url::parse(&data.url)?,
+            images: data
+                .images
+                .iter()
+                .filter_map(|url| Url::parse(url).ok())
+                .collect(),
+        };
+        Ok(cmd)
     }
 }
 

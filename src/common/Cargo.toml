@@ -9,6 +9,8 @@ time = { workspace = true, features = ["formatting", "parsing", "macros", "serde
 uuid = { workspace = true, features = ["v4"] }
 thiserror = { workspace = true }
 itertools = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
 
 # Optional dependencies via feature-flags
 aws-sdk-dynamodb = { workspace = true, optional = true }
