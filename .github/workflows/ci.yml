@@ -12,6 +12,22 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+x-crates: &all-crates
+  - src/common
+  - src/filter
+  - src/item/src/item-api/src/item-api-get-item
+  - src/item/src/item-core
+  - src/item/src/item-index
+  - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+  - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+  - src/item/src/item-lambda/src/item-lambda-write-new
+  - src/item/src/item-lambda/src/item-lambda-write-update
+  - src/item/src/item-write
+  - src/item/src/item-read
+  - src/scrape/src/scrape-core
+  - src/scrape/src/scrape-static
+  - src/test-api
+
 jobs:
   lint:
     name: Lint Workspace
@@ -49,21 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate:
-          - src/common
-          - src/filter
-          - src/item/src/item-api/src/item-api-get-item
-          - src/item/src/item-core
-          - src/item/src/item-index
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
-          - src/item/src/item-lambda/src/item-lambda-write-new
-          - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-write
-          - src/item/src/item-read
-          - src/scrape/src/scrape-core
-          - src/scrape/src/scrape-static
-          - src/test-api
+        crate: *all-crates
     steps:
       - uses: actions/checkout@v4
 
@@ -83,29 +85,44 @@ jobs:
         working-directory: ${{ matrix.crate }}
         run: cargo build --all-features
 
-  test:
-    name: Test ${{ matrix.crate }}
+  unit-test:
+    name: Unit-Test ${{ matrix.crate }}
     needs: build
     permissions:
       contents: read
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate:
-          - src/common
-          - src/filter
-          - src/item/src/item-api/src/item-api-get-item
-          - src/item/src/item-core
-          - src/item/src/item-index
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
-          - src/item/src/item-lambda/src/item-lambda-write-new
-          - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-write
-          - src/item/src/item-read
-          - src/scrape/src/scrape-core
-          - src/scrape/src/scrape-static
-          - src/test-api
+        crate: *all-crates
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Test ${{ matrix.crate }}
+        working-directory: ${{ matrix.crate }}
+        run: cargo test --lib --all-features
+
+  integration-test:
+    name: Integration-Test ${{ matrix.crate }}
+    needs: build
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate: *all-crates
     steps:
       - uses: actions/checkout@v4
 
@@ -134,11 +151,11 @@ jobs:
 
       - name: Test ${{ matrix.crate }}
         working-directory: ${{ matrix.crate }}
-        run: cargo test --all-features
+        run: cargo test --test '*' --all-features
 
   sonar:
     name: SonarQube-Cloud Analysis
-    needs: test
+    needs: [unit-test, integration-test]
     permissions:
       contents: read
     runs-on: ubuntu-latest
