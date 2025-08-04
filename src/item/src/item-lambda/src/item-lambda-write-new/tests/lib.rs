@@ -29,7 +29,7 @@ async fn should_create_new_items_when_all_valid(#[case] n: usize) {
             other_description: Default::default(),
             price: None,
             state: ItemStateCommandData::Listed,
-            url: "".to_string(),
+            url: "https://example.com".to_string(),
             images: vec![],
         };
         SqsMessage {
@@ -85,7 +85,7 @@ async fn should_skip_records_with_empty_body(#[case] n: usize) {
             other_description: Default::default(),
             price: None,
             state: ItemStateCommandData::Listed,
-            url: "".to_string(),
+            url: "https://example.com".to_string(),
             images: vec![],
         };
         SqsMessage {
