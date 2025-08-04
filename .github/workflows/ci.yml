@@ -182,6 +182,7 @@ jobs:
   sonar:
     name: SonarQube-Cloud Analysis
     needs: [unit-test, integration-test]
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
     runs-on: ubuntu-latest
