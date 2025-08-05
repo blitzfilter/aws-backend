@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::repository::QueryItemRepository;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::config::http::HttpResponse;
@@ -9,7 +11,10 @@ use common::localized::Localized;
 use common::price::domain::{MonetaryAmountOverflowError, Price};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use item_core::item::domain::description::Description;
+use item_core::item::domain::title::Title;
 use item_core::item::domain::{Item, LocalizedItemView};
+use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GetItemError {
@@ -85,7 +90,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> QueryItemService for T {
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
-        languages: &[Language],
+        preferred_languages: &[Language],
         currency: &Currency,
     ) -> Result<LocalizedItemView, GetItemError> {
         let item_record = self
@@ -97,48 +102,41 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> QueryItemService for T {
                 shops_item_id.clone(),
             ))?;
 
-        let mut available_languages = languages
-            .iter()
-            .filter(|x| x == &&Language::De || x == &&Language::En)
-            .collect::<Vec<&Language>>();
-        available_languages.push(&Language::De);
-        available_languages.push(&Language::En);
+        let mut available_titles: HashMap<Language, Title> = HashMap::with_capacity(3);
+        available_titles.insert(
+            item_record.title_native.language.into(),
+            item_record.title_native.text.into(),
+        );
+        if let Some(title_de) = item_record.title_de {
+            available_titles.insert(Language::De, title_de.into());
+        }
+        if let Some(title_en) = item_record.title_en {
+            available_titles.insert(Language::En, title_en.into());
+        }
 
-        let title = match (
-            available_languages.as_slice(),
-            item_record.title_de,
-            item_record.title_en,
-        ) {
-            ([Language::De, ..], Some(title_de), _) => {
-                Localized::new(Language::De, title_de.into())
-            }
-            ([Language::En, ..], Some(title_en), _) => {
-                Localized::new(Language::En, title_en.into())
-            }
-            _ => Localized::new(
-                item_record.title_native.language.into(),
-                item_record.title_native.text.into(),
-            ),
-        };
+        let mut available_descriptions: HashMap<Language, Description> = HashMap::with_capacity(3);
+        if let Some(description_native) = item_record.description_native {
+            available_descriptions.insert(
+                description_native.language.into(),
+                description_native.text.into(),
+            );
+        }
+        if let Some(description_de) = item_record.description_de {
+            available_descriptions.insert(Language::De, description_de.into());
+        }
+        if let Some(description_en) = item_record.description_en {
+            available_descriptions.insert(Language::En, description_en.into());
+        }
 
-        let description = match (
-            available_languages.as_slice(),
-            item_record.description_de,
-            item_record.description_en,
-        ) {
-            ([Language::De, ..], Some(description_de), _) => {
-                Some(Localized::new(Language::De, description_de.into()))
-            }
-            ([Language::En, ..], Some(description_en), _) => {
-                Some(Localized::new(Language::En, description_en.into()))
-            }
-            _ => item_record.description_native.map(|description_native| {
-                Localized::new(
-                    description_native.language.into(),
-                    description_native.text.into(),
-                )
-            }),
-        };
+        let title = Language::resolve(preferred_languages, available_titles).unwrap_or_else(|| {
+            error!(
+                shopId = %shop_id,
+                shopsItemId = %shops_item_id,
+                "Failed resolving title. This SHOULD be impossible because the native title always exists."
+            );
+            Localized::new(Language::En, "Unknown title".into())
+        });
+        let description = Language::resolve(preferred_languages, available_descriptions);
 
         let price = match currency {
             Currency::Eur => item_record
