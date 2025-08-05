@@ -71,12 +71,14 @@ pub async fn handle(
         .payload
         .path_parameters
         .get("shopId")
+        .filter(|str| !str.is_empty())
         .map(ShopId::from)
         .ok_or(ApiError::bad_request(BAD_PARAMETER).with_path_field("shopId"))?;
     let shops_item_id = event
         .payload
         .path_parameters
         .get("shopsItemId")
+        .filter(|str| !str.is_empty())
         .map(ShopsItemId::from)
         .ok_or(ApiError::bad_request(BAD_PARAMETER).with_path_field("shopsItemId"))?;
 
