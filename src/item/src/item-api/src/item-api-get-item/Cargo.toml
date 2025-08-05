@@ -20,6 +20,8 @@ accept-language = { workspace = true }
 http = { workspace = true }
 
 [dev-dependencies]
+test-api = { workspace = true }
+serial_test = { workspace = true }
 mockall = { workspace = true }
 rstest = { workspace = true }
 time = { workspace = true }
