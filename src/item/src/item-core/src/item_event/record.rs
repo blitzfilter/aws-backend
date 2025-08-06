@@ -10,7 +10,7 @@ use common::event_id::EventId;
 use common::has::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
-use common::language::record::{LanguageRecord, TextRecord};
+use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -124,54 +124,34 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
 
         match domain.payload {
             ItemEventPayload::Created(payload) => {
+                let native_title_lang = payload.native_title.localization;
+                let native_description_lang = payload
+                    .native_description
+                    .as_ref()
+                    .map(|descr| descr.localization);
                 let mut payload = payload;
-                let title_native: TextRecord = payload.native_title.into();
-                let title_de = payload
-                    .other_title
-                    .remove(&Language::De)
-                    .map(String::from)
-                    .or_else(|| {
-                        if title_native.language == LanguageRecord::De {
-                            Some(title_native.text.clone())
-                        } else {
-                            None
-                        }
-                    });
-                let title_en = payload
-                    .other_title
-                    .remove(&Language::En)
-                    .map(String::from)
-                    .or_else(|| {
-                        if title_native.language == LanguageRecord::En {
-                            Some(title_native.text.clone())
-                        } else {
-                            None
-                        }
-                    });
 
-                let description_native = payload.native_description.map(TextRecord::from);
+                payload.other_title.insert(
+                    payload.native_title.localization,
+                    payload.native_title.payload,
+                );
+                let title_de = payload.other_title.remove(&Language::De).map(String::from);
+                let title_en = payload.other_title.remove(&Language::En).map(String::from);
+
+                if let Some(description_native) = payload.native_description {
+                    payload
+                        .other_description
+                        .insert(description_native.localization, description_native.payload);
+                }
                 let description_de = payload
                     .other_description
                     .remove(&Language::De)
-                    .map(String::from)
-                    .or_else(|| {
-                        if title_native.language == LanguageRecord::De {
-                            description_native.as_ref().map(|text| text.text.clone())
-                        } else {
-                            None
-                        }
-                    });
+                    .map(String::from);
                 let description_en = payload
                     .other_description
                     .remove(&Language::En)
-                    .map(String::from)
-                    .or_else(|| {
-                        if title_native.language == LanguageRecord::En {
-                            description_native.as_ref().map(|text| text.text.clone())
-                        } else {
-                            None
-                        }
-                    });
+                    .map(String::from);
+
                 let record = ItemEventRecord {
                     pk,
                     sk,
@@ -181,10 +161,18 @@ impl TryFrom<ItemEvent> for ItemEventRecord {
                     shop_id,
                     shops_item_id,
                     shop_name: Some(payload.shop_name.into()),
-                    title_native: Some(title_native),
+                    title_native: payload
+                        .other_title
+                        .remove_entry(&native_title_lang)
+                        .map(|(lang, title)| TextRecord::new(title, lang.into())),
                     title_de,
                     title_en,
-                    description_native,
+                    description_native: native_description_lang.and_then(|native_descr_lang| {
+                        payload
+                            .other_description
+                            .remove_entry(&native_descr_lang)
+                            .map(|(lang, descr)| TextRecord::new(descr, lang.into()))
+                    }),
                     description_de,
                     description_en,
                     price_native: payload.native_price.map(PriceRecord::from),
