@@ -283,7 +283,7 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create_updat
     assert!(publish_res.is_ok());
 
     // Wait for Lambda to consume and handle all messages
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    tokio::time::sleep(Duration::from_secs(15)).await;
 
     let actual = service
         .dynamodb_client
