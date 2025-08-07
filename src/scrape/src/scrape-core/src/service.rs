@@ -58,7 +58,7 @@ impl<'a> PublishScrapeItemService for PublishScrapeItemsContext<'a> {
                     });
                 }
                 Err(err) => {
-                    error!(error = %err, shopId = %shop_id, "Failed assessing ScrapeItems.");
+                    error!(error = ?err, shopId = %shop_id, "Failed assessing ScrapeItems.");
                     failures.extend(keys);
                 }
             }
