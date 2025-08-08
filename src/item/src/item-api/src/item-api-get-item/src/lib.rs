@@ -1,6 +1,6 @@
-use aws_lambda_events::apigw::{ApiGatewayProxyRequest, ApiGatewayProxyResponse};
+use aws_lambda_events::apigw::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use aws_lambda_events::http::HeaderValue;
-use common::api::api_gateway_proxy_response_builder::ApiGatewayProxyResponseBuilder;
+use common::api::api_gateway_v2_http_response_builder::ApiGatewayV2HttpResponseBuilder;
 use common::api::error::ApiError;
 use common::api::error_code::{
     BAD_HEADER_VALUE, BAD_PARAMETER, BAD_QUERY_PARAMETER_VALUE, INTERNAL_SERVER_ERROR,
@@ -19,19 +19,19 @@ use tracing::error;
 
 #[tracing::instrument(skip(event, service), fields(requestId = %event.context.request_id))]
 pub async fn handler(
-    event: LambdaEvent<ApiGatewayProxyRequest>,
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl QueryItemService,
-) -> Result<ApiGatewayProxyResponse, lambda_runtime::Error> {
+) -> Result<ApiGatewayV2httpResponse, lambda_runtime::Error> {
     match handle(event, service).await {
         Ok(response) => Ok(response),
-        Err(err) => Ok(ApiGatewayProxyResponse::from(err)),
+        Err(err) => Ok(ApiGatewayV2httpResponse::from(err)),
     }
 }
 
 pub async fn handle(
-    event: LambdaEvent<ApiGatewayProxyRequest>,
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl QueryItemService,
-) -> Result<ApiGatewayProxyResponse, ApiError> {
+) -> Result<ApiGatewayV2httpResponse, ApiError> {
     let languages = event
         .payload
         .headers
@@ -93,7 +93,7 @@ pub async fn handle(
 
     let content_language = item_data.title.language;
 
-    Ok(ApiGatewayProxyResponseBuilder::json(200)
+    Ok(ApiGatewayV2HttpResponseBuilder::json(200)
         .body(response)
         .content_language(content_language)
         .e_tag(item_data.event_id.to_string().as_str())
@@ -105,7 +105,7 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use crate::handler;
-    use aws_lambda_events::apigw::ApiGatewayProxyRequest;
+    use aws_lambda_events::apigw::ApiGatewayV2httpRequest;
     use aws_lambda_events::encodings::Body::Text;
     use aws_lambda_events::query_map::QueryMap;
     use common::event_id::EventId;
@@ -132,17 +132,14 @@ mod tests {
         let shop_id = ShopId::new();
         let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayProxyRequest {
+            payload: ApiGatewayV2httpRequest {
                 resource: None,
-                path: None,
                 http_method: Default::default(),
                 headers: Default::default(),
-                multi_value_headers: Default::default(),
                 query_string_parameters: QueryMap::from(HashMap::from([(
                     "currency".to_string(),
                     "invalid_currency".to_string(),
                 )])),
-                multi_value_query_string_parameters: Default::default(),
                 path_parameters: HashMap::from_iter([
                     ("shopId".to_string(), shop_id.to_string()),
                     ("shopsItemId".to_string(), shops_item_id.to_string()),
@@ -151,6 +148,15 @@ mod tests {
                 request_context: Default::default(),
                 body: None,
                 is_base64_encoded: false,
+                kind: None,
+                method_arn: None,
+                identity_source: None,
+                authorization_token: None,
+                version: None,
+                route_key: None,
+                raw_path: None,
+                raw_query_string: None,
+                cookies: None,
             },
             context: Default::default(),
         };
@@ -175,14 +181,11 @@ mod tests {
         service.expect_view_item().never();
         let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayProxyRequest {
+            payload: ApiGatewayV2httpRequest {
                 resource: None,
-                path: None,
                 http_method: Default::default(),
                 headers: Default::default(),
-                multi_value_headers: Default::default(),
                 query_string_parameters: Default::default(),
-                multi_value_query_string_parameters: Default::default(),
                 path_parameters: HashMap::from_iter([(
                     "shopsItemId".to_string(),
                     shops_item_id.to_string(),
@@ -191,6 +194,15 @@ mod tests {
                 request_context: Default::default(),
                 body: None,
                 is_base64_encoded: false,
+                kind: None,
+                method_arn: None,
+                identity_source: None,
+                authorization_token: None,
+                version: None,
+                route_key: None,
+                raw_path: None,
+                raw_query_string: None,
+                cookies: None,
             },
             context: Default::default(),
         };
@@ -215,19 +227,25 @@ mod tests {
         service.expect_view_item().never();
         let shop_id = ShopId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayProxyRequest {
+            payload: ApiGatewayV2httpRequest {
                 resource: None,
-                path: None,
                 http_method: Default::default(),
                 headers: Default::default(),
-                multi_value_headers: Default::default(),
                 query_string_parameters: Default::default(),
-                multi_value_query_string_parameters: Default::default(),
                 path_parameters: HashMap::from_iter([("shopId".to_string(), shop_id.to_string())]),
                 stage_variables: Default::default(),
                 request_context: Default::default(),
                 body: None,
                 is_base64_encoded: false,
+                kind: None,
+                method_arn: None,
+                identity_source: None,
+                authorization_token: None,
+                version: None,
+                route_key: None,
+                raw_path: None,
+                raw_query_string: None,
+                cookies: None,
             },
             context: Default::default(),
         };
@@ -274,14 +292,11 @@ mod tests {
         let shop_id = ShopId::new();
         let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayProxyRequest {
+            payload: ApiGatewayV2httpRequest {
                 resource: None,
-                path: None,
                 http_method: Default::default(),
                 headers: Default::default(),
-                multi_value_headers: Default::default(),
                 query_string_parameters: Default::default(),
-                multi_value_query_string_parameters: Default::default(),
                 path_parameters: HashMap::from_iter([
                     ("shopId".to_string(), shop_id.to_string()),
                     ("shopsItemId".to_string(), shops_item_id.to_string()),
@@ -290,6 +305,15 @@ mod tests {
                 request_context: Default::default(),
                 body: None,
                 is_base64_encoded: false,
+                kind: None,
+                method_arn: None,
+                identity_source: None,
+                authorization_token: None,
+                version: None,
+                route_key: None,
+                raw_path: None,
+                raw_query_string: None,
+                cookies: None,
             },
             context: Default::default(),
         };
@@ -330,14 +354,11 @@ mod tests {
         let shop_id = ShopId::new();
         let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayProxyRequest {
+            payload: ApiGatewayV2httpRequest {
                 resource: None,
-                path: None,
                 http_method: Default::default(),
                 headers: Default::default(),
-                multi_value_headers: Default::default(),
                 query_string_parameters: Default::default(),
-                multi_value_query_string_parameters: Default::default(),
                 path_parameters: HashMap::from_iter([
                     ("shopId".to_string(), shop_id.to_string()),
                     ("shopsItemId".to_string(), shops_item_id.to_string()),
@@ -346,6 +367,15 @@ mod tests {
                 request_context: Default::default(),
                 body: None,
                 is_base64_encoded: false,
+                kind: None,
+                method_arn: None,
+                identity_source: None,
+                authorization_token: None,
+                version: None,
+                route_key: None,
+                raw_path: None,
+                raw_query_string: None,
+                cookies: None,
             },
             context: Default::default(),
         };

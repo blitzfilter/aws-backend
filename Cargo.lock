@@ -1933,6 +1933,7 @@ dependencies = [
  "http 1.3.1",
  "item-core",
  "item-read",
+ "item-write",
  "lambda_runtime",
  "mockall",
  "rstest",

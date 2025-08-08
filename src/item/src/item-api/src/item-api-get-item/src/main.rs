@@ -1,5 +1,5 @@
 use aws_config::BehaviorVersion;
-use aws_lambda_events::apigw::ApiGatewayProxyRequest;
+use aws_lambda_events::apigw::ApiGatewayV2httpRequest;
 use aws_sdk_dynamodb::Client;
 use item_api_get_item::handler;
 use lambda_runtime::tracing::info;
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Error> {
     info!("Lambda cold start completed, client initialized.");
 
     run(service_fn(
-        move |event: LambdaEvent<ApiGatewayProxyRequest>| async move {
+        move |event: LambdaEvent<ApiGatewayV2httpRequest>| async move {
             handler(event, client).await
         },
     ))

@@ -64,8 +64,11 @@ pub struct LocalizedTextData {
 }
 
 impl LocalizedTextData {
-    pub fn new(text: String, language: LanguageData) -> Self {
-        LocalizedTextData { text, language }
+    pub fn new(text: impl Into<String>, language: LanguageData) -> Self {
+        LocalizedTextData {
+            text: text.into(),
+            language,
+        }
     }
 }
 
