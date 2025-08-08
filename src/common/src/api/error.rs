@@ -1,9 +1,6 @@
+use crate::api::api_gateway_v2_http_response_builder::ApiGatewayV2HttpResponseBuilder;
 use crate::api::error_code::ApiErrorCode;
-use crate::api::{
-    api_gateway_proxy_response_builder::ApiGatewayProxyResponseBuilder,
-    api_gateway_v2_http_response_builder::ApiGatewayV2HttpResponseBuilder,
-};
-use aws_lambda_events::apigw::{ApiGatewayProxyResponse, ApiGatewayV2httpResponse};
+use aws_lambda_events::apigw::ApiGatewayV2httpResponse;
 use http::StatusCode;
 use serde::Serialize;
 use std::error::Error;
@@ -118,15 +115,6 @@ impl ApiError {
 
     pub fn gateway_time_out(error: ApiErrorCode) -> Self {
         Self::new(StatusCode::GATEWAY_TIMEOUT, error)
-    }
-}
-
-impl From<ApiError> for ApiGatewayProxyResponse {
-    fn from(api_error: ApiError) -> Self {
-        ApiGatewayProxyResponseBuilder::json(api_error.status.into())
-            .body(serde_json::to_string(&api_error).unwrap())
-            .cors()
-            .build()
     }
 }
 
