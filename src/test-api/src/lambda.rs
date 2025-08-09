@@ -147,10 +147,11 @@ pub fn build_lambda_if_needed(lambda_name: &str, lambda_src_dir: &Path) -> PathB
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
-                if fname.starts_with(&format!("{lambda_name}_")) && fname.ends_with(".zip") {
-                    let _ = fs::remove_file(&path);
-                }
+            if let Some(fname) = path.file_name().and_then(|f| f.to_str())
+                && fname.starts_with(&format!("{lambda_name}_"))
+                && fname.ends_with(".zip")
+            {
+                let _ = fs::remove_file(&path);
             }
         }
     }
