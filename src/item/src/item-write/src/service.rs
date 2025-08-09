@@ -278,7 +278,7 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                 match record_res {
                     Ok(record_event) => Some(record_event),
                     Err(err) => {
-                        error!(error = %err, "Failed converting DynamoDB-JSON to ItemEventRecord from failed BatchWriteItemOutput.");
+                        error!(error = %err, type = %std::any::type_name::<ItemEventRecord>(), "Failed converting DynamoDB-JSON to ItemEventRecord from failed BatchWriteItemOutput.");
                         None
                     }
                 }

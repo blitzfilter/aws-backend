@@ -64,7 +64,7 @@ where
             .and_then(|item_record_res| match item_record_res {
                 Ok(item_record) => Some(item_record),
                 Err(err) => {
-                    error!(error = %err, "Failed deserializing ItemRecord.");
+                    error!(error = %err, type = %std::any::type_name::<ItemRecord>(), "Failed deserializing ItemRecord.");
                     None
                 }
             });
@@ -111,7 +111,7 @@ where
             .filter_map(|result| match result {
                 Ok(event) => Some(event),
                 Err(err) => {
-                    error!(error = %err, "Failed deserializing ItemRecord.");
+                    error!(error = %err, type = %std::any::type_name::<ItemRecord>(), "Failed deserializing ItemRecord.");
                     None
                 }
             })
@@ -257,7 +257,7 @@ where
             .filter_map(|result| match result {
                 Ok(event) => Some(event),
                 Err(err) => {
-                    error!(error = %err, "Failed deserializing ItemSummaryHash.");
+                    error!(error = %err, type = %std::any::type_name::<ItemSummaryHash>(), "Failed deserializing ItemSummaryHash.");
                     None
                 }
             })
