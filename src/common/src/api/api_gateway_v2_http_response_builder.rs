@@ -152,8 +152,10 @@ impl ApiGatewayV2HttpResponseBuilder {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::api::api_gateway_proxy_response_builder::ApiGatewayV2HttpResponseBuilder;
-    use crate::language::data::LanguageData;
+    use crate::{
+        api::api_gateway_v2_http_response_builder::ApiGatewayV2HttpResponseBuilder,
+        language::data::LanguageData,
+    };
     use std::time::SystemTime;
 
     #[rstest::rstest]
