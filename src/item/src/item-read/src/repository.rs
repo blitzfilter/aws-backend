@@ -38,7 +38,7 @@ pub trait QueryItemRepository {
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<Vec<ItemSummaryHash>, SdkError<QueryError, HttpResponse>>;
+    ) -> Result<impl IntoIterator<Item = ItemSummaryHash>, SdkError<QueryError, HttpResponse>>;
 }
 
 #[async_trait]
@@ -233,7 +233,7 @@ where
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<Vec<ItemSummaryHash>, SdkError<QueryError, HttpResponse>> {
+    ) -> Result<impl IntoIterator<Item = ItemSummaryHash>, SdkError<QueryError, HttpResponse>> {
         let records = self
             .get()
             .query()
@@ -260,8 +260,7 @@ where
                     error!(error = %err, type = %std::any::type_name::<ItemSummaryHash>(), "Failed deserializing ItemSummaryHash.");
                     None
                 }
-            })
-            .collect();
+            });
 
         Ok(records)
     }
