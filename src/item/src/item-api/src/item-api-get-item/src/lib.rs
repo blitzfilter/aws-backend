@@ -56,7 +56,8 @@ pub async fn handle(
         .payload
         .query_string_parameters
         .first("currency")
-        .map(serde_json::from_str::<CurrencyData>)
+        .filter(|str| !str.is_empty())
+        .map(|currency| serde_json::from_str::<CurrencyData>(&format!(r#""{currency}""#)))
         .map(|currency_res| {
             currency_res.map_err(|err| {
                 ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
