@@ -248,7 +248,9 @@ async fn should_return_nothing_for_query_item_diff_records_when_table_is_empty()
     let actual = client
         .query_item_hashes(&ShopId::new(), true)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     assert!(actual.is_empty());
 }
@@ -306,7 +308,9 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
     sleep(Duration::from_secs(3)).await;
 
     let expected: ItemSummaryHash = inserted.into();
-    let actual = client.query_item_hashes(&shop_id, true).await.unwrap();
+    let actual = client.query_item_hashes(&shop_id, true).await.unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     assert_eq!(vec![expected], actual);
 }
@@ -408,7 +412,9 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
 
     let expected1: ItemSummaryHash = inserted1.into();
     let expected2: ItemSummaryHash = inserted2.into();
-    let actual = client.query_item_hashes(&shop_id, true).await.unwrap();
+    let actual = client.query_item_hashes(&shop_id, true).await.unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     assert_eq!(2, actual.len());
     assert!(actual.contains(&expected1));
@@ -513,7 +519,9 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
 
     let expected1: ItemSummaryHash = inserted1.into();
     let expected2: ItemSummaryHash = inserted2.into();
-    let actual = client.query_item_hashes(&shop_id, true).await.unwrap();
+    let actual = client.query_item_hashes(&shop_id, true).await.unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     assert_eq!(vec![expected1, expected2], actual);
 }
@@ -573,7 +581,9 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     let actual = client
         .query_item_hashes(&ShopId::new(), true)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     assert!(actual.is_empty());
 }
@@ -668,7 +678,9 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     let actual = client
         .query_item_hashes(&ShopId::new(), true)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     assert!(actual.is_empty());
 }
