@@ -88,7 +88,7 @@ pub async fn handle(
         .await?
         .into();
     let response = serde_json::to_string(&item_data).map_err(|err| {
-        error!(error = %err, payload = ?item_data, "Failed serializing GetItemData.");
+        error!(error = %err, payload = ?item_data, type = %std::any::type_name::<GetItemData>(), "Failed serializing GetItemData.");
         ApiError::internal_server_error(INTERNAL_SERVER_ERROR)
     })?;
 

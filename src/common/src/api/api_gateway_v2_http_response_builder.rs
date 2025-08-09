@@ -54,6 +54,7 @@ impl ApiGatewayV2HttpResponseBuilder {
                 None => {
                     error!(
                         language = ?language,
+                        type = %std::any::type_name::<LanguageData>(),
                         "Failed to serialize LanguageData as JSON-Value-String when setting HTTP Content-Language."
                     );
                 }
@@ -74,6 +75,7 @@ impl ApiGatewayV2HttpResponseBuilder {
                 error!(
                     error = %err,
                     language = ?language,
+                    type = %std::any::type_name::<LanguageData>(),
                     "Failed to serialize LanguageData when setting HTTP Content-Language."
                 );
             }

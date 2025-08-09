@@ -97,6 +97,7 @@ fn extract_message_data(
                 error!(
                     error = %e,
                     payload = %item_json,
+                    type = %std::any::type_name::<UpdateItemCommandData>(),
                     "Failed deserializing UpdateItemCommandData."
                 );
                 failed_message_ids.push(message_id);
