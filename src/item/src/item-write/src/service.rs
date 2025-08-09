@@ -189,14 +189,14 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                     match res {
                         Ok(output) => self.handle_batch_output(output, failures),
                         Err(err) => {
-                            error!(error = %err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
+                            error!(error = ?err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
                             failures.extend(item_keys);
                         }
                     }
                 }
             }
             Err(err) => {
-                error!(error = %err, "Failed entire BatchGetItem-Operation due to SdkError.");
+                error!(error = ?err, "Failed entire BatchGetItem-Operation due to SdkError.");
                 failures.extend(create_item_keys);
             }
         }
@@ -249,14 +249,14 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                     match res {
                         Ok(output) => self.handle_batch_output(output, failures),
                         Err(err) => {
-                            error!(error = %err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
+                            error!(error = ?err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
                             failures.extend(item_keys);
                         }
                     }
                 }
             }
             Err(err) => {
-                error!(error = %err, "Failed entire BatchGetItem-Operation due to SdkError.");
+                error!(error = ?err, "Failed entire BatchGetItem-Operation due to SdkError.");
                 failures.extend(update_item_keys);
             }
         }
