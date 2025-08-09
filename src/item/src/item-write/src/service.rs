@@ -300,19 +300,18 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
         for mut existing_item in existing_records.into_iter().map(Item::from) {
             if let Some((item_key, update)) = update_chunk.remove_entry(&existing_item.key()) {
                 let mut any_changes = false;
-                if let Some(price_update) = update.price {
-                    if let Some(price_event) =
+                if let Some(price_update) = update.price
+                    && let Some(price_event) =
                         existing_item.change_price(price_update, self.fx_rate)
-                    {
-                        events.push(price_event);
-                        any_changes = true;
-                    }
+                {
+                    events.push(price_event);
+                    any_changes = true;
                 }
-                if let Some(state_update) = update.state {
-                    if let Some(state_event) = existing_item.change_state(state_update) {
-                        events.push(state_event);
-                        any_changes = true;
-                    }
+                if let Some(state_update) = update.state
+                    && let Some(state_event) = existing_item.change_state(state_update)
+                {
+                    events.push(state_event);
+                    any_changes = true;
                 }
                 if !any_changes {
                     info!(
