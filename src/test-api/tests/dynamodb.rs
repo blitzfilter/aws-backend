@@ -14,5 +14,5 @@ async fn should_set_up_tables() {
     let tables = list_tables_output.table_names();
 
     assert_eq!(tables.len(), 1);
-    assert!(tables.contains(&"items".to_string()));
+    assert!(tables.contains(&"table_1".to_string()));
 }

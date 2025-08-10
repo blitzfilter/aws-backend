@@ -1,4 +1,5 @@
 use common::batch::Batch;
+use common::env::get_dynamodb_table_name;
 use common::language::data::LocalizedTextData;
 use common::language::record::{LanguageRecord, TextRecord};
 use common::{
@@ -162,7 +163,7 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create(#[cas
     let actual = service
         .dynamodb_client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -222,7 +223,7 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_update(#[cas
     let actual = service
         .dynamodb_client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -288,7 +289,7 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create_updat
     let actual = service
         .dynamodb_client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()

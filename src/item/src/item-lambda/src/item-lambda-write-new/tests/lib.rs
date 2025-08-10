@@ -60,7 +60,12 @@ async fn should_create_new_items_when_all_valid(#[case] n: usize) {
 
     assert!(response.batch_item_failures.is_empty());
 
-    let scan_result = client.scan().table_name("items").send().await.unwrap();
+    let scan_result = client
+        .scan()
+        .table_name(get_dynamodb_table_name())
+        .send()
+        .await
+        .unwrap();
     assert_eq!(n, scan_result.count as usize);
 }
 
@@ -120,6 +125,11 @@ async fn should_skip_records_with_empty_body(#[case] n: usize) {
 
     assert!(response.batch_item_failures.is_empty());
 
-    let scan_result = client.scan().table_name("items").send().await.unwrap();
+    let scan_result = client
+        .scan()
+        .table_name(get_dynamodb_table_name())
+        .send()
+        .await
+        .unwrap();
     assert_eq!(n - 1, scan_result.count as usize);
 }

@@ -82,7 +82,7 @@ async fn should_return_item_for_find_item_when_exists() {
     let client = get_dynamodb_client().await;
     client
         .put_item()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted).ok())
         .send()
         .await
@@ -174,7 +174,7 @@ async fn should_return_localized_item_view_for_view_item_respecting_preferred_la
     let client = get_dynamodb_client().await;
     client
         .put_item()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted).ok())
         .send()
         .await
@@ -243,7 +243,7 @@ async fn should_return_localized_item_view_for_view_item_respecting_currency(
     let client = get_dynamodb_client().await;
     client
         .put_item()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted).ok())
         .send()
         .await

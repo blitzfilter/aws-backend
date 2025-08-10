@@ -5,6 +5,7 @@ use aws_sdk_dynamodb::operation::batch_write_item::{BatchWriteItemError, BatchWr
 use aws_sdk_dynamodb::operation::update_item::{UpdateItemError, UpdateItemOutput};
 use aws_sdk_dynamodb::types::AttributeValue;
 use common::batch::Batch;
+use common::env::get_dynamodb_table_name;
 use common::has::Has;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -96,7 +97,7 @@ where
 
         self.get()
             .update_item()
-            .table_name("items")
+            .table_name(get_dynamodb_table_name())
             .key("pk", AttributeValue::S(pk))
             .key("sk", AttributeValue::S(sk))
             .update_expression(update_expr)

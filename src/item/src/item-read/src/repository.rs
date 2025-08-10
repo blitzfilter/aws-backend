@@ -7,6 +7,7 @@ use aws_sdk_dynamodb::operation::query::QueryError;
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
 use common::batch::Batch;
 use common::batch::dynamodb::BatchGetItemResult;
+use common::env::get_dynamodb_table_name;
 use common::has::Has;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
@@ -54,7 +55,7 @@ where
         let rec = self
             .get()
             .get_item()
-            .table_name("items")
+            .table_name(get_dynamodb_table_name())
             .key("pk", AttributeValue::S(mk_pk(shop_id, shops_item_id)))
             .key("sk", AttributeValue::S(mk_sk().to_owned()))
             .send()
@@ -237,7 +238,7 @@ where
         let records = self
             .get()
             .query()
-            .table_name("items")
+            .table_name(get_dynamodb_table_name())
             .index_name("gsi_1")
             .key_condition_expression("#gsi_1_pk = :gsi_1_pk_val")
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")

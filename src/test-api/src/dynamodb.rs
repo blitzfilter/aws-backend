@@ -7,6 +7,7 @@ use aws_sdk_dynamodb::types::{
     ProjectionType, TableClass,
 };
 use aws_sdk_dynamodb::{Client, Error};
+use common::env::get_dynamodb_table_name;
 use tokio::sync::OnceCell;
 use tracing::debug;
 
@@ -65,7 +66,7 @@ async fn set_up_table_items() -> Result<(), Error> {
     get_dynamodb_client()
         .await
         .create_table()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .attribute_definitions(
             AttributeDefinition::builder()
                 .attribute_name("pk")

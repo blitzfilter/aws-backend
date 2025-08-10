@@ -52,6 +52,11 @@ async fn should_skip_all_when_they_dont_exist(#[case] n: usize) {
 
     assert!(response.batch_item_failures.is_empty());
 
-    let scan_result = client.scan().table_name("items").send().await.unwrap();
+    let scan_result = client
+        .scan()
+        .table_name(get_dynamodb_table_name())
+        .send()
+        .await
+        .unwrap();
     assert_eq!(0, scan_result.count as usize);
 }

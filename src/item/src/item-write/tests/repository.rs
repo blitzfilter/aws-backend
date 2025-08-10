@@ -220,7 +220,7 @@ async fn should_put_item_event_records_for_single_record() {
 
     let actual = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -319,7 +319,7 @@ async fn should_put_item_event_records_for_multiple_records() {
 
     let actual = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
