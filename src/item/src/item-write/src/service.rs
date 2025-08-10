@@ -13,6 +13,7 @@ use item_core::item_event::domain::ItemEvent;
 use item_core::item_event::record::ItemEventRecord;
 use item_read::repository::QueryItemRepository;
 use itertools::Itertools;
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info, warn};
 
@@ -187,7 +188,7 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                     let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
                     let res = self.put_item_event_records(batch).await;
                     match res {
-                        Ok(output) => self.handle_batch_output(output, failures),
+                        Ok(output) => handle_batch_output::<ItemEventRecord>(output, failures),
                         Err(err) => {
                             error!(error = ?err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
                             failures.extend(item_keys);
@@ -247,7 +248,7 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                     let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
                     let res = self.put_item_event_records(batch).await;
                     match res {
-                        Ok(output) => self.handle_batch_output(output, failures),
+                        Ok(output) => handle_batch_output::<ItemEventRecord>(output, failures),
                         Err(err) => {
                             error!(error = ?err, "Failed writing entire ItemEventRecord-Batch due to SdkError.");
                             failures.extend(item_keys);
@@ -260,32 +261,6 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                 failures.extend(update_item_keys);
             }
         }
-    }
-
-    fn handle_batch_output(&self, output: BatchWriteItemOutput, failures: &mut Vec<ItemKey>) {
-        let unprocessed = output
-            .unprocessed_items
-            .unwrap_or_default()
-            .into_iter()
-            .next()
-            .map(|(_, unprocessed)| unprocessed)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|write_req| write_req.put_request)
-            .map(|put_req| put_req.item)
-            .filter_map(|ddb_item| {
-                let record_res = serde_dynamo::from_item::<_, ItemEventRecord>(ddb_item);
-                match record_res {
-                    Ok(record_event) => Some(record_event),
-                    Err(err) => {
-                        error!(error = %err, type = %std::any::type_name::<ItemEventRecord>(), "Failed converting DynamoDB-JSON to ItemEventRecord from failed BatchWriteItemOutput.");
-                        None
-                    }
-                }
-            })
-            .map(ItemEventRecord::into_item_key);
-
-        failures.extend(unprocessed);
     }
 
     fn find_update_events_with_existing_items(
@@ -335,6 +310,39 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
 
         events
     }
+}
+
+pub fn handle_batch_output<T>(output: BatchWriteItemOutput, failures: &mut Vec<T::Key>)
+where
+    T: HasKey + for<'de> Deserialize<'de>,
+{
+    let unprocessed = output
+        .unprocessed_items
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .map(|(_, unprocessed)| unprocessed)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|write_req| write_req.put_request)
+        .map(|put_req| put_req.item)
+        .filter_map(|ddb_item| {
+            let record_res = serde_dynamo::from_item::<_, T>(ddb_item);
+            match record_res {
+                Ok(record_event) => Some(record_event),
+                Err(err) => {
+                    error!(
+                        error = %err,
+                        type = %std::any::type_name::<T>(),
+                        "Failed converting DynamoDB-JSON to target-type from failed BatchWriteItemOutput."
+                    );
+                    None
+                }
+            }
+        })
+        .map(|t| t.key());
+
+    failures.extend(unprocessed);
 }
 
 #[cfg(test)]
