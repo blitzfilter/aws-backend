@@ -1,4 +1,5 @@
 use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
+use common::env::get_dynamodb_table_name;
 use common::price::domain::FixedFxRate;
 use item_core::item::command_data::UpdateItemCommandData;
 use item_core::item_state::command_data::ItemStateCommandData;
