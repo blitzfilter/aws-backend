@@ -5,9 +5,15 @@ edition = "2024"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-time = { workspace = true, features = ["formatting", "parsing", "macros", "serde"] }
+time = { workspace = true, features = [
+    "formatting",
+    "parsing",
+    "macros",
+    "serde",
+] }
 uuid = { workspace = true, features = ["v4"] }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 itertools = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
@@ -15,8 +21,9 @@ strum_macros = { workspace = true }
 # Optional dependencies via feature-flags
 aws-sdk-dynamodb = { workspace = true, optional = true }
 aws-sdk-sqs = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
-serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"], optional = true }
+serde_dynamo = { workspace = true, features = [
+    "aws-sdk-dynamodb+1",
+], optional = true }
 aws_lambda_events = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -28,6 +35,6 @@ serde_json = { workspace = true }
 
 [features]
 default = []
-dynamodb = ["serde_dynamo", "aws-sdk-dynamodb", "tracing"]
-sqs = ["aws-sdk-sqs", "serde_json", "tracing"]
+dynamodb = ["serde_dynamo", "aws-sdk-dynamodb"]
+sqs = ["aws-sdk-sqs", "serde_json"]
 api = ["aws_lambda_events/apigw", "http", "serde_json", "httpdate"]

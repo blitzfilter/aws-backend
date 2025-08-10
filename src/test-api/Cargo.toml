@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+common = { workspace = true }
 test-api-macros = { workspace = true }
 async-trait = { workspace = true }
 derive_builder = { workspace = true }
