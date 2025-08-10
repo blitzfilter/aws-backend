@@ -121,11 +121,9 @@ mod tests {
     async fn should_scrape_all_pages_until_no_items_returned() {
         let actual = DummyScraper
             .scrape(&DummyClient, ScraperConfig::default())
-            .collect::<Vec<Result<ScrapeItem, ScrapeError>>>()
-            .await
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+            .filter_map(|result| async { result.ok() })
+            .collect::<Vec<_>>()
+            .await;
 
         assert_eq!(81, actual.len());
     }
@@ -146,11 +144,9 @@ mod tests {
                     page_delay: Some(Duration::from_millis(delay_ms)),
                 },
             )
-            .collect::<Vec<Result<ScrapeItem, ScrapeError>>>()
-            .await
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>();
+            .filter_map(|result| async { result.ok() })
+            .collect::<Vec<_>>()
+            .await;
         let t2 = SystemTime::now();
 
         let time_spent = t2.duration_since(t1).unwrap().as_millis();
