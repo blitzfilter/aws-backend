@@ -1,5 +1,6 @@
 use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
+use common::env::get_dynamodb_table_name;
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::language::record::{LanguageRecord, TextRecord};

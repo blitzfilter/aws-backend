@@ -1,4 +1,5 @@
 use common::batch::Batch;
+use common::env::get_dynamodb_table_name;
 use common::item_id::ItemKey;
 use common::language::domain::Language;
 use common::language::record::{LanguageRecord, TextRecord};
