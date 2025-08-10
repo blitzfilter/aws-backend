@@ -94,7 +94,10 @@ where
             .set_keys(Some(keys))
             .build()
             .expect("shouldn't fail because we previously set the only required field 'keys'.");
-        let request_items = Some(HashMap::from([("items".to_owned(), keys_and_attributes)]));
+        let request_items = Some(HashMap::from([(
+            get_dynamodb_table_name().to_owned(),
+            keys_and_attributes,
+        )]));
         let response = self
             .get()
             .batch_get_item()
@@ -105,7 +108,7 @@ where
         let records = response
             .responses
             .unwrap_or_default()
-            .remove("items")
+            .remove(get_dynamodb_table_name())
             .unwrap_or_default()
             .into_iter()
             .map(serde_dynamo::from_item::<_, ItemRecord>)
@@ -121,7 +124,7 @@ where
         let unprocessed = response
             .unprocessed_keys
             .unwrap_or_default()
-            .remove("items")
+            .remove(get_dynamodb_table_name())
             .map(|keys_and_attributes| keys_and_attributes.keys)
             .unwrap_or_default()
             .into_iter()
@@ -173,7 +176,10 @@ where
             .projection_expression("pk")
             .build()
             .expect("shouldn't fail because we previously set the only required field 'keys'.");
-        let request_items = Some(HashMap::from([("items".to_owned(), keys_and_attributes)]));
+        let request_items = Some(HashMap::from([(
+            get_dynamodb_table_name().to_owned(),
+            keys_and_attributes,
+        )]));
         let response = self
             .get()
             .batch_get_item()
@@ -184,7 +190,7 @@ where
         let records = response
             .responses
             .unwrap_or_default()
-            .remove("items")
+            .remove(get_dynamodb_table_name())
             .unwrap_or_default()
             .into_iter()
             .map(extract_item_key)
@@ -200,7 +206,7 @@ where
         let unprocessed = response
             .unprocessed_keys
             .unwrap_or_default()
-            .remove("items")
+            .remove(get_dynamodb_table_name())
             .map(|keys_and_attributes| keys_and_attributes.keys)
             .unwrap_or_default()
             .into_iter()

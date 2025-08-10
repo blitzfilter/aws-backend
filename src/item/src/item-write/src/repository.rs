@@ -47,7 +47,7 @@ where
         self.get()
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
-                "items".to_owned(),
+                get_dynamodb_table_name().to_owned(),
                 item_event_records.into_dynamodb_write_requests(),
             )])))
             .send()
@@ -61,7 +61,7 @@ where
         self.get()
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
-                "items".to_owned(),
+                get_dynamodb_table_name().to_owned(),
                 item_records.into_dynamodb_write_requests(),
             )])))
             .send()
