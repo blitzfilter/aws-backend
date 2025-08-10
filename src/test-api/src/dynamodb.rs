@@ -46,6 +46,9 @@ impl IntegrationTestService for DynamoDB {
     }
 
     async fn set_up(&self) {
+        unsafe {
+            std::env::set_var("DYNAMODB_TABLE_NAME", "table_1");
+        }
         set_up_tables()
             .await
             .expect("shouldn't fail setting up tables");
