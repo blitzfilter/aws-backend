@@ -93,7 +93,13 @@ fn extract_message_data(
                     Some(command)
                 }
                 Err(err) => {
-                    warn!(error = %err, payload = %item_json, "Failed parsing URL for CreateItemCommand");
+                    warn!(
+                        error = %err,
+                        payload = %item_json,
+                        fromType = %std::any::type_name::<CreateItemCommandData>(),
+                        fromType = %std::any::type_name::<CreateItemCommand>(),
+                        "Failed mapping."
+                    );
                     failed_message_ids.push(message_id);
                     None
                 }
