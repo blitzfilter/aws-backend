@@ -49,7 +49,7 @@ async fn should_create_items_for_handle_create_items_with_one_command() {
 
     let event_record_attr_map = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -109,7 +109,7 @@ async fn should_create_items_for_handle_create_items_with_commands_count(#[case]
 
     let actual_count = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -194,7 +194,7 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
     );
     let actual_count_1 = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -206,7 +206,7 @@ async fn should_partially_skip_existent_items_for_handle_create_items() {
     assert!(write_res_2.is_ok());
     let actual_count_2 = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -249,7 +249,7 @@ async fn should_skip_non_existent_items_for_handle_update_items_with_commands_co
 
     let actual_count = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
@@ -356,7 +356,7 @@ async fn should_partially_skip_non_existent_items_for_handle_update_items_with_c
 
     let actual_count = client
         .scan()
-        .table_name("items")
+        .table_name(get_dynamodb_table_name())
         .send()
         .await
         .unwrap()
