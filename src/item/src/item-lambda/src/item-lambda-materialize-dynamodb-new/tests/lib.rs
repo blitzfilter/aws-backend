@@ -24,7 +24,7 @@ use url::Url;
 #[case::fivehundred(500)]
 #[case::onethousand(1000)]
 #[localstack_test(services = [DynamoDB()])]
-async fn should_materialize_items(#[case] n: usize) {
+async fn should_materialize_items_for_create(#[case] n: usize) {
     let mk_message = |x: usize| {
         let event_record: ItemEventRecord = Item::create(
             ShopId::new(),
