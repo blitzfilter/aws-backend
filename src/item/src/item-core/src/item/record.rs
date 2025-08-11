@@ -108,7 +108,7 @@ impl TryFrom<ItemEventRecord> for ItemRecord {
         let timestamp_str = event_record.timestamp.format(&well_known::Rfc3339)?;
         let record = ItemRecord {
             pk: event_record.pk,
-            sk: event_record.sk,
+            sk: "item#materialized".to_string(),
             gsi_1_pk: format!("shop_id#{}", event_record.shop_id),
             gsi_1_sk: format!("updated#{timestamp_str}"),
             item_id: event_record.item_id,
