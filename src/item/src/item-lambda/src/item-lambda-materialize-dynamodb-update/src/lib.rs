@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_invalid_json_deserialization() {
+    async fn should_fail_message_for_invalid_json_deserialization() {
         let invalid_json_message = SqsMessage {
             message_id: Some("msg1".to_string()),
             receipt_handle: None,
@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_empty_message_body() {
+    async fn should_skip_message_for_empty_message_body() {
         let empty_body_message = SqsMessage {
             message_id: Some("msg2".to_string()),
             receipt_handle: None,
@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_repository_update_failure() {
+    async fn should_fail_message_for_repository_update_failure() {
         let event_record = create_sample_item_event_record();
         let valid_message = SqsMessage {
             message_id: Some("msg3".to_string()),
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_mixed_success_and_failure_scenarios() {
+    async fn should_process_mixed_success_and_failure_scenarios_correctly() {
         let event_record = create_sample_item_event_record();
         let valid_message = SqsMessage {
             message_id: Some("msg_success".to_string()),
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_extract_message_data_with_invalid_json() {
+    async fn should_fail_extract_message_data_with_invalid_json() {
         let mut failed_message_ids = Vec::new();
         let mut skipped_count = 0;
         let mut message_ids = HashMap::new();
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_extract_message_data_with_empty_body() {
+    async fn should_skip_extract_message_data_with_empty_body() {
         let mut failed_message_ids = Vec::new();
         let mut skipped_count = 0;
         let mut message_ids = HashMap::new();
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_extract_message_data_with_valid_data() {
+    async fn should_succeed_extract_message_data_with_valid_data() {
         let mut failed_message_ids = Vec::new();
         let mut skipped_count = 0;
         let mut message_ids = HashMap::new();
