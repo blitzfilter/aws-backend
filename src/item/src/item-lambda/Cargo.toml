@@ -8,3 +8,5 @@ item-lambda-write-new = { workspace = true }
 item-lambda-write-update = { workspace = true }
 item-lambda-materialize-dynamodb-new = { workspace = true }
 item-lambda-materialize-dynamodb-update = { workspace = true }
+item-lambda-materialize-opensearch-new = { workspace = true }
+item-lambda-materialize-opensearch-update = { workspace = true }

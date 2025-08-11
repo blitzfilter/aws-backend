@@ -1,0 +1,6 @@
+[package]
+name = "item-lambda-materialize-opensearch-update"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

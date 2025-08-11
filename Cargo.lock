@@ -1983,6 +1983,8 @@ version = "0.1.0"
 dependencies = [
  "item-lambda-materialize-dynamodb-new",
  "item-lambda-materialize-dynamodb-update",
+ "item-lambda-materialize-opensearch-new",
+ "item-lambda-materialize-opensearch-update",
  "item-lambda-write-new",
  "item-lambda-write-update",
 ]
@@ -2033,6 +2035,14 @@ dependencies = [
  "tracing-subscriber",
  "url",
 ]
+
+[[package]]
+name = "item-lambda-materialize-opensearch-new"
+version = "0.1.0"
+
+[[package]]
+name = "item-lambda-materialize-opensearch-update"
+version = "0.1.0"
 
 [[package]]
 name = "item-lambda-write-new"
