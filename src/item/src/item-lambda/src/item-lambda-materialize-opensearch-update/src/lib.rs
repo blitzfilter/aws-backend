@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+use aws_lambda_events::sqs::{SqsBatchResponse, SqsEvent};
+use item_index::IndexItemDocumentRepository;
+use lambda_runtime::LambdaEvent;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[tracing::instrument(skip(_repository, event), fields(requestId = %event.context.request_id))]
+pub async fn handler(
+    _repository: &impl IndexItemDocumentRepository,
+    event: LambdaEvent<SqsEvent>,
+) -> Result<SqsBatchResponse, lambda_runtime::Error> {
+    todo!()
 }
