@@ -13,11 +13,14 @@ pub struct BulkResponse {
 #[derive(Debug, Deserialize)]
 pub struct BulkItemResult {
     #[serde(default)]
-    pub update: Option<BulkUpdateResult>,
+    pub update: Option<BulkOpResult>,
+
+    #[serde(default)]
+    pub create: Option<BulkOpResult>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct BulkUpdateResult {
+pub struct BulkOpResult {
     #[serde(rename = "_index")]
     pub index: String,
 
