@@ -2024,12 +2024,14 @@ dependencies = [
  "lambda_runtime",
  "mockall",
  "rstest",
+ "serde_dynamo",
  "serde_json",
  "serial_test",
  "test-api",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
