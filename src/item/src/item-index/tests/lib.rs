@@ -4,7 +4,7 @@ use common::shops_item_id::ShopsItemId;
 use item_core::item::document::ItemDocument;
 use item_core::item::update_document::ItemUpdateDocument;
 use item_core::item_state::document::ItemStateDocument;
-use item_index::IndexItemDocuments;
+use item_index::IndexItemDocumentRepository;
 use opensearch::params::Refresh;
 use opensearch::{GetParts, IndexParts};
 use serde::de::DeserializeOwned;

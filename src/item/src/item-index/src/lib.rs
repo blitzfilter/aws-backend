@@ -11,7 +11,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 #[async_trait]
-pub trait IndexItemDocuments {
+pub trait IndexItemDocumentRepository {
     async fn create_item_documents(
         &self,
         updates: Vec<ItemDocument>,
@@ -24,7 +24,7 @@ pub trait IndexItemDocuments {
 }
 
 #[async_trait]
-impl<T: Has<opensearch::OpenSearch> + Sync> IndexItemDocuments for T {
+impl<T: Has<opensearch::OpenSearch> + Sync> IndexItemDocumentRepository for T {
     async fn create_item_documents(
         &self,
         documents: Vec<ItemDocument>,
