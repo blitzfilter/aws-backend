@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 #[async_trait]
 #[allow(clippy::result_large_err)]
+#[mockall::automock]
 pub trait PersistItemRepository {
     async fn put_item_event_records(
         &self,
