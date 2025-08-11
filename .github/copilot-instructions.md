@@ -17,11 +17,8 @@ Always reference these instructions first and fallback to search or bash command
 - Lint check: `cargo clippy --workspace --all-targets --all-features -- -D warnings` -- takes 15 seconds
 
 ### Testing
-- **Unit tests**: `cargo test --workspace --lib --all-features` -- takes 35 seconds. Set timeout to 2+ minutes.
-- **Integration tests (basic)**: Some work without prerequisites:
-  - DynamoDB tests: `cd src/test-api && cargo test --test dynamodb --all-features` -- takes 41 seconds with Docker
-  - **NEVER CANCEL**: OpenSearch tests take 5+ minutes but often timeout in CI environments
-- **Integration tests (full)**: Require additional setup (see Prerequisites section)
+- **Unit tests**: `cargo test --workspace --lib --all-features` -- takes 35 seconds. Set timeout to 2+ minutes. Apply parameterized testing with crate `rstest` when plausible, e.g. for serialization.
+- **Integration tests**: Require additional setup (see Prerequisites section)
 
 ### Prerequisites for Full Integration Testing
 **WARNING**: These require network access and may fail in restricted environments:
@@ -34,12 +31,12 @@ Always reference these instructions first and fallback to search or bash command
 ### Always Validate Changes
 - **ALWAYS** run format and lint checks before committing: `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - **ALWAYS** run unit tests after code changes: `cargo test --workspace --lib --all-features`
-- Run basic integration tests when changing core functionality: `cd src/test-api && cargo test --test dynamodb --all-features`
+- Run integration tests when changing core functionality: `cargo test --workspace --all-features --test '*'`
 
 ### Manual Testing Scenarios
 Since this is a serverless backend, manual testing involves:
 1. **Build validation**: Ensure all Lambda functions compile: `cargo build --workspace`
-2. **Unit test validation**: Verify business logic: `cargo test --workspace --lib --all-features`  
+2. **Unit test validation**: Verify business logic: `cargo test --workspace --lib --all-features`
 3. **Integration test validation**: Test AWS service integration with LocalStack containers
 4. **CI validation**: The CI pipeline (.github/workflows/ci.yml) runs the complete test suite
 
@@ -53,7 +50,7 @@ Since this is a serverless backend, manual testing involves:
 
 **NEVER CANCEL these commands - they are expected to take significant time:**
 - `cargo check --workspace`: 3 minutes (first run with downloads) - Set timeout to 10+ minutes
-- `cargo build --workspace`: 3 minutes 11 seconds - Set timeout to 10+ minutes  
+- `cargo build --workspace`: 3 minutes 11 seconds - Set timeout to 10+ minutes
 - `cargo install cargo-lambda`: 15+ minutes - Set timeout to 30+ minutes
 - DynamoDB integration tests: 41 seconds - Set timeout to 2+ minutes
 - OpenSearch integration tests: 5+ minutes (often timeout) - Set timeout to 10+ minutes
@@ -67,7 +64,7 @@ Since this is a serverless backend, manual testing involves:
 - **src/item**: Core item management system with multiple sub-modules:
   - `item-core`: Core business logic and domain models
   - `item-read`: Data access layer for reading items
-  - `item-write`: Data access layer for writing items  
+  - `item-write`: Data access layer for writing items
   - `item-index`: Search indexing functionality
   - `item-api`: API Gateway handlers
   - `item-lambda`: Lambda function implementations
@@ -80,6 +77,8 @@ Located in `src/item/src/item-lambda/src/`:
 - `item-lambda-write-update`: Handle item update events
 - `item-lambda-materialize-dynamodb-new`: Materialize new items to DynamoDB
 - `item-lambda-materialize-dynamodb-update`: Materialize item updates to DynamoDB
+- `item-lambda-materialize-opensearch-new`: Materialize new items to OpenSearch
+- `item-lambda-materialize-opensearch-update`: Materialize item updates to OpenSearch
 
 ### API Handlers
 - `src/item/src/item-api/src/item-api-get-item`: API Gateway handler for retrieving items
@@ -110,14 +109,14 @@ Cargo.toml (workspace root)
 └── Shared dependency versions across all crates
 ```
 
-### Main Source Directories  
+### Main Source Directories
 ```
 src/
 ├── common/          # Shared utilities, API types, error handling
 ├── item/           # Item management system (main business logic)
 │   ├── src/item-core/      # Domain models and business rules
 │   ├── src/item-read/      # Data access for reading
-│   ├── src/item-write/     # Data access for writing  
+│   ├── src/item-write/     # Data access for writing
 │   ├── src/item-index/     # Search and indexing
 │   ├── src/item-api/       # API Gateway handlers
 │   └── src/item-lambda/    # Lambda function implementations
@@ -137,7 +136,7 @@ src/
 - **Network timeouts during install**: Expected - retry with longer timeouts
 - **Integration tests fail**: Ensure Docker is available and running
 
-### Test Issues  
+### Test Issues
 - **Lambda tests fail**: Requires cargo-lambda installation (`cargo install cargo-lambda`)
 - **OpenSearch tests timeout**: Expected in CI environments - focus on unit tests
 - **DynamoDB tests slow**: Normal - uses Docker containers for LocalStack
