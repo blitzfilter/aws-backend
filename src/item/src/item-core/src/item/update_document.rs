@@ -3,7 +3,7 @@ use common::event_id::EventId;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemUpdateDocument {
     pub event_id: EventId,
