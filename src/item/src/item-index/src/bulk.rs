@@ -38,6 +38,12 @@ pub struct BulkOpResult {
     pub error: Option<BulkError>,
 }
 
+impl BulkOpResult {
+    pub fn is_err(&self) -> bool {
+        self.error.is_some()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BulkError {
     #[serde(rename = "type")]
