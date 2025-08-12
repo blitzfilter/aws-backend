@@ -25,7 +25,7 @@ async-stream = "0.3.6"
 async-trait = "0.1.88"
 aws-config = "1.8.4"
 aws-sdk-dynamodb = "1.87.0"
-aws-sdk-lambda = "1.92.0"
+aws-sdk-lambda = "1.92.1"
 aws-sdk-opensearch = "1.93.0"
 aws-sdk-sqs = "1.79.0"
 aws_lambda_events = { version = "0.17.0", default-features = false }
@@ -76,11 +76,11 @@ test-api = { path = "src/test-api" }
 test-api-macros = { path = "src/test-api/src/test-api-macros" }
 testcontainers = "0.24.0"
 testcontainers-modules = "0.12.1"
-thiserror = "2.0.12"
+thiserror = "2.0.14"
 time = "0.3.41"
 tokio = { version = "1.47.1", default-features = false }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 url = "2.5.4"
-uuid = "1.17.0"
+uuid = "1.18.0"
 walkdir = "2.5.0"
