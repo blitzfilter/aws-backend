@@ -2044,6 +2044,7 @@ dependencies = [
  "aws_lambda_events",
  "common",
  "dotenvy",
+ "field",
  "item-core",
  "item-index",
  "lambda_runtime",

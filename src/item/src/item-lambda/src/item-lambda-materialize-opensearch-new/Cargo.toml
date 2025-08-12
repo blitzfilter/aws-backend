@@ -17,6 +17,7 @@ tracing = { workspace = true }
 dotenvy = { workspace = true }
 opensearch = { workspace = true }
 url = { workspace = true }
+field = { workspace = true }
 
 [dev-dependencies]
 test-api = { workspace = true }
