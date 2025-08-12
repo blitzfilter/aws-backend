@@ -23,13 +23,13 @@ pub async fn handler(
     let mut message_ids: HashMap<ItemKey, String> = HashMap::with_capacity(records_count);
 
     for message in event.payload.records {
-        if let Some(item_recor) = extract_message_data(
+        if let Some(item_record) = extract_message_data(
             message,
             &mut failed_message_ids,
             &mut skipped_count,
             &mut message_ids,
         ) {
-            materialized_records.push(item_recor);
+            materialized_records.push(item_record);
         }
     }
 
