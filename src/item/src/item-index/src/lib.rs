@@ -14,7 +14,7 @@ use std::collections::HashMap;
 pub trait IndexItemDocumentRepository {
     async fn create_item_documents(
         &self,
-        updates: Vec<ItemDocument>,
+        documents: Vec<ItemDocument>,
     ) -> Result<BulkResponse, opensearch::Error>;
 
     async fn update_item_documents(
