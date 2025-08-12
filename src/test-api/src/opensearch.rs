@@ -9,7 +9,9 @@ use aws_sdk_sqs::error::SdkError;
 use opensearch::http::Url;
 use opensearch::http::response::Response;
 use opensearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
-use opensearch::{Error, OpenSearch as Client};
+use opensearch::params::Refresh;
+use opensearch::{Error, GetParts, IndexParts, OpenSearch as Client};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use std::time::Duration;
 use tokio::sync::OnceCell;
@@ -223,4 +225,27 @@ async fn set_up_indices() -> Result<Response, Error> {
         .body(mapping)
         .send()
         .await
+}
+
+pub async fn read_by_id<T: DeserializeOwned>(index: &str, id: impl Into<String>) -> T {
+    let get_response = get_opensearch_client()
+        .await
+        .get(GetParts::IndexId(index, &id.into()))
+        .send()
+        .await
+        .unwrap();
+    assert!(get_response.status_code().is_success());
+
+    let response_doc: serde_json::Value = get_response.json().await.unwrap();
+    serde_json::from_value(response_doc["_source"].clone()).unwrap()
+}
+
+pub async fn refresh_index(index: &str) {
+    get_opensearch_client()
+        .await
+        .index(IndexParts::Index(index))
+        .refresh(Refresh::True)
+        .send()
+        .await
+        .unwrap();
 }

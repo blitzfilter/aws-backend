@@ -5,35 +5,10 @@ use item_core::item::document::ItemDocument;
 use item_core::item::update_document::ItemUpdateDocument;
 use item_core::item_state::document::ItemStateDocument;
 use item_index::IndexItemDocumentRepository;
-use opensearch::params::Refresh;
-use opensearch::{GetParts, IndexParts};
-use serde::de::DeserializeOwned;
+use opensearch::http::Url;
 use std::collections::HashMap;
 use test_api::*;
 use time::OffsetDateTime;
-
-async fn read_by_id<T: DeserializeOwned>(id: impl Into<String>) -> T {
-    let get_response = get_opensearch_client()
-        .await
-        .get(GetParts::IndexId("items", &id.into()))
-        .send()
-        .await
-        .unwrap();
-    assert!(get_response.status_code().is_success());
-
-    let response_doc: serde_json::Value = get_response.json().await.unwrap();
-    serde_json::from_value(response_doc["_source"].clone()).unwrap()
-}
-
-async fn refresh_index() {
-    get_opensearch_client()
-        .await
-        .index(IndexParts::Index("items"))
-        .refresh(Refresh::True)
-        .send()
-        .await
-        .unwrap();
-}
 
 #[localstack_test(services = [OpenSearch()])]
 async fn should_create_item_document() {
@@ -56,8 +31,8 @@ async fn should_create_item_document() {
         price_nzd: None,
         state: ItemStateDocument::Listed,
         is_available: false,
-        url: "https://foo.com/bar".to_string(),
-        images: vec!["https://foo.com/bar".to_string()],
+        url: Url::parse("https://foo.com/bar").unwrap(),
+        images: vec![Url::parse("https://foo.com/bar").unwrap()],
         created: OffsetDateTime::now_utc(),
         updated: OffsetDateTime::now_utc(),
     };
@@ -67,8 +42,8 @@ async fn should_create_item_document() {
         .await
         .unwrap();
     assert!(!response.errors);
-    refresh_index().await;
-    let actual = read_by_id(item_id).await;
+    refresh_index("items").await;
+    let actual = read_by_id("items", item_id).await;
 
     assert_eq!(expected, actual);
 }
@@ -94,8 +69,8 @@ async fn should_create_item_documents() {
         price_nzd: None,
         state: ItemStateDocument::Listed,
         is_available: false,
-        url: "https://foo.com/bar".to_string(),
-        images: vec!["https://foo.com/bar".to_string()],
+        url: Url::parse("https://foo.com/bar").unwrap(),
+        images: vec![Url::parse("https://foo.com/bar").unwrap()],
         created: OffsetDateTime::now_utc(),
         updated: OffsetDateTime::now_utc(),
     };
@@ -118,8 +93,8 @@ async fn should_create_item_documents() {
         price_nzd: None,
         state: ItemStateDocument::Listed,
         is_available: false,
-        url: "https://foo.com/bar".to_string(),
-        images: vec!["https://foo.com/bar".to_string()],
+        url: Url::parse("https://foo.com/bar").unwrap(),
+        images: vec![Url::parse("https://foo.com/bar").unwrap()],
         created: OffsetDateTime::now_utc(),
         updated: OffsetDateTime::now_utc(),
     };
@@ -129,9 +104,9 @@ async fn should_create_item_documents() {
         .await
         .unwrap();
     assert!(!response.errors);
-    refresh_index().await;
-    let actual1 = read_by_id(item_id1).await;
-    let actual2 = read_by_id(item_id2).await;
+    refresh_index("items").await;
+    let actual1 = read_by_id("items", item_id1).await;
+    let actual2 = read_by_id("items", item_id2).await;
 
     assert_eq!(expected1, actual1);
     assert_eq!(expected2, actual2);
@@ -158,8 +133,8 @@ async fn should_update_item_document() {
         price_nzd: None,
         state: ItemStateDocument::Listed,
         is_available: false,
-        url: "https://foo.com/bar".to_string(),
-        images: vec!["https://foo.com/bar".to_string()],
+        url: Url::parse("https://foo.com/bar").unwrap(),
+        images: vec![Url::parse("https://foo.com/bar").unwrap()],
         created: OffsetDateTime::now_utc(),
         updated: OffsetDateTime::now_utc(),
     };
@@ -169,7 +144,7 @@ async fn should_update_item_document() {
         .await
         .unwrap();
     assert!(!write_response.errors);
-    refresh_index().await;
+    refresh_index("items").await;
 
     let updated_event_id = EventId::new();
     let updated_update_ts = OffsetDateTime::now_utc();
@@ -190,14 +165,14 @@ async fn should_update_item_document() {
         .await
         .unwrap();
     assert!(!update_response.errors);
-    refresh_index().await;
+    refresh_index("items").await;
 
     let mut expected = initial;
     expected.event_id = updated_event_id;
     expected.state = ItemStateDocument::Sold;
     expected.updated = updated_update_ts;
 
-    let actual = read_by_id(item_id).await;
+    let actual = read_by_id("items", item_id).await;
 
     assert_eq!(expected, actual);
 }

@@ -3800,6 +3800,7 @@ dependencies = [
  "derive_builder",
  "hex",
  "opensearch",
+ "serde",
  "serde_json",
  "serial_test",
  "sha2",
