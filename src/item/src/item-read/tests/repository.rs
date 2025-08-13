@@ -14,7 +14,7 @@ use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
-use item_read::repository::QueryItemRepository;
+use item_read::repository::{QueryItemRepository, QueryItemRepositoryImpl};
 use std::time::Duration;
 use test_api::tokio::time::sleep;
 use test_api::*;
@@ -22,10 +22,14 @@ use time::OffsetDateTime;
 use time::format_description::well_known;
 use url::Url;
 
+async fn get_repository() -> QueryItemRepositoryImpl<'static> {
+    QueryItemRepositoryImpl::new(get_dynamodb_client().await)
+}
+
 #[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_get_item_record_when_table_is_empty() {
-    let client = get_dynamodb_client().await;
-    let actual = client
+    let repository = get_repository().await;
+    let actual = repository
         .get_item_record(&ShopId::new(), &"non-existent".into())
         .await
         .unwrap();
@@ -76,8 +80,8 @@ async fn should_return_item_record_for_get_item_record_when_exists() {
         updated: now,
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&expected).ok())
@@ -85,7 +89,8 @@ async fn should_return_item_record_for_get_item_record_when_exists() {
         .await
         .unwrap();
 
-    let actual = client
+    let repository = get_repository().await;
+    let actual = repository
         .get_item_record(&shop_id, &shops_item_id)
         .await
         .unwrap();
@@ -134,8 +139,8 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
         updated: now,
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&other).ok())
@@ -143,7 +148,8 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
         .await
         .unwrap();
 
-    let actual = client
+    let repository = get_repository().await;
+    let actual = repository
         .get_item_record(&ShopId::new(), &"non-existent".into())
         .await
         .unwrap();
@@ -219,15 +225,17 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
         timestamp: OffsetDateTime::now_utc(),
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    let repository = get_repository().await;
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&other1).ok())
         .send()
         .await
         .unwrap();
-    client
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&other2).ok())
@@ -235,7 +243,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
         .await
         .unwrap();
 
-    let actual = client
+    let actual = repository
         .get_item_record(&ShopId::new(), &"non-existent".into())
         .await
         .unwrap();
@@ -245,8 +253,8 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
 
 #[localstack_test(services = [DynamoDB()])]
 async fn should_return_nothing_for_query_item_diff_records_when_table_is_empty() {
-    let client = get_dynamodb_client().await;
-    let actual = client
+    let repository = get_repository().await;
+    let actual = repository
         .query_item_hashes(&ShopId::new(), true)
         .await
         .unwrap()
@@ -296,8 +304,9 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
         updated: now,
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    let repository = get_repository().await;
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted).ok())
@@ -309,7 +318,7 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
     sleep(Duration::from_secs(3)).await;
 
     let expected: ItemSummaryHash = inserted.into();
-    let actual = client
+    let actual = repository
         .query_item_hashes(&shop_id, true)
         .await
         .unwrap()
@@ -395,15 +404,17 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
         updated: now2,
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    let repository = get_repository().await;
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted1).ok())
         .send()
         .await
         .unwrap();
-    client
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted2).ok())
@@ -416,7 +427,7 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
 
     let expected1: ItemSummaryHash = inserted1.into();
     let expected2: ItemSummaryHash = inserted2.into();
-    let actual = client
+    let actual = repository
         .query_item_hashes(&shop_id, true)
         .await
         .unwrap()
@@ -505,15 +516,17 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
         updated: now2,
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    let repository = get_repository().await;
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted1).ok())
         .send()
         .await
         .unwrap();
-    client
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&inserted2).ok())
@@ -526,7 +539,7 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
 
     let expected1: ItemSummaryHash = inserted1.into();
     let expected2: ItemSummaryHash = inserted2.into();
-    let actual = client
+    let actual = repository
         .query_item_hashes(&shop_id, true)
         .await
         .unwrap()
@@ -576,8 +589,9 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         updated: now,
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    let repository = get_repository().await;
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&other).ok())
@@ -588,7 +602,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let actual = client
+    let actual = repository
         .query_item_hashes(&ShopId::new(), true)
         .await
         .unwrap()
@@ -666,15 +680,17 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
         timestamp: OffsetDateTime::now_utc(),
     };
 
-    let client = get_dynamodb_client().await;
-    client
+    let repository = get_repository().await;
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&other).ok())
         .send()
         .await
         .unwrap();
-    client
+    get_dynamodb_client()
+        .await
         .put_item()
         .table_name(get_dynamodb_table_name())
         .set_item(serde_dynamo::to_item(&other2).ok())
@@ -685,7 +701,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     // Wait for GSI
     sleep(Duration::from_secs(3)).await;
 
-    let actual = client
+    let actual = repository
         .query_item_hashes(&ShopId::new(), true)
         .await
         .unwrap()
@@ -697,7 +713,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
 
 #[localstack_test(services = [DynamoDB()])]
 async fn should_return_item_records_for_batch_get_item_records_when_all_exist() {
-    let client = get_dynamodb_client().await;
+    let repository = get_repository().await;
     let shop_id = ShopId::new();
     let mk_expected = |n: i32| {
         let now = OffsetDateTime::now_utc();
@@ -740,6 +756,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_all_exist() 
             updated: now,
         }
     };
+    let client = get_dynamodb_client().await;
     let mut expecteds = Vec::with_capacity(100);
     for n in 1..=100 {
         let expected = mk_expected(n);
@@ -753,7 +770,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_all_exist() 
         expecteds.push(expected);
     }
 
-    let mut actuals = client
+    let mut actuals = repository
         .get_item_records(
             &Batch::try_from(
                 (1..=100)
@@ -833,7 +850,8 @@ async fn should_return_item_records_for_batch_get_item_records_when_some_do_not_
         expecteds.push(expected);
     }
 
-    let mut actuals = client
+    let mut actuals = get_repository()
+        .await
         .get_item_records(
             &Batch::try_from(
                 (1..=14)
@@ -915,7 +933,8 @@ async fn should_return_item_records_for_batch_get_item_records_when_more_than_10
         }
     }
 
-    let mut actuals = client
+    let mut actuals = get_repository()
+        .await
         .get_item_records(
             &Batch::try_from(
                 (1..=100)
@@ -995,7 +1014,8 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_all_exist() {
         expecteds.push(expected.key());
     }
 
-    let mut actuals = client
+    let mut actuals = get_repository()
+        .await
         .exist_item_records(
             &Batch::try_from(
                 (1..=100)
@@ -1073,7 +1093,8 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_some_do_not_e
         expecteds.push(expected.key());
     }
 
-    let mut actuals = client
+    let mut actuals = get_repository()
+        .await
         .exist_item_records(
             &Batch::try_from(
                 (1..=14)
@@ -1153,7 +1174,8 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_more_than_100
         }
     }
 
-    let mut actuals = client
+    let mut actuals = get_repository()
+        .await
         .exist_item_records(
             &Batch::try_from(
                 (1..=100)

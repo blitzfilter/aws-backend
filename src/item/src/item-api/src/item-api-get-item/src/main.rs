@@ -2,6 +2,8 @@ use aws_config::BehaviorVersion;
 use aws_lambda_events::apigw::ApiGatewayV2httpRequest;
 use aws_sdk_dynamodb::Client;
 use item_api_get_item::handler;
+use item_read::repository::QueryItemRepositoryImpl;
+use item_read::service::QueryItemServiceImpl;
 use lambda_runtime::tracing::info;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use std::env;
@@ -30,14 +32,14 @@ async fn main() -> Result<(), Error> {
         info!("Using environments custom AWS_ENDPOINT_URL '{endpoint_url}'");
     }
 
-    let client = &Client::new(&aws_config_builder.build());
+    let client = Client::new(&aws_config_builder.build());
+    let repository = QueryItemRepositoryImpl::new(&client);
+    let service = QueryItemServiceImpl::new(&repository);
 
     info!("Lambda cold start completed, client initialized.");
 
     run(service_fn(
-        move |event: LambdaEvent<ApiGatewayV2httpRequest>| async move {
-            handler(event, client).await
-        },
+        |event: LambdaEvent<ApiGatewayV2httpRequest>| async { handler(event, &service).await },
     ))
     .await
 }

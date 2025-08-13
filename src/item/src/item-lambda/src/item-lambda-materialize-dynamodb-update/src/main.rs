@@ -2,6 +2,7 @@ use aws_config::BehaviorVersion;
 use aws_lambda_events::sqs::SqsEvent;
 use aws_sdk_dynamodb::Client;
 use item_lambda_materialize_dynamodb_update::handler;
+use item_write::repository::PersistItemRepositoryImpl;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use std::env;
 use tracing::info;
@@ -30,12 +31,13 @@ async fn main() -> Result<(), Error> {
         aws_config_builder.set_endpoint_url(Some(endpoint_url));
     }
 
-    let ddb_client = &Client::new(&aws_config_builder.build());
+    let client = &Client::new(&aws_config_builder.build());
+    let repository = &PersistItemRepositoryImpl::new(client);
 
     info!("Lambda cold start completed, DynamoDB-Client initialized.");
 
     run(service_fn(move |event: LambdaEvent<SqsEvent>| async move {
-        handler(ddb_client, event).await
+        handler(repository, event).await
     }))
     .await
 }

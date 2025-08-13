@@ -1,5 +1,3 @@
-use std::vec;
-
 use aws_lambda_events::sqs::SqsEvent;
 use aws_lambda_events::sqs::SqsMessage;
 use common::env::get_dynamodb_table_name;
@@ -11,7 +9,9 @@ use item_core::item::domain::Item;
 use item_core::item::domain::shop_name::ShopName;
 use item_core::item_event::record::ItemEventRecord;
 use item_lambda_materialize_dynamodb_new::handler;
+use item_write::repository::PersistItemRepositoryImpl;
 use lambda_runtime::{Context, LambdaEvent};
+use std::vec;
 use test_api::*;
 use url::Url;
 
@@ -68,7 +68,8 @@ async fn should_materialize_items_for_create(#[case] n: usize) {
     };
 
     let client = get_dynamodb_client().await;
-    let response = handler(client, lambda_event).await.unwrap();
+    let repository = &PersistItemRepositoryImpl::new(client);
+    let response = handler(repository, lambda_event).await.unwrap();
 
     assert!(response.batch_item_failures.is_empty());
 

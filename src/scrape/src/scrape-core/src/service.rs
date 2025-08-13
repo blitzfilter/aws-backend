@@ -8,14 +8,14 @@ use common::batch::Batch;
 use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
-use item_read::repository::QueryItemRepository;
+use item_read::repository::{QueryItemRepository, QueryItemRepositoryImpl};
 use serde::Serialize;
 use std::collections::HashMap;
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
-pub struct PublishScrapeItemsContext<'a> {
-    pub dynamodb_client: &'a aws_sdk_dynamodb::Client,
+pub struct PublishScrapeItemsImpl<'a> {
+    pub dynamodb_read_repository: &'a QueryItemRepositoryImpl<'a>,
     pub sqs_client: &'a aws_sdk_sqs::Client,
     pub sqs_create_url: String,
     pub sqs_update_url: String,
@@ -30,7 +30,7 @@ pub trait PublishScrapeItemService {
 }
 
 #[async_trait]
-impl<'a> PublishScrapeItemService for PublishScrapeItemsContext<'a> {
+impl<'a> PublishScrapeItemService for PublishScrapeItemsImpl<'a> {
     async fn publish_scrape_items(
         &self,
         scrape_items: Vec<ScrapeItem>,
@@ -134,14 +134,14 @@ fn handle_message_batch_result(
     }
 }
 
-impl<'a> PublishScrapeItemsContext<'a> {
+impl<'a> PublishScrapeItemsImpl<'a> {
     async fn assess(
         &self,
         scrape_items: Vec<ScrapeItem>,
         shop_id: &ShopId,
     ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>> {
         let shop_universe = self
-            .dynamodb_client
+            .dynamodb_read_repository
             .query_item_hashes(shop_id, true)
             .await?
             .into_iter()

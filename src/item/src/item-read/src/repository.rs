@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::http::HttpResponse;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemError;
@@ -8,7 +9,6 @@ use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
 use common::batch::Batch;
 use common::batch::dynamodb::BatchGetItemResult;
 use common::env::get_dynamodb_table_name;
-use common::has::Has;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use tracing::error;
 
 #[async_trait]
+#[mockall::automock]
 pub trait QueryItemRepository {
     async fn get_item_record(
         &self,
@@ -39,21 +40,29 @@ pub trait QueryItemRepository {
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<impl IntoIterator<Item = ItemSummaryHash>, SdkError<QueryError, HttpResponse>>;
+    ) -> Result<Vec<ItemSummaryHash>, SdkError<QueryError, HttpResponse>>;
+}
+
+#[derive(Debug)]
+pub struct QueryItemRepositoryImpl<'a> {
+    client: &'a Client,
+}
+
+impl<'a> QueryItemRepositoryImpl<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self { client }
+    }
 }
 
 #[async_trait]
-impl<T> QueryItemRepository for T
-where
-    T: Has<aws_sdk_dynamodb::Client> + Sync,
-{
+impl<'a> QueryItemRepository for QueryItemRepositoryImpl<'a> {
     async fn get_item_record(
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
     ) -> Result<Option<ItemRecord>, SdkError<GetItemError, HttpResponse>> {
         let rec = self
-            .get()
+            .client
             .get_item()
             .table_name(get_dynamodb_table_name())
             .key("pk", AttributeValue::S(mk_pk(shop_id, shops_item_id)))
@@ -99,7 +108,7 @@ where
             keys_and_attributes,
         )]));
         let response = self
-            .get()
+            .client
             .batch_get_item()
             .set_request_items(request_items)
             .send()
@@ -181,7 +190,7 @@ where
             keys_and_attributes,
         )]));
         let response = self
-            .get()
+            .client
             .batch_get_item()
             .set_request_items(request_items)
             .send()
@@ -240,9 +249,9 @@ where
         &self,
         shop_id: &ShopId,
         scan_index_forward: bool,
-    ) -> Result<impl IntoIterator<Item = ItemSummaryHash>, SdkError<QueryError, HttpResponse>> {
+    ) -> Result<Vec<ItemSummaryHash>, SdkError<QueryError, HttpResponse>> {
         let records = self
-            .get()
+            .client
             .query()
             .table_name(get_dynamodb_table_name())
             .index_name("gsi_1")
@@ -267,7 +276,8 @@ where
                     error!(error = %err, type = %std::any::type_name::<ItemSummaryHash>(), "Failed deserializing ItemSummaryHash.");
                     None
                 }
-            });
+            })
+            .collect();
 
         Ok(records)
     }

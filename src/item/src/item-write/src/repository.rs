@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::http::HttpResponse;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::batch_write_item::{BatchWriteItemError, BatchWriteItemOutput};
@@ -6,7 +7,6 @@ use aws_sdk_dynamodb::operation::update_item::{UpdateItemError, UpdateItemOutput
 use aws_sdk_dynamodb::types::AttributeValue;
 use common::batch::Batch;
 use common::env::get_dynamodb_table_name;
-use common::has::Has;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::record::ItemRecord;
@@ -36,16 +36,23 @@ pub trait PersistItemRepository {
     ) -> Result<UpdateItemOutput, SdkError<UpdateItemError, HttpResponse>>;
 }
 
+pub struct PersistItemRepositoryImpl<'a> {
+    client: &'a Client,
+}
+
+impl<'a> PersistItemRepositoryImpl<'a> {
+    pub fn new(client: &'a Client) -> Self {
+        Self { client }
+    }
+}
+
 #[async_trait]
-impl<T> PersistItemRepository for T
-where
-    T: Has<aws_sdk_dynamodb::Client> + Sync,
-{
+impl<'a> PersistItemRepository for PersistItemRepositoryImpl<'a> {
     async fn put_item_event_records(
         &self,
         item_event_records: Batch<ItemEventRecord, 25>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>> {
-        self.get()
+        self.client
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
                 get_dynamodb_table_name().to_owned(),
@@ -59,7 +66,7 @@ where
         &self,
         item_records: Batch<ItemRecord, 25>,
     ) -> Result<BatchWriteItemOutput, SdkError<BatchWriteItemError, HttpResponse>> {
-        self.get()
+        self.client
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
                 get_dynamodb_table_name().to_owned(),
@@ -96,7 +103,7 @@ where
 
         let update_expr = format!("SET {}", update_expressions.join(", "));
 
-        self.get()
+        self.client
             .update_item()
             .table_name(get_dynamodb_table_name())
             .key("pk", AttributeValue::S(pk))

@@ -10,10 +10,11 @@ use item_core::{
     item::{hash::ItemHash, record::ItemRecord},
     item_state::{data::ItemStateData, domain::ItemState, record::ItemStateRecord},
 };
-use item_write::repository::PersistItemRepository;
+use item_read::repository::QueryItemRepositoryImpl;
+use item_write::repository::{PersistItemRepository, PersistItemRepositoryImpl};
 use scrape_core::{
     data::ScrapeItem,
-    service::{PublishScrapeItemService, PublishScrapeItemsContext},
+    service::{PublishScrapeItemService, PublishScrapeItemsImpl},
 };
 use std::{collections::HashMap, time::Duration};
 use test_api::*;
@@ -133,8 +134,8 @@ fn mk_item_record(id: usize, shop_id: &ShopId) -> ItemRecord {
 #[case::onehundred(100)]
 #[localstack_test(services = [DynamoDB(), CREATE_ITEM_SQS_LAMBDA])]
 async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create(#[case] n: usize) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
@@ -160,8 +161,8 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create(#[cas
     // Wait for Lambda to consume and handle all messages
     tokio::time::sleep(Duration::from_secs(10)).await;
 
-    let actual = service
-        .dynamodb_client
+    let actual = get_dynamodb_client()
+        .await
         .scan()
         .table_name(get_dynamodb_table_name())
         .send()
@@ -180,12 +181,13 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create(#[cas
 #[case::onehundred(50)]
 #[localstack_test(services = [DynamoDB(), UPDATE_ITEM_SQS_LAMBDA])]
 async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_update(#[case] n: usize) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
     };
+    let dynamodb_write_repository = &PersistItemRepositoryImpl::new(get_dynamodb_client().await);
 
     // Simulate materialized view
     let shop_ids = HashMap::from([
@@ -202,8 +204,7 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_update(#[cas
     for batch in Batch::<_, 25>::chunked_from(
         (1..=n).map(|i| mk_item_record(i, shop_ids.get(&(i % 9)).unwrap())),
     ) {
-        service
-            .dynamodb_client
+        dynamodb_write_repository
             .put_item_records(batch)
             .await
             .unwrap();
@@ -220,8 +221,8 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_update(#[cas
     // Wait for Lambda to consume and handle all messages
     tokio::time::sleep(Duration::from_secs(10)).await;
 
-    let actual = service
-        .dynamodb_client
+    let actual = get_dynamodb_client()
+        .await
         .scan()
         .table_name(get_dynamodb_table_name())
         .send()
@@ -243,12 +244,13 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_update(#[cas
 async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create_update_mix(
     #[case] n: usize,
 ) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
     };
+    let dynamodb_write_repository = &PersistItemRepositoryImpl::new(get_dynamodb_client().await);
 
     // Simulate materialized view
     let shop_ids = HashMap::from([
@@ -268,8 +270,7 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create_updat
     let expected_update_items = materialized_items.clone().count();
     let expected_new_items = n - expected_update_items;
     for batch in Batch::<_, 25>::chunked_from(materialized_items) {
-        service
-            .dynamodb_client
+        dynamodb_write_repository
             .put_item_records(batch)
             .await
             .unwrap();
@@ -286,8 +287,8 @@ async fn should_publish_scrape_items_then_find_them_in_dynamodb_for_create_updat
     // Wait for Lambda to consume and handle all messages
     tokio::time::sleep(Duration::from_secs(15)).await;
 
-    let actual = service
-        .dynamodb_client
+    let actual = get_dynamodb_client()
+        .await
         .scan()
         .table_name(get_dynamodb_table_name())
         .send()

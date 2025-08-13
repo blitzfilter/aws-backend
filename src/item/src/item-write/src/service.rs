@@ -1,9 +1,8 @@
 use crate::repository::PersistItemRepository;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
 use common::batch::Batch;
-use common::has::{Has, HasKey};
+use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::price::domain::FxRate;
 use item_core::item::command::{CreateItemCommand, UpdateItemCommand};
@@ -32,19 +31,28 @@ pub trait CommandItemService {
     ) -> Result<(), Vec<ItemKey>>;
 }
 
-pub struct CommandItemServiceContext<'a, T: FxRate + Sync> {
-    pub dynamodb_client: &'a Client,
-    pub fx_rate: &'a T,
+pub struct CommandItemServiceImpl<'a, T: FxRate + Sync> {
+    dynamodb_read_repository: &'a (dyn QueryItemRepository + Sync),
+    dynamodb_write_repository: &'a (dyn PersistItemRepository + Sync),
+    fx_rate: &'a T,
 }
 
-impl<T: FxRate + Sync> Has<Client> for CommandItemServiceContext<'_, T> {
-    fn get(&self) -> &Client {
-        self.dynamodb_client
+impl<'a, T: FxRate + Sync> CommandItemServiceImpl<'a, T> {
+    pub fn new(
+        dynamodb_read_repository: &'a (dyn QueryItemRepository + Sync),
+        dynamodb_write_repository: &'a (dyn PersistItemRepository + Sync),
+        fx_rate: &'a T,
+    ) -> Self {
+        Self {
+            dynamodb_read_repository,
+            dynamodb_write_repository,
+            fx_rate,
+        }
     }
 }
 
 #[async_trait]
-impl<T: FxRate + Sync> CommandItemService for CommandItemServiceContext<'_, T> {
+impl<T: FxRate + Sync> CommandItemService for CommandItemServiceImpl<'_, T> {
     async fn handle_create_items(
         &self,
         commands: Vec<CreateItemCommand>,
@@ -111,7 +119,7 @@ impl<T: FxRate + Sync> CommandItemService for CommandItemServiceContext<'_, T> {
     }
 }
 
-impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
+impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
     async fn handle_create_chunk(
         &self,
         create_chunk: Vec<CreateItemCommand>,
@@ -124,7 +132,11 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                 .collect::<Vec<_>>()
         ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
 
-        match self.exist_item_records(&create_item_keys).await {
+        match self
+            .dynamodb_read_repository
+            .exist_item_records(&create_item_keys)
+            .await
+        {
             Ok(existing_item_keys) => {
                 if let Some(unprocessed) = existing_item_keys.unprocessed {
                     warn!(
@@ -186,7 +198,10 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
 
                 for batch in batches {
                     let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
-                    let res = self.put_item_event_records(batch).await;
+                    let res = self
+                        .dynamodb_write_repository
+                        .put_item_event_records(batch)
+                        .await;
                     match res {
                         Ok(output) => handle_batch_output::<ItemEventRecord>(output, failures),
                         Err(err) => {
@@ -216,7 +231,11 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
                 .collect::<Vec<_>>()
         ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
 
-        match self.get_item_records(&update_item_keys).await {
+        match self
+            .dynamodb_read_repository
+            .get_item_records(&update_item_keys)
+            .await
+        {
             Ok(existing_item_keys) => {
                 if let Some(unprocessed) = existing_item_keys.unprocessed {
                     warn!(
@@ -246,7 +265,10 @@ impl<T: FxRate + Sync> CommandItemServiceContext<'_, T> {
 
                 for batch in batches {
                     let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
-                    let res = self.put_item_event_records(batch).await;
+                    let res = self
+                        .dynamodb_write_repository
+                        .put_item_event_records(batch)
+                        .await;
                     match res {
                         Ok(output) => handle_batch_output::<ItemEventRecord>(output, failures),
                         Err(err) => {
@@ -347,7 +369,8 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use crate::service::CommandItemServiceContext;
+    use crate::repository::PersistItemRepositoryImpl;
+    use crate::service::CommandItemServiceImpl;
     use aws_sdk_dynamodb::{Client, Config};
     use common::currency::domain::Currency;
     use common::item_id::ItemKey;
@@ -360,6 +383,7 @@ pub mod tests {
     use item_core::item_event::domain::ItemCommonEventPayload;
     use item_core::item_state::domain::ItemState;
     use item_core::item_state::record::ItemStateRecord;
+    use item_read::repository::QueryItemRepositoryImpl;
     use std::collections::HashMap;
     use time::OffsetDateTime;
     use url::Url;
@@ -417,13 +441,13 @@ pub mod tests {
         }];
 
         let mut skipped_count = 0;
-        let context = CommandItemServiceContext {
-            dynamodb_client: &Client::from_conf(
-                Config::builder().behavior_version_latest().build(),
-            ),
+        let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
+        let service = CommandItemServiceImpl {
+            dynamodb_read_repository: &QueryItemRepositoryImpl::new(client),
+            dynamodb_write_repository: &PersistItemRepositoryImpl::new(client),
             fx_rate: &FixedFxRate::default(),
         };
-        let actuals = context.find_update_events_with_existing_items(
+        let actuals = service.find_update_events_with_existing_items(
             update_chunk,
             existing_records,
             &mut skipped_count,
@@ -460,13 +484,13 @@ pub mod tests {
         ]);
 
         let mut skipped_count = 0;
-        let context = CommandItemServiceContext {
-            dynamodb_client: &Client::from_conf(
-                Config::builder().behavior_version_latest().build(),
-            ),
+        let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
+        let service = CommandItemServiceImpl {
+            dynamodb_read_repository: &QueryItemRepositoryImpl::new(client),
+            dynamodb_write_repository: &PersistItemRepositoryImpl::new(client),
             fx_rate: &FixedFxRate::default(),
         };
-        let actuals = context.find_update_events_with_existing_items(
+        let actuals = service.find_update_events_with_existing_items(
             update_chunk,
             vec![],
             &mut skipped_count,
@@ -529,13 +553,13 @@ pub mod tests {
         }];
 
         let mut skipped_count = 0;
-        let context = CommandItemServiceContext {
-            dynamodb_client: &Client::from_conf(
-                Config::builder().behavior_version_latest().build(),
-            ),
+        let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
+        let service = CommandItemServiceImpl {
+            dynamodb_read_repository: &QueryItemRepositoryImpl::new(client),
+            dynamodb_write_repository: &PersistItemRepositoryImpl::new(client),
             fx_rate: &FixedFxRate::default(),
         };
-        let actuals = context.find_update_events_with_existing_items(
+        let actuals = service.find_update_events_with_existing_items(
             update_chunk,
             existing_records,
             &mut skipped_count,

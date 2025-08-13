@@ -8,10 +8,12 @@ use item_core::{
     item::{hash::ItemHash, record::ItemRecord},
     item_state::{data::ItemStateData, domain::ItemState, record::ItemStateRecord},
 };
+use item_read::repository::QueryItemRepositoryImpl;
 use item_write::repository::PersistItemRepository;
+use item_write::repository::PersistItemRepositoryImpl;
 use scrape_core::{
     data::ScrapeItem,
-    service::{PublishScrapeItemService, PublishScrapeItemsContext},
+    service::{PublishScrapeItemService, PublishScrapeItemsImpl},
 };
 use std::collections::HashMap;
 use test_api::*;
@@ -103,8 +105,8 @@ fn mk_item_record(id: usize, shop_id: &ShopId) -> ItemRecord {
 #[case::onethousand(1000)]
 #[localstack_test(services = [DynamoDB(), CREATE_ITEM_SQS])]
 async fn should_publish_scrape_items_for_create_for_single_shop_id(#[case] n: usize) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
@@ -146,8 +148,8 @@ async fn should_publish_scrape_items_for_create_for_single_shop_id(#[case] n: us
 #[case::onethousand(1000)]
 #[localstack_test(services = [DynamoDB(), CREATE_ITEM_SQS])]
 async fn should_publish_scrape_items_for_create_for_multiple_shop_ids(#[case] n: usize) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
@@ -199,18 +201,18 @@ async fn should_publish_scrape_items_for_create_for_multiple_shop_ids(#[case] n:
 #[case::onethousand(1000)]
 #[localstack_test(services = [DynamoDB(), UPDATE_ITEM_SQS])]
 async fn should_publish_scrape_items_for_update_for_single_shop_id(#[case] n: usize) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
     };
+    let dynamodb_write_repository = &PersistItemRepositoryImpl::new(get_dynamodb_client().await);
 
     // Simulate materialized view
     let shop_id = ShopId::new();
     for batch in Batch::<_, 25>::chunked_from((1..=n).map(|i| mk_item_record(i, &shop_id))) {
-        service
-            .dynamodb_client
+        dynamodb_write_repository
             .put_item_records(batch)
             .await
             .unwrap();
@@ -254,12 +256,13 @@ async fn should_publish_scrape_items_for_update_for_single_shop_id(#[case] n: us
 #[case::onethousand(1000)]
 #[localstack_test(services = [DynamoDB(), UPDATE_ITEM_SQS])]
 async fn should_publish_scrape_items_for_update_for_multiple_shop_ids(#[case] n: usize) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
     };
+    let dynamodb_write_repository = &PersistItemRepositoryImpl::new(get_dynamodb_client().await);
 
     // Simulate materialized view
     let shop_ids = HashMap::from([
@@ -276,8 +279,7 @@ async fn should_publish_scrape_items_for_update_for_multiple_shop_ids(#[case] n:
     for batch in Batch::<_, 25>::chunked_from(
         (1..=n).map(|i| mk_item_record(i, shop_ids.get(&(i % 9)).unwrap())),
     ) {
-        service
-            .dynamodb_client
+        dynamodb_write_repository
             .put_item_records(batch)
             .await
             .unwrap();
@@ -323,12 +325,13 @@ async fn should_publish_scrape_items_for_update_for_multiple_shop_ids(#[case] n:
 async fn should_publish_scrape_items_for_downstream_command_mix_for_single_shop_id(
     #[case] n: usize,
 ) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
     };
+    let dynamodb_write_repository = &PersistItemRepositoryImpl::new(get_dynamodb_client().await);
 
     // Simulate materialized view
     let shop_id = ShopId::new();
@@ -337,8 +340,7 @@ async fn should_publish_scrape_items_for_downstream_command_mix_for_single_shop_
             .filter(|i| i % 3 == 0)
             .map(|i| mk_item_record(i, &shop_id)),
     ) {
-        service
-            .dynamodb_client
+        dynamodb_write_repository
             .put_item_records(batch)
             .await
             .unwrap();
@@ -402,12 +404,13 @@ async fn should_publish_scrape_items_for_downstream_command_mix_for_single_shop_
 async fn should_publish_scrape_items_for_downstream_command_mix_for_multiple_shop_ids(
     #[case] n: usize,
 ) {
-    let service = PublishScrapeItemsContext {
-        dynamodb_client: get_dynamodb_client().await,
+    let service = PublishScrapeItemsImpl {
+        dynamodb_read_repository: &QueryItemRepositoryImpl::new(get_dynamodb_client().await),
         sqs_client: get_sqs_client().await,
         sqs_create_url: CREATE_ITEM_SQS.queue_url(),
         sqs_update_url: UPDATE_ITEM_SQS.queue_url(),
     };
+    let dynamodb_write_repository = &PersistItemRepositoryImpl::new(get_dynamodb_client().await);
 
     // Simulate materialized view
     let shop_ids = HashMap::from([
@@ -426,8 +429,7 @@ async fn should_publish_scrape_items_for_downstream_command_mix_for_multiple_sho
             .filter(|i| i % 3 == 0)
             .map(|i| mk_item_record(i, shop_ids.get(&(i % 9)).unwrap())),
     ) {
-        service
-            .dynamodb_client
+        dynamodb_write_repository
             .put_item_records(batch)
             .await
             .unwrap();

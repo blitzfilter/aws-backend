@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::config::http::HttpResponse;
 use aws_sdk_dynamodb::error::SdkError;
 use common::currency::domain::Currency;
-use common::has::Has;
 use common::language::domain::Language;
 use common::localized::Localized;
 use common::price::domain::{MonetaryAmountOverflowError, Price};
@@ -67,14 +66,25 @@ pub trait QueryItemService {
     ) -> Result<LocalizedItemView, GetItemError>;
 }
 
+pub struct QueryItemServiceImpl<'a> {
+    repository: &'a (dyn QueryItemRepository + Sync),
+}
+
+impl<'a> QueryItemServiceImpl<'a> {
+    pub fn new(repository: &'a (dyn QueryItemRepository + Sync)) -> Self {
+        Self { repository }
+    }
+}
+
 #[async_trait]
-impl<T: Has<aws_sdk_dynamodb::Client> + Sync> QueryItemService for T {
+impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
     async fn find_item(
         &self,
         shop_id: &ShopId,
         shops_item_id: &ShopsItemId,
     ) -> Result<Item, GetItemError> {
         let item_record = self
+            .repository
             .get_item_record(shop_id, shops_item_id)
             .await
             .map_err(Box::from)?
@@ -94,6 +104,7 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> QueryItemService for T {
         currency: &Currency,
     ) -> Result<LocalizedItemView, GetItemError> {
         let item_record = self
+            .repository
             .get_item_record(shop_id, shops_item_id)
             .await
             .map_err(Box::from)?
@@ -179,3 +190,33 @@ impl<T: Has<aws_sdk_dynamodb::Client> + Sync> QueryItemService for T {
         Ok(item_view)
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use common::shop_id::ShopId;
+
+//     use crate::{
+//         repository::MockQueryItemRepository,
+//         service::{GetItemError, QueryItemService, QueryItemServiceImpl},
+//     };
+
+//     async fn should_return_item_not_found_err_when_item_does_not_exist() {
+//         let shop_id = ShopId::new();
+//         let shops_item_id = "non-existent".into();
+//         let mut repository = &MockQueryItemRepository::default();
+//         repository
+//             .expect_get_item_record()
+//             .return_once(|shop_id, shops_item_id| {});
+//         let service = QueryItemServiceImpl { repository };
+//         let actual = service.find_item(&shop_id, &shops_item_id).await;
+
+//         assert!(actual.is_err());
+//         match actual.unwrap_err() {
+//             GetItemError::ItemNotFound(err_shop_id, err_shops_item_id) => {
+//                 assert_eq!(err_shop_id, shop_id);
+//                 assert_eq!(err_shops_item_id, shops_item_id);
+//             }
+//             _ => panic!("expected GetItemError::ItemNotFound"),
+//         }
+//     }
+// }

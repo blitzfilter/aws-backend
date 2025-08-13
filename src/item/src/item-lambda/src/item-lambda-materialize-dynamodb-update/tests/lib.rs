@@ -13,6 +13,7 @@ use item_core::item_event::record::ItemEventRecord;
 use item_core::item_state::record::ItemStateRecord;
 use item_lambda_materialize_dynamodb_update::handler;
 use item_write::repository::PersistItemRepository;
+use item_write::repository::PersistItemRepositoryImpl;
 use lambda_runtime::{Context, LambdaEvent};
 use std::vec;
 use test_api::*;
@@ -55,8 +56,9 @@ async fn should_materialize_items_for_update(#[case] n: usize) {
     };
     let item_records = (1..=n).map(|_| mk_item_record()).collect::<Vec<_>>();
     let client = get_dynamodb_client().await;
+    let repository = &PersistItemRepositoryImpl::new(client);
     for batch in Batch::<_, 25>::chunked_from(item_records.clone().into_iter()) {
-        client.put_item_records(batch).await.unwrap();
+        repository.put_item_records(batch).await.unwrap();
     }
 
     // Make updates for materialized ItemRecords
@@ -91,7 +93,7 @@ async fn should_materialize_items_for_update(#[case] n: usize) {
         context: Context::default(),
     };
 
-    let response = handler(client, lambda_event).await.unwrap();
+    let response = handler(repository, lambda_event).await.unwrap();
 
     assert!(response.batch_item_failures.is_empty());
 
