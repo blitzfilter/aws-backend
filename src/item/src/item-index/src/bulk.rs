@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BulkResponse {
     pub took: u64,
 
@@ -10,16 +10,30 @@ pub struct BulkResponse {
     pub items: Vec<BulkItemResult>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BulkItemResult {
-    #[serde(default)]
-    pub update: Option<BulkOpResult>,
-
-    #[serde(default)]
-    pub create: Option<BulkOpResult>,
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum BulkItemResult {
+    Update { update: BulkOpResult },
+    Create { create: BulkOpResult },
 }
 
-#[derive(Debug, Deserialize)]
+impl BulkItemResult {
+    pub fn unwrap_update(self) -> BulkOpResult {
+        match self {
+            BulkItemResult::Update { update } => update,
+            _ => panic!("Expected BulkItemResult::Update"),
+        }
+    }
+
+    pub fn unwrap_create(self) -> BulkOpResult {
+        match self {
+            BulkItemResult::Create { create } => create,
+            _ => panic!("Expected BulkItemResult::Create"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct BulkOpResult {
     #[serde(rename = "_index")]
     pub index: String,
@@ -44,7 +58,7 @@ impl BulkOpResult {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BulkError {
     #[serde(rename = "type")]
     pub error_type: String,
@@ -93,7 +107,7 @@ mod tests {
         assert!(!response.errors);
         assert_eq!(response.items.len(), 1);
 
-        let update = response.items[0].update.as_ref().unwrap();
+        let update = response.items[0].clone().unwrap_update();
         assert_eq!(update.index, "items");
         assert_eq!(update.id, "1");
         assert_eq!(update.version, Some(2));
@@ -142,12 +156,12 @@ mod tests {
         assert_eq!(response.items.len(), 2);
 
         // Success item
-        let update_ok = response.items[0].update.as_ref().unwrap();
+        let update_ok = response.items[0].clone().unwrap_update();
         assert_eq!(update_ok.status, 200);
         assert!(update_ok.error.is_none());
 
         // Error item
-        let update_err = response.items[1].update.as_ref().unwrap();
+        let update_err = response.items[1].clone().unwrap_update();
         assert_eq!(update_err.status, 409);
         assert!(update_err.error.is_some());
 
@@ -190,5 +204,91 @@ mod tests {
         assert_eq!(err.reason, "failed to parse field [price]");
         assert!(err.index_uuid.is_none());
         assert!(err.extra.is_some());
+    }
+
+    #[test]
+    fn should_parse_successful_create_response_for_bulk_response() {
+        let json = json!({
+            "took": 15,
+            "errors": false,
+            "items": [
+                {
+                    "create": {
+                        "_index": "items",
+                        "_id": "10",
+                        "_version": 1,
+                        "result": "created",
+                        "status": 201
+                    }
+                }
+            ]
+        });
+
+        let response: BulkResponse = serde_json::from_value(json).unwrap();
+
+        assert_eq!(response.took, 15);
+        assert!(!response.errors);
+        assert_eq!(response.items.len(), 1);
+
+        let create = match &response.items[0] {
+            BulkItemResult::Create { create } => create,
+            _ => panic!("Expected Create variant"),
+        };
+
+        assert_eq!(create.index, "items");
+        assert_eq!(create.id, "10");
+        assert_eq!(create.version, Some(1));
+        assert_eq!(create.result, "created");
+        assert_eq!(create.status, 201);
+        assert!(create.error.is_none());
+    }
+
+    #[test]
+    fn should_parse_failed_create_response_for_bulk_response() {
+        let json = json!({
+            "took": 8,
+            "errors": true,
+            "items": [
+                {
+                    "create": {
+                        "_index": "items",
+                        "_id": "11",
+                        "status": 409,
+                        "result": "error",
+                        "error": {
+                            "type": "version_conflict_engine_exception",
+                            "reason": "[items][11]: version conflict, document already exists",
+                            "index": "items",
+                            "shard": "shard-2",
+                            "index_uuid": "uuid456"
+                        }
+                    }
+                }
+            ]
+        });
+
+        let response: BulkResponse = serde_json::from_value(json).unwrap();
+
+        assert_eq!(response.took, 8);
+        assert!(response.errors);
+        assert_eq!(response.items.len(), 1);
+
+        let create = match &response.items[0] {
+            BulkItemResult::Create { create } => create,
+            _ => panic!("Expected Create variant"),
+        };
+
+        assert_eq!(create.status, 409);
+        assert!(create.error.is_some());
+
+        let err = create.error.as_ref().unwrap();
+        assert_eq!(err.error_type, "version_conflict_engine_exception");
+        assert_eq!(
+            err.reason,
+            "[items][11]: version conflict, document already exists"
+        );
+        assert_eq!(err.index.as_deref(), Some("items"));
+        assert_eq!(err.shard.as_deref(), Some("shard-2"));
+        assert_eq!(err.index_uuid.as_deref(), Some("uuid456"));
     }
 }

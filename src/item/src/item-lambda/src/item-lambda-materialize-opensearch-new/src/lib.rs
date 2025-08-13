@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemId;
 use item_core::{item::document::ItemDocument, item_event::record::ItemEventRecord};
-use item_index::{IndexItemDocumentRepository, bulk::BulkResponse};
+use item_index::{
+    IndexItemDocumentRepository,
+    bulk::{BulkItemResult, BulkResponse},
+};
 use lambda_runtime::LambdaEvent;
 use tracing::{error, info, warn};
 
@@ -115,7 +118,13 @@ fn handle_bulk_response(
         let failures = response
             .items
             .into_iter()
-            .filter_map(|bulk_item_result| bulk_item_result.create)
+            .filter_map(|bulk_item_result| match bulk_item_result {
+                BulkItemResult::Create { create } => Some(create),
+                other => {
+                    error!(actual = ?other, "Expected BulkItemResult::Create.");
+                    None
+                }
+            })
             .filter(|bulk_op_result| bulk_op_result.is_err());
 
         for failure in failures {
