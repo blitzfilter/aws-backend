@@ -1,7 +1,6 @@
-use crate::repository::PersistItemRepository;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
 use common::batch::Batch;
+use common::batch::dynamodb::handle_batch_output;
 use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::price::domain::FxRate;
@@ -10,9 +9,8 @@ use item_core::item::domain::Item;
 use item_core::item::record::ItemRecord;
 use item_core::item_event::domain::ItemEvent;
 use item_core::item_event::record::ItemEventRecord;
-use item_read::repository::QueryItemRepository;
+use item_dynamodb::repository::ItemDynamoDbRepository;
 use itertools::Itertools;
-use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info, warn};
 
@@ -32,20 +30,17 @@ pub trait CommandItemService {
 }
 
 pub struct CommandItemServiceImpl<'a, T: FxRate + Sync> {
-    dynamodb_read_repository: &'a (dyn QueryItemRepository + Sync),
-    dynamodb_write_repository: &'a (dyn PersistItemRepository + Sync),
+    dynamodb_repository: &'a (dyn ItemDynamoDbRepository + Sync),
     fx_rate: &'a T,
 }
 
 impl<'a, T: FxRate + Sync> CommandItemServiceImpl<'a, T> {
     pub fn new(
-        dynamodb_read_repository: &'a (dyn QueryItemRepository + Sync),
-        dynamodb_write_repository: &'a (dyn PersistItemRepository + Sync),
+        dynamodb_repository: &'a (dyn ItemDynamoDbRepository + Sync),
         fx_rate: &'a T,
     ) -> Self {
         Self {
-            dynamodb_read_repository,
-            dynamodb_write_repository,
+            dynamodb_repository,
             fx_rate,
         }
     }
@@ -133,7 +128,7 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
         ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
 
         match self
-            .dynamodb_read_repository
+            .dynamodb_repository
             .exist_item_records(&create_item_keys)
             .await
         {
@@ -198,10 +193,7 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
 
                 for batch in batches {
                     let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
-                    let res = self
-                        .dynamodb_write_repository
-                        .put_item_event_records(batch)
-                        .await;
+                    let res = self.dynamodb_repository.put_item_event_records(batch).await;
                     match res {
                         Ok(output) => handle_batch_output::<ItemEventRecord>(output, failures),
                         Err(err) => {
@@ -232,7 +224,7 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
         ).expect("shouldn't fail creating Batch from Vec because by implementation itertools::chunks(100) produces Vec's of size no more than 100.");
 
         match self
-            .dynamodb_read_repository
+            .dynamodb_repository
             .get_item_records(&update_item_keys)
             .await
         {
@@ -265,10 +257,7 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
 
                 for batch in batches {
                     let item_keys = batch.iter().map(ItemEventRecord::key).collect::<Vec<_>>();
-                    let res = self
-                        .dynamodb_write_repository
-                        .put_item_event_records(batch)
-                        .await;
+                    let res = self.dynamodb_repository.put_item_event_records(batch).await;
                     match res {
                         Ok(output) => handle_batch_output::<ItemEventRecord>(output, failures),
                         Err(err) => {
@@ -334,43 +323,8 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
     }
 }
 
-pub fn handle_batch_output<T>(output: BatchWriteItemOutput, failures: &mut Vec<T::Key>)
-where
-    T: HasKey + for<'de> Deserialize<'de>,
-{
-    let unprocessed = output
-        .unprocessed_items
-        .unwrap_or_default()
-        .into_iter()
-        .next()
-        .map(|(_, unprocessed)| unprocessed)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|write_req| write_req.put_request)
-        .map(|put_req| put_req.item)
-        .filter_map(|ddb_item| {
-            let record_res = serde_dynamo::from_item::<_, T>(ddb_item);
-            match record_res {
-                Ok(record_event) => Some(record_event),
-                Err(err) => {
-                    error!(
-                        error = %err,
-                        type = %std::any::type_name::<T>(),
-                        "Failed converting DynamoDB-JSON to target-type from failed BatchWriteItemOutput."
-                    );
-                    None
-                }
-            }
-        })
-        .map(|t| t.key());
-
-    failures.extend(unprocessed);
-}
-
 #[cfg(test)]
 pub mod tests {
-    use crate::repository::PersistItemRepositoryImpl;
-    use crate::service::CommandItemServiceImpl;
     use aws_sdk_dynamodb::{Client, Config};
     use common::currency::domain::Currency;
     use common::item_id::ItemKey;
@@ -383,10 +337,12 @@ pub mod tests {
     use item_core::item_event::domain::ItemCommonEventPayload;
     use item_core::item_state::domain::ItemState;
     use item_core::item_state::record::ItemStateRecord;
-    use item_read::repository::QueryItemRepositoryImpl;
+    use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
     use std::collections::HashMap;
     use time::OffsetDateTime;
     use url::Url;
+
+    use crate::command_service::CommandItemServiceImpl;
 
     #[test]
     fn should_find_update_events_with_existing_items() {
@@ -443,8 +399,7 @@ pub mod tests {
         let mut skipped_count = 0;
         let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
         let service = CommandItemServiceImpl {
-            dynamodb_read_repository: &QueryItemRepositoryImpl::new(client),
-            dynamodb_write_repository: &PersistItemRepositoryImpl::new(client),
+            dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
             fx_rate: &FixedFxRate::default(),
         };
         let actuals = service.find_update_events_with_existing_items(
@@ -486,8 +441,7 @@ pub mod tests {
         let mut skipped_count = 0;
         let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
         let service = CommandItemServiceImpl {
-            dynamodb_read_repository: &QueryItemRepositoryImpl::new(client),
-            dynamodb_write_repository: &PersistItemRepositoryImpl::new(client),
+            dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
             fx_rate: &FixedFxRate::default(),
         };
         let actuals = service.find_update_events_with_existing_items(
@@ -555,8 +509,7 @@ pub mod tests {
         let mut skipped_count = 0;
         let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
         let service = CommandItemServiceImpl {
-            dynamodb_read_repository: &QueryItemRepositoryImpl::new(client),
-            dynamodb_write_repository: &PersistItemRepositoryImpl::new(client),
+            dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
             fx_rate: &FixedFxRate::default(),
         };
         let actuals = service.find_update_events_with_existing_items(

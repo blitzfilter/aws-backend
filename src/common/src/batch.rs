@@ -342,9 +342,12 @@ impl<T, const N: usize> From<Batch<T, N>> for Vec<T> {
 
 #[cfg(feature = "dynamodb")]
 pub mod dynamodb {
-    use crate::batch::Batch;
-    use aws_sdk_dynamodb::types::{PutRequest, WriteRequest};
-    use serde::Serialize;
+    use crate::{batch::Batch, has::HasKey};
+    use aws_sdk_dynamodb::{
+        operation::batch_write_item::BatchWriteItemOutput,
+        types::{PutRequest, WriteRequest},
+    };
+    use serde::{Deserialize, Serialize};
     use tracing::error;
 
     impl<T: Serialize> Batch<T, 25> {
@@ -376,6 +379,39 @@ pub mod dynamodb {
     pub struct BatchGetItemResult<T, Key> {
         pub items: Vec<T>,
         pub unprocessed: Option<Batch<Key, 100>>,
+    }
+
+    pub fn handle_batch_output<T>(output: BatchWriteItemOutput, failures: &mut Vec<T::Key>)
+    where
+        T: HasKey + for<'de> Deserialize<'de>,
+    {
+        let unprocessed = output
+            .unprocessed_items
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+            .map(|(_, unprocessed)| unprocessed)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|write_req| write_req.put_request)
+            .map(|put_req| put_req.item)
+            .filter_map(|ddb_item| {
+                let record_res = serde_dynamo::from_item::<_, T>(ddb_item);
+                match record_res {
+                    Ok(record_event) => Some(record_event),
+                    Err(err) => {
+                        error!(
+                            error = %err,
+                            type = %std::any::type_name::<T>(),
+                            "Failed converting DynamoDB-JSON to target-type from failed BatchWriteItemOutput."
+                        );
+                        None
+                    }
+                }
+            })
+            .map(|t| t.key());
+
+        failures.extend(unprocessed);
     }
 }
 

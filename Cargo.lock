@@ -1918,10 +1918,10 @@ version = "0.1.0"
 dependencies = [
  "item-api",
  "item-core",
- "item-index",
+ "item-dynamodb",
  "item-lambda",
- "item-read",
- "item-write",
+ "item-opensearch",
+ "item-service",
 ]
 
 [[package]]
@@ -1943,8 +1943,8 @@ dependencies = [
  "dotenvy",
  "http 1.3.1",
  "item-core",
- "item-read",
- "item-write",
+ "item-dynamodb",
+ "item-service",
  "lambda_runtime",
  "mockall",
  "rstest",
@@ -1974,18 +1974,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "item-index"
+name = "item-dynamodb"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "aws-sdk-dynamodb",
  "common",
  "item-core",
- "opensearch",
+ "mockall",
+ "rstest",
  "serde",
- "serde_json",
+ "serde_dynamo",
  "serial_test",
  "test-api",
  "time",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2010,7 +2014,7 @@ dependencies = [
  "common",
  "dotenvy",
  "item-core",
- "item-write",
+ "item-dynamodb",
  "lambda_runtime",
  "mockall",
  "rstest",
@@ -2033,7 +2037,7 @@ dependencies = [
  "common",
  "dotenvy",
  "item-core",
- "item-write",
+ "item-dynamodb",
  "lambda_runtime",
  "mockall",
  "rstest",
@@ -2057,7 +2061,7 @@ dependencies = [
  "dotenvy",
  "field",
  "item-core",
- "item-index",
+ "item-opensearch",
  "lambda_runtime",
  "mockall",
  "opensearch",
@@ -2080,7 +2084,7 @@ dependencies = [
  "common",
  "dotenvy",
  "item-core",
- "item-index",
+ "item-opensearch",
  "lambda_runtime",
  "mockall",
  "opensearch",
@@ -2104,8 +2108,8 @@ dependencies = [
  "common",
  "dotenvy",
  "item-core",
- "item-read",
- "item-write",
+ "item-dynamodb",
+ "item-service",
  "lambda_runtime",
  "mockall",
  "rstest",
@@ -2127,8 +2131,8 @@ dependencies = [
  "common",
  "dotenvy",
  "item-core",
- "item-read",
- "item-write",
+ "item-dynamodb",
+ "item-service",
  "lambda_runtime",
  "mockall",
  "rstest",
@@ -2141,40 +2145,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "item-read"
+name = "item-opensearch"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "aws-sdk-dynamodb",
  "common",
  "item-core",
- "mockall",
- "rstest",
- "serde_dynamo",
+ "opensearch",
+ "serde",
+ "serde_json",
  "serial_test",
  "test-api",
- "thiserror",
  "time",
- "tracing",
- "url",
 ]
 
 [[package]]
-name = "item-write"
+name = "item-service"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "aws-sdk-dynamodb",
  "common",
  "item-core",
- "item-read",
+ "item-dynamodb",
  "itertools 0.14.0",
  "mockall",
  "rstest",
  "serde",
  "serde_dynamo",
- "serial_test",
- "test-api",
+ "thiserror",
  "time",
  "tracing",
  "url",
@@ -3411,8 +3410,7 @@ dependencies = [
  "common",
  "futures",
  "item-core",
- "item-read",
- "item-write",
+ "item-dynamodb",
  "rstest",
  "serde",
  "serial_test",

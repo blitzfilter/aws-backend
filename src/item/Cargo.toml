@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 item-api = { workspace = true }
 item-core = { workspace = true }
-item-read = { workspace = true }
-item-write = { workspace = true }
-item-index = { workspace = true }
+item-opensearch = { workspace = true }
 item-lambda = { workspace = true }
+item-service = { workspace = true }
+item-dynamodb = { workspace = true }

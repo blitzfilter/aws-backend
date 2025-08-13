@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::repository::QueryItemRepository;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::config::http::HttpResponse;
 use aws_sdk_dynamodb::error::SdkError;
@@ -13,6 +12,7 @@ use common::shops_item_id::ShopsItemId;
 use item_core::item::domain::description::Description;
 use item_core::item::domain::title::Title;
 use item_core::item::domain::{Item, LocalizedItemView};
+use item_dynamodb::repository::ItemDynamoDbRepository;
 use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
@@ -29,11 +29,11 @@ pub enum GetItemError {
     ),
 }
 
-#[cfg(feature = "api")]
 pub mod api {
-    use crate::service::GetItemError;
     use common::api::error::ApiError;
     use common::api::error_code::{ITEM_NOT_FOUND, MONETARY_AMOUNT_OVERFLOW};
+
+    use crate::query_service::GetItemError;
 
     impl From<GetItemError> for ApiError {
         fn from(err: GetItemError) -> Self {
@@ -67,11 +67,11 @@ pub trait QueryItemService {
 }
 
 pub struct QueryItemServiceImpl<'a> {
-    repository: &'a (dyn QueryItemRepository + Sync),
+    repository: &'a (dyn ItemDynamoDbRepository + Sync),
 }
 
 impl<'a> QueryItemServiceImpl<'a> {
-    pub fn new(repository: &'a (dyn QueryItemRepository + Sync)) -> Self {
+    pub fn new(repository: &'a (dyn ItemDynamoDbRepository + Sync)) -> Self {
         Self { repository }
     }
 }

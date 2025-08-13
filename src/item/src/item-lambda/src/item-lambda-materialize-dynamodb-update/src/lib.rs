@@ -5,13 +5,13 @@ use common::has::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::update_record::ItemRecordUpdate;
 use item_core::item_event::record::ItemEventRecord;
-use item_write::repository::PersistItemRepository;
+use item_dynamodb::repository::ItemDynamoDbRepository;
 use lambda_runtime::LambdaEvent;
 use tracing::{error, info};
 
 #[tracing::instrument(skip(repository, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
-    repository: &impl PersistItemRepository,
+    repository: &impl ItemDynamoDbRepository,
     event: LambdaEvent<SqsEvent>,
 ) -> Result<SqsBatchResponse, lambda_runtime::Error> {
     let records_count = event.payload.records.len();
@@ -119,7 +119,7 @@ mod tests {
     use item_core::item::update_record::ItemRecordUpdate;
     use item_core::item_event::record::ItemEventRecord;
     use item_core::item_state::domain::ItemState;
-    use item_write::repository::MockPersistItemRepository;
+    use item_dynamodb::repository::MockItemDynamoDbRepository;
     use lambda_runtime::{Context, LambdaEvent};
     use std::collections::HashMap;
     use url::Url;
@@ -167,7 +167,7 @@ mod tests {
             context: Context::default(),
         };
 
-        let mut repository_mock = MockPersistItemRepository::default();
+        let mut repository_mock = MockItemDynamoDbRepository::default();
         // Repository should not be called since the message fails parsing
         repository_mock.expect_update_item_record().times(0);
 
@@ -199,7 +199,7 @@ mod tests {
             context: Context::default(),
         };
 
-        let mut repository_mock = MockPersistItemRepository::default();
+        let mut repository_mock = MockItemDynamoDbRepository::default();
         // Repository should not be called since the message has no body
         repository_mock.expect_update_item_record().times(0);
 
@@ -232,7 +232,7 @@ mod tests {
             context: Context::default(),
         };
 
-        let mut repository_mock = MockPersistItemRepository::default();
+        let mut repository_mock = MockItemDynamoDbRepository::default();
         repository_mock
             .expect_update_item_record()
             .times(1)
@@ -295,7 +295,7 @@ mod tests {
             context: Context::default(),
         };
 
-        let mut repository_mock = MockPersistItemRepository::default();
+        let mut repository_mock = MockItemDynamoDbRepository::default();
         repository_mock
             .expect_update_item_record()
             .times(1)

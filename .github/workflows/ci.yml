@@ -54,7 +54,7 @@ jobs:
           - src/filter
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
-          - src/item/src/item-index
+          - src/item/src/item-opensearch
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
           - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
@@ -98,7 +98,7 @@ jobs:
           - src/filter
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
-          - src/item/src/item-index
+          - src/item/src/item-opensearch
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
           - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
@@ -139,7 +139,7 @@ jobs:
     strategy:
       matrix:
         crate:
-          - src/item/src/item-index
+          - src/item/src/item-opensearch
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
           - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new

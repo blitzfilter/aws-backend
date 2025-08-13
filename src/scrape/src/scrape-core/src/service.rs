@@ -8,14 +8,14 @@ use common::batch::Batch;
 use common::has::HasKey;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
-use item_read::repository::{QueryItemRepository, QueryItemRepositoryImpl};
+use item_dynamodb::repository::ItemDynamoDbRepository;
 use serde::Serialize;
 use std::collections::HashMap;
 use tracing::{error, info};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PublishScrapeItemsImpl<'a> {
-    pub dynamodb_read_repository: &'a QueryItemRepositoryImpl<'a>,
+    pub dynamodb_repository: &'a (dyn ItemDynamoDbRepository + Sync),
     pub sqs_client: &'a aws_sdk_sqs::Client,
     pub sqs_create_url: String,
     pub sqs_update_url: String,
@@ -141,7 +141,7 @@ impl<'a> PublishScrapeItemsImpl<'a> {
         shop_id: &ShopId,
     ) -> Result<impl Iterator<Item = ScrapeItemChangeCommandData>, SdkError<QueryError>> {
         let shop_universe = self
-            .dynamodb_read_repository
+            .dynamodb_repository
             .query_item_hashes(shop_id, true)
             .await?
             .into_iter()

@@ -1,8 +1,8 @@
 use aws_config::BehaviorVersion;
 use aws_lambda_events::sqs::SqsEvent;
 use aws_sdk_dynamodb::Client;
+use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
 use item_lambda_materialize_dynamodb_new::handler;
-use item_write::repository::PersistItemRepositoryImpl;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use std::env;
 use tracing::info;
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Error> {
     }
 
     let client = &Client::new(&aws_config_builder.build());
-    let repository = &PersistItemRepositoryImpl::new(client);
+    let repository = &ItemDynamoDbRepositoryImpl::new(client);
 
     info!("Lambda cold start completed, DynamoDB-Client initialized.");
 

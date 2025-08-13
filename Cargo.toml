@@ -37,16 +37,16 @@ item = { path = "src/item" }
 item-api = { path = "src/item/src/item-api" }
 item-api-get-item = { path = "src/item/src/item-api/src/item-api-get-item" }
 item-core = { path = "src/item/src/item-core" }
-item-index = { path = "src/item/src/item-index" }
+item-dynamodb = { path = "src/item/src/item-dynamodb" }
+item-opensearch = { path = "src/item/src/item-opensearch" }
 item-lambda = { path = "src/item/src/item-lambda" }
+item-service = { path = "src/item/src/item-service" }
 item-lambda-materialize-dynamodb-new = { path = "src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new" }
 item-lambda-materialize-dynamodb-update = { path = "src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update" }
 item-lambda-materialize-opensearch-new = { path = "src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new" }
 item-lambda-materialize-opensearch-update = { path = "src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update" }
 item-lambda-write-new = { path = "src/item/src/item-lambda/src/item-lambda-write-new" }
 item-lambda-write-update = { path = "src/item/src/item-lambda/src/item-lambda-write-update" }
-item-read = { path = "src/item/src/item-read" }
-item-write = { path = "src/item/src/item-write" }
 itertools = "0.14.0"
 lambda_runtime = "0.14.3"
 mockall = "0.13.1"

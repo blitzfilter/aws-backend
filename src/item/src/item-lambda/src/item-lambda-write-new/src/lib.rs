@@ -3,7 +3,7 @@ use common::has::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::command::CreateItemCommand;
 use item_core::item::command_data::CreateItemCommandData;
-use item_write::service::CommandItemService;
+use item_service::command_service::CommandItemService;
 use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
 use tracing::{error, info, warn};
@@ -127,7 +127,7 @@ mod tests {
     use common::shop_id::ShopId;
     use item_core::item::command_data::CreateItemCommandData;
     use item_core::item_state::command_data::ItemStateCommandData;
-    use item_write::service::MockCommandItemService;
+    use item_service::command_service::MockCommandItemService;
     use lambda_runtime::{Context, LambdaEvent};
 
     #[rstest::rstest]

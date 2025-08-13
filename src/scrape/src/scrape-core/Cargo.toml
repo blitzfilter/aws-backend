@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 common = { workspace = true, features = ["sqs"] }
 item-core = { workspace = true }
-item-read = { workspace = true }
+item-dynamodb = { workspace = true }
 futures = { workspace = true, features = ["async-await", "alloc"] }
 tokio = { workspace = true, features = ["time"] }
 async-stream = { workspace = true }
@@ -22,6 +22,5 @@ tokio = { workspace = true, features = ["full"] }
 rstest = { workspace = true }
 test-api = { workspace = true }
 serial_test = { workspace = true }
-item-write = { workspace = true }
 time = { workspace = true }
 url = { workspace = true, features = ["serde"] }

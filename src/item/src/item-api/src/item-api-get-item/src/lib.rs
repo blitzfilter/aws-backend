@@ -13,7 +13,7 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use http::header::ACCEPT_LANGUAGE;
 use item_core::item::get_data::GetItemData;
-use item_read::service::QueryItemService;
+use item_service::query_service::QueryItemService;
 use lambda_runtime::LambdaEvent;
 use tracing::error;
 
@@ -119,7 +119,7 @@ mod tests {
     use item_core::item::domain::LocalizedItemView;
     use item_core::item::hash::ItemHash;
     use item_core::item_state::domain::ItemState;
-    use item_read::service::{GetItemError, MockQueryItemService};
+    use item_service::query_service::{GetItemError, MockQueryItemService};
     use lambda_runtime::LambdaEvent;
     use test_api::{ApiGatewayV2httpRequestProxy, extract_apigw_response_json_body};
     use time::OffsetDateTime;

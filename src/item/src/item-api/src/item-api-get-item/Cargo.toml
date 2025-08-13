@@ -5,8 +5,9 @@ edition = "2024"
 
 [dependencies]
 common = { workspace = true, features = ["api"] }
-item-read = { workspace = true, features = ["api"] }
 item-core = { workspace = true }
+item-service = { workspace = true }
+item-dynamodb = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
 dotenvy = { workspace = true }
@@ -21,7 +22,6 @@ http = { workspace = true }
 
 [dev-dependencies]
 test-api = { workspace = true }
-item-write = { workspace = true }
 serial_test = { workspace = true }
 mockall = { workspace = true }
 rstest = { workspace = true }

@@ -64,9 +64,8 @@ Since this is a serverless backend, manual testing involves:
 - **src/filter**: Item filtering logic
 - **src/item**: Core item management system with multiple sub-modules:
   - `item-core`: Core business logic and domain models
-  - `item-read`: Data access layer for reading items
-  - `item-write`: Data access layer for writing items
-  - `item-index`: Search indexing functionality
+  - `item-dynamodb`: Data access layer for items in DynamoDB
+  - `item-opensearch`: Data access layer for items in OpenSearch
   - `item-api`: API Gateway handlers
   - `item-lambda`: Lambda function implementations
 - **src/scrape**: Web scraping functionality
@@ -118,7 +117,7 @@ src/
 │   ├── src/item-core/      # Domain models and business rules
 │   ├── src/item-read/      # Data access for reading
 │   ├── src/item-write/     # Data access for writing
-│   ├── src/item-index/     # Search and indexing
+│   ├── src/item-opensearch/     # Search and indexing
 │   ├── src/item-api/       # API Gateway handlers
 │   └── src/item-lambda/    # Lambda function implementations
 ├── filter/         # Item filtering logic

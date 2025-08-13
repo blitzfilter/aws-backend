@@ -14,7 +14,7 @@ use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
-use item_read::repository::{QueryItemRepository, QueryItemRepositoryImpl};
+use item_dynamodb::repository::{ItemDynamoDbRepository, ItemDynamoDbRepositoryImpl};
 use std::time::Duration;
 use test_api::tokio::time::sleep;
 use test_api::*;
@@ -22,8 +22,8 @@ use time::OffsetDateTime;
 use time::format_description::well_known;
 use url::Url;
 
-async fn get_repository() -> QueryItemRepositoryImpl<'static> {
-    QueryItemRepositoryImpl::new(get_dynamodb_client().await)
+async fn get_repository() -> ItemDynamoDbRepositoryImpl<'static> {
+    ItemDynamoDbRepositoryImpl::new(get_dynamodb_client().await)
 }
 
 #[localstack_test(services = [DynamoDB()])]

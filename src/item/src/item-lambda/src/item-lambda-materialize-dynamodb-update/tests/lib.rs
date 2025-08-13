@@ -11,9 +11,9 @@ use item_core::item::domain::shop_name::ShopName;
 use item_core::item::record::ItemRecord;
 use item_core::item_event::record::ItemEventRecord;
 use item_core::item_state::record::ItemStateRecord;
+use item_dynamodb::repository::ItemDynamoDbRepository;
+use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
 use item_lambda_materialize_dynamodb_update::handler;
-use item_write::repository::PersistItemRepository;
-use item_write::repository::PersistItemRepositoryImpl;
 use lambda_runtime::{Context, LambdaEvent};
 use std::vec;
 use test_api::*;
@@ -56,7 +56,7 @@ async fn should_materialize_items_for_update(#[case] n: usize) {
     };
     let item_records = (1..=n).map(|_| mk_item_record()).collect::<Vec<_>>();
     let client = get_dynamodb_client().await;
-    let repository = &PersistItemRepositoryImpl::new(client);
+    let repository = &ItemDynamoDbRepositoryImpl::new(client);
     for batch in Batch::<_, 25>::chunked_from(item_records.clone().into_iter()) {
         repository.put_item_records(batch).await.unwrap();
     }

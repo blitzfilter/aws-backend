@@ -1,25 +1,22 @@
 [package]
-name = "item-read"
+name = "item-service"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 common = { workspace = true, features = ["dynamodb"] }
 item-core = { workspace = true }
+item-dynamodb = { workspace = true }
 async-trait = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"] }
+serde = { workspace = true }
 tracing = { workspace = true }
-thiserror = { workspace = true }
+itertools = { workspace = true }
 mockall = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-test-api = { workspace = true }
-serial_test = { workspace = true }
-rstest = { workspace = true }
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
+rstest = { workspace = true }
 url = { workspace = true, features = ["serde"] }
-
-[features]
-default = []
-api = ["common/api"]

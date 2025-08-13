@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemId;
 use item_core::{item::document::ItemDocument, item_event::record::ItemEventRecord};
-use item_index::{
-    IndexItemDocumentRepository,
+use item_opensearch::{
+    ItemOpenSearchRepository,
     bulk::{BulkItemResult, BulkResponse},
 };
 use lambda_runtime::LambdaEvent;
@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 
 #[tracing::instrument(skip(repository, event), fields(requestId = %event.context.request_id))]
 pub async fn handler(
-    repository: &impl IndexItemDocumentRepository,
+    repository: &impl ItemOpenSearchRepository,
     event: LambdaEvent<SqsEvent>,
 ) -> Result<SqsBatchResponse, lambda_runtime::Error> {
     let records_count = event.payload.records.len();

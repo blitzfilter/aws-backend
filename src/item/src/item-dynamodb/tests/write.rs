@@ -14,19 +14,14 @@ use item_core::item_event::record::ItemEventRecord;
 use item_core::item_event_type::record::ItemEventTypeRecord;
 use item_core::item_state::domain::ItemState;
 use item_core::item_state::record::ItemStateRecord;
-use item_read::repository::{QueryItemRepository, QueryItemRepositoryImpl};
-use item_write::repository::{PersistItemRepository, PersistItemRepositoryImpl};
+use item_dynamodb::repository::{ItemDynamoDbRepository, ItemDynamoDbRepositoryImpl};
 use test_api::*;
 use time::OffsetDateTime;
 use time::format_description::well_known;
 use url::Url;
 
-async fn get_write_repository() -> PersistItemRepositoryImpl<'static> {
-    PersistItemRepositoryImpl::new(get_dynamodb_client().await)
-}
-
-async fn get_read_repository() -> QueryItemRepositoryImpl<'static> {
-    QueryItemRepositoryImpl::new(get_dynamodb_client().await)
+async fn get_repository() -> ItemDynamoDbRepositoryImpl<'static> {
+    ItemDynamoDbRepositoryImpl::new(get_dynamodb_client().await)
 }
 
 #[localstack_test(services = [DynamoDB()])]
@@ -69,13 +64,13 @@ async fn should_put_item_records_for_single_record() {
         updated: now,
     };
 
-    get_write_repository()
+    get_repository()
         .await
         .put_item_records(Batch::from([expected.clone()]))
         .await
         .unwrap();
 
-    let actual = get_read_repository()
+    let actual = get_repository()
         .await
         .get_item_record(&shop_id, &shops_item_id)
         .await
@@ -161,19 +156,19 @@ async fn should_put_item_records_for_multiple_records() {
         updated: now2,
     };
 
-    get_write_repository()
+    get_repository()
         .await
         .put_item_records([expected1.clone(), expected2.clone()].into())
         .await
         .unwrap();
 
-    let actual1 = get_read_repository()
+    let actual1 = get_repository()
         .await
         .get_item_record(&shop_id, &shops_item_id_1)
         .await
         .unwrap()
         .unwrap();
-    let actual2 = get_read_repository()
+    let actual2 = get_repository()
         .await
         .get_item_record(&shop_id, &shops_item_id_2)
         .await
@@ -223,7 +218,7 @@ async fn should_put_item_event_records_for_single_record() {
         price_nzd: None,
     };
 
-    get_write_repository()
+    get_repository()
         .await
         .put_item_event_records(Batch::from([expected.clone()]))
         .await
@@ -323,7 +318,7 @@ async fn should_put_item_event_records_for_multiple_records() {
         timestamp: now2,
     };
 
-    get_write_repository()
+    get_repository()
         .await
         .put_item_event_records(Batch::from([expected1.clone(), expected2.clone()]))
         .await
@@ -407,18 +402,18 @@ async fn should_update_item_record() {
     expected.hash = ItemHash::new(&Some(price.into()), &ItemState::Sold);
     expected.updated = now2;
 
-    get_write_repository()
+    get_repository()
         .await
         .put_item_records(Batch::from([initial.clone()]))
         .await
         .unwrap();
-    get_write_repository()
+    get_repository()
         .await
         .update_item_record(&shop_id, &shops_item_id, update)
         .await
         .unwrap();
 
-    let actual = get_read_repository()
+    let actual = get_repository()
         .await
         .get_item_record(&shop_id, &shops_item_id)
         .await
