@@ -121,7 +121,7 @@ mod tests {
     use item_core::item_state::domain::ItemState;
     use item_read::service::{GetItemError, MockQueryItemService};
     use lambda_runtime::LambdaEvent;
-    use test_api::{ApiGatewayV2httpRequestProxy, extract_json_body};
+    use test_api::{ApiGatewayV2httpRequestProxy, extract_apigw_response_json_body};
     use time::OffsetDateTime;
     use time::macros::datetime;
     use url::Url;
@@ -193,7 +193,7 @@ mod tests {
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(200, response.status_code);
-        let json = extract_json_body!(response);
+        let json = extract_apigw_response_json_body!(response);
         assert_eq!(
             expected_language,
             serde_json::from_value::<LanguageData>(json["title"]["language"].clone()).unwrap()
@@ -307,7 +307,7 @@ mod tests {
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(200, response.status_code);
-        let json = extract_json_body!(response);
+        let json = extract_apigw_response_json_body!(response);
         assert_eq!(query_value, json["price"]["currency"]);
     }
 
@@ -418,7 +418,7 @@ mod tests {
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(400, response.status_code);
-        let json = extract_json_body!(response);
+        let json = extract_apigw_response_json_body!(response);
         assert_eq!(400, json["status"]);
         assert_eq!("currency", json["source"]["field"]);
     }
@@ -437,7 +437,7 @@ mod tests {
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(400, response.status_code);
-        let json = extract_json_body!(response);
+        let json = extract_apigw_response_json_body!(response);
         assert_eq!(400, json["status"]);
         assert_eq!("shopId", json["source"]["field"]);
     }
@@ -456,7 +456,7 @@ mod tests {
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(400, response.status_code);
-        let json = extract_json_body!(response);
+        let json = extract_apigw_response_json_body!(response);
         assert_eq!(400, json["status"]);
         assert_eq!("shopsItemId", json["source"]["field"]);
     }
@@ -485,7 +485,7 @@ mod tests {
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(404, response.status_code);
-        let json = extract_json_body!(response);
+        let json = extract_apigw_response_json_body!(response);
         assert_eq!(404, json["status"]);
     }
 }

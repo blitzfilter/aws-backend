@@ -52,7 +52,7 @@ pub trait IntegrationTestService: Sized {
 }
 
 #[macro_export]
-macro_rules! extract_json_body {
+macro_rules! extract_apigw_response_json_body {
     ($response:expr) => {{
         match &$response.clone().body {
             Some(Text(body)) => serde_json::from_str::<serde_json::Value>(body)
