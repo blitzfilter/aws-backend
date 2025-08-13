@@ -43,7 +43,7 @@ pub async fn handler(
             error!(error = ?err, "Failed entire batch.");
             failed_message_ids.extend(message_ids.into_values());
         }
-    };
+    }
 
     let failure_count = failed_message_ids.len();
     info!(
