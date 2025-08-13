@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common = { workspace = true, features = ["dynamodb"] }
+common = { workspace = true, features = ["dynamodb", "api"] }
 item-core = { workspace = true }
 item-dynamodb = { workspace = true }
 async-trait = { workspace = true }

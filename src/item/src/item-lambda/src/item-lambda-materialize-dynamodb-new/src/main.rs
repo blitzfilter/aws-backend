@@ -31,13 +31,13 @@ async fn main() -> Result<(), Error> {
         aws_config_builder.set_endpoint_url(Some(endpoint_url));
     }
 
-    let client = &Client::new(&aws_config_builder.build());
-    let repository = &ItemDynamoDbRepositoryImpl::new(client);
+    let client = Client::new(&aws_config_builder.build());
+    let repository = ItemDynamoDbRepositoryImpl::new(&client);
 
     info!("Lambda cold start completed, DynamoDB-Client initialized.");
 
-    run(service_fn(move |event: LambdaEvent<SqsEvent>| async move {
-        handler(repository, event).await
+    run(service_fn(|event: LambdaEvent<SqsEvent>| async {
+        handler(&repository, event).await
     }))
     .await
 }

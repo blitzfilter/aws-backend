@@ -33,10 +33,10 @@ async fn main() -> Result<(), Error> {
         aws_config_builder.set_endpoint_url(Some(endpoint_url));
     }
 
-    let client = &Client::new(&aws_config_builder.build());
-    let dynamodb_repository = &ItemDynamoDbRepositoryImpl::new(client);
-    let fx_rate = &FixedFxRate::default();
-    let service = CommandItemServiceImpl::new(dynamodb_repository, fx_rate);
+    let client = Client::new(&aws_config_builder.build());
+    let dynamodb_repository = ItemDynamoDbRepositoryImpl::new(&client);
+    let fx_rate = FixedFxRate::default();
+    let service = CommandItemServiceImpl::new(&dynamodb_repository, &fx_rate);
 
     info!("Lambda cold start completed, DynamoDB-Client initialized.");
 
