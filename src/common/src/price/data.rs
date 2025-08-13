@@ -1,6 +1,5 @@
 use crate::currency::data::CurrencyData;
-use crate::currency::domain::MinorUnitExponent;
-use crate::has::Has;
+use crate::currency::domain::HasMinorUnitExponent;
 use crate::price::domain::{NegativeMonetaryAmountError, Price};
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +22,7 @@ impl PriceData {
         if amount < 0f64 {
             Err(NegativeMonetaryAmountError)
         } else {
-            let minor_unit_exponent: &MinorUnitExponent = currency.get();
+            let minor_unit_exponent = currency.minor_unit_exponent();
             let scaled = amount * 10f64.powi(minor_unit_exponent.0 as i32);
             let amount = scaled.trunc() as u64;
             Ok(PriceData { currency, amount })

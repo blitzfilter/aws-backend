@@ -1,7 +1,7 @@
 use crate::item::record::ItemRecord;
 use crate::item_state::domain::ItemState;
 use common::currency::domain::Currency;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::price::domain::{MonetaryAmount, Price};
 use common::shop_id::ShopId;

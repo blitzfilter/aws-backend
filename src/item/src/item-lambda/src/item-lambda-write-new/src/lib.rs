@@ -1,5 +1,5 @@
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::command::CreateItemCommand;
 use item_core::item::command_data::CreateItemCommandData;

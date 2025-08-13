@@ -1,7 +1,6 @@
 use crate::currency::command_data::CurrencyCommandData;
 use crate::currency::data::CurrencyData;
 use crate::currency::record::CurrencyRecord;
-use crate::has::Has;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub struct MinorUnitExponent(pub u8);
@@ -38,15 +37,19 @@ pub enum Currency {
     Nzd,
 }
 
-impl Has<MinorUnitExponent> for Currency {
-    fn get(&self) -> &MinorUnitExponent {
+pub trait HasMinorUnitExponent {
+    fn minor_unit_exponent(&self) -> MinorUnitExponent;
+}
+
+impl HasMinorUnitExponent for Currency {
+    fn minor_unit_exponent(&self) -> MinorUnitExponent {
         match self {
-            Currency::Eur => &MinorUnitExponent(2),
-            Currency::Gbp => &MinorUnitExponent(2),
-            Currency::Usd => &MinorUnitExponent(2),
-            Currency::Aud => &MinorUnitExponent(2),
-            Currency::Cad => &MinorUnitExponent(2),
-            Currency::Nzd => &MinorUnitExponent(2),
+            Currency::Eur => MinorUnitExponent(2),
+            Currency::Gbp => MinorUnitExponent(2),
+            Currency::Usd => MinorUnitExponent(2),
+            Currency::Aud => MinorUnitExponent(2),
+            Currency::Cad => MinorUnitExponent(2),
+            Currency::Nzd => MinorUnitExponent(2),
         }
     }
 }

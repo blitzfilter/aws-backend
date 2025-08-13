@@ -1,6 +1,7 @@
 use aws_config::BehaviorVersion;
 use aws_lambda_events::sqs::SqsEvent;
 use item_lambda_materialize_opensearch_new::handler;
+use item_opensearch::ItemOpenSearchRepositoryImpl;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use opensearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
 use std::env;
@@ -30,12 +31,13 @@ async fn main() -> Result<(), Error> {
         .auth(aws_config.try_into()?)
         .service_name("es")
         .build()?;
-    let client = &opensearch::OpenSearch::new(transport);
+    let client = opensearch::OpenSearch::new(transport);
+    let repository = ItemOpenSearchRepositoryImpl::new(&client);
 
     info!("Lambda cold start completed, DynamoDB-Client initialized.");
 
-    run(service_fn(move |event: LambdaEvent<SqsEvent>| async move {
-        handler(client, event).await
+    run(service_fn(|event: LambdaEvent<SqsEvent>| async {
+        handler(&repository, event).await
     }))
     .await
 }

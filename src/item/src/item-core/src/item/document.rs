@@ -5,7 +5,7 @@ use common::error::missing_field::MissingPersistenceField;
 use common::item_id::{ItemId, ItemKey};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use common::{event_id::EventId, has::HasKey};
+use common::{event_id::EventId, has_key::HasKey};
 use field::field;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

@@ -4,7 +4,7 @@ use crate::item_state::record::ItemStateRecord;
 use common::error::mapping_error::PersistenceMappingError;
 use common::error::missing_field::MissingPersistenceField;
 use common::event_id::EventId;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::record::TextRecord;
 use common::price::record::PriceRecord;

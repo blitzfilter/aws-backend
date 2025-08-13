@@ -5,7 +5,7 @@ use aws_sdk_sqs::config::http::HttpResponse;
 use aws_sdk_sqs::error::SdkError;
 use aws_sdk_sqs::operation::send_message_batch::{SendMessageBatchError, SendMessageBatchOutput};
 use common::batch::Batch;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
 use item_dynamodb::repository::ItemDynamoDbRepository;

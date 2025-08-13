@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemKey;
-use common::{batch::Batch, batch::dynamodb::handle_batch_output, has::HasKey};
+use common::{batch::Batch, batch::dynamodb::handle_batch_output, has_key::HasKey};
 use item_core::{item::record::ItemRecord, item_event::record::ItemEventRecord};
 use item_dynamodb::repository::ItemDynamoDbRepository;
 use lambda_runtime::LambdaEvent;
@@ -129,7 +129,7 @@ mod tests {
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
-    use common::has::HasKey;
+    use common::has_key::HasKey;
     use common::localized::Localized;
     use common::price::domain::Price;
     use common::shop_id::ShopId;

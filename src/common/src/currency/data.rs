@@ -1,5 +1,4 @@
-use crate::currency::domain::{Currency, MinorUnitExponent};
-use crate::has::Has;
+use crate::currency::domain::{Currency, HasMinorUnitExponent, MinorUnitExponent};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
@@ -13,15 +12,15 @@ pub enum CurrencyData {
     Nzd,
 }
 
-impl Has<MinorUnitExponent> for CurrencyData {
-    fn get(&self) -> &MinorUnitExponent {
+impl HasMinorUnitExponent for CurrencyData {
+    fn minor_unit_exponent(&self) -> MinorUnitExponent {
         match self {
-            CurrencyData::Eur => &MinorUnitExponent(2),
-            CurrencyData::Gbp => &MinorUnitExponent(2),
-            CurrencyData::Usd => &MinorUnitExponent(2),
-            CurrencyData::Aud => &MinorUnitExponent(2),
-            CurrencyData::Cad => &MinorUnitExponent(2),
-            CurrencyData::Nzd => &MinorUnitExponent(2),
+            CurrencyData::Eur => MinorUnitExponent(2),
+            CurrencyData::Gbp => MinorUnitExponent(2),
+            CurrencyData::Usd => MinorUnitExponent(2),
+            CurrencyData::Aud => MinorUnitExponent(2),
+            CurrencyData::Cad => MinorUnitExponent(2),
+            CurrencyData::Nzd => MinorUnitExponent(2),
         }
     }
 }

@@ -3,7 +3,7 @@ use crate::item::domain::description::Description;
 use crate::item::domain::shop_name::ShopName;
 use crate::item::domain::title::Title;
 use crate::item_state::domain::ItemState;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use common::language::domain::Language;
 use common::localized::Localized;

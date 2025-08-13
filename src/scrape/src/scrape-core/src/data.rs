@@ -1,5 +1,5 @@
 use crate::data::ScrapeItemChangeCommandData::{Create, Update};
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use common::language::data::{LanguageData, LocalizedTextData};
 use common::price::command_data::PriceCommandData;

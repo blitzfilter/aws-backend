@@ -7,7 +7,7 @@ use crate::item_event_type::record::ItemEventTypeRecord;
 use crate::item_state::record::ItemStateRecord;
 use common::currency::domain::Currency;
 use common::event_id::EventId;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::language::record::TextRecord;

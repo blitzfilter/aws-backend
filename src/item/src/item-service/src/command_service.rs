@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use common::batch::Batch;
 use common::batch::dynamodb::handle_batch_output;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use common::price::domain::FxRate;
 use item_core::item::command::{CreateItemCommand, UpdateItemCommand};

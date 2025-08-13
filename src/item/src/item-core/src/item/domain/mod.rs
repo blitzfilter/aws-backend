@@ -15,7 +15,7 @@ use crate::item_state::domain::ItemState;
 use common::currency::domain::Currency;
 use common::event::Event;
 use common::event_id::EventId;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::domain::Language;
 use common::localized::Localized;

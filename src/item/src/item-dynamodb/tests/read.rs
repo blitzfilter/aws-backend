@@ -2,7 +2,7 @@ use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
 use common::env::get_dynamodb_table_name;
 use common::event_id::EventId;
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
 use common::language::record::{LanguageRecord, TextRecord};
 use common::price::record::PriceRecord;

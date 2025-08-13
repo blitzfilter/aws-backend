@@ -2,7 +2,6 @@ pub mod bulk;
 
 use crate::bulk::BulkResponse;
 use async_trait::async_trait;
-use common::has::Has;
 use common::item_id::ItemId;
 use item_core::item::document::ItemDocument;
 use item_core::item::update_document::ItemUpdateDocument;
@@ -23,8 +22,18 @@ pub trait ItemOpenSearchRepository {
     ) -> Result<BulkResponse, opensearch::Error>;
 }
 
+pub struct ItemOpenSearchRepositoryImpl<'a> {
+    client: &'a opensearch::OpenSearch,
+}
+
+impl<'a> ItemOpenSearchRepositoryImpl<'a> {
+    pub fn new(client: &'a opensearch::OpenSearch) -> Self {
+        ItemOpenSearchRepositoryImpl { client }
+    }
+}
+
 #[async_trait]
-impl<T: Has<opensearch::OpenSearch> + Sync> ItemOpenSearchRepository for T {
+impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
     async fn create_item_documents(
         &self,
         documents: Vec<ItemDocument>,
@@ -35,7 +44,7 @@ impl<T: Has<opensearch::OpenSearch> + Sync> ItemOpenSearchRepository for T {
             ops.push(BulkOperation::create(doc._id(), &doc))?;
         }
 
-        self.get()
+        self.client
             .bulk(BulkParts::Index("items"))
             .body(vec![ops])
             .send()
@@ -58,7 +67,7 @@ impl<T: Has<opensearch::OpenSearch> + Sync> ItemOpenSearchRepository for T {
             ))?;
         }
 
-        self.get()
+        self.client
             .bulk(BulkParts::Index("items"))
             .body(vec![ops])
             .send()

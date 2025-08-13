@@ -4,7 +4,7 @@ use common::shops_item_id::ShopsItemId;
 use item_core::item::document::ItemDocument;
 use item_core::item::update_document::ItemUpdateDocument;
 use item_core::item_state::document::ItemStateDocument;
-use item_opensearch::ItemOpenSearchRepository;
+use item_opensearch::{ItemOpenSearchRepository, ItemOpenSearchRepositoryImpl};
 use opensearch::http::Url;
 use std::collections::HashMap;
 use test_api::*;
@@ -37,7 +37,8 @@ async fn should_create_item_document() {
         updated: OffsetDateTime::now_utc(),
     };
     let client = get_opensearch_client().await;
-    let response = client
+    let repository = ItemOpenSearchRepositoryImpl::new(client);
+    let response = repository
         .create_item_documents(vec![expected.clone()])
         .await
         .unwrap();
@@ -99,7 +100,8 @@ async fn should_create_item_documents() {
         updated: OffsetDateTime::now_utc(),
     };
     let client = get_opensearch_client().await;
-    let response = client
+    let repository = ItemOpenSearchRepositoryImpl::new(client);
+    let response = repository
         .create_item_documents(vec![expected1.clone(), expected2.clone()])
         .await
         .unwrap();
@@ -139,7 +141,8 @@ async fn should_update_item_document() {
         updated: OffsetDateTime::now_utc(),
     };
     let client = get_opensearch_client().await;
-    let write_response = client
+    let repository = ItemOpenSearchRepositoryImpl::new(client);
+    let write_response = repository
         .create_item_documents(vec![initial.clone()])
         .await
         .unwrap();
@@ -160,7 +163,8 @@ async fn should_update_item_document() {
         is_available: None,
         updated: updated_update_ts,
     };
-    let update_response = client
+    let repository = ItemOpenSearchRepositoryImpl::new(client);
+    let update_response = repository
         .update_item_documents(HashMap::from([(item_id, update)]))
         .await
         .unwrap();

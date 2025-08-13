@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
-use common::has::HasKey;
+use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use item_core::item::update_record::ItemRecordUpdate;
 use item_core::item_event::record::ItemEventRecord;

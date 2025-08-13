@@ -4,7 +4,7 @@ use common::language::data::LocalizedTextData;
 use common::price::command_data::PriceCommandData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use common::{has::HasKey, item_id::ItemKey};
+use common::{has_key::HasKey, item_id::ItemKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -342,7 +342,7 @@ impl<T, const N: usize> From<Batch<T, N>> for Vec<T> {
 
 #[cfg(feature = "dynamodb")]
 pub mod dynamodb {
-    use crate::{batch::Batch, has::HasKey};
+    use crate::{batch::Batch, has_key::HasKey};
     use aws_sdk_dynamodb::{
         operation::batch_write_item::BatchWriteItemOutput,
         types::{PutRequest, WriteRequest},
