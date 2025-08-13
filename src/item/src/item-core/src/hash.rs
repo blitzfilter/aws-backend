@@ -102,3 +102,68 @@ impl ItemHashContributor for Price {
 }
 
 // endregion
+
+#[cfg(test)]
+mod tests {
+    use crate::{hash::ItemHash, item_state::ItemState};
+    use common::{currency::domain::Currency, price::domain::Price};
+
+    #[rstest::rstest]
+    #[case(
+        &Some(Price::new(42u64.into(), Currency::Eur)),
+        &ItemState::Available,
+        &Some(Price::new(69u64.into(), Currency::Eur)),
+        &ItemState::Available
+    )]
+    #[case(
+        &Some(Price::new(8000u64.into(), Currency::Eur)),
+        &ItemState::Available,
+        &Some(Price::new(8001u64.into(), Currency::Eur)),
+        &ItemState::Available
+    )]
+    #[case(
+        &Some(Price::new(1u64.into(), Currency::Eur)),
+        &ItemState::Available,
+        &Some(Price::new(1u64.into(), Currency::Eur)),
+        &ItemState::Sold
+    )]
+    #[case(
+        &Some(Price::new(1000000000u64.into(), Currency::Eur)),
+        &ItemState::Sold,
+        &Some(Price::new(1000000000u64.into(), Currency::Gbp)),
+        &ItemState::Sold
+    )]
+    #[case(
+        &None,
+        &ItemState::Reserved,
+        &None,
+        &ItemState::Removed
+    )]
+    fn should_compute_different_hash_for_different_inputs(
+        #[case] price_1: &Option<Price>,
+        #[case] state_1: &ItemState,
+        #[case] price_2: &Option<Price>,
+        #[case] state_2: &ItemState,
+    ) {
+        let hash_1 = ItemHash::new(price_1, state_1);
+        let hash_2 = ItemHash::new(price_2, state_2);
+
+        assert_ne!(hash_1, hash_2)
+    }
+
+    #[rstest::rstest]
+    #[case(&Some(Price::new(42u64.into(), Currency::Eur)), &ItemState::Available)]
+    #[case(&Some(Price::new(8000u64.into(), Currency::Eur)), &ItemState::Available)]
+    #[case(&Some(Price::new(1u64.into(), Currency::Eur)), &ItemState::Available)]
+    #[case(&Some(Price::new(1000000000u64.into(), Currency::Eur)), &ItemState::Sold)]
+    #[case(&None, &ItemState::Reserved)]
+    fn should_compute_same_hash_for_same_inputs(
+        #[case] price: &Option<Price>,
+        #[case] state: &ItemState,
+    ) {
+        let hash_1 = ItemHash::new(price, state);
+        let hash_2 = ItemHash::new(price, state);
+
+        assert_eq!(hash_1, hash_2)
+    }
+}
