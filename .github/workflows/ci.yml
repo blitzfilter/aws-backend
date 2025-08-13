@@ -51,9 +51,10 @@ jobs:
       matrix:
         crate:
           - src/common
-          - src/filter
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
+          - src/item/src/item-data
+          - src/item/src/item-dynamodb
           - src/item/src/item-opensearch
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
@@ -61,8 +62,7 @@ jobs:
           - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
           - src/item/src/item-lambda/src/item-lambda-write-new
           - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-write
-          - src/item/src/item-read
+          - src/item/src/item-service
           - src/scrape/src/scrape-core
           - src/scrape/src/scrape-static
           - src/test-api
@@ -95,9 +95,10 @@ jobs:
       matrix:
         crate:
           - src/common
-          - src/filter
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
+          - src/item/src/item-data
+          - src/item/src/item-dynamodb
           - src/item/src/item-opensearch
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
@@ -105,8 +106,7 @@ jobs:
           - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
           - src/item/src/item-lambda/src/item-lambda-write-new
           - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-write
-          - src/item/src/item-read
+          - src/item/src/item-service
           - src/scrape/src/scrape-core
           - src/scrape/src/scrape-static
           - src/test-api
@@ -139,14 +139,11 @@ jobs:
     strategy:
       matrix:
         crate:
+          - src/item/src/item-dynamodb
           - src/item/src/item-opensearch
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
           - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
           - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
-          - src/item/src/item-lambda/src/item-lambda-write-new
-          - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-write
-          - src/item/src/item-read
           - src/scrape/src/scrape-core
           - src/test-api
     steps:
