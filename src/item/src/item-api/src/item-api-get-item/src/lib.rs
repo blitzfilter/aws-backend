@@ -106,9 +106,7 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use crate::handler;
-    use aws_lambda_events::apigw::ApiGatewayV2httpRequest;
     use aws_lambda_events::encodings::Body::Text;
-    use aws_lambda_events::query_map::QueryMap;
     use common::event_id::EventId;
     use common::language::domain::Language;
     use common::localized::Localized;
@@ -118,10 +116,9 @@ mod tests {
     use item_core::item::domain::LocalizedItemView;
     use item_core::item::hash::ItemHash;
     use item_core::item_state::domain::ItemState;
-    use item_read::service::MockQueryItemService;
+    use item_read::service::{GetItemError, MockQueryItemService};
     use lambda_runtime::LambdaEvent;
-    use serde_json::Value;
-    use std::collections::HashMap;
+    use test_api::{ApiGatewayV2httpRequestProxy, extract_json_body};
     use time::OffsetDateTime;
     use time::macros::datetime;
     use url::Url;
@@ -130,139 +127,91 @@ mod tests {
     async fn should_400_when_currency_query_param_is_invalid() {
         let mut service = MockQueryItemService::default();
         service.expect_view_item().never();
+
         let shop_id = ShopId::new();
         let shops_item_id = ShopsItemId::new();
+
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequest {
-                resource: None,
-                http_method: Default::default(),
-                headers: Default::default(),
-                query_string_parameters: QueryMap::from(HashMap::from([(
-                    "currency".to_string(),
-                    "invalid_currency".to_string(),
-                )])),
-                path_parameters: HashMap::from_iter([
-                    ("shopId".to_string(), shop_id.to_string()),
-                    ("shopsItemId".to_string(), shops_item_id.to_string()),
-                ]),
-                stage_variables: Default::default(),
-                request_context: Default::default(),
-                body: None,
-                is_base64_encoded: false,
-                kind: None,
-                method_arn: None,
-                identity_source: None,
-                authorization_token: None,
-                version: None,
-                route_key: None,
-                raw_path: None,
-                raw_query_string: None,
-                cookies: None,
-            },
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .path_parameter("shopId", shop_id)
+                .path_parameter("shopsItemId", shops_item_id)
+                .query_string_parameter("currency", "invalid_currency")
+                .build(),
             context: Default::default(),
         };
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(400, response.status_code);
-        if let Text(body) = response.body.unwrap() {
-            let item_data = serde_json::from_str::<Value>(&body).unwrap();
-            assert_eq!(400, item_data.get("status").unwrap().as_u64().unwrap());
-            assert_eq!(
-                "currency",
-                item_data.get("source").unwrap().get("field").unwrap()
-            );
-        } else {
-            panic!("Expected Text.");
-        }
+        let json = extract_json_body!(response);
+        assert_eq!(400, json["status"]);
+        assert_eq!("currency", json["source"]["field"]);
     }
 
     #[tokio::test]
     async fn should_400_when_path_param_shop_id_is_missing() {
         let mut service = MockQueryItemService::default();
         service.expect_view_item().never();
-        let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequest {
-                resource: None,
-                http_method: Default::default(),
-                headers: Default::default(),
-                query_string_parameters: Default::default(),
-                path_parameters: HashMap::from_iter([(
-                    "shopsItemId".to_string(),
-                    shops_item_id.to_string(),
-                )]),
-                stage_variables: Default::default(),
-                request_context: Default::default(),
-                body: None,
-                is_base64_encoded: false,
-                kind: None,
-                method_arn: None,
-                identity_source: None,
-                authorization_token: None,
-                version: None,
-                route_key: None,
-                raw_path: None,
-                raw_query_string: None,
-                cookies: None,
-            },
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .path_parameter("shopsItemId", ShopsItemId::new())
+                .build(),
             context: Default::default(),
         };
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(400, response.status_code);
-        if let Text(body) = response.body.unwrap() {
-            let item_data = serde_json::from_str::<Value>(&body).unwrap();
-            assert_eq!(400, item_data.get("status").unwrap().as_u64().unwrap());
-            assert_eq!(
-                "shopId",
-                item_data.get("source").unwrap().get("field").unwrap()
-            );
-        } else {
-            panic!("Expected Text.");
-        }
+        let json = extract_json_body!(response);
+        assert_eq!(400, json["status"]);
+        assert_eq!("shopId", json["source"]["field"]);
     }
 
     #[tokio::test]
     async fn should_400_when_path_param_shops_item_id_is_missing() {
         let mut service = MockQueryItemService::default();
         service.expect_view_item().never();
-        let shop_id = ShopId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequest {
-                resource: None,
-                http_method: Default::default(),
-                headers: Default::default(),
-                query_string_parameters: Default::default(),
-                path_parameters: HashMap::from_iter([("shopId".to_string(), shop_id.to_string())]),
-                stage_variables: Default::default(),
-                request_context: Default::default(),
-                body: None,
-                is_base64_encoded: false,
-                kind: None,
-                method_arn: None,
-                identity_source: None,
-                authorization_token: None,
-                version: None,
-                route_key: None,
-                raw_path: None,
-                raw_query_string: None,
-                cookies: None,
-            },
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .path_parameter("shopId", ShopId::new())
+                .build(),
             context: Default::default(),
         };
 
         let response = handler(lambda_event, &service).await.unwrap();
         assert_eq!(400, response.status_code);
-        if let Text(body) = response.body.unwrap() {
-            let item_data = serde_json::from_str::<Value>(&body).unwrap();
-            assert_eq!(400, item_data.get("status").unwrap().as_u64().unwrap());
-            assert_eq!(
-                "shopsItemId",
-                item_data.get("source").unwrap().get("field").unwrap()
-            );
-        } else {
-            panic!("Expected Text.");
-        }
+        let json = extract_json_body!(response);
+        assert_eq!(400, json["status"]);
+        assert_eq!("shopsItemId", json["source"]["field"]);
+    }
+
+    #[tokio::test]
+    async fn should_404_when_item_does_not_exist() {
+        let shop_id = ShopId::new();
+        let shops_item_id = ShopsItemId::new();
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .path_parameter("shopId", shop_id)
+                .path_parameter("shopsItemId", shops_item_id)
+                .build(),
+            context: Default::default(),
+        };
+
+        let mut service = MockQueryItemService::default();
+        service
+            .expect_view_item()
+            .return_once(move |shop_id, shops_item_id, _, _| {
+                let shop_id = shop_id.clone();
+                let shops_item_id = shops_item_id.clone();
+                Box::pin(async move { Err(GetItemError::ItemNotFound(shop_id, shops_item_id)) })
+            });
+
+        let response = handler(lambda_event, &service).await.unwrap();
+        assert_eq!(404, response.status_code);
+        let json = extract_json_body!(response);
+        assert_eq!(404, json["status"]);
     }
 
     #[tokio::test]
@@ -293,29 +242,11 @@ mod tests {
         let shop_id = ShopId::new();
         let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequest {
-                resource: None,
-                http_method: Default::default(),
-                headers: Default::default(),
-                query_string_parameters: Default::default(),
-                path_parameters: HashMap::from_iter([
-                    ("shopId".to_string(), shop_id.to_string()),
-                    ("shopsItemId".to_string(), shops_item_id.to_string()),
-                ]),
-                stage_variables: Default::default(),
-                request_context: Default::default(),
-                body: None,
-                is_base64_encoded: false,
-                kind: None,
-                method_arn: None,
-                identity_source: None,
-                authorization_token: None,
-                version: None,
-                route_key: None,
-                raw_path: None,
-                raw_query_string: None,
-                cookies: None,
-            },
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .path_parameter("shopId", shop_id)
+                .path_parameter("shopsItemId", shops_item_id)
+                .build(),
             context: Default::default(),
         };
         let response = handler(lambda_event, &service).await.unwrap();
@@ -355,29 +286,11 @@ mod tests {
         let shop_id = ShopId::new();
         let shops_item_id = ShopsItemId::new();
         let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequest {
-                resource: None,
-                http_method: Default::default(),
-                headers: Default::default(),
-                query_string_parameters: Default::default(),
-                path_parameters: HashMap::from_iter([
-                    ("shopId".to_string(), shop_id.to_string()),
-                    ("shopsItemId".to_string(), shops_item_id.to_string()),
-                ]),
-                stage_variables: Default::default(),
-                request_context: Default::default(),
-                body: None,
-                is_base64_encoded: false,
-                kind: None,
-                method_arn: None,
-                identity_source: None,
-                authorization_token: None,
-                version: None,
-                route_key: None,
-                raw_path: None,
-                raw_query_string: None,
-                cookies: None,
-            },
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .path_parameter("shopId", shop_id)
+                .path_parameter("shopsItemId", shops_item_id)
+                .build(),
             context: Default::default(),
         };
         let response = handler(lambda_event, &service).await.unwrap();

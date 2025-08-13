@@ -1,3 +1,4 @@
+mod api_gateway;
 mod dynamodb;
 mod lambda;
 pub mod localstack;
@@ -6,6 +7,7 @@ mod s3;
 mod sqs;
 mod sqs_lambda;
 
+pub use api_gateway::*;
 use async_trait::async_trait;
 pub use dynamodb::{DynamoDB, get_dynamodb_client};
 pub use lambda::{Lambda, get_lambda_client};
@@ -47,4 +49,15 @@ pub trait IntegrationTestService: Sized {
     async fn set_up(&self);
     /// Cleans up after the test (defaults to a no-op)
     async fn tear_down(&self) {}
+}
+
+#[macro_export]
+macro_rules! extract_json_body {
+    ($response:expr) => {{
+        match &$response.clone().body {
+            Some(Text(body)) => serde_json::from_str::<serde_json::Value>(body)
+                .expect("Failed to parse JSON from response body"),
+            _ => panic!("Expected response body to be Text."),
+        }
+    }};
 }
