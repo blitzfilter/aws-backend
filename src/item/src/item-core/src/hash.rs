@@ -1,4 +1,4 @@
-use crate::item_state_domain::ItemState;
+use crate::item_state::ItemState;
 use common::currency::domain::Currency;
 use common::price::domain::{MonetaryAmount, Price};
 use serde::{Deserialize, Serialize};

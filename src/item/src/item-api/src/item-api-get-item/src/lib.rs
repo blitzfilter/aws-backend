@@ -116,7 +116,7 @@ mod tests {
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use http::header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE, ETAG, LAST_MODIFIED};
-    use item_core::{hash::ItemHash, item::LocalizedItemView, item_state_domain::ItemState};
+    use item_core::{hash::ItemHash, item::LocalizedItemView, item_state::ItemState};
     use item_service::query_service::{GetItemError, MockQueryItemService};
     use lambda_runtime::LambdaEvent;
     use test_api::{ApiGatewayV2httpRequestProxy, extract_apigw_response_json_body};

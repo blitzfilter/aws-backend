@@ -7,7 +7,7 @@ use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::item::Item;
-use item_core::item_state_domain::ItemState;
+use item_core::item_state::ItemState;
 use item_core::shop_name::ShopName;
 use item_dynamodb::item_event_record::ItemEventRecord;
 use item_dynamodb::item_record::ItemRecord;

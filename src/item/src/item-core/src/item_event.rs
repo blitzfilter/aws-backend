@@ -12,7 +12,7 @@ use url::Url;
 
 use crate::description::Description;
 use crate::hash::ItemHash;
-use crate::item_state_domain::ItemState;
+use crate::item_state::ItemState;
 use crate::shop_name::ShopName;
 use crate::title::Title;
 

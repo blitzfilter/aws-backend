@@ -136,7 +136,7 @@ mod tests {
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use item_core::shop_name::ShopName;
-    use item_core::{item::Item, item_state_domain::ItemState};
+    use item_core::{item::Item, item_state::ItemState};
     use item_dynamodb::item_event_record::ItemEventRecord;
     use item_dynamodb::item_record::ItemRecord;
     use item_dynamodb::repository::MockItemDynamoDbRepository;

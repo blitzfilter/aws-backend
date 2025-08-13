@@ -1,4 +1,4 @@
-use item_core::domain::ItemEventPayload;
+use item_core::item_event::ItemEventPayload;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]

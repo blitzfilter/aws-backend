@@ -9,11 +9,11 @@ use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::domain::{
+use item_core::hash::ItemHash;
+use item_core::item_event::{
     ItemCommonEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
     ItemStateChangeEventPayload,
 };
-use item_core::hash::ItemHash;
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, error};

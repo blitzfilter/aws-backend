@@ -1,4 +1,4 @@
-use item_core::item_state_domain::ItemState;
+use item_core::item_state::ItemState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
