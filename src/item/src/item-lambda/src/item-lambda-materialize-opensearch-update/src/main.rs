@@ -1,7 +1,7 @@
 use aws_config::BehaviorVersion;
 use aws_lambda_events::sqs::SqsEvent;
 use item_lambda_materialize_opensearch_update::handler;
-use item_opensearch::ItemOpenSearchRepositoryImpl;
+use item_opensearch::repository::ItemOpenSearchRepositoryImpl;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use opensearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
 use std::env;

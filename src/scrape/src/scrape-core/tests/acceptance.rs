@@ -6,10 +6,11 @@ use common::{
     currency::data::CurrencyData, event_id::EventId, item_id::ItemId, language::data::LanguageData,
     price::data::PriceData, shop_id::ShopId,
 };
-use item_core::{
-    item::{hash::ItemHash, record::ItemRecord},
-    item_state::{data::ItemStateData, domain::ItemState, record::ItemStateRecord},
-};
+use item_core::hash::ItemHash;
+use item_core::item_state_domain::ItemState;
+use item_data::item_state_data::ItemStateData;
+use item_dynamodb::item_record::ItemRecord;
+use item_dynamodb::item_state_record::ItemStateRecord;
 use item_dynamodb::repository::ItemDynamoDbRepository;
 use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
 use scrape_core::{

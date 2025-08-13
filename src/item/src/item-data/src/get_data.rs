@@ -1,5 +1,4 @@
-use crate::item::domain::LocalizedItemView;
-use crate::item_state::data::ItemStateData;
+use crate::item_state_data::ItemStateData;
 use common::event_id::EventId;
 use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
@@ -7,6 +6,7 @@ use common::language::data::LocalizedTextData;
 use common::price::data::PriceData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use item_core::item::LocalizedItemView;
 use serde::Serialize;
 use time::OffsetDateTime;
 

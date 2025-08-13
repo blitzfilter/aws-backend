@@ -1,10 +1,10 @@
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::document::ItemDocument;
-use item_core::item::update_document::ItemUpdateDocument;
-use item_core::item_state::document::ItemStateDocument;
-use item_opensearch::{ItemOpenSearchRepository, ItemOpenSearchRepositoryImpl};
+use item_opensearch::item_document::ItemDocument;
+use item_opensearch::item_state_document::ItemStateDocument;
+use item_opensearch::item_update_document::ItemUpdateDocument;
+use item_opensearch::repository::{ItemOpenSearchRepository, ItemOpenSearchRepositoryImpl};
 use opensearch::http::Url;
 use std::collections::HashMap;
 use test_api::*;

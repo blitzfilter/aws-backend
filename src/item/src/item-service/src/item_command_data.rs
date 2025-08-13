@@ -1,4 +1,4 @@
-use crate::item_state::command_data::ItemStateCommandData;
+use crate::item_state_command_data::ItemStateCommandData;
 use common::language::command_data::LanguageCommandData;
 use common::language::data::LocalizedTextData;
 use common::price::command_data::PriceCommandData;

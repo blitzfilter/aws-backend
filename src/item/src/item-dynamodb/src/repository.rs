@@ -1,3 +1,7 @@
+use crate::item_event_record::ItemEventRecord;
+use crate::item_record::ItemRecord;
+use crate::item_summary_hash::ItemSummaryHash;
+use crate::item_update_record::ItemRecordUpdate;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::http::HttpResponse;
@@ -14,10 +18,6 @@ use common::env::get_dynamodb_table_name;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::hash::ItemSummaryHash;
-use item_core::item::record::ItemRecord;
-use item_core::item::update_record::ItemRecordUpdate;
-use item_core::item_event::record::ItemEventRecord;
 use std::collections::HashMap;
 use tracing::error;
 

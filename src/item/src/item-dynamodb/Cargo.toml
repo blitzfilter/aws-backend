@@ -6,16 +6,22 @@ edition = "2024"
 [dependencies]
 common = { workspace = true, features = ["dynamodb"] }
 item-core = { workspace = true }
-async-trait = { workspace = true }
-aws-sdk-dynamodb = { workspace = true }
-serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"] }
 serde = { workspace = true }
-tracing = { workspace = true }
-mockall = { workspace = true }
+field = { workspace = true }
+time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
+url = { workspace = true, features = ["serde"] }
+
+async-trait = { workspace = true, optional = true }
+aws-sdk-dynamodb = { workspace = true, optional = true }
+serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"], optional = true }
+tracing = { workspace = true, optional = true }
+mockall = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-api = { workspace = true }
-time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 serial_test = { workspace = true }
 rstest = { workspace = true }
-url = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true }
+
+[features]
+repository = ["common/dynamodb", "async-trait", "aws-sdk-dynamodb", "serde_dynamo", "tracing", "mockall"]

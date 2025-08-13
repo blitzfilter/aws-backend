@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 common = { workspace = true, features = ["sqs"] }
 item-core = { workspace = true }
-item-dynamodb = { workspace = true }
+item-data = { workspace = true }
+item-service = { workspace = true }
+item-dynamodb = { workspace = true, features = ["repository"] }
 futures = { workspace = true, features = ["async-await", "alloc"] }
 tokio = { workspace = true, features = ["time"] }
 async-stream = { workspace = true }

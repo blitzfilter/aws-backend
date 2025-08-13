@@ -7,7 +7,7 @@ edition = "2024"
 common = { workspace = true }
 item-core = { workspace = true }
 item-service = { workspace = true }
-item-dynamodb = { workspace = true }
+item-dynamodb = { workspace = true, features = ["repository"] }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }

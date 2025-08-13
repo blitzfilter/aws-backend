@@ -9,9 +9,9 @@ use common::localized::Localized;
 use common::price::domain::{MonetaryAmountOverflowError, Price};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::domain::description::Description;
-use item_core::item::domain::title::Title;
-use item_core::item::domain::{Item, LocalizedItemView};
+use item_core::description::Description;
+use item_core::item::{Item, LocalizedItemView};
+use item_core::title::Title;
 use item_dynamodb::repository::ItemDynamoDbRepository;
 use tracing::error;
 

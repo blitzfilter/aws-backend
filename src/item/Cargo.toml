@@ -9,4 +9,4 @@ item-core = { workspace = true }
 item-opensearch = { workspace = true }
 item-lambda = { workspace = true }
 item-service = { workspace = true }
-item-dynamodb = { workspace = true }
+item-dynamodb = { workspace = true, features = ["repository"] }

@@ -1,5 +1,6 @@
-use crate::{item_event::record::ItemEventRecord, item_state::document::ItemStateDocument};
+use crate::item_state_document::ItemStateDocument;
 use common::event_id::EventId;
+use item_dynamodb::item_event_record::ItemEventRecord;
 use serde::Serialize;
 use time::OffsetDateTime;
 

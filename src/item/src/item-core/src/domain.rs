@@ -1,8 +1,3 @@
-use crate::item::domain::description::Description;
-use crate::item::domain::shop_name::ShopName;
-use crate::item::domain::title::Title;
-use crate::item::hash::ItemHash;
-use crate::item_state::domain::ItemState;
 use common::currency::domain::Currency;
 use common::event::Event;
 use common::has_key::HasKey;
@@ -14,6 +9,12 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use std::collections::HashMap;
 use url::Url;
+
+use crate::description::Description;
+use crate::hash::ItemHash;
+use crate::item_state_domain::ItemState;
+use crate::shop_name::ShopName;
+use crate::title::Title;
 
 pub type ItemEvent = Event<ItemId, ItemEventPayload>;
 

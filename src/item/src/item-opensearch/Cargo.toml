@@ -6,12 +6,16 @@ edition = "2024"
 [dependencies]
 common = { workspace = true }
 item-core = { workspace = true }
+item-dynamodb = { workspace = true }
 async-trait = { workspace = true }
 opensearch = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+field = { workspace = true }
+url = { workspace = true }
+time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 
 [dev-dependencies]
 test-api = { workspace = true }
 serial_test = { workspace = true }
-time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
+rstest = { workspace = true }

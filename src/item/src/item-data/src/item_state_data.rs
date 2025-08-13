@@ -1,4 +1,4 @@
-use crate::item_state::domain::ItemState;
+use item_core::item_state_domain::ItemState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -19,6 +19,18 @@ impl From<ItemState> for ItemStateData {
             ItemState::Reserved => ItemStateData::Reserved,
             ItemState::Sold => ItemStateData::Sold,
             ItemState::Removed => ItemStateData::Removed,
+        }
+    }
+}
+
+impl From<ItemStateData> for ItemState {
+    fn from(cmd: ItemStateData) -> Self {
+        match cmd {
+            ItemStateData::Listed => ItemState::Listed,
+            ItemStateData::Available => ItemState::Available,
+            ItemStateData::Reserved => ItemState::Reserved,
+            ItemStateData::Sold => ItemState::Sold,
+            ItemStateData::Removed => ItemState::Removed,
         }
     }
 }

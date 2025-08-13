@@ -7,9 +7,10 @@ use common::price::data::PriceData;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
-use item_core::item::hash::ItemHash;
-use item_core::item_state::data::ItemStateData;
+use item_core::hash::ItemHash;
+use item_data::item_state_data::ItemStateData;
+use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandData};
+use item_service::item_state_command_data::ItemStateCommandData;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -47,6 +48,16 @@ impl HasKey for ScrapeItem {
     }
 }
 
+fn state_data_into_cmd_data(data: ItemStateData) -> ItemStateCommandData {
+    match data {
+        ItemStateData::Listed => ItemStateCommandData::Listed,
+        ItemStateData::Available => ItemStateCommandData::Available,
+        ItemStateData::Reserved => ItemStateCommandData::Reserved,
+        ItemStateData::Sold => ItemStateCommandData::Sold,
+        ItemStateData::Removed => ItemStateCommandData::Removed,
+    }
+}
+
 impl From<ScrapeItem> for CreateItemCommandData {
     fn from(scrape_item: ScrapeItem) -> Self {
         CreateItemCommandData {
@@ -66,7 +77,7 @@ impl From<ScrapeItem> for CreateItemCommandData {
                 .map(|(lang, text)| (lang.into(), text))
                 .collect(),
             price: scrape_item.price.map(PriceCommandData::from),
-            state: scrape_item.state.into(),
+            state: state_data_into_cmd_data(scrape_item.state),
             url: scrape_item.url,
             images: scrape_item.images,
         }
@@ -79,7 +90,7 @@ impl From<ScrapeItem> for UpdateItemCommandData {
             shop_id: scrape_item.shop_id,
             shops_item_id: scrape_item.shops_item_id,
             price: scrape_item.price.map(PriceCommandData::from),
-            state: Some(scrape_item.state.into()),
+            state: Some(state_data_into_cmd_data(scrape_item.state)),
         }
     }
 }
@@ -124,11 +135,11 @@ mod tests {
     use common::price::domain::Price;
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
-    use item_core::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
-    use item_core::item::hash::ItemHash;
-    use item_core::item_state::command_data::ItemStateCommandData;
-    use item_core::item_state::data::ItemStateData;
-    use item_core::item_state::domain::ItemState;
+    use item_core::hash::ItemHash;
+    use item_core::item_state_domain::ItemState;
+    use item_data::item_state_data::ItemStateData;
+    use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandData};
+    use item_service::item_state_command_data::ItemStateCommandData;
     use std::collections::HashMap;
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::item_state::data::ItemStateData;
+use item_core::item_state_domain::ItemState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -11,14 +11,14 @@ pub enum ItemStateCommandData {
     Removed,
 }
 
-impl From<ItemStateData> for ItemStateCommandData {
-    fn from(data: ItemStateData) -> Self {
-        match data {
-            ItemStateData::Listed => ItemStateCommandData::Listed,
-            ItemStateData::Available => ItemStateCommandData::Available,
-            ItemStateData::Reserved => ItemStateCommandData::Reserved,
-            ItemStateData::Sold => ItemStateCommandData::Sold,
-            ItemStateData::Removed => ItemStateCommandData::Removed,
+impl From<ItemStateCommandData> for ItemState {
+    fn from(cmd: ItemStateCommandData) -> Self {
+        match cmd {
+            ItemStateCommandData::Listed => ItemState::Listed,
+            ItemStateCommandData::Available => ItemState::Available,
+            ItemStateCommandData::Reserved => ItemState::Reserved,
+            ItemStateCommandData::Sold => ItemState::Sold,
+            ItemStateCommandData::Removed => ItemState::Removed,
         }
     }
 }

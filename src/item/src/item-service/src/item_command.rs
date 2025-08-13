@@ -1,8 +1,3 @@
-use crate::item::command_data::{CreateItemCommandData, UpdateItemCommandData};
-use crate::item::domain::description::Description;
-use crate::item::domain::shop_name::ShopName;
-use crate::item::domain::title::Title;
-use crate::item_state::domain::ItemState;
 use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use common::language::domain::Language;
@@ -10,8 +5,14 @@ use common::localized::Localized;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use item_core::description::Description;
+use item_core::item_state_domain::ItemState;
+use item_core::shop_name::ShopName;
+use item_core::title::Title;
 use std::collections::HashMap;
 use url::Url;
+
+use crate::item_command_data::{CreateItemCommandData, UpdateItemCommandData};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateItemCommand {

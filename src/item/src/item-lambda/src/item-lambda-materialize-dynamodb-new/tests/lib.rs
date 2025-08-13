@@ -5,9 +5,10 @@ use common::localized::Localized;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item::domain::Item;
-use item_core::item::domain::shop_name::ShopName;
-use item_core::item_event::record::ItemEventRecord;
+use item_core::item::Item;
+use item_core::item_state_domain::ItemState;
+use item_core::shop_name::ShopName;
+use item_dynamodb::item_event_record::ItemEventRecord;
 use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
 use item_lambda_materialize_dynamodb_new::handler;
 use lambda_runtime::{Context, LambdaEvent};
@@ -42,7 +43,7 @@ async fn should_materialize_items_for_create(#[case] n: usize) {
                 common::currency::domain::Currency::Cad,
             )),
             Default::default(),
-            item_core::item_state::domain::ItemState::Available,
+            ItemState::Available,
             Url::parse("https://boop.bap.com").unwrap(),
             vec![],
         )

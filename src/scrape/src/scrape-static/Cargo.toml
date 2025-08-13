@@ -7,6 +7,7 @@ edition = "2024"
 common = { workspace = true }
 scrape-core = { workspace = true }
 item-core = { workspace = true }
+item-data = { workspace = true }
 reqwest = { workspace = true, features = ["json", "native-tls-vendored"] }
 async-trait = { workspace = true }
 scraper = { workspace = true }

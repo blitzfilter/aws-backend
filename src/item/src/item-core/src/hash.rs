@@ -1,11 +1,6 @@
-use crate::item::record::ItemRecord;
-use crate::item_state::domain::ItemState;
+use crate::item_state_domain::ItemState;
 use common::currency::domain::Currency;
-use common::has_key::HasKey;
-use common::item_id::{ItemId, ItemKey};
 use common::price::domain::{MonetaryAmount, Price};
-use common::shop_id::ShopId;
-use common::shops_item_id::ShopsItemId;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::ops::Add;
@@ -107,33 +102,3 @@ impl ItemHashContributor for Price {
 }
 
 // endregion
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemSummaryHash {
-    pub item_id: ItemId,
-    pub shop_id: ShopId,
-    pub shops_item_id: ShopsItemId,
-    pub hash: ItemHash,
-}
-
-impl HasKey for ItemSummaryHash {
-    type Key = ItemKey;
-
-    fn key(&self) -> Self::Key {
-        ItemKey {
-            shop_id: self.shop_id.clone(),
-            shops_item_id: self.shops_item_id.clone(),
-        }
-    }
-}
-
-impl From<ItemRecord> for ItemSummaryHash {
-    fn from(value: ItemRecord) -> Self {
-        ItemSummaryHash {
-            item_id: value.item_id,
-            shop_id: value.shop_id,
-            shops_item_id: value.shops_item_id,
-            hash: value.hash,
-        }
-    }
-}

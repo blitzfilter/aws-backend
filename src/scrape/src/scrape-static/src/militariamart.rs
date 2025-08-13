@@ -4,7 +4,7 @@ use common::language::data::{LanguageData, LocalizedTextData};
 use common::price::data::PriceData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use item_core::item_state::data::ItemStateData;
+use item_data::item_state_data::ItemStateData;
 use reqwest::Client;
 use scrape_core::data::ScrapeItem;
 use scrape_core::spec::{ScrapeError, Scraper, ScraperConfig};

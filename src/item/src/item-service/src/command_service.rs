@@ -1,14 +1,14 @@
+use crate::item_command::{CreateItemCommand, UpdateItemCommand};
 use async_trait::async_trait;
 use common::batch::Batch;
 use common::batch::dynamodb::handle_batch_output;
 use common::has_key::HasKey;
 use common::item_id::ItemKey;
 use common::price::domain::FxRate;
-use item_core::item::command::{CreateItemCommand, UpdateItemCommand};
-use item_core::item::domain::Item;
-use item_core::item::record::ItemRecord;
-use item_core::item_event::domain::ItemEvent;
-use item_core::item_event::record::ItemEventRecord;
+use item_core::domain::ItemEvent;
+use item_core::item::Item;
+use item_dynamodb::item_event_record::ItemEventRecord;
+use item_dynamodb::item_record::ItemRecord;
 use item_dynamodb::repository::ItemDynamoDbRepository;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
@@ -325,18 +325,18 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
 
 #[cfg(test)]
 pub mod tests {
+    use crate::item_command::UpdateItemCommand;
     use aws_sdk_dynamodb::{Client, Config};
     use common::currency::domain::Currency;
     use common::item_id::ItemKey;
     use common::language::record::{LanguageRecord, TextRecord};
     use common::price::domain::{FixedFxRate, Price};
     use common::shops_item_id::ShopsItemId;
-    use item_core::item::command::UpdateItemCommand;
-    use item_core::item::hash::ItemHash;
-    use item_core::item::record::ItemRecord;
-    use item_core::item_event::domain::ItemCommonEventPayload;
-    use item_core::item_state::domain::ItemState;
-    use item_core::item_state::record::ItemStateRecord;
+    use item_core::domain::ItemCommonEventPayload;
+    use item_core::hash::ItemHash;
+    use item_core::item_state_domain::ItemState;
+    use item_dynamodb::item_record::ItemRecord;
+    use item_dynamodb::item_state_record::ItemStateRecord;
     use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
     use std::collections::HashMap;
     use time::OffsetDateTime;

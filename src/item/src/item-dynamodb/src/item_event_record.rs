@@ -1,10 +1,5 @@
-use crate::item::hash::ItemHash;
-use crate::item_event::domain::{
-    ItemCommonEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
-    ItemStateChangeEventPayload,
-};
-use crate::item_event_type::record::ItemEventTypeRecord;
-use crate::item_state::record::ItemStateRecord;
+use crate::item_event_type_record::ItemEventTypeRecord;
+use crate::item_state_record::ItemStateRecord;
 use common::currency::domain::Currency;
 use common::event_id::EventId;
 use common::has_key::HasKey;
@@ -14,6 +9,11 @@ use common::language::record::TextRecord;
 use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use item_core::domain::{
+    ItemCommonEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
+    ItemStateChangeEventPayload,
+};
+use item_core::hash::ItemHash;
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, error};

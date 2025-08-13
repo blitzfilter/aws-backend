@@ -68,7 +68,7 @@ mod tests {
     use async_trait::async_trait;
     use common::language::data::{LanguageData, LocalizedTextData};
     use futures::StreamExt;
-    use item_core::item_state::data::ItemStateData;
+    use item_data::item_state_data::ItemStateData;
     use std::time::{Duration, SystemTime};
 
     struct DummyClient;
@@ -102,7 +102,7 @@ mod tests {
                 native_description: None,
                 other_description: Default::default(),
                 price: None,
-                state: ItemStateData::Listed,
+                state: ItemStateData::Available,
                 url: "".to_string(),
                 images: vec![],
             };

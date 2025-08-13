@@ -1,5 +1,4 @@
-use crate::item_event::record::ItemEventRecord;
-use crate::item_state::document::ItemStateDocument;
+use crate::item_state_document::ItemStateDocument;
 use common::error::mapping_error::PersistenceMappingError;
 use common::error::missing_field::MissingPersistenceField;
 use common::item_id::{ItemId, ItemKey};
@@ -7,6 +6,7 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use common::{event_id::EventId, has_key::HasKey};
 use field::field;
+use item_dynamodb::item_event_record::ItemEventRecord;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use url::Url;

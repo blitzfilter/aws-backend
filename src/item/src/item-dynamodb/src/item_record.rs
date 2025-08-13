@@ -1,16 +1,23 @@
-use crate::item::hash::ItemHash;
-use crate::item_event::record::ItemEventRecord;
-use crate::item_state::record::ItemStateRecord;
+use std::collections::HashMap;
+
+use crate::item_event_record::ItemEventRecord;
+use crate::item_state_record::ItemStateRecord;
+use common::currency::domain::Currency;
 use common::error::mapping_error::PersistenceMappingError;
 use common::error::missing_field::MissingPersistenceField;
 use common::event_id::EventId;
 use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
+use common::language::domain::Language;
 use common::language::record::TextRecord;
+use common::localized::Localized;
+use common::price::domain::Price;
 use common::price::record::PriceRecord;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use field::field;
+use item_core::hash::ItemHash;
+use item_core::item::Item;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known;
@@ -97,6 +104,71 @@ impl HasKey for ItemRecord {
         ItemKey {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),
+        }
+    }
+}
+
+impl From<ItemRecord> for Item {
+    fn from(record: ItemRecord) -> Self {
+        let mut other_title = HashMap::with_capacity(2);
+        if let Some(title_en) = record.title_en {
+            other_title.insert(Language::En, title_en.into());
+        }
+        if let Some(title_de) = record.title_de {
+            other_title.insert(Language::De, title_de.into());
+        }
+
+        let mut other_description = HashMap::with_capacity(2);
+        if let Some(description_en) = record.description_en {
+            other_description.insert(Language::En, description_en.into());
+        }
+        if let Some(description_de) = record.description_de {
+            other_description.insert(Language::De, description_de.into());
+        }
+
+        let mut other_price = HashMap::with_capacity(2);
+        if let Some(price_eur) = record.price_eur {
+            other_price.insert(Currency::Eur, price_eur.into());
+        }
+        if let Some(price_eur) = record.price_gbp {
+            other_price.insert(Currency::Gbp, price_eur.into());
+        }
+        if let Some(price_eur) = record.price_usd {
+            other_price.insert(Currency::Usd, price_eur.into());
+        }
+        if let Some(price_eur) = record.price_aud {
+            other_price.insert(Currency::Aud, price_eur.into());
+        }
+        if let Some(price_eur) = record.price_cad {
+            other_price.insert(Currency::Cad, price_eur.into());
+        }
+        if let Some(price_eur) = record.price_nzd {
+            other_price.insert(Currency::Nzd, price_eur.into());
+        }
+
+        Item {
+            item_id: record.item_id,
+            event_id: record.event_id,
+            shop_id: record.shop_id,
+            shops_item_id: record.shops_item_id,
+            shop_name: record.shop_name.into(),
+            native_title: Localized::new(
+                record.title_native.language.into(),
+                record.title_native.text.into(),
+            ),
+            other_title,
+            native_description: record.description_native.map(|text_record| {
+                Localized::new(text_record.language.into(), text_record.text.into())
+            }),
+            other_description,
+            native_price: record.price_native.map(Price::from),
+            other_price,
+            state: record.state.into(),
+            url: record.url,
+            images: record.images,
+            hash: record.hash,
+            created: record.created,
+            updated: record.updated,
         }
     }
 }

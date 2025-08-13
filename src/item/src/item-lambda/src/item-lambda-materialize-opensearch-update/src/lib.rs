@@ -2,11 +2,10 @@ use std::collections::HashMap;
 
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemId;
-use item_core::{item::update_document::ItemUpdateDocument, item_event::record::ItemEventRecord};
-use item_opensearch::{
-    ItemOpenSearchRepository,
-    bulk::{BulkItemResult, BulkResponse},
-};
+use item_dynamodb::item_event_record::ItemEventRecord;
+use item_opensearch::bulk_response::{BulkItemResult, BulkResponse};
+use item_opensearch::item_update_document::ItemUpdateDocument;
+use item_opensearch::repository::ItemOpenSearchRepository;
 use lambda_runtime::LambdaEvent;
 use tracing::{error, info, warn};
 

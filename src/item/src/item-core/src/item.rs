@@ -1,17 +1,3 @@
-pub mod description;
-pub mod shop_name;
-pub mod title;
-
-use crate::item::domain::description::Description;
-use crate::item::domain::shop_name::ShopName;
-use crate::item::domain::title::Title;
-use crate::item::hash::ItemHash;
-use crate::item::record::ItemRecord;
-use crate::item_event::domain::{
-    ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
-    ItemStateChangeEventPayload,
-};
-use crate::item_state::domain::ItemState;
 use common::currency::domain::Currency;
 use common::event::Event;
 use common::event_id::EventId;
@@ -25,6 +11,16 @@ use common::shops_item_id::ShopsItemId;
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use url::Url;
+
+use crate::description::Description;
+use crate::domain::{
+    ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
+    ItemStateChangeEventPayload,
+};
+use crate::hash::ItemHash;
+use crate::item_state_domain::ItemState;
+use crate::shop_name::ShopName;
+use crate::title::Title;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -185,71 +181,6 @@ impl HasKey for Item {
     }
 }
 
-impl From<ItemRecord> for Item {
-    fn from(record: ItemRecord) -> Self {
-        let mut other_title = HashMap::with_capacity(2);
-        if let Some(title_en) = record.title_en {
-            other_title.insert(Language::En, title_en.into());
-        }
-        if let Some(title_de) = record.title_de {
-            other_title.insert(Language::De, title_de.into());
-        }
-
-        let mut other_description = HashMap::with_capacity(2);
-        if let Some(description_en) = record.description_en {
-            other_description.insert(Language::En, description_en.into());
-        }
-        if let Some(description_de) = record.description_de {
-            other_description.insert(Language::De, description_de.into());
-        }
-
-        let mut other_price = HashMap::with_capacity(2);
-        if let Some(price_eur) = record.price_eur {
-            other_price.insert(Currency::Eur, price_eur.into());
-        }
-        if let Some(price_eur) = record.price_gbp {
-            other_price.insert(Currency::Gbp, price_eur.into());
-        }
-        if let Some(price_eur) = record.price_usd {
-            other_price.insert(Currency::Usd, price_eur.into());
-        }
-        if let Some(price_eur) = record.price_aud {
-            other_price.insert(Currency::Aud, price_eur.into());
-        }
-        if let Some(price_eur) = record.price_cad {
-            other_price.insert(Currency::Cad, price_eur.into());
-        }
-        if let Some(price_eur) = record.price_nzd {
-            other_price.insert(Currency::Nzd, price_eur.into());
-        }
-
-        Item {
-            item_id: record.item_id,
-            event_id: record.event_id,
-            shop_id: record.shop_id,
-            shops_item_id: record.shops_item_id,
-            shop_name: record.shop_name.into(),
-            native_title: Localized::new(
-                record.title_native.language.into(),
-                record.title_native.text.into(),
-            ),
-            other_title,
-            native_description: record.description_native.map(|text_record| {
-                Localized::new(text_record.language.into(), text_record.text.into())
-            }),
-            other_description,
-            native_price: record.price_native.map(Price::from),
-            other_price,
-            state: record.state.into(),
-            url: record.url,
-            images: record.images,
-            hash: record.hash,
-            created: record.created,
-            updated: record.updated,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalizedItemView {
     pub item_id: ItemId,
@@ -271,9 +202,9 @@ pub struct LocalizedItemView {
 #[cfg(test)]
 mod tests {
     mod state {
-        use crate::item::domain::Item;
-        use crate::item::hash::ItemHash;
-        use crate::item_state::domain::ItemState;
+        use crate::hash::ItemHash;
+        use crate::item::Item;
+        use crate::item_state_domain::ItemState;
         use common::language::domain::Language;
         use common::localized::Localized;
         use time::OffsetDateTime;
@@ -440,10 +371,10 @@ mod tests {
     }
 
     mod price {
-        use crate::item::domain::Item;
-        use crate::item::hash::ItemHash;
-        use crate::item_event::domain::ItemEventPayload;
-        use crate::item_state::domain::ItemState;
+        use crate::domain::ItemEventPayload;
+        use crate::hash::ItemHash;
+        use crate::item::Item;
+        use crate::item_state_domain::ItemState;
         use common::currency::domain::Currency;
         use common::language::domain::Language;
         use common::localized::Localized;

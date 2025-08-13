@@ -1,4 +1,4 @@
-use crate::item_state::record::ItemStateRecord;
+use item_dynamodb::item_state_record::ItemStateRecord;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]

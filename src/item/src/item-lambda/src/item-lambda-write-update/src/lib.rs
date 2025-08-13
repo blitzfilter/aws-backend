@@ -1,9 +1,9 @@
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::has_key::HasKey;
 use common::item_id::ItemKey;
-use item_core::item::command::UpdateItemCommand;
-use item_core::item::command_data::UpdateItemCommandData;
 use item_service::command_service::CommandItemService;
+use item_service::item_command::UpdateItemCommand;
+use item_service::item_command_data::UpdateItemCommandData;
 use lambda_runtime::LambdaEvent;
 use std::collections::HashMap;
 use tracing::{error, info, warn};
@@ -113,9 +113,9 @@ mod tests {
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use common::item_id::ItemKey;
     use common::shop_id::ShopId;
-    use item_core::item::command_data::UpdateItemCommandData;
-    use item_core::item_state::command_data::ItemStateCommandData;
     use item_service::command_service::MockCommandItemService;
+    use item_service::item_command_data::UpdateItemCommandData;
+    use item_service::item_state_command_data::ItemStateCommandData;
     use lambda_runtime::{Context, LambdaEvent};
 
     #[rstest::rstest]

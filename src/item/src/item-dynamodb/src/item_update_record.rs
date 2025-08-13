@@ -1,10 +1,11 @@
-use crate::item::hash::ItemHash;
-use crate::item_event::record::ItemEventRecord;
-use crate::item_state::record::ItemStateRecord;
 use common::event_id::EventId;
 use common::price::record::PriceRecord;
+use item_core::hash::ItemHash;
 use serde::Serialize;
 use time::OffsetDateTime;
+
+use crate::item_event_record::ItemEventRecord;
+use crate::item_state_record::ItemStateRecord;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ItemRecordUpdate {
