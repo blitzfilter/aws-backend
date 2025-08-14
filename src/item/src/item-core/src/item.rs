@@ -103,7 +103,7 @@ impl Item {
                 payload: event_payload_constructor(ItemStateChangeEventPayload {
                     shop_id: self.shop_id.clone(),
                     shops_item_id: self.shops_item_id.clone(),
-                    hash: self.hash.clone(),
+                    hash: self.hash,
                 }),
             };
             Some(event)
@@ -125,7 +125,7 @@ impl Item {
             shops_item_id: self.shops_item_id.clone(),
             price: new_price,
             other_price: new_other_price,
-            hash: self.hash.clone(),
+            hash: self.hash,
         };
 
         match old_price_opt {
