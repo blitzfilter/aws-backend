@@ -8,6 +8,7 @@ common = { workspace = true, features = ["api"] }
 item-core = { workspace = true }
 serde = { workspace = true }
 time = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
