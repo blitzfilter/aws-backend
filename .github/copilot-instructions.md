@@ -20,6 +20,7 @@ Always reference these instructions first and fallback to search or bash command
 - **Unit tests**: `cargo test --workspace --lib --all-features` -- takes 35 seconds. Set timeout to 2+ minutes. Apply parameterized testing with crate `rstest` when plausible, e.g. for serialization.
 - **Integration tests**: Require additional setup (see Prerequisites section)
 - All test names need to follow a consistent naming convention, e.g., `should_[expectation]_when_[condition]_for_[purpose]`. The placeholders can be replaced with many words, e.g. `should_serialize_data_when_valid_for_storing`. Provide meaningful test-names that describe the purpose of the test.
+- Most types have an instance for `fake::Dummy<fake::Faker>`. Our internal crates provide this functionality via feature-flag `test-data`. You may need to include it for dev-dependencies. Use it to generate test data when plausible.
 
 ### Prerequisites for Full Integration Testing
 **WARNING**: These require network access and may fail in restricted environments:
