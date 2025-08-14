@@ -16,6 +16,7 @@ aws-sdk-dynamodb = { workspace = true, optional = true }
 serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"], optional = true }
 tracing = { workspace = true, optional = true }
 mockall = { workspace = true, optional = true }
+fake = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-api = { workspace = true }
@@ -24,4 +25,6 @@ rstest = { workspace = true }
 serde_json = { workspace = true }
 
 [features]
+default = []
 repository = ["common/dynamodb", "async-trait", "aws-sdk-dynamodb", "serde_dynamo", "tracing", "mockall"]
+test-data = ["fake", "common/test-data", "item-core/test-data"]

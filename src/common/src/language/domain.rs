@@ -5,6 +5,7 @@ use crate::language::data::LanguageData;
 use crate::language::record::LanguageRecord;
 use crate::localized::Localized;
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum Language {
     De,

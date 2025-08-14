@@ -110,8 +110,9 @@ impl FxRate for FixedFxRate {
     }
 }
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct MonetaryAmount(u64);
+pub struct MonetaryAmount(#[cfg_attr(feature = "test-data", dummy(faker = "0..=1000000000"))] u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, thiserror::Error)]
 #[error("Monetary amount cannot be negative.")]
@@ -167,6 +168,7 @@ impl From<MonetaryAmount> for u64 {
     }
 }
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Price {
     pub monetary_amount: MonetaryAmount,

@@ -2,6 +2,7 @@ use crate::currency::command_data::CurrencyCommandData;
 use crate::price::data::PriceData;
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PriceCommandData {
     pub currency: CurrencyCommandData,

@@ -58,3 +58,43 @@ impl From<ItemEventRecord> for ItemRecordUpdate {
         }
     }
 }
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use common::price::domain::{MonetaryAmount, Price};
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for ItemRecordUpdate {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            let price_native: Option<PriceRecord> =
+                Some(config.fake_with_rng::<Price, _>(rng).into());
+            let state: ItemStateRecord = config.fake_with_rng(rng);
+
+            ItemRecordUpdate {
+                event_id: config.fake_with_rng(rng),
+                price_native,
+                price_eur: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_usd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_gbp: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_aud: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_cad: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_nzd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                state: Some(state),
+                hash: ItemHash::new(&price_native.map(Price::from), &state.into()),
+                updated: OffsetDateTime::now_utc(),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_update_record::ItemRecordUpdate;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_item_record_update() {
+            let _ = Faker.fake::<ItemRecordUpdate>();
+        }
+    }
+}

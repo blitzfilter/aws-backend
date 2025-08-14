@@ -220,3 +220,93 @@ impl TryFrom<ItemEventRecord> for ItemRecord {
         Ok(record)
     }
 }
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use common::price::domain::MonetaryAmount;
+    use fake::{Dummy, Fake, Faker, Rng};
+    use item_core::description::Description;
+    use item_core::shop_name::ShopName;
+    use item_core::title::Title;
+
+    impl Dummy<Faker> for ItemRecord {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            let now = OffsetDateTime::now_utc();
+            let now_str = now.format(&well_known::Rfc3339).unwrap();
+            let shop_id: ShopId = config.fake_with_rng(rng);
+            let shops_item_id: ShopsItemId = config.fake_with_rng(rng);
+            let price_native: Option<PriceRecord> =
+                Some(config.fake_with_rng::<Price, _>(rng).into());
+            let state: ItemStateRecord = config.fake_with_rng(rng);
+
+            ItemRecord {
+                pk: format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}"),
+                sk: "item#materialized".to_string(),
+                gsi_1_pk: format!("shop_id#{shop_id}"),
+                gsi_1_sk: format!("updated#{now_str}"),
+                item_id: config.fake_with_rng(rng),
+                event_id: config.fake_with_rng(rng),
+                shop_id: shop_id.clone(),
+                shops_item_id: shops_item_id.clone(),
+                shop_name: config.fake_with_rng::<ShopName, _>(rng).into(),
+                title_native: TextRecord::new(
+                    config.fake_with_rng::<Title, _>(rng).to_string(),
+                    config.fake_with_rng(rng),
+                ),
+                title_de: Some(config.fake_with_rng::<Title, _>(rng).to_string()),
+                title_en: Some(config.fake_with_rng::<Title, _>(rng).to_string()),
+                description_native: Some(TextRecord::new(
+                    config.fake_with_rng::<Description, _>(rng).to_string(),
+                    config.fake_with_rng(rng),
+                )),
+                description_de: Some(config.fake_with_rng::<Description, _>(rng).to_string()),
+                description_en: Some(config.fake_with_rng::<Description, _>(rng).to_string()),
+                price_native,
+                price_eur: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_usd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_gbp: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_aud: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_cad: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_nzd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                state,
+                url: Url::parse(&format!(
+                    "https://foo.bar/item/{}",
+                    config.fake_with_rng::<u16, _>(rng)
+                ))
+                .unwrap(),
+                images: vec![
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                ],
+                hash: ItemHash::new(&price_native.map(Price::from), &state.into()),
+                created: now,
+                updated: now,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_record::ItemRecord;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_get_item_record() {
+            let _ = Faker.fake::<ItemRecord>();
+        }
+    }
+}

@@ -10,6 +10,12 @@ serde = { workspace = true }
 time = { workspace = true }
 url = { workspace = true }
 
+fake = { workspace = true, optional = true }
+
 [dev-dependencies]
 rstest = { workspace = true }
 serde_json = { workspace = true }
+
+[features]
+default = []
+test-data = ["fake", "common/test-data", "item-core/test-data"]

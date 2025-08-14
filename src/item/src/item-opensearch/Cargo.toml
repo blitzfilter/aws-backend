@@ -15,7 +15,13 @@ field = { workspace = true }
 url = { workspace = true }
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 
+fake = { workspace = true, optional = true }
+
 [dev-dependencies]
 test-api = { workspace = true }
 serial_test = { workspace = true }
 rstest = { workspace = true }
+
+[features]
+default = []
+test-data = ["fake", "common/test-data", "item-core/test-data"]

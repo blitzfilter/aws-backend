@@ -38,3 +38,31 @@ impl From<ItemRecord> for ItemSummaryHash {
         }
     }
 }
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for ItemSummaryHash {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            ItemSummaryHash {
+                item_id: config.fake_with_rng(rng),
+                shop_id: config.fake_with_rng(rng),
+                shops_item_id: config.fake_with_rng(rng),
+                hash: ItemHash::new(&config.fake_with_rng(rng), &config.fake_with_rng(rng)),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_summary_hash::ItemSummaryHash;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_get_item_record() {
+            let _ = Faker.fake::<ItemSummaryHash>();
+        }
+    }
+}

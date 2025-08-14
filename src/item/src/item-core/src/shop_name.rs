@@ -1,7 +1,14 @@
 use std::ops::Deref;
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShopName(String);
+pub struct ShopName(
+    #[cfg_attr(
+        feature = "test-data",
+        dummy(faker = "fake::faker::company::en::CompanyName()")
+    )]
+    String,
+);
 
 impl From<&str> for ShopName {
     fn from(s: &str) -> Self {

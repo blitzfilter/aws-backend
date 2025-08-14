@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
 pub struct EventId(Uuid);

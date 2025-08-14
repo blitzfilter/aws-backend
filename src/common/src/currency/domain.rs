@@ -17,6 +17,7 @@ impl From<MinorUnitExponent> for u8 {
     }
 }
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(
     Copy,
     Clone,

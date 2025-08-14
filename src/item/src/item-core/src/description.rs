@@ -1,8 +1,15 @@
 use std::fmt::Display;
 use std::ops::Deref;
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct Description(String);
+pub struct Description(
+    #[cfg_attr(
+        feature = "test-data",
+        dummy(faker = "fake::faker::lorem::en::Paragraph(1..10)")
+    )]
+    String,
+);
 
 impl From<&str> for Description {
     fn from(s: &str) -> Self {

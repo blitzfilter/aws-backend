@@ -1,5 +1,6 @@
 use crate::language::{domain::Language, record::TextRecord};
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Localized<L, T> {
     pub localization: L,

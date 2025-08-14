@@ -28,6 +28,7 @@ aws_lambda_events = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 httpdate = { workspace = true, optional = true }
+fake = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
@@ -38,3 +39,4 @@ default = []
 dynamodb = ["serde_dynamo", "aws-sdk-dynamodb"]
 sqs = ["aws-sdk-sqs", "serde_json"]
 api = ["aws_lambda_events/apigw", "http", "serde_json", "httpdate"]
+test-data = ["fake"]

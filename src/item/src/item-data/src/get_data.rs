@@ -77,6 +77,29 @@ impl From<LocalizedItemView> for GetItemData {
     }
 }
 
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for GetItemData {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            config.fake_with_rng::<LocalizedItemView, _>(rng).into()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::get_data::GetItemData;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_get_item_data() {
+            let _ = Faker.fake::<GetItemData>();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use common::{

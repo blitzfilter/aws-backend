@@ -3,6 +3,7 @@ use crate::currency::domain::HasMinorUnitExponent;
 use crate::price::domain::{NegativeMonetaryAmountError, Price};
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriceData {

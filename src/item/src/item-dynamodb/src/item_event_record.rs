@@ -369,7 +369,7 @@ fn mk_price_event_record(
         description_native: None,
         description_de: None,
         description_en: None,
-        price_native: Some(item_price_change_event_payload.price.into()),
+        price_native: Some(item_price_change_event_payload.native_price.into()),
         price_eur: item_price_change_event_payload
             .other_price
             .get(&Currency::Eur)
@@ -405,5 +405,31 @@ fn mk_price_event_record(
         images: None,
         hash: item_price_change_event_payload.hash,
         timestamp,
+    }
+}
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for ItemEventRecord {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            config
+                .fake_with_rng::<ItemEvent, _>(rng)
+                .try_into()
+                .unwrap()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_event_record::ItemEventRecord;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_get_item_event_record() {
+            let _ = Faker.fake::<ItemEventRecord>();
+        }
     }
 }

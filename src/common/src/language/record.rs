@@ -2,6 +2,7 @@ use crate::language::domain::Language;
 use crate::localized::Localized;
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LanguageRecord {

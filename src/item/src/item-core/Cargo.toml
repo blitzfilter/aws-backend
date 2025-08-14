@@ -12,6 +12,12 @@ thiserror = { workspace = true }
 field = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 
+fake = { workspace = true, optional = true }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 rstest = { workspace = true }
+
+[features]
+default = []
+test-data = ["fake", "common/test-data"]

@@ -125,3 +125,73 @@ impl TryFrom<ItemEventRecord> for ItemDocument {
         Ok(document)
     }
 }
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use common::price::domain::MonetaryAmount;
+    use fake::{Dummy, Fake, Faker, Rng};
+    use item_core::description::Description;
+    use item_core::shop_name::ShopName;
+    use item_core::title::Title;
+
+    impl Dummy<Faker> for ItemDocument {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            let state: ItemStateDocument = config.fake_with_rng(rng);
+            ItemDocument {
+                item_id: config.fake_with_rng(rng),
+                event_id: config.fake_with_rng(rng),
+                shop_id: config.fake_with_rng(rng),
+                shops_item_id: config.fake_with_rng(rng),
+                shop_name: config.fake_with_rng::<ShopName, _>(rng).into(),
+                title_de: Some(config.fake_with_rng::<Title, _>(rng).to_string()),
+                title_en: Some(config.fake_with_rng::<Title, _>(rng).to_string()),
+                description_de: Some(config.fake_with_rng::<Description, _>(rng).to_string()),
+                description_en: Some(config.fake_with_rng::<Description, _>(rng).to_string()),
+                price_eur: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_usd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_gbp: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_aud: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_cad: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_nzd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                state,
+                is_available: matches!(state, ItemStateDocument::Available),
+                url: Url::parse(&format!(
+                    "https://foo.bar/item/{}",
+                    config.fake_with_rng::<u16, _>(rng)
+                ))
+                .unwrap(),
+                images: vec![
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                ],
+                created: OffsetDateTime::now_utc(),
+                updated: OffsetDateTime::now_utc(),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_document::ItemDocument;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_item_document() {
+            let _ = Faker.fake::<ItemDocument>();
+        }
+    }
+}

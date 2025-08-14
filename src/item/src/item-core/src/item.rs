@@ -123,7 +123,7 @@ impl Item {
         let payload = ItemPriceChangeEventPayload {
             shop_id: self.shop_id.clone(),
             shops_item_id: self.shops_item_id.clone(),
-            price: new_price,
+            native_price: new_price,
             other_price: new_other_price,
             hash: self.hash,
         };
@@ -197,6 +197,124 @@ pub struct LocalizedItemView {
     pub hash: ItemHash,
     pub created: OffsetDateTime,
     pub updated: OffsetDateTime,
+}
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use common::price::domain::FixedFxRate;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for Item {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            let native_price: Option<Price> = config.fake_with_rng(rng);
+            let other_price = match native_price {
+                None => HashMap::new(),
+                Some(price) => FixedFxRate()
+                    .exchange_all(price.currency, price.monetary_amount)
+                    .unwrap(),
+            };
+            let state = config.fake_with_rng(rng);
+            Item {
+                item_id: config.fake_with_rng(rng),
+                event_id: config.fake_with_rng(rng),
+                shop_id: config.fake_with_rng(rng),
+                shops_item_id: config.fake_with_rng(rng),
+                shop_name: config.fake_with_rng(rng),
+                native_title: config.fake_with_rng(rng),
+                other_title: config.fake_with_rng(rng),
+                native_description: config.fake_with_rng(rng),
+                other_description: config.fake_with_rng(rng),
+                native_price,
+                other_price,
+                state,
+                url: Url::parse(&format!(
+                    "https://foo.bar/item/{}",
+                    config.fake_with_rng::<u16, _>(rng)
+                ))
+                .unwrap(),
+                images: vec![
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                ],
+                hash: ItemHash::new(&native_price, &state),
+                created: OffsetDateTime::now_utc(),
+                updated: OffsetDateTime::now_utc(),
+            }
+        }
+    }
+
+    impl Dummy<Faker> for LocalizedItemView {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            let native_price: Option<Price> = config.fake_with_rng(rng);
+            let state = config.fake_with_rng(rng);
+            LocalizedItemView {
+                item_id: config.fake_with_rng(rng),
+                event_id: config.fake_with_rng(rng),
+                shop_id: config.fake_with_rng(rng),
+                shops_item_id: config.fake_with_rng(rng),
+                shop_name: config.fake_with_rng(rng),
+                title: config.fake_with_rng(rng),
+                description: config.fake_with_rng(rng),
+                price: config.fake_with_rng(rng),
+                state,
+                url: Url::parse(&format!(
+                    "https://foo.bar/item/{}",
+                    config.fake_with_rng::<u16, _>(rng)
+                ))
+                .unwrap(),
+                images: vec![
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                    Url::parse(&format!(
+                        "https://foo.bar/images/{}",
+                        config.fake_with_rng::<u16, _>(rng)
+                    ))
+                    .unwrap(),
+                ],
+                hash: ItemHash::new(&native_price, &state),
+                created: OffsetDateTime::now_utc(),
+                updated: OffsetDateTime::now_utc(),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item::{Item, LocalizedItemView};
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_item() {
+            let _ = Faker.fake::<Item>();
+        }
+
+        #[test]
+        fn should_fake_localized_item_view() {
+            let _ = Faker.fake::<LocalizedItemView>();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -489,7 +607,7 @@ mod tests {
 
             match actual.payload {
                 ItemEventPayload::PriceDiscovered(payload) => {
-                    assert_eq!(to_price, payload.price);
+                    assert_eq!(to_price, payload.native_price);
                     assert_eq!(item.native_price, Some(to_price));
                     assert_ne!(initial_item.hash, item.hash);
                 }
@@ -533,7 +651,7 @@ mod tests {
 
             match actual.payload {
                 ItemEventPayload::PriceDropped(payload) => {
-                    assert_eq!(to_price, payload.price);
+                    assert_eq!(to_price, payload.native_price);
                     assert_eq!(item.native_price, Some(to_price));
                     assert_ne!(initial_item.hash, item.hash);
                 }
@@ -579,7 +697,7 @@ mod tests {
 
             match actual.payload {
                 ItemEventPayload::PriceIncreased(payload) => {
-                    assert_eq!(to_price, payload.price);
+                    assert_eq!(to_price, payload.native_price);
                     assert_eq!(item.native_price, Some(to_price));
                     assert_ne!(initial_item.hash, item.hash);
                 }

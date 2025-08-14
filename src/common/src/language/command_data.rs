@@ -2,6 +2,7 @@ use crate::language::data::LanguageData;
 use serde::{Deserialize, Serialize};
 
 // ISO 639-1
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Debug, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageCommandData {

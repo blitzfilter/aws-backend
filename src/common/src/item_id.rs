@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ItemKey {
     pub shop_id: ShopId,
@@ -56,6 +57,7 @@ impl TryFrom<&str> for ItemKey {
     }
 }
 
+#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
 pub struct ItemId(Uuid);

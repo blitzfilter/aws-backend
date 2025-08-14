@@ -54,3 +54,39 @@ impl From<ItemEventRecord> for ItemUpdateDocument {
         }
     }
 }
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use common::price::domain::MonetaryAmount;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for ItemUpdateDocument {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            let state = config.fake_with_rng(rng);
+            ItemUpdateDocument {
+                event_id: config.fake_with_rng(rng),
+                price_eur: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_usd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_gbp: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_aud: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_cad: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                price_nzd: Some(config.fake_with_rng::<MonetaryAmount, _>(rng).into()),
+                state,
+                is_available: state.map(|state| matches!(state, ItemStateDocument::Available)),
+                updated: OffsetDateTime::now_utc(),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_update_document::ItemUpdateDocument;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_item_update_document() {
+            let _ = Faker.fake::<ItemUpdateDocument>();
+        }
+    }
+}
