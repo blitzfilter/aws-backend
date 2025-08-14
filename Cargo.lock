@@ -2240,6 +2240,7 @@ dependencies = [
  "async-trait",
  "aws-sdk-dynamodb",
  "common",
+ "fake",
  "item-core",
  "item-dynamodb",
  "itertools 0.14.0",
@@ -2250,6 +2251,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "tracing",
  "url",
 ]

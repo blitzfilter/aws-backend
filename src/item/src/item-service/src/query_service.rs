@@ -191,32 +191,433 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use common::shop_id::ShopId;
+#[cfg(test)]
+mod tests {
 
-//     use crate::{
-//         repository::MockQueryItemRepository,
-//         service::{GetItemError, QueryItemService, QueryItemServiceImpl},
-//     };
+    mod find_item {
+        use crate::query_service::{GetItemError, QueryItemService, QueryItemServiceImpl};
+        use aws_sdk_dynamodb::{
+            config::http::HttpResponse,
+            error::{ConnectorError, SdkError},
+        };
+        use common::{shop_id::ShopId, shops_item_id::ShopsItemId};
+        use fake::{Fake, Faker};
+        use item_dynamodb::repository::MockItemDynamoDbRepository;
 
-//     async fn should_return_item_not_found_err_when_item_does_not_exist() {
-//         let shop_id = ShopId::new();
-//         let shops_item_id = "non-existent".into();
-//         let mut repository = &MockQueryItemRepository::default();
-//         repository
-//             .expect_get_item_record()
-//             .return_once(|shop_id, shops_item_id| {});
-//         let service = QueryItemServiceImpl { repository };
-//         let actual = service.find_item(&shop_id, &shops_item_id).await;
+        #[tokio::test]
+        async fn should_return_item_when_exists() {
+            let mut repository = MockItemDynamoDbRepository::default();
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(Faker.fake())) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual = service.find_item(&ShopId::new(), &ShopsItemId::new()).await;
+            assert!(actual.is_ok());
+        }
 
-//         assert!(actual.is_err());
-//         match actual.unwrap_err() {
-//             GetItemError::ItemNotFound(err_shop_id, err_shops_item_id) => {
-//                 assert_eq!(err_shop_id, shop_id);
-//                 assert_eq!(err_shops_item_id, shops_item_id);
-//             }
-//             _ => panic!("expected GetItemError::ItemNotFound"),
-//         }
-//     }
-// }
+        #[tokio::test]
+        async fn should_return_item_not_found_err_when_item_does_not_exist() {
+            let shop_id = ShopId::new();
+            let shops_item_id = "non-existent".into();
+            let mut repository = MockItemDynamoDbRepository::default();
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(None) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual = service.find_item(&shop_id, &shops_item_id).await;
+
+            assert!(actual.is_err());
+            match actual.unwrap_err() {
+                GetItemError::ItemNotFound(err_shop_id, err_shops_item_id) => {
+                    assert_eq!(err_shop_id, shop_id);
+                    assert_eq!(err_shops_item_id, shops_item_id);
+                }
+                _ => panic!("expected GetItemError::ItemNotFound"),
+            }
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case::construction_failure(SdkError::construction_failure("Something went wrong"))]
+        #[case::timeout(SdkError::timeout_error("Something went wrong"))]
+        #[case::dispatch_failure(SdkError::dispatch_failure(ConnectorError::user("Something went wrong".into())))]
+        #[case::response_error(SdkError::response_error(
+            "Something went wrong",
+            HttpResponse::new(500u16.try_into().unwrap(), "{}".into())
+        ))]
+        #[case::service_error(SdkError::service_error(
+            aws_sdk_dynamodb::operation::get_item::GetItemError::unhandled("Something went wrong"),
+            HttpResponse::new(500u16.try_into().unwrap(), "{}".into())
+        ))]
+        async fn should_propagate_sdk_error(
+            #[case] expected: SdkError<
+                aws_sdk_dynamodb::operation::get_item::GetItemError,
+                aws_sdk_dynamodb::config::http::HttpResponse,
+            >,
+        ) {
+            let shop_id = ShopId::new();
+            let shops_item_id = "non-existent".into();
+            let mut repository = MockItemDynamoDbRepository::default();
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Err(expected) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual = service.find_item(&shop_id, &shops_item_id).await;
+
+            assert!(actual.is_err());
+            match actual.unwrap_err() {
+                GetItemError::SdkGetItemError(_) => {}
+                _ => panic!("expected GetItemError::ItemNotFound"),
+            }
+        }
+    }
+
+    mod view_item {
+        use crate::query_service::{GetItemError, QueryItemService, QueryItemServiceImpl};
+        use aws_sdk_dynamodb::{
+            config::http::HttpResponse,
+            error::{ConnectorError, SdkError},
+        };
+        use common::{
+            currency::domain::Currency,
+            language::{
+                domain::Language,
+                domain::Language::*,
+                record::{LanguageRecord, TextRecord},
+            },
+            shop_id::ShopId,
+            shops_item_id::ShopsItemId,
+        };
+        use fake::{Fake, Faker};
+        use item_dynamodb::{item_record::ItemRecord, repository::MockItemDynamoDbRepository};
+
+        #[tokio::test]
+        async fn should_return_item_when_exists() {
+            let mut repository = MockItemDynamoDbRepository::default();
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(Faker.fake())) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual = service
+                .view_item(&ShopId::new(), &ShopsItemId::new(), &[], &Currency::Eur)
+                .await;
+            assert!(actual.is_ok());
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case::eur(Currency::Eur, 2)]
+        #[case::gbp(Currency::Gbp, 4)]
+        #[case::usd(Currency::Usd, 10)]
+        #[case::aud(Currency::Aud, 1000)]
+        #[case::cad(Currency::Cad, 4000)]
+        #[case::nzd(Currency::Nzd, 42)]
+        async fn should_respect_currency(#[case] currency: Currency, #[case] expected_amount: u64) {
+            let mut repository = MockItemDynamoDbRepository::default();
+            let mut expected_record: ItemRecord = Faker.fake();
+            expected_record.price_eur = Some(2);
+            expected_record.price_gbp = Some(4);
+            expected_record.price_usd = Some(10);
+            expected_record.price_aud = Some(1000);
+            expected_record.price_cad = Some(4000);
+            expected_record.price_nzd = Some(42);
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual_price = service
+                .view_item(&ShopId::new(), &ShopsItemId::new(), &[], &currency)
+                .await
+                .unwrap()
+                .price
+                .unwrap();
+            assert_eq!(currency, actual_price.currency);
+            assert_eq!(expected_amount, u64::from(actual_price.monetary_amount));
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case(&[], De, "German")]
+        #[case(&[De], De, "German")]
+        #[case(&[De, En], De, "German")]
+        #[case(&[De, Fr], De, "German")]
+        #[case(&[Fr, De, En, Es], De, "German")]
+        #[case(&[En], En, "English")]
+        #[case(&[En, De, Fr, Es], En, "English")]
+        #[case(&[En, De, Es], En, "English")]
+        #[case(&[Es, De, En], Es, "Spanish")]
+        #[case(&[Es, En, De], Es, "Spanish")]
+        async fn should_respect_language_for_title(
+            #[case] languages: &[Language],
+            #[case] expected_language: Language,
+            #[case] expected_title: &str,
+        ) {
+            let mut repository = MockItemDynamoDbRepository::default();
+            let mut expected_record: ItemRecord = Faker.fake();
+            expected_record.title_native = TextRecord::new("Spanish", LanguageRecord::Es);
+            expected_record.title_de = Some("German".to_string());
+            expected_record.title_en = Some("English".to_string());
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual_title = service
+                .view_item(
+                    &ShopId::new(),
+                    &ShopsItemId::new(),
+                    languages,
+                    &Currency::Gbp,
+                )
+                .await
+                .unwrap()
+                .title;
+            assert_eq!(expected_language, actual_title.localization);
+            assert_eq!(expected_title, actual_title.payload.as_ref());
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case(&[], Es, "Spanish")]
+        #[case(&[De], Es, "Spanish")]
+        #[case(&[De, En], Es, "Spanish")]
+        #[case(&[De, Fr], Es, "Spanish")]
+        #[case(&[Fr, De, En, Es], Es, "Spanish")]
+        #[case(&[En], Es, "Spanish")]
+        #[case(&[En, De, Fr, Es], Es, "Spanish")]
+        #[case(&[En, De, Es], Es, "Spanish")]
+        #[case(&[Es, De, En], Es, "Spanish")]
+        #[case(&[Es, En, De], Es, "Spanish")]
+        async fn should_fallback_to_native_when_only_native_exists_for_title(
+            #[case] languages: &[Language],
+            #[case] expected_language: Language,
+            #[case] expected_title: &str,
+        ) {
+            let mut repository = MockItemDynamoDbRepository::default();
+            let mut expected_record: ItemRecord = Faker.fake();
+            expected_record.title_native = TextRecord::new("Spanish", LanguageRecord::Es);
+            expected_record.title_de = None;
+            expected_record.title_en = None;
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual_title = service
+                .view_item(
+                    &ShopId::new(),
+                    &ShopsItemId::new(),
+                    languages,
+                    &Currency::Gbp,
+                )
+                .await
+                .unwrap()
+                .title;
+            assert_eq!(expected_language, actual_title.localization);
+            assert_eq!(expected_title, actual_title.payload.as_ref());
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case(&[], De, "German")]
+        #[case(&[De], De, "German")]
+        #[case(&[De, En], De, "German")]
+        #[case(&[De, Fr], De, "German")]
+        #[case(&[Fr, De, En, Es], De, "German")]
+        #[case(&[En], En, "English")]
+        #[case(&[En, De, Fr, Es], En, "English")]
+        #[case(&[En, De, Es], En, "English")]
+        #[case(&[Es, De, En], Es, "Spanish")]
+        #[case(&[Es, En, De], Es, "Spanish")]
+        async fn should_respect_language_for_description(
+            #[case] languages: &[Language],
+            #[case] expected_language: Language,
+            #[case] expected_description: &str,
+        ) {
+            let mut repository = MockItemDynamoDbRepository::default();
+            let mut expected_record: ItemRecord = Faker.fake();
+            expected_record.description_native =
+                Some(TextRecord::new("Spanish", LanguageRecord::Es));
+            expected_record.description_de = Some("German".to_string());
+            expected_record.description_en = Some("English".to_string());
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual_description = service
+                .view_item(
+                    &ShopId::new(),
+                    &ShopsItemId::new(),
+                    languages,
+                    &Currency::Gbp,
+                )
+                .await
+                .unwrap()
+                .description
+                .unwrap();
+            assert_eq!(expected_language, actual_description.localization);
+            assert_eq!(expected_description, actual_description.payload.as_ref());
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case(&[], Es, "Spanish")]
+        #[case(&[De], Es, "Spanish")]
+        #[case(&[De, En], Es, "Spanish")]
+        #[case(&[De, Fr], Es, "Spanish")]
+        #[case(&[Fr, De, En, Es], Es, "Spanish")]
+        #[case(&[En], Es, "Spanish")]
+        #[case(&[En, De, Fr, Es], Es, "Spanish")]
+        #[case(&[En, De, Es], Es, "Spanish")]
+        #[case(&[Es, De, En], Es, "Spanish")]
+        #[case(&[Es, En, De], Es, "Spanish")]
+        async fn should_fallback_to_native_when_only_native_exists_for_description(
+            #[case] languages: &[Language],
+            #[case] expected_language: Language,
+            #[case] expected_description: &str,
+        ) {
+            let mut repository = MockItemDynamoDbRepository::default();
+            let mut expected_record: ItemRecord = Faker.fake();
+            expected_record.description_native =
+                Some(TextRecord::new("Spanish", LanguageRecord::Es));
+            expected_record.description_de = None;
+            expected_record.description_en = None;
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual_description = service
+                .view_item(
+                    &ShopId::new(),
+                    &ShopsItemId::new(),
+                    languages,
+                    &Currency::Gbp,
+                )
+                .await
+                .unwrap()
+                .description
+                .unwrap();
+            assert_eq!(expected_language, actual_description.localization);
+            assert_eq!(expected_description, actual_description.payload.as_ref());
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case(&[])]
+        #[case(&[De])]
+        #[case(&[De, En])]
+        #[case(&[De, Fr])]
+        #[case(&[Fr, De, En, Es])]
+        #[case(&[En])]
+        #[case(&[En, De, Fr, Es])]
+        #[case(&[En, De, Es])]
+        #[case(&[Es, De, En])]
+        #[case(&[Es, En, De])]
+        async fn should_return_item_without_description_when_none_exists(
+            #[case] languages: &[Language],
+        ) {
+            let mut repository = MockItemDynamoDbRepository::default();
+            let mut expected_record: ItemRecord = Faker.fake();
+            expected_record.description_native = None;
+            expected_record.description_de = None;
+            expected_record.description_en = None;
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual_description = service
+                .view_item(
+                    &ShopId::new(),
+                    &ShopsItemId::new(),
+                    languages,
+                    &Currency::Gbp,
+                )
+                .await
+                .unwrap()
+                .description;
+            assert!(actual_description.is_none());
+        }
+
+        #[tokio::test]
+        async fn should_return_item_not_found_err_when_item_does_not_exist() {
+            let shop_id = ShopId::new();
+            let shops_item_id = "non-existent".into();
+            let mut repository = MockItemDynamoDbRepository::default();
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Ok(None) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual = service
+                .view_item(&shop_id, &shops_item_id, &[], &Currency::Eur)
+                .await;
+
+            assert!(actual.is_err());
+            match actual.unwrap_err() {
+                GetItemError::ItemNotFound(err_shop_id, err_shops_item_id) => {
+                    assert_eq!(err_shop_id, shop_id);
+                    assert_eq!(err_shops_item_id, shops_item_id);
+                }
+                _ => panic!("expected GetItemError::ItemNotFound"),
+            }
+        }
+
+        #[tokio::test]
+        #[rstest::rstest]
+        #[case::construction_failure(SdkError::construction_failure("Something went wrong"))]
+        #[case::timeout(SdkError::timeout_error("Something went wrong"))]
+        #[case::dispatch_failure(SdkError::dispatch_failure(ConnectorError::user("Something went wrong".into())))]
+        #[case::response_error(SdkError::response_error(
+            "Something went wrong",
+            HttpResponse::new(500u16.try_into().unwrap(), "{}".into())
+        ))]
+        #[case::service_error(SdkError::service_error(
+            aws_sdk_dynamodb::operation::get_item::GetItemError::unhandled("Something went wrong"),
+            HttpResponse::new(500u16.try_into().unwrap(), "{}".into())
+        ))]
+        async fn should_propagate_sdk_error(
+            #[case] expected: SdkError<
+                aws_sdk_dynamodb::operation::get_item::GetItemError,
+                aws_sdk_dynamodb::config::http::HttpResponse,
+            >,
+        ) {
+            let shop_id = ShopId::new();
+            let shops_item_id = "non-existent".into();
+            let mut repository = MockItemDynamoDbRepository::default();
+            repository
+                .expect_get_item_record()
+                .return_once(|_, _| Box::pin(async { Err(expected) }));
+            let service = QueryItemServiceImpl {
+                repository: &repository,
+            };
+            let actual = service
+                .view_item(&shop_id, &shops_item_id, &[], &Currency::Eur)
+                .await;
+
+            assert!(actual.is_err());
+            match actual.unwrap_err() {
+                GetItemError::SdkGetItemError(_) => {}
+                _ => panic!("expected GetItemError::ItemNotFound"),
+            }
+        }
+    }
+}
