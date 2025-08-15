@@ -5,7 +5,7 @@ use common::price::data::PriceData;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_data::item_state_data::ItemStateData;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use scrape_core::data::ScrapeItem;
 use scrape_core::spec::{ScrapeError, Scraper, ScraperConfig};
 use scraper::{ElementRef, Html, Selector};
@@ -86,11 +86,11 @@ impl Scraper<Client> for MilitariaMart {
                             );
                                     ItemStateData::Listed
                                 }),
-                                url: format!("{}/shop.php?code={}", &self.url, shops_item_id),
+                                url: Url::parse(&format!("{}/shop.php?code={}", &self.url, shops_item_id)).unwrap(),
                                 images: extract_relative_image_urls(shop_item)
                                     .into_iter()
                                     .map(|relative_url| {
-                                        format!("{}/{}", &self.url, relative_url)
+                                        Url::parse(&format!("{}/{}", &self.url, relative_url)).unwrap()
                                     })
                                     .collect(),
                                 shop_id,

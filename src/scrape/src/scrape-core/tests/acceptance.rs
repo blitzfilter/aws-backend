@@ -85,11 +85,11 @@ fn mk_scrape_item(id: usize, shop_id: &ShopId) -> ScrapeItem {
             amount: 10000u32.into(),
         }),
         state: ItemStateData::Available,
-        url: "https://example.com/Lorem".to_owned(),
+        url: Url::parse("https://foo.bar").unwrap(),
         images: vec![
-            "https://example.com/Lorem/image1.jpg".to_owned(),
-            "https://example.com/Lorem/image2.jpg".to_owned(),
-            "https://example.com/Lorem/image3.jpg".to_owned(),
+            Url::parse("https://example.com/Lorem/image1.jpg").unwrap(),
+            Url::parse("https://example.com/Lorem/image2.jpg").unwrap(),
+            Url::parse("https://example.com/Lorem/image3.jpg").unwrap(),
         ],
     }
 }

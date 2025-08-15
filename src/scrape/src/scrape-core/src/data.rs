@@ -13,6 +13,7 @@ use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandDa
 use item_service::item_state_command_data::ItemStateCommandData;
 use serde::Serialize;
 use std::collections::HashMap;
+use url::Url;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
@@ -33,8 +34,8 @@ pub struct ScrapeItem {
     pub other_description: HashMap<LanguageData, String>,
     pub price: Option<PriceData>,
     pub state: ItemStateData,
-    pub url: String,
-    pub images: Vec<String>,
+    pub url: Url,
+    pub images: Vec<Url>,
 }
 
 impl HasKey for ScrapeItem {
@@ -141,6 +142,7 @@ mod tests {
     use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandData};
     use item_service::item_state_command_data::ItemStateCommandData;
     use std::collections::HashMap;
+    use url::Url;
 
     #[test]
     fn should_return_create_command_when_item_not_exists_in_universe() {
@@ -162,7 +164,7 @@ mod tests {
                 amount: 42,
             }),
             state: ItemStateData::Reserved,
-            url: "".to_string(),
+            url: Url::parse("https://foo.bar").unwrap(),
             images: vec![],
         };
         let expected = CreateItemCommandData {
@@ -181,7 +183,7 @@ mod tests {
                 amount: 42,
             }),
             state: ItemStateCommandData::Reserved,
-            url: "".to_string(),
+            url: Url::parse("https://foo.bar").unwrap(),
             images: vec![],
         };
         let actual = scrape_item.into_changes(&HashMap::new());
@@ -216,7 +218,7 @@ mod tests {
                 amount: 120,
             }),
             state: ItemStateData::Listed,
-            url: "".to_string(),
+            url: Url::parse("https://foo.bar").unwrap(),
             images: vec![],
         };
         let expected = UpdateItemCommandData {
@@ -269,7 +271,7 @@ mod tests {
                 amount: 100,
             }),
             state: ItemStateData::Sold,
-            url: "".to_string(),
+            url: Url::parse("https://foo.bar").unwrap(),
             images: vec![],
         };
         let expected = UpdateItemCommandData {
@@ -322,7 +324,7 @@ mod tests {
                 amount: 100,
             }),
             state: ItemStateData::Reserved,
-            url: "".to_string(),
+            url: Url::parse("https://foo.bar").unwrap(),
             images: vec![],
         };
         let actual = scrape_item.into_changes(&HashMap::from([(

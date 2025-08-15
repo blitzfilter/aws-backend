@@ -70,6 +70,7 @@ mod tests {
     use futures::StreamExt;
     use item_data::item_state_data::ItemStateData;
     use std::time::{Duration, SystemTime};
+    use url::Url;
 
     struct DummyClient;
     struct DummyScraper;
@@ -103,7 +104,7 @@ mod tests {
                 other_description: Default::default(),
                 price: None,
                 state: ItemStateData::Available,
-                url: "".to_string(),
+                url: Url::parse("https://foo.bar").unwrap(),
                 images: vec![],
             };
             match page_num {

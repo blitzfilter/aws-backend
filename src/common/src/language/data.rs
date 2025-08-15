@@ -82,6 +82,32 @@ impl<T: Into<String>> From<Localized<Language, T>> for LocalizedTextData {
     }
 }
 
+#[cfg(feature = "test-data")]
+mod faker {
+    use crate::language::data::LocalizedTextData;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for LocalizedTextData {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            LocalizedTextData {
+                text: fake::faker::lorem::en::Sentence(5..20).fake_with_rng(rng),
+                language: config.fake_with_rng(rng),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::language::data::LocalizedTextData;
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_localized_text_data() {
+            let _ = Faker.fake::<LocalizedTextData>();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::LanguageData;

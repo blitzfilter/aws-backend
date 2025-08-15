@@ -29,10 +29,9 @@ pub struct CreateItemCommand {
     pub images: Vec<Url>,
 }
 
-impl TryFrom<CreateItemCommandData> for CreateItemCommand {
-    type Error = url::ParseError;
-    fn try_from(data: CreateItemCommandData) -> Result<Self, Self::Error> {
-        let cmd = CreateItemCommand {
+impl From<CreateItemCommandData> for CreateItemCommand {
+    fn from(data: CreateItemCommandData) -> Self {
+        CreateItemCommand {
             shop_id: data.shop_id,
             shops_item_id: data.shops_item_id,
             shop_name: data.shop_name.into(),
@@ -56,14 +55,9 @@ impl TryFrom<CreateItemCommandData> for CreateItemCommand {
                 .collect(),
             price: data.price.map(Price::from),
             state: data.state.into(),
-            url: Url::parse(&data.url)?,
-            images: data
-                .images
-                .iter()
-                .filter_map(|url| Url::parse(url).ok())
-                .collect(),
-        };
-        Ok(cmd)
+            url: data.url,
+            images: data.images,
+        }
     }
 }
 
@@ -95,6 +89,40 @@ impl From<UpdateItemCommandData> for UpdateItemCommand {
         UpdateItemCommand {
             price: data.price.map(Price::from),
             state: data.state.map(ItemState::from),
+        }
+    }
+}
+
+#[cfg(feature = "test-data")]
+mod faker {
+    use super::*;
+    use fake::{Dummy, Fake, Faker, Rng};
+
+    impl Dummy<Faker> for CreateItemCommand {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            config.fake_with_rng::<CreateItemCommandData, _>(rng).into()
+        }
+    }
+
+    impl Dummy<Faker> for UpdateItemCommand {
+        fn dummy_with_rng<R: Rng + ?Sized>(config: &Faker, rng: &mut R) -> Self {
+            config.fake_with_rng::<UpdateItemCommandData, _>(rng).into()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::item_command::{CreateItemCommand, UpdateItemCommand};
+        use fake::{Fake, Faker};
+
+        #[test]
+        fn should_fake_create_item_command() {
+            let _ = Faker.fake::<CreateItemCommand>();
+        }
+
+        #[test]
+        fn should_fake_update_item_command() {
+            let _ = Faker.fake::<UpdateItemCommand>();
         }
     }
 }

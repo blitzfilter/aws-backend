@@ -17,6 +17,8 @@ mockall = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 
+fake = { workspace = true, optional = true }
+
 [dev-dependencies]
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 rstest = { workspace = true }
@@ -24,3 +26,8 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 item-dynamodb = { workspace = true, features = ["repository", "test-data"] }
 fake = { workspace = true }
+item-service = { workspace = true, features = ["test-data"] }
+
+[features]
+default = []
+test-data = ["fake", "common/test-data", "item-core/test-data"]

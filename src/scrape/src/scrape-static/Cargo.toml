@@ -12,3 +12,4 @@ reqwest = { workspace = true, features = ["json", "native-tls-vendored"] }
 async-trait = { workspace = true }
 scraper = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
