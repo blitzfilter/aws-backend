@@ -114,7 +114,9 @@ mod tests {
     use common::price::domain::Price;
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
+    use fake::{Fake, Faker};
     use item_core::item::Item;
+    use item_core::item_event::{ItemCommonEventPayload, ItemEvent};
     use item_core::item_state::ItemState;
     use item_core::shop_name::ShopName;
     use item_dynamodb::item_event_record::ItemEventRecord;
@@ -123,6 +125,121 @@ mod tests {
     use lambda_runtime::{Context, LambdaEvent};
     use std::collections::HashMap;
     use url::Url;
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(1)]
+    #[case(5)]
+    #[case(10)]
+    #[case(25)]
+    #[case(47)]
+    #[case(100)]
+    #[case(150)]
+    #[case(453)]
+    #[case(900)]
+    #[case(2874)]
+    #[case(10874)]
+    async fn should_handle_sqs_message(#[case] record_count: usize) {
+        let records = fake::vec![ItemEvent; record_count]
+            .into_iter()
+            .map(ItemEventRecord::try_from)
+            .map(Result::unwrap)
+            .map(|record| serde_json::to_string(&record))
+            .map(Result::unwrap)
+            .map(|json_payload| SqsMessage {
+                message_id: Some(Faker.fake()),
+                receipt_handle: None,
+                body: Some(json_payload),
+                md5_of_body: None,
+                md5_of_message_attributes: None,
+                attributes: Default::default(),
+                message_attributes: Default::default(),
+                event_source_arn: None,
+                event_source: None,
+                aws_region: None,
+            })
+            .collect();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Context::default(),
+        };
+        let mut repository = MockItemDynamoDbRepository::default();
+        repository
+            .expect_update_item_record()
+            .returning(move |_, _, _| {
+                Box::pin(async move { Ok(UpdateItemOutput::builder().build()) })
+            });
+
+        let actual = handler(&repository, lambda_event).await.unwrap();
+        assert!(actual.batch_item_failures.is_empty());
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(0, 1)]
+    #[case(1, 1)]
+    #[case(2, 5)]
+    #[case(7, 10)]
+    #[case(24, 25)]
+    #[case(0, 47)]
+    #[case(98, 100)]
+    #[case(1, 150)]
+    #[case(0, 453)]
+    #[case(0, 900)]
+    #[case(2874, 2874)]
+    #[case(874, 10874)]
+    async fn should_respond_with_partial_failures(
+        #[case] failure_count: usize,
+        #[case] record_count: usize,
+    ) {
+        let events = fake::vec![ItemEvent; record_count];
+        let expected_failures = events
+            .clone()
+            .into_iter()
+            .take(failure_count)
+            .collect::<Vec<_>>();
+        let records = events
+            .into_iter()
+            .map(ItemEventRecord::try_from)
+            .map(Result::unwrap)
+            .map(|record| serde_json::to_string(&record))
+            .map(Result::unwrap)
+            .map(|json_payload| SqsMessage {
+                message_id: Some(Faker.fake()),
+                receipt_handle: None,
+                body: Some(json_payload),
+                md5_of_body: None,
+                md5_of_message_attributes: None,
+                attributes: Default::default(),
+                message_attributes: Default::default(),
+                event_source_arn: None,
+                event_source: None,
+                aws_region: None,
+            })
+            .collect();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Context::default(),
+        };
+        let mut repository = MockItemDynamoDbRepository::default();
+        repository
+            .expect_update_item_record()
+            .returning(move |shop_id, shops_item_id, _| {
+                if expected_failures.iter().any(|event| {
+                    event.payload.shop_id() == shop_id
+                        && event.payload.shops_item_id() == shops_item_id
+                }) {
+                    Box::pin(
+                        async move { Err(SdkError::construction_failure("Something went wrong.")) },
+                    )
+                } else {
+                    Box::pin(async move { Ok(UpdateItemOutput::builder().build()) })
+                }
+            });
+
+        let actual = handler(&repository, lambda_event).await.unwrap();
+        assert_eq!(failure_count, actual.batch_item_failures.len());
+    }
 
     fn create_sample_item_event_record() -> ItemEventRecord {
         let item = Item::create(

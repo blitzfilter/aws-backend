@@ -24,3 +24,6 @@ rstest = { workspace = true }
 mockall = { workspace = true }
 url = { workspace = true }
 serde_dynamo = { workspace = true }
+item-core = { workspace = true, features = ["test-data"] }
+fake = { workspace = true }
+time = { workspace = true }
