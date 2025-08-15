@@ -130,11 +130,14 @@ mod tests {
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
+    use common::event::Event;
     use common::has_key::HasKey;
     use common::localized::Localized;
     use common::price::domain::Price;
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
+    use fake::{Fake, Faker};
+    use item_core::item_event::{ItemCreatedEventPayload, ItemEventPayload};
     use item_core::shop_name::ShopName;
     use item_core::{item::Item, item_state::ItemState};
     use item_dynamodb::item_event_record::ItemEventRecord;
@@ -142,7 +145,61 @@ mod tests {
     use item_dynamodb::repository::MockItemDynamoDbRepository;
     use lambda_runtime::{Context, LambdaEvent};
     use std::collections::HashMap;
+    use time::OffsetDateTime;
     use url::Url;
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(1)]
+    #[case(5)]
+    #[case(10)]
+    #[case(25)]
+    #[case(47)]
+    #[case(100)]
+    #[case(150)]
+    #[case(453)]
+    #[case(900)]
+    #[case(2874)]
+    #[case(10874)]
+    async fn should_handle_sqs_message(#[case] record_count: usize) {
+        let records = fake::vec![ItemCreatedEventPayload; record_count]
+            .into_iter()
+            .map(ItemEventPayload::Created)
+            .map(|event_payload| Event {
+                aggregate_id: Faker.fake(),
+                event_id: Faker.fake(),
+                timestamp: OffsetDateTime::now_utc(),
+                payload: event_payload,
+            })
+            .map(ItemEventRecord::try_from)
+            .map(Result::unwrap)
+            .map(|record| serde_json::to_string(&record))
+            .map(Result::unwrap)
+            .map(|json_payload| SqsMessage {
+                message_id: Some(Faker.fake()),
+                receipt_handle: None,
+                body: Some(json_payload),
+                md5_of_body: None,
+                md5_of_message_attributes: None,
+                attributes: Default::default(),
+                message_attributes: Default::default(),
+                event_source_arn: None,
+                event_source: None,
+                aws_region: None,
+            })
+            .collect();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Context::default(),
+        };
+        let mut repository = MockItemDynamoDbRepository::default();
+        repository.expect_put_item_records().returning(move |_| {
+            Box::pin(async move { Ok(BatchWriteItemOutput::builder().build()) })
+        });
+
+        let actual = handler(&repository, lambda_event).await.unwrap();
+        assert!(actual.batch_item_failures.is_empty());
+    }
 
     fn create_sample_item_event_record() -> ItemEventRecord {
         let item = Item::create(

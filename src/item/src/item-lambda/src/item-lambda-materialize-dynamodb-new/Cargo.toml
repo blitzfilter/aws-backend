@@ -23,3 +23,6 @@ serial_test = { workspace = true }
 rstest = { workspace = true }
 mockall = { workspace = true }
 url = { workspace = true }
+fake = { workspace = true }
+time = { workspace = true }
+item-core = { workspace = true, features = ["test-data"] }
