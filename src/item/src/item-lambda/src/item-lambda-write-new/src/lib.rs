@@ -87,23 +87,11 @@ fn extract_message_data(
             None
         }
         Some(item_json) => match serde_json::from_str::<CreateItemCommandData>(&item_json) {
-            Ok(command_data) => match CreateItemCommand::try_from(command_data) {
-                Ok(command) => {
-                    message_ids.insert(command.key(), message_id);
-                    Some(command)
-                }
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        payload = %item_json,
-                        fromType = %std::any::type_name::<CreateItemCommandData>(),
-                        fromType = %std::any::type_name::<CreateItemCommand>(),
-                        "Failed mapping."
-                    );
-                    failed_message_ids.push(message_id);
-                    None
-                }
-            },
+            Ok(command_data) => {
+                let command = CreateItemCommand::from(command_data);
+                message_ids.insert(command.key(), message_id);
+                Some(command)
+            }
             Err(e) => {
                 error!(
                     error = %e,
@@ -129,6 +117,7 @@ mod tests {
     use item_service::item_command_data::CreateItemCommandData;
     use item_service::item_state_command_data::ItemStateCommandData;
     use lambda_runtime::{Context, LambdaEvent};
+    use url::Url;
 
     #[rstest::rstest]
     #[case::one(1)]
@@ -152,7 +141,7 @@ mod tests {
                 other_description: Default::default(),
                 price: None,
                 state: ItemStateCommandData::Listed,
-                url: "https://boop.beep.bap.com".to_string(),
+                url: Url::parse("https://foo.bar").unwrap(),
                 images: vec![],
             };
             SqsMessage {
