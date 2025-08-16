@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemId;
 use item_dynamodb::item_event_record::ItemEventRecord;
@@ -7,6 +5,7 @@ use item_opensearch::bulk_response::{BulkItemResult, BulkResponse};
 use item_opensearch::item_document::ItemDocument;
 use item_opensearch::repository::ItemOpenSearchRepository;
 use lambda_runtime::LambdaEvent;
+use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 #[tracing::instrument(skip(repository, event), fields(requestId = %event.context.request_id))]
@@ -158,5 +157,218 @@ fn handle_bulk_response(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::handler;
+    use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
+    use common::event::Event;
+    use fake::Fake;
+    use fake::Faker;
+    use item_core::item_event::{ItemCreatedEventPayload, ItemEventPayload};
+    use item_dynamodb::item_event_record::ItemEventRecord;
+    use item_opensearch::bulk_response::BulkError;
+    use item_opensearch::bulk_response::BulkItemResult;
+    use item_opensearch::bulk_response::BulkOpResult;
+    use item_opensearch::{bulk_response::BulkResponse, repository::MockItemOpenSearchRepository};
+    use lambda_runtime::LambdaEvent;
+    use std::collections::HashMap;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(1)]
+    #[case(5)]
+    #[case(10)]
+    #[case(25)]
+    #[case(47)]
+    #[case(100)]
+    #[case(150)]
+    #[case(453)]
+    #[case(900)]
+    #[case(2874)]
+    #[case(10874)]
+    async fn should_handle_message(#[case] record_count: usize) {
+        let mut repository = MockItemOpenSearchRepository::default();
+        repository.expect_create_item_documents().return_once(|_| {
+            Box::pin(async move {
+                Ok(BulkResponse {
+                    took: 500,
+                    errors: false,
+                    items: vec![],
+                })
+            })
+        });
+
+        let records = fake::vec![ItemCreatedEventPayload; record_count]
+            .into_iter()
+            .map(ItemEventPayload::Created)
+            .map(|event_payload| Event {
+                aggregate_id: Faker.fake(),
+                event_id: Faker.fake(),
+                timestamp: OffsetDateTime::now_utc(),
+                payload: event_payload,
+            })
+            .map(ItemEventRecord::try_from)
+            .map(Result::unwrap)
+            .map(|record| serde_json::to_string(&record))
+            .map(Result::unwrap)
+            .map(|json_payload| SqsMessage {
+                message_id: Some(Faker.fake()),
+                receipt_handle: None,
+                body: Some(json_payload),
+                md5_of_body: None,
+                md5_of_message_attributes: None,
+                attributes: Default::default(),
+                message_attributes: Default::default(),
+                event_source_arn: None,
+                event_source: None,
+                aws_region: None,
+            })
+            .collect();
+        let lambda_event: LambdaEvent<SqsEvent> = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Default::default(),
+        };
+
+        let actual = handler(&repository, lambda_event).await.unwrap();
+        assert!(actual.batch_item_failures.is_empty())
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(0, 1)]
+    #[case(1, 1)]
+    #[case(2, 5)]
+    #[case(9, 10)]
+    #[case(0, 25)]
+    #[case(47, 47)]
+    #[case(100, 100)]
+    #[case(0, 150)]
+    #[case(234, 453)]
+    #[case(773, 900)]
+    #[case(299, 2874)]
+    #[case(77, 10874)]
+    async fn should_respond_with_partial_failures_when_opensearch_partial_bulk_failure(
+        #[case] failure_count: usize,
+        #[case] record_count: usize,
+    ) {
+        let mut message_ids = HashMap::with_capacity(record_count);
+        let expected_failures = message_ids
+            .keys()
+            .take(failure_count)
+            .cloned()
+            .collect::<Vec<_>>();
+        let expected_failures_clone = expected_failures.clone();
+        let records = fake::vec![ItemCreatedEventPayload; record_count]
+            .into_iter()
+            .map(ItemEventPayload::Created)
+            .map(|event_payload| Event {
+                aggregate_id: Faker.fake(),
+                event_id: Faker.fake(),
+                timestamp: OffsetDateTime::now_utc(),
+                payload: event_payload,
+            })
+            .map(ItemEventRecord::try_from)
+            .map(Result::unwrap)
+            .map(|record| {
+                let uuid = Uuid::new_v4().to_string();
+                message_ids.insert(record.item_id, uuid.clone());
+                SqsMessage {
+                    message_id: Some(uuid),
+                    receipt_handle: None,
+                    body: Some(serde_json::to_string(&record).unwrap()),
+                    md5_of_body: None,
+                    md5_of_message_attributes: None,
+                    attributes: Default::default(),
+                    message_attributes: Default::default(),
+                    event_source_arn: None,
+                    event_source: None,
+                    aws_region: None,
+                }
+            })
+            .collect();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Default::default(),
+        };
+        let mut repository = MockItemOpenSearchRepository::default();
+        repository
+            .expect_create_item_documents()
+            .return_once(move |batch| {
+                let failures: Vec<_> = batch
+                    .iter()
+                    .filter(|&item_document| {
+                        expected_failures_clone.contains(&item_document.item_id)
+                    })
+                    .cloned()
+                    .map(|unprocessed_doc| {
+                        let index: String = Faker.fake();
+                        BulkOpResult {
+                            index: index.clone(),
+                            id: unprocessed_doc.item_id.to_string(),
+                            version: Some(2),
+                            result: "not created".to_string(),
+                            status: 409,
+                            error: Some(BulkError {
+                                error_type: "boop".to_string(),
+                                reason: "[items][3]: version conflict, document already exists"
+                                    .to_string(),
+                                index_uuid: Some(Uuid::new_v4().to_string()),
+                                shard: Some("shard-1".to_string()),
+                                index: Some(index),
+                                extra: Default::default(),
+                            }),
+                        }
+                    })
+                    .map(|create| BulkItemResult::Create { create })
+                    .collect();
+
+                let successes: Vec<_> = batch
+                    .into_iter()
+                    .filter(|item_document| {
+                        !expected_failures_clone.contains(&item_document.item_id)
+                    })
+                    .map(|unprocessed_doc| {
+                        let index: String = Faker.fake();
+                        BulkOpResult {
+                            index: index.clone(),
+                            id: unprocessed_doc.item_id.to_string(),
+                            version: Some(2),
+                            result: "created".to_string(),
+                            status: 201,
+                            error: None,
+                        }
+                    })
+                    .map(|create| BulkItemResult::Create { create })
+                    .collect();
+                Box::pin(async move {
+                    Ok(BulkResponse {
+                        took: 500,
+                        errors: true,
+                        items: [successes, failures].concat(),
+                    })
+                })
+            });
+
+        let mut actual_failed_message_ids = handler(&repository, lambda_event)
+            .await
+            .unwrap()
+            .batch_item_failures
+            .into_iter()
+            .map(|failure| failure.item_identifier)
+            .collect::<Vec<_>>();
+        actual_failed_message_ids.sort();
+        let mut expected_failed_message_ids = expected_failures
+            .into_iter()
+            .map(|item_id| message_ids.remove(&item_id))
+            .map(Option::unwrap)
+            .collect::<Vec<_>>();
+        expected_failed_message_ids.sort();
+
+        assert_eq!(expected_failed_message_ids, actual_failed_message_ids);
     }
 }

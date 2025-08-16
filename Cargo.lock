@@ -2132,6 +2132,7 @@ dependencies = [
  "aws_lambda_events",
  "common",
  "dotenvy",
+ "fake",
  "field",
  "item-core",
  "item-dynamodb",
@@ -2143,10 +2144,12 @@ dependencies = [
  "serde_json",
  "serial_test",
  "test-api",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2230,6 +2233,7 @@ dependencies = [
  "field",
  "item-core",
  "item-dynamodb",
+ "mockall",
  "opensearch",
  "rstest",
  "serde",

@@ -8,6 +8,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 #[async_trait]
+#[mockall::automock]
 pub trait ItemOpenSearchRepository {
     async fn create_item_documents(
         &self,
