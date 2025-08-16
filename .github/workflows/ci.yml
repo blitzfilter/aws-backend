@@ -141,7 +141,6 @@ jobs:
         crate:
           - src/item/src/item-dynamodb
           - src/item/src/item-opensearch
-          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
           - src/scrape/src/scrape-core
           - src/test-api
     steps:
