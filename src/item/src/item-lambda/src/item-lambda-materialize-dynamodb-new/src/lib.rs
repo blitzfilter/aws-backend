@@ -130,6 +130,7 @@ mod tests {
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
+    use common::env::get_dynamodb_table_name;
     use common::event::Event;
     use common::has_key::HasKey;
     use common::item_id::ItemKey;
@@ -147,6 +148,7 @@ mod tests {
     use lambda_runtime::{Context, LambdaEvent};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+    use test_api::mk_partial_put_batch_failure;
     use time::OffsetDateTime;
     use url::Url;
     use uuid::Uuid;
@@ -217,7 +219,9 @@ mod tests {
     #[case(900)]
     #[case(2874)]
     #[case(10874)]
-    async fn should_respond_with_partial_failures(#[case] record_count: usize) {
+    async fn should_respond_with_partial_failures_when_ddb_full_batch_failure(
+        #[case] record_count: usize,
+    ) {
         let mut message_ids = HashMap::with_capacity(record_count);
         let records = fake::vec![ItemCreatedEventPayload; record_count]
             .into_iter()
@@ -282,6 +286,98 @@ mod tests {
             .unwrap()
             .iter()
             .map(|key| message_ids.remove(key))
+            .map(Option::unwrap)
+            .collect::<Vec<_>>();
+        expected_failed_message_ids.sort();
+
+        assert_eq!(expected_failed_message_ids, actual_failed_message_ids);
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(0, 1)]
+    #[case(1, 1)]
+    #[case(2, 5)]
+    #[case(9, 10)]
+    #[case(0, 25)]
+    #[case(47, 47)]
+    #[case(100, 100)]
+    #[case(0, 150)]
+    #[case(234, 453)]
+    #[case(773, 900)]
+    #[case(299, 2874)]
+    #[case(77, 10874)]
+    async fn should_respond_with_partial_failures_when_ddb_partial_batch_failure(
+        #[case] failure_count: usize,
+        #[case] record_count: usize,
+    ) {
+        let mut message_ids = HashMap::with_capacity(record_count);
+        let expected_failures = message_ids
+            .keys()
+            .take(failure_count)
+            .cloned()
+            .collect::<Vec<_>>();
+        let expected_failures_clone = expected_failures.clone();
+        let records = fake::vec![ItemCreatedEventPayload; record_count]
+            .into_iter()
+            .map(ItemEventPayload::Created)
+            .map(|event_payload| Event {
+                aggregate_id: Faker.fake(),
+                event_id: Faker.fake(),
+                timestamp: OffsetDateTime::now_utc(),
+                payload: event_payload,
+            })
+            .map(ItemEventRecord::try_from)
+            .map(Result::unwrap)
+            .map(|record| {
+                let uuid = Uuid::new_v4().to_string();
+                message_ids.insert(record.key(), uuid.clone());
+                SqsMessage {
+                    message_id: Some(uuid),
+                    receipt_handle: None,
+                    body: Some(serde_json::to_string(&record).unwrap()),
+                    md5_of_body: None,
+                    md5_of_message_attributes: None,
+                    attributes: Default::default(),
+                    message_attributes: Default::default(),
+                    event_source_arn: None,
+                    event_source: None,
+                    aws_region: None,
+                }
+            })
+            .collect();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Context::default(),
+        };
+        let mut repository = MockItemDynamoDbRepository::default();
+        repository
+            .expect_put_item_records()
+            .returning(move |batch| {
+                let unprocessed = batch
+                    .into_iter()
+                    .filter(|item_record| expected_failures_clone.contains(&item_record.key()))
+                    .collect();
+                Box::pin(async move {
+                    Ok(BatchWriteItemOutput::builder()
+                        .set_unprocessed_items(mk_partial_put_batch_failure(
+                            get_dynamodb_table_name(),
+                            unprocessed,
+                        ))
+                        .build())
+                })
+            });
+        let mut actual_failed_message_ids = handler(&repository, lambda_event)
+            .await
+            .unwrap()
+            .batch_item_failures
+            .into_iter()
+            .map(|failure| failure.item_identifier)
+            .collect::<Vec<_>>();
+        actual_failed_message_ids.sort();
+        let mut expected_failed_message_ids = expected_failures
+            .into_iter()
+            .map(|key| message_ids.remove(&key))
             .map(Option::unwrap)
             .collect::<Vec<_>>();
         expected_failed_message_ids.sort();

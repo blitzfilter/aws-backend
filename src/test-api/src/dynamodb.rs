@@ -1,13 +1,16 @@
+use std::collections::HashMap;
+
 use crate::IntegrationTestService;
 use crate::localstack::get_aws_config;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::ScalarAttributeType::S;
 use aws_sdk_dynamodb::types::{
     AttributeDefinition, BillingMode, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection,
-    ProjectionType, TableClass,
+    ProjectionType, PutRequest, TableClass, WriteRequest,
 };
 use aws_sdk_dynamodb::{Client, Error};
 use common::env::get_dynamodb_table_name;
+use serde::Serialize;
 use tokio::sync::OnceCell;
 use tracing::debug;
 
@@ -138,4 +141,27 @@ async fn set_up_table_items() -> Result<(), Error> {
         .await?;
 
     Ok(())
+}
+
+pub fn mk_partial_put_batch_failure<T: Serialize>(
+    table_name: &str,
+    failures: Vec<T>,
+) -> Option<HashMap<String, Vec<WriteRequest>>> {
+    let put_failures = failures
+        .into_iter()
+        .map(serde_dynamo::to_item)
+        .map(Result::unwrap)
+        .map(|ddb_item| {
+            PutRequest::builder()
+                .set_item(Some(ddb_item))
+                .build()
+                .unwrap()
+        })
+        .map(|put_req| {
+            WriteRequest::builder()
+                .set_put_request(Some(put_req))
+                .build()
+        })
+        .collect();
+    Some(HashMap::from([(table_name.to_string(), put_failures)]))
 }

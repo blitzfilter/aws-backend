@@ -9,7 +9,7 @@ mod sqs_lambda;
 
 pub use api_gateway::*;
 use async_trait::async_trait;
-pub use dynamodb::{DynamoDB, get_dynamodb_client};
+pub use dynamodb::{DynamoDB, get_dynamodb_client, mk_partial_put_batch_failure};
 pub use lambda::{Lambda, get_lambda_client};
 pub use opensearch::{OpenSearch, get_opensearch_client, read_by_id, refresh_index};
 pub use s3::S3;
