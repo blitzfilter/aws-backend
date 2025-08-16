@@ -25,3 +25,7 @@ serial_test = { workspace = true }
 rstest = { workspace = true }
 mockall = { workspace = true }
 url = { workspace = true }
+item-opensearch = { workspace = true, features = ["test-data"] }
+fake = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
