@@ -125,6 +125,7 @@ mod tests {
     use lambda_runtime::{Context, LambdaEvent};
     use std::collections::HashMap;
     use url::Url;
+    use uuid::Uuid;
 
     #[tokio::test]
     #[rstest::rstest]
@@ -193,28 +194,36 @@ mod tests {
         #[case] record_count: usize,
     ) {
         let events = fake::vec![ItemEvent; record_count];
-        let expected_failures = events
+        let expected_failed_events = events
             .clone()
             .into_iter()
             .take(failure_count)
             .collect::<Vec<_>>();
+        let mut expected_failed_message_ids = Vec::with_capacity(failure_count);
         let records = events
             .into_iter()
             .map(ItemEventRecord::try_from)
             .map(Result::unwrap)
-            .map(|record| serde_json::to_string(&record))
-            .map(Result::unwrap)
-            .map(|json_payload| SqsMessage {
-                message_id: Some(Faker.fake()),
-                receipt_handle: None,
-                body: Some(json_payload),
-                md5_of_body: None,
-                md5_of_message_attributes: None,
-                attributes: Default::default(),
-                message_attributes: Default::default(),
-                event_source_arn: None,
-                event_source: None,
-                aws_region: None,
+            .map(|event_record| {
+                let message_id = Uuid::new_v4().to_string();
+                if expected_failed_events.iter().any(|event| {
+                    event.payload.shop_id() == &event_record.shop_id
+                        && event.payload.shops_item_id() == &event_record.shops_item_id
+                }) {
+                    expected_failed_message_ids.push(message_id.clone());
+                }
+                SqsMessage {
+                    message_id: Some(message_id),
+                    receipt_handle: None,
+                    body: Some(serde_json::to_string(&event_record).unwrap()),
+                    md5_of_body: None,
+                    md5_of_message_attributes: None,
+                    attributes: Default::default(),
+                    message_attributes: Default::default(),
+                    event_source_arn: None,
+                    event_source: None,
+                    aws_region: None,
+                }
             })
             .collect();
         let lambda_event = LambdaEvent {
@@ -225,7 +234,7 @@ mod tests {
         repository
             .expect_update_item_record()
             .returning(move |shop_id, shops_item_id, _| {
-                if expected_failures.iter().any(|event| {
+                if expected_failed_events.iter().any(|event| {
                     event.payload.shop_id() == shop_id
                         && event.payload.shops_item_id() == shops_item_id
                 }) {
@@ -237,8 +246,17 @@ mod tests {
                 }
             });
 
-        let actual = handler(&repository, lambda_event).await.unwrap();
-        assert_eq!(failure_count, actual.batch_item_failures.len());
+        expected_failed_message_ids.sort();
+        let mut actual_failed_message_ids = handler(&repository, lambda_event)
+            .await
+            .unwrap()
+            .batch_item_failures
+            .into_iter()
+            .map(|failure| failure.item_identifier)
+            .collect::<Vec<_>>();
+        actual_failed_message_ids.sort();
+
+        assert_eq!(expected_failed_message_ids, actual_failed_message_ids);
     }
 
     fn create_sample_item_event_record() -> ItemEventRecord {

@@ -26,3 +26,4 @@ url = { workspace = true }
 fake = { workspace = true }
 time = { workspace = true }
 item-core = { workspace = true, features = ["test-data"] }
+uuid = { workspace = true }

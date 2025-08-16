@@ -27,3 +27,4 @@ serde_dynamo = { workspace = true }
 item-core = { workspace = true, features = ["test-data"] }
 fake = { workspace = true }
 time = { workspace = true }
+uuid = { workspace = true }
