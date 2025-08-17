@@ -12,6 +12,9 @@ pub mod item_id;
 pub mod item_state;
 pub mod language;
 pub mod localized;
+
+#[cfg(feature = "api")]
+pub mod opensearch;
 pub mod page;
 pub mod price;
 pub mod serde;

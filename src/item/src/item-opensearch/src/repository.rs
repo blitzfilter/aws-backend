@@ -1,4 +1,4 @@
-use crate::bulk_response::BulkResponse;
+use common::opensearch::bulk_response::BulkResponse;
 use crate::item_document::ItemDocument;
 use crate::item_update_document::ItemUpdateDocument;
 use async_trait::async_trait;
