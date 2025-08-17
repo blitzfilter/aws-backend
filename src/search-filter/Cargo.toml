@@ -1,0 +1,7 @@
+[package]
+name = "search-filter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+search-filter-core = { workspace = true }
