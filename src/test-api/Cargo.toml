@@ -14,7 +14,7 @@ aws_lambda_events = { workspace = true, features = ["apigw"] }
 serial_test = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_dynamo = { workspace = true }
+serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"] }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 testcontainers = { workspace = true }
