@@ -137,7 +137,7 @@ mod tests {
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use item_core::hash::ItemHash;
-    use item_core::item_state::ItemState;
+    use common::item_state::item_state::ItemState;
     use item_data::item_state_data::ItemStateData;
     use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandData};
     use item_service::item_state_command_data::ItemStateCommandData;

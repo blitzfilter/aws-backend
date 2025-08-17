@@ -1,4 +1,4 @@
-use crate::item_state::ItemState;
+use common::item_state::item_state::ItemState;
 use blake3::Hash;
 use common::currency::domain::Currency;
 use common::price::domain::{MonetaryAmount, Price};
@@ -135,8 +135,9 @@ impl ItemHashContributor for Price {
 
 #[cfg(test)]
 mod tests {
-    use crate::{hash::ItemHash, item_state::ItemState};
+    use crate::hash::ItemHash;
     use common::{currency::domain::Currency, price::domain::Price};
+    use common::item_state::item_state::ItemState;
 
     #[rstest::rstest]
     #[case(

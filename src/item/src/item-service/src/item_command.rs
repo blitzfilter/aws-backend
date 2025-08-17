@@ -6,7 +6,7 @@ use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::description::Description;
-use item_core::item_state::ItemState;
+use common::item_state::item_state::ItemState;
 use item_core::shop_name::ShopName;
 use item_core::title::Title;
 use std::collections::HashMap;

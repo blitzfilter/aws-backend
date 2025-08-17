@@ -1,4 +1,4 @@
-use item_core::item_state::ItemState;
+use common::item_state::item_state::ItemState;
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "test-data", derive(fake::Dummy))]

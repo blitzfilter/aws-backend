@@ -7,8 +7,7 @@ pub struct SearchFilter {
     item_query: TextQuery,
     shop_name_query: Option<TextQuery>,
     price_query: Option<MonetaryAmount>,
-    state_query: ArrayQuery<ItemState>,
-    is_available: Option<bool>,
+    // state_query: ArrayQuery<ItemState>,
     created_query: Option<RangeQuery<OffsetDateTime>>,
     updated_query: Option<RangeQuery<OffsetDateTime>>,
 }

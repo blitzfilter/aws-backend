@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemKey;
-use common::{batch::Batch, batch::dynamodb::handle_batch_output, has_key::HasKey};
+use common::{batch::dynamodb::handle_batch_output, batch::Batch, has_key::HasKey};
 use item_dynamodb::item_event_record::ItemEventRecord;
 use item_dynamodb::item_record::ItemRecord;
 use item_dynamodb::repository::ItemDynamoDbRepository;
@@ -141,7 +141,7 @@ mod tests {
     use fake::{Fake, Faker};
     use item_core::item_event::{ItemCreatedEventPayload, ItemEventPayload};
     use item_core::shop_name::ShopName;
-    use item_core::{item::Item, item_state::ItemState};
+    use item_core::item::Item;
     use item_dynamodb::item_event_record::ItemEventRecord;
     use item_dynamodb::item_record::ItemRecord;
     use item_dynamodb::repository::MockItemDynamoDbRepository;
@@ -152,6 +152,7 @@ mod tests {
     use time::OffsetDateTime;
     use url::Url;
     use uuid::Uuid;
+    use common::item_state::item_state::ItemState;
 
     #[tokio::test]
     #[rstest::rstest]
