@@ -16,7 +16,7 @@ members = ["src/common", "src/filter", "src/item", "src/scrape", "src/test-api"]
 [workspace.dependencies]
 accept-language = "3.1.0"
 async-stream = "0.3.6"
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 aws-config = "1.8.5"
 aws-sdk-dynamodb = "1.88.0"
 aws-sdk-lambda = "1.93.0"
