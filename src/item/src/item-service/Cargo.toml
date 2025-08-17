@@ -16,6 +16,7 @@ itertools = { workspace = true }
 mockall = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true, features = ["serde"] }
+search-filter-core = { workspace = true }
 
 fake = { workspace = true, optional = true }
 

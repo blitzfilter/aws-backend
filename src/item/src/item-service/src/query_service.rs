@@ -6,13 +6,16 @@ use aws_sdk_dynamodb::error::SdkError;
 use common::currency::domain::Currency;
 use common::language::domain::Language;
 use common::localized::Localized;
+use common::page::Page;
 use common::price::domain::{MonetaryAmountOverflowError, Price};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
+use common::sort::Sort;
 use item_core::description::Description;
 use item_core::item::{Item, LocalizedItemView};
 use item_core::title::Title;
 use item_dynamodb::repository::ItemDynamoDbRepository;
+use search_filter_core::search_filter::SearchFilter;
 use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
@@ -48,6 +51,16 @@ pub mod api {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum SearchItemsError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortItemField {
+    Price,
+    Updated,
+    Created,
+}
+
 #[async_trait]
 #[mockall::automock]
 pub trait QueryItemService {
@@ -64,6 +77,15 @@ pub trait QueryItemService {
         languages: &[Language],
         currency: &Currency,
     ) -> Result<LocalizedItemView, GetItemError>;
+
+    async fn search_items(
+        &self,
+        search_filter: &SearchFilter,
+        language: &Language,
+        currency: &Currency,
+        sort: &Option<Sort<SortItemField>>,
+        page: &Option<Page>,
+    ) -> Result<Vec<LocalizedItemView>, SearchItemsError>;
 }
 
 pub struct QueryItemServiceImpl<'a> {
@@ -188,6 +210,17 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
         };
 
         Ok(item_view)
+    }
+
+    async fn search_items(
+        &self,
+        search_filter: &SearchFilter,
+        language: &Language,
+        currency: &Currency,
+        sort: &Option<Sort<SortItemField>>,
+        page: &Option<Page>,
+    ) -> Result<Vec<LocalizedItemView>, SearchItemsError> {
+        todo!()
     }
 }
 
