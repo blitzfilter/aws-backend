@@ -109,37 +109,40 @@ fn extract_message_data(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::handler;
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
-    use common::item_id::ItemKey;
-    use common::shop_id::ShopId;
-    use item_service::command_service::MockCommandItemService;
-    use item_service::item_command_data::UpdateItemCommandData;
-    use item_service::item_state_command_data::ItemStateCommandData;
+    use common::has_key::HasKey;
+    use fake::{Fake, Faker};
+    use item_service::{
+        command_service::MockCommandItemService, item_command_data::UpdateItemCommandData,
+    };
     use lambda_runtime::{Context, LambdaEvent};
+    use uuid::Uuid;
 
     #[rstest::rstest]
-    #[case::one(1)]
-    #[case::five(5)]
-    #[case::ten(10)]
-    #[case::fifty(50)]
-    #[case::fivehundred(500)]
-    #[case::onethousand(1000)]
-    #[case::tenthousand(10000)]
+    #[case(1)]
+    #[case(5)]
+    #[case(10)]
+    #[case(25)]
+    #[case(47)]
+    #[case(100)]
+    #[case(150)]
+    #[case(453)]
+    #[case(900)]
+    #[case(2874)]
+    #[case(10874)]
     #[tokio::test]
-    async fn should_pass_on_service_failures(#[case] n: usize) {
-        let shop_id = ShopId::new();
-        let mk_message = |x: usize| {
-            let command_data = UpdateItemCommandData {
-                shop_id: shop_id.clone(),
-                shops_item_id: x.to_string().into(),
-                price: None,
-                state: Some(ItemStateCommandData::Listed),
-            };
-            SqsMessage {
-                message_id: Some(x.to_string()),
+    async fn should_handle_message(#[case] record_count: usize) {
+        let records = fake::vec![UpdateItemCommandData; record_count]
+            .into_iter()
+            .map(|record| serde_json::to_string(&record))
+            .map(Result::unwrap)
+            .map(|json_payload| SqsMessage {
+                message_id: Some(Faker.fake()),
                 receipt_handle: None,
-                body: Some(serde_json::to_string(&command_data).unwrap()),
+                body: Some(json_payload),
                 md5_of_body: None,
                 md5_of_message_attributes: None,
                 attributes: Default::default(),
@@ -147,9 +150,8 @@ mod tests {
                 event_source_arn: None,
                 event_source: None,
                 aws_region: None,
-            }
-        };
-        let records = (1..=n).map(mk_message).collect();
+            })
+            .collect();
         let lambda_event = LambdaEvent {
             payload: SqsEvent { records },
             context: Context::default(),
@@ -158,11 +160,80 @@ mod tests {
         let mut service_mock = MockCommandItemService::default();
         service_mock
             .expect_handle_update_items()
-            .return_once(move |_| {
-                Box::pin(async move { Err(vec![ItemKey::new(shop_id, n.to_string().into())]) })
-            });
+            .return_once(|_| Box::pin(async { Ok(()) }));
         let response = handler(&service_mock, lambda_event).await.unwrap();
 
-        assert_eq!(response.batch_item_failures.len(), 1);
+        assert!(response.batch_item_failures.is_empty());
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(0, 1)]
+    #[case(1, 1)]
+    #[case(2, 5)]
+    #[case(9, 10)]
+    #[case(0, 25)]
+    #[case(47, 47)]
+    #[case(100, 100)]
+    #[case(0, 150)]
+    #[case(234, 453)]
+    #[case(773, 900)]
+    #[case(299, 2874)]
+    #[case(77, 10874)]
+    async fn should_respond_with_partial_failures(
+        #[case] failure_count: usize,
+        #[case] record_count: usize,
+    ) {
+        let commands = fake::vec![UpdateItemCommandData; record_count];
+        let expected_failed_keys = commands
+            .iter()
+            .take(failure_count)
+            .map(UpdateItemCommandData::key)
+            .collect::<Vec<_>>();
+        let mut messages_ids = HashMap::with_capacity(record_count);
+        let records = commands
+            .into_iter()
+            .map(|cmd_data| {
+                let message_id = Uuid::new_v4().to_string();
+                messages_ids.insert(cmd_data.key(), message_id.clone());
+                SqsMessage {
+                    message_id: Some(message_id),
+                    receipt_handle: None,
+                    body: Some(serde_json::to_string(&cmd_data).unwrap()),
+                    md5_of_body: None,
+                    md5_of_message_attributes: None,
+                    attributes: Default::default(),
+                    message_attributes: Default::default(),
+                    event_source_arn: None,
+                    event_source: None,
+                    aws_region: None,
+                }
+            })
+            .collect();
+        let mut expected_failed_message_ids = expected_failed_keys
+            .iter()
+            .map(|key| messages_ids.remove(key).unwrap())
+            .collect::<Vec<_>>();
+        expected_failed_message_ids.sort();
+        let lambda_event = LambdaEvent {
+            payload: SqsEvent { records },
+            context: Context::default(),
+        };
+
+        let mut service_mock = MockCommandItemService::default();
+        service_mock
+            .expect_handle_update_items()
+            .return_once(move |_| Box::pin(async { Err(expected_failed_keys) }));
+        let mut actual_failed_message_ids = handler(&service_mock, lambda_event)
+            .await
+            .unwrap()
+            .batch_item_failures
+            .into_iter()
+            .map(|failure| failure.item_identifier)
+            .collect::<Vec<_>>();
+        actual_failed_message_ids.sort();
+
+        assert_eq!(failure_count, actual_failed_message_ids.len());
+        assert_eq!(expected_failed_message_ids, actual_failed_message_ids);
     }
 }

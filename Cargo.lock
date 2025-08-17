@@ -2214,6 +2214,7 @@ dependencies = [
  "aws_lambda_events",
  "common",
  "dotenvy",
+ "fake",
  "item-core",
  "item-dynamodb",
  "item-service",
@@ -2226,6 +2227,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

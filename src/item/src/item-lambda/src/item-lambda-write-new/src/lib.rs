@@ -231,6 +231,7 @@ mod tests {
             .collect::<Vec<_>>();
         actual_failed_message_ids.sort();
 
+        assert_eq!(failure_count, actual_failed_message_ids.len());
         assert_eq!(expected_failed_message_ids, actual_failed_message_ids);
     }
 }
