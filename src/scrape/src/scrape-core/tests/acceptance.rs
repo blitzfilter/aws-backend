@@ -7,7 +7,7 @@ use common::{
     price::data::PriceData, shop_id::ShopId,
 };
 use item_core::hash::ItemHash;
-use common::item_state::item_state::ItemState;
+use common::item_state::domain::ItemState;
 use item_data::item_state_data::ItemStateData;
 use item_dynamodb::item_record::ItemRecord;
 use item_dynamodb::item_state_record::ItemStateRecord;

@@ -1,5 +1,5 @@
 use crate::{array_query::ArrayQuery, range_query::RangeQuery, text_query::TextQuery};
-use common::item_state::item_state::ItemState;
+use common::item_state::domain::ItemState;
 use common::{currency::domain::Currency, price::domain::MonetaryAmount};
 use time::OffsetDateTime;
 

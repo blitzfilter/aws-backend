@@ -152,7 +152,7 @@ mod tests {
     use time::OffsetDateTime;
     use url::Url;
     use uuid::Uuid;
-    use common::item_state::item_state::ItemState;
+    use common::item_state::domain::ItemState;
 
     #[tokio::test]
     #[rstest::rstest]

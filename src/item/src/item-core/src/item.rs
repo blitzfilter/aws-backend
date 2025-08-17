@@ -18,7 +18,7 @@ use crate::item_event::{
     ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
     ItemStateChangeEventPayload,
 };
-use common::item_state::item_state::ItemState;
+use common::item_state::domain::ItemState;
 use crate::shop_name::ShopName;
 use crate::title::Title;
 
@@ -322,7 +322,7 @@ mod tests {
     mod state {
         use crate::hash::ItemHash;
         use crate::item::Item;
-        use common::item_state::item_state::ItemState;
+        use common::item_state::domain::ItemState;
         use common::language::domain::Language;
         use common::localized::Localized;
         use time::OffsetDateTime;
@@ -492,7 +492,7 @@ mod tests {
         use crate::hash::ItemHash;
         use crate::item::Item;
         use crate::item_event::ItemEventPayload;
-        use common::item_state::item_state::ItemState;
+        use common::item_state::domain::ItemState;
         use common::currency::domain::Currency;
         use common::language::domain::Language;
         use common::localized::Localized;

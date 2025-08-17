@@ -123,7 +123,7 @@ mod tests {
     use time::OffsetDateTime;
     use time::macros::datetime;
     use url::Url;
-    use common::item_state::item_state::ItemState;
+    use common::item_state::domain::ItemState;
 
     #[tokio::test]
     #[rstest::rstest]
