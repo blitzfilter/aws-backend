@@ -29,6 +29,7 @@ http = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 httpdate = { workspace = true, optional = true }
 fake = { workspace = true, optional = true }
+opensearch = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
@@ -37,6 +38,7 @@ serde_json = { workspace = true }
 [features]
 default = []
 dynamodb = ["serde_dynamo", "aws-sdk-dynamodb"]
+opensearch = ["dep:opensearch"]
 sqs = ["aws-sdk-sqs", "serde_json"]
 api = ["aws_lambda_events/apigw", "http", "serde_json", "httpdate"]
 test-data = ["fake"]

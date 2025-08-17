@@ -13,7 +13,7 @@ pub mod item_state;
 pub mod language;
 pub mod localized;
 
-#[cfg(feature = "api")]
+#[cfg(feature = "opensearch")]
 pub mod opensearch;
 pub mod page;
 pub mod price;
