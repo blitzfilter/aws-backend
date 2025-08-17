@@ -51,6 +51,7 @@ jobs:
       matrix:
         crate:
           - src/common
+          - src/search-filter/src/search-filter-core
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
           - src/item/src/item-data
@@ -95,6 +96,7 @@ jobs:
       matrix:
         crate:
           - src/common
+          - src/search-filter/src/search-filter-core
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-core
           - src/item/src/item-data
