@@ -158,14 +158,14 @@ async fn set_up_indices() -> Result<Response, Error> {
             "type": "keyword"
           },
           "shopName": {
-            "type": "keyword",
+            "type": "text",
           },
           "titleDe": {
-            "type": "search_as_you_type",
+            "type": "text",
             "analyzer": "german"
           },
           "titleEn": {
-            "type": "search_as_you_type",
+            "type": "text",
             "analyzer": "english"
           },
           "descriptionDe": {
@@ -176,22 +176,22 @@ async fn set_up_indices() -> Result<Response, Error> {
             "type": "text",
             "analyzer": "english",
           },
-          "price_eur": {
+          "priceEur": {
             "type": "unsigned_long",
           },
-          "price_usd": {
+          "priceUsd": {
             "type": "unsigned_long",
           },
-          "price_gbp": {
+          "priceBbp": {
             "type": "unsigned_long",
           },
-          "price_aud": {
+          "priceAud": {
             "type": "unsigned_long",
           },
-          "price_cad": {
+          "priceCad": {
             "type": "unsigned_long",
           },
-          "price_nze": {
+          "priceNze": {
             "type": "unsigned_long",
           },
           "state": {

@@ -5,10 +5,10 @@ use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchFilter {
-    item_query: TextQuery,
-    shop_name_query: Option<TextQuery>,
-    price_query: Option<RangeQuery<MonetaryAmount>>,
-    state_query: ArrayQuery<ItemState>,
-    created_query: Option<RangeQuery<OffsetDateTime>>,
-    updated_query: Option<RangeQuery<OffsetDateTime>>,
+    pub item_query: TextQuery,
+    pub shop_name_query: Option<TextQuery>,
+    pub price_query: Option<RangeQuery<MonetaryAmount>>,
+    pub state_query: ArrayQuery<ItemState>,
+    pub created_query: Option<RangeQuery<OffsetDateTime>>,
+    pub updated_query: Option<RangeQuery<OffsetDateTime>>,
 }

@@ -3,7 +3,7 @@ use crate::price::command_data::PriceCommandData;
 use crate::price::data::PriceData;
 use crate::price::record::PriceRecord;
 use std::collections::HashMap;
-use std::ops::{Add, Sub};
+use std::ops::{Add, Deref, Sub};
 use strum::{EnumCount, IntoEnumIterator};
 
 type Rate = u64;
@@ -117,6 +117,13 @@ pub struct MonetaryAmount(#[cfg_attr(feature = "test-data", dummy(faker = "0..=1
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, thiserror::Error)]
 #[error("Monetary amount cannot be negative.")]
 pub struct NegativeMonetaryAmountError;
+
+impl Deref for MonetaryAmount {
+    type Target = u64;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Add for MonetaryAmount {
     type Output = MonetaryAmount;

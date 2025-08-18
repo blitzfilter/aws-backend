@@ -1,5 +1,5 @@
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
 pub struct RangeQuery<T: Ord> {
-    pub from: Option<T>,
-    pub to: Option<T>,
+    pub min: Option<T>,
+    pub max: Option<T>,
 }
