@@ -15,6 +15,7 @@ field = { workspace = true }
 url = { workspace = true }
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 mockall = { workspace = true }
+search-filter-core = { workspace = true }
 
 fake = { workspace = true, optional = true }
 
@@ -22,6 +23,7 @@ fake = { workspace = true, optional = true }
 test-api = { workspace = true }
 serial_test = { workspace = true }
 rstest = { workspace = true }
+item-opensearch = { workspace = true, features = ["test-data"] }
 
 [features]
 default = []
