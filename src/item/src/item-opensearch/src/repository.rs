@@ -134,7 +134,13 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             }));
         }
 
-        match &*search_filter.state_query {
+        match search_filter
+            .state_query
+            .0
+            .iter()
+            .collect::<Vec<&ItemState>>()
+            .as_slice()
+        {
             [] => {}
             [ItemState::Available] => {
                 must.push(json!({
@@ -144,8 +150,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             states => {
                 let state_values: Vec<&str> = states
                     .iter()
-                    .copied()
-                    .map(ItemStateDocument::from)
+                    .map(|state| ItemStateDocument::from(**state))
                     .map(|s| s.as_str())
                     .collect();
 

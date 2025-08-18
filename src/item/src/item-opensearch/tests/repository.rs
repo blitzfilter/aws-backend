@@ -8,7 +8,6 @@ use item_opensearch::item_state_document::ItemStateDocument;
 use item_opensearch::item_update_document::ItemUpdateDocument;
 use item_opensearch::repository::{ItemOpenSearchRepository, ItemOpenSearchRepositoryImpl};
 use opensearch::http::Url;
-use search_filter_core::array_query::ArrayQuery;
 use search_filter_core::search_filter::SearchFilter;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -226,7 +225,7 @@ async fn should_search_item_documents() {
         item_query: "Hallo Welt".into(),
         shop_name_query: None,
         price_query: None,
-        state_query: ArrayQuery(vec![]),
+        state_query: Default::default(),
         created_query: None,
         updated_query: None,
     };
