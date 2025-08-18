@@ -12,7 +12,7 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use common::sort::Sort;
 use item_core::description::Description;
-use item_core::item::{Item, LocalizedItemView};
+use item_core::item::{Item, LocalizedItemView, SortItemField};
 use item_core::title::Title;
 use item_dynamodb::repository::ItemDynamoDbRepository;
 use search_filter_core::search_filter::SearchFilter;
@@ -53,13 +53,6 @@ pub mod api {
 
 #[derive(thiserror::Error, Debug)]
 pub enum SearchItemsError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SortItemField {
-    Price,
-    Updated,
-    Created,
-}
 
 #[async_trait]
 #[mockall::automock]

@@ -6,6 +6,6 @@ pub enum SortDirection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sort<T> {
-    field: T,
-    direction: SortDirection,
+    pub field: T,
+    pub direction: SortDirection,
 }

@@ -18,9 +18,9 @@ use crate::item_event::{
     ItemCreatedEventPayload, ItemEvent, ItemEventPayload, ItemPriceChangeEventPayload,
     ItemStateChangeEventPayload,
 };
-use common::item_state::domain::ItemState;
 use crate::shop_name::ShopName;
 use crate::title::Title;
+use common::item_state::domain::ItemState;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -179,6 +179,13 @@ impl HasKey for Item {
             shops_item_id: self.shops_item_id.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortItemField {
+    Price,
+    Updated,
+    Created,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,8 +499,8 @@ mod tests {
         use crate::hash::ItemHash;
         use crate::item::Item;
         use crate::item_event::ItemEventPayload;
-        use common::item_state::domain::ItemState;
         use common::currency::domain::Currency;
+        use common::item_state::domain::ItemState;
         use common::language::domain::Language;
         use common::localized::Localized;
         use common::price::domain::{FxRate, MonetaryAmount, Price};
