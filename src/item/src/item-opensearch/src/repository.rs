@@ -161,12 +161,12 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
         }
 
         let price_field = match currency {
-            Currency::Eur => "price_eur",
-            Currency::Gbp => "price_gbp",
-            Currency::Usd => "price_usd",
-            Currency::Aud => "price_aud",
-            Currency::Cad => "price_cad",
-            Currency::Nzd => "price_nzd",
+            Currency::Eur => "priceEur",
+            Currency::Gbp => "priceGbp",
+            Currency::Usd => "priceUsd",
+            Currency::Aud => "priceAud",
+            Currency::Cad => "priceCad",
+            Currency::Nzd => "priceNzd",
         };
         if let Some(min) = search_filter
             .price_query
@@ -258,7 +258,10 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             };
             body.as_object_mut().unwrap().insert(
                 "sort".to_string(),
-                json!([{ sort_field: { "order": order } }]),
+                json!([
+                    { sort_field: { "order": order, "missing": "_last", } },
+                    { "itemId": { "order": "asc"} }
+                ]),
             );
         }
 
