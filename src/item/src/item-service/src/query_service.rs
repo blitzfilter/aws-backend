@@ -207,11 +207,11 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
 
     async fn search_items(
         &self,
-        search_filter: &SearchFilter,
-        language: &Language,
-        currency: &Currency,
-        sort: &Option<Sort<SortItemField>>,
-        page: &Option<Page>,
+        _search_filter: &SearchFilter,
+        _language: &Language,
+        _currency: &Currency,
+        _sort: &Option<Sort<SortItemField>>,
+        _page: &Option<Page>,
     ) -> Result<Vec<LocalizedItemView>, SearchItemsError> {
         todo!()
     }
