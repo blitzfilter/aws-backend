@@ -28,11 +28,11 @@ pub enum GetItemError {
     ),
 }
 
+#[cfg(feature = "api")]
 pub mod api {
+    use crate::get_service::GetItemError;
     use common::api::error::ApiError;
     use common::api::error_code::{ITEM_NOT_FOUND, MONETARY_AMOUNT_OVERFLOW};
-
-    use crate::get_service::GetItemError;
 
     impl From<GetItemError> for ApiError {
         fn from(err: GetItemError) -> Self {

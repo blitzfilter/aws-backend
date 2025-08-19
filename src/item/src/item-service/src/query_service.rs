@@ -21,6 +21,23 @@ pub enum SearchItemsError {
     OpenSearchError(#[from] opensearch::Error),
 }
 
+#[cfg(feature = "api")]
+pub mod api {
+    use crate::query_service::SearchItemsError;
+    use common::api::error::ApiError;
+    use common::api::error_code::INTERNAL_SERVER_ERROR;
+
+    impl From<SearchItemsError> for ApiError {
+        fn from(err: SearchItemsError) -> Self {
+            match err {
+                SearchItemsError::OpenSearchError(_) => {
+                    ApiError::internal_server_error(INTERNAL_SERVER_ERROR)
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 #[mockall::automock]
 pub trait QueryItemService {
