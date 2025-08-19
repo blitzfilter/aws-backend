@@ -1,0 +1,22 @@
+[package]
+name = "item-api-search-items"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { workspace = true, features = ["api"] }
+item-core = { workspace = true }
+item-service = { workspace = true, features = ["opensearch"] }
+item-opensearch = { workspace = true }
+item-data = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json"] }
+dotenvy = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+aws_lambda_events = { workspace = true, features = ["apigw"] }
+lambda_runtime = { workspace = true }
+aws-config = { workspace = true }
+opensearch = { workspace = true }
+serde_json = { workspace = true }
+accept-language = { workspace = true }
+http = { workspace = true }

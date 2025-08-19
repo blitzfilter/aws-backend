@@ -39,6 +39,7 @@ item = { path = "src/item" }
 item-api = { path = "src/item/src/item-api" }
 item-data = { path = "src/item/src/item-data" }
 item-api-get-item = { path = "src/item/src/item-api/src/item-api-get-item" }
+item-api-search-items = { path = "src/item/src/item-api/src/item-api-search-items" }
 item-core = { path = "src/item/src/item-core" }
 item-dynamodb = { path = "src/item/src/item-dynamodb" }
 item-opensearch = { path = "src/item/src/item-opensearch" }
