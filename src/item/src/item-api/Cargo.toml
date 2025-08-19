@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 item-api-get-item = { workspace = true }
-item-api-search-items = { workspace = true }
+item-api-simple-search = { workspace = true }

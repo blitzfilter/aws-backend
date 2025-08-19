@@ -1974,7 +1974,7 @@ name = "item-api"
 version = "0.1.0"
 dependencies = [
  "item-api-get-item",
- "item-api-search-items",
+ "item-api-simple-search",
 ]
 
 [[package]]
@@ -2006,7 +2006,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "item-api-search-items"
+name = "item-api-simple-search"
 version = "0.1.0"
 dependencies = [
  "accept-language",
