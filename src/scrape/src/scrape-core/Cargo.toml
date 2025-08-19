@@ -7,7 +7,7 @@ edition = "2024"
 common = { workspace = true, features = ["sqs"] }
 item-core = { workspace = true }
 item-data = { workspace = true }
-item-service = { workspace = true }
+item-service = { workspace = true, features = ["dynamodb"] }
 item-dynamodb = { workspace = true, features = ["repository"] }
 futures = { workspace = true, features = ["async-await", "alloc"] }
 tokio = { workspace = true, features = ["time"] }

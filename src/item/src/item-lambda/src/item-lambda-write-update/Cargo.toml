@@ -7,7 +7,7 @@ edition = "2024"
 common = { workspace = true }
 item-core = { workspace = true }
 item-dynamodb = { workspace = true, features = ["repository"] }
-item-service = { workspace = true }
+item-service = { workspace = true, features = ["dynamodb"] }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
@@ -23,6 +23,6 @@ test-api = { workspace = true }
 serial_test = { workspace = true }
 rstest = { workspace = true }
 mockall = { workspace = true }
-item-service = { workspace = true, features = ["test-data"] }
+item-service = { workspace = true, features = ["test-data", "dynamodb"] }
 fake = { workspace = true }
 uuid = { workspace = true }

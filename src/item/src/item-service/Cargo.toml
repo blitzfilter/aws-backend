@@ -6,12 +6,7 @@ edition = "2024"
 [dependencies]
 common = { workspace = true, features = ["dynamodb", "api"] }
 item-core = { workspace = true }
-item-dynamodb = { workspace = true, features = ["repository"] }
-item-opensearch = { workspace = true }
-opensearch = { workspace = true }
 async-trait = { workspace = true }
-aws-sdk-dynamodb = { workspace = true }
-serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"] }
 serde = { workspace = true }
 tracing = { workspace = true }
 itertools = { workspace = true }
@@ -21,6 +16,13 @@ url = { workspace = true, features = ["serde"] }
 search-filter-core = { workspace = true }
 
 fake = { workspace = true, optional = true }
+item-dynamodb = { workspace = true, features = ["repository"], optional = true }
+aws-sdk-dynamodb = { workspace = true, optional = true }
+serde_dynamo = { workspace = true, features = [
+    "aws-sdk-dynamodb+1",
+], optional = true }
+item-opensearch = { workspace = true, optional = true }
+opensearch = { workspace = true, optional = true }
 
 [dev-dependencies]
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
@@ -33,4 +35,6 @@ item-service = { workspace = true, features = ["test-data"] }
 
 [features]
 default = []
+dynamodb = ["aws-sdk-dynamodb", "serde_dynamo", "item-dynamodb"]
+opensearch = ["dep:opensearch", "item-opensearch"]
 test-data = ["fake", "common/test-data", "item-core/test-data"]
