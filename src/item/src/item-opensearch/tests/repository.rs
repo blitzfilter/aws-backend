@@ -303,6 +303,7 @@ async fn should_search_item_documents_when_all_arguments_are_given() {
             &Some(page),
         )
         .await;
+
     assert!(response.is_ok());
 }
 
@@ -457,9 +458,9 @@ async fn should_search_item_documents_respecting_order_when_price_range_is_given
         .map(|hit| hit.source)
         .collect::<Vec<_>>();
     let sorter = |l: &ItemDocument, r: &ItemDocument| match l
-        .price_usd
+        .price_eur
         .unwrap()
-        .cmp(&r.price_usd.unwrap())
+        .cmp(&r.price_eur.unwrap())
     {
         std::cmp::Ordering::Equal => l.item_id.to_string().cmp(&r.item_id.to_string()),
         ord => ord,
