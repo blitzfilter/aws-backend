@@ -68,7 +68,7 @@ serial_test = "3.2.0"
 sha2 = "0.10.9"
 strum = "0.27.2"
 strum_macros = "0.27.2"
-syn = "2.0.105"
+syn = "2.0.106"
 test-api = { path = "src/test-api" }
 test-api-macros = { path = "src/test-api/src/test-api-macros" }
 testcontainers = "0.24.0"
