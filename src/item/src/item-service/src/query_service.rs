@@ -164,6 +164,7 @@ mod tests {
     use search_filter_core::{
         array_query::AnyOfQuery, range_query::RangeQuery, search_filter::SearchFilter,
     };
+    use serde::ser::Error;
     use time::macros::datetime;
 
     fn mk_search_response(item_documents: Vec<ItemDocument>) -> SearchResponse<ItemDocument> {
@@ -195,6 +196,7 @@ mod tests {
         }
     }
 
+    #[tokio::test]
     #[rstest::rstest]
     #[case(
         SearchFilter {
@@ -271,7 +273,6 @@ mod tests {
         None,
         1234
     )]
-    #[tokio::test]
     async fn should_search_items(
         #[case] search_filter: SearchFilter,
         #[case] language: Language,
@@ -294,5 +295,142 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, actual.len());
+    }
+
+    #[tokio::test]
+    async fn should_propagate_opensearch_error() {
+        let mut repository = MockItemOpenSearchRepository::default();
+        repository
+            .expect_search_item_documents()
+            .return_once(|_, _, _, _, _| {
+                Box::pin(async {
+                    Err(opensearch::Error::from(serde_json::Error::custom(
+                        "Something went wrong.",
+                    )))
+                })
+            });
+        let service = QueryItemServiceImpl::new(&repository);
+
+        let actual = service
+            .search_items(
+                &SearchFilter {
+                    item_query: "Hallo Welten!".into(),
+                    shop_name_query: None,
+                    price_query: None,
+                    state_query: Default::default(),
+                    created_query: None,
+                    updated_query: None,
+                },
+                &Language::De,
+                &Currency::Eur,
+                &None,
+                &None,
+            )
+            .await;
+
+        assert!(actual.is_err());
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case::eur(Currency::Eur, 2)]
+    #[case::gbp(Currency::Gbp, 4)]
+    #[case::usd(Currency::Usd, 10)]
+    #[case::aud(Currency::Aud, 1000)]
+    #[case::cad(Currency::Cad, 4000)]
+    #[case::nzd(Currency::Nzd, 42)]
+    async fn should_respect_currency(#[case] currency: Currency, #[case] expected_amount: u64) {
+        let mut repository = MockItemOpenSearchRepository::default();
+        repository
+            .expect_search_item_documents()
+            .return_once(move |_, _, _, _, _| {
+                let items = fake::vec![ItemDocument; 369]
+                    .into_iter()
+                    .map(|mut item| {
+                        item.price_eur = Some(2);
+                        item.price_gbp = Some(4);
+                        item.price_usd = Some(10);
+                        item.price_aud = Some(1000);
+                        item.price_cad = Some(4000);
+                        item.price_nzd = Some(42);
+                        item
+                    })
+                    .collect();
+                Box::pin(async move { Ok(mk_search_response(items)) })
+            });
+        let service = QueryItemServiceImpl::new(&repository);
+
+        let actual = service
+            .search_items(
+                &SearchFilter {
+                    item_query: "Hallo Welten!".into(),
+                    shop_name_query: None,
+                    price_query: None,
+                    state_query: Default::default(),
+                    created_query: None,
+                    updated_query: None,
+                },
+                &Language::De,
+                &currency,
+                &None,
+                &None,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            actual
+                .iter()
+                .map(|item| item.price.unwrap())
+                .all(|price| price.currency == currency
+                    && price.monetary_amount == expected_amount.into())
+        );
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(Language::De, "German")]
+    #[case(Language::En, "English")]
+    async fn should_respect_language(#[case] language: Language, #[case] expected: &str) {
+        let mut repository = MockItemOpenSearchRepository::default();
+        repository
+            .expect_search_item_documents()
+            .return_once(move |_, _, _, _, _| {
+                let items = fake::vec![ItemDocument; 369]
+                    .into_iter()
+                    .map(|mut item| {
+                        item.title_de = Some("German".to_string());
+                        item.title_en = Some("English".to_string());
+                        item.description_de = Some("German".to_string());
+                        item.description_en = Some("English".to_string());
+                        item
+                    })
+                    .collect();
+                Box::pin(async move { Ok(mk_search_response(items)) })
+            });
+        let service = QueryItemServiceImpl::new(&repository);
+
+        let actual = service
+            .search_items(
+                &SearchFilter {
+                    item_query: "Hallo Welten!".into(),
+                    shop_name_query: None,
+                    price_query: None,
+                    state_query: Default::default(),
+                    created_query: None,
+                    updated_query: None,
+                },
+                &language,
+                &Currency::Aud,
+                &None,
+                &None,
+            )
+            .await
+            .unwrap();
+
+        assert!(actual.iter().all(|item| item.title.localization == language
+            && item.title.payload.as_ref() == expected
+            && item.description.clone().unwrap().localization == language
+            && item.description.clone().unwrap().payload.as_ref() == expected));
     }
 }
