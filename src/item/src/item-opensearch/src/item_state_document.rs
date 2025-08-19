@@ -37,6 +37,18 @@ impl From<ItemState> for ItemStateDocument {
     }
 }
 
+impl From<ItemStateDocument> for ItemState {
+    fn from(value: ItemStateDocument) -> Self {
+        match value {
+            ItemStateDocument::Listed => ItemState::Listed,
+            ItemStateDocument::Available => ItemState::Available,
+            ItemStateDocument::Reserved => ItemState::Reserved,
+            ItemStateDocument::Sold => ItemState::Sold,
+            ItemStateDocument::Removed => ItemState::Removed,
+        }
+    }
+}
+
 impl ItemStateDocument {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -88,7 +100,7 @@ mod tests {
     #[case(ItemStateDocument::Reserved)]
     #[case(ItemStateDocument::Sold)]
     #[case(ItemStateDocument::Removed)]
-    fn should_as_str_match_serialiazed(#[case] state: ItemStateDocument) {
+    fn should_as_str_match_serialized(#[case] state: ItemStateDocument) {
         let serialized = serde_json::to_string::<ItemStateDocument>(&state)
             .unwrap()
             .replace("\"", "");
