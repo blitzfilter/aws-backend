@@ -104,6 +104,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
         page: &Option<Page>,
     ) -> Result<SearchResponse<ItemDocument>, opensearch::Error> {
         let mut must = vec![];
+        let mut filter = vec![];
 
         let (title_field, description_field) = match language {
             Language::De => ("titleDe", "descriptionDe"),
@@ -118,7 +119,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
                     format!("{description_field}^1"),
                 ],
                 "fuzziness": "AUTO",
-                "operator": "and"
+                "minimum_should_match": "70%"
             }
         }));
 
@@ -128,7 +129,6 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
                     "shopName": {
                         "query": shop_name_query.deref(),
                         "fuzziness": "AUTO",
-                        "operator": "and"
                     }
                 }
             }));
@@ -143,7 +143,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
         {
             [] => {}
             [ItemState::Available] => {
-                must.push(json!({
+                filter.push(json!({
                     "term": { "isAvailable": true }
                 }));
             }
@@ -154,7 +154,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
                     .map(|s| s.as_str())
                     .collect();
 
-                must.push(json!({
+                filter.push(json!({
                     "terms": { "state": state_values }
                 }));
             }
@@ -172,7 +172,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             .price_query
             .and_then(|price_query| price_query.min)
         {
-            must.push(json!({
+            filter.push(json!({
                 "range": { price_field: { "gte": min.deref() } }
             }));
         }
@@ -180,7 +180,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             .price_query
             .and_then(|price_query| price_query.max)
         {
-            must.push(json!({
+            filter.push(json!({
                 "range": { price_field: { "lte": max.deref() } }
             }));
         }
@@ -192,7 +192,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             let formatted_min = min
                 .format(&well_known::Rfc3339)
                 .map_err(serde_json::Error::custom)?;
-            must.push(json!({
+            filter.push(json!({
                 "range": { "created": { "gte": formatted_min } }
             }));
         }
@@ -203,7 +203,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             let formatted_max = max
                 .format(&well_known::Rfc3339)
                 .map_err(serde_json::Error::custom)?;
-            must.push(json!({
+            filter.push(json!({
                 "range": { "created": { "lte": formatted_max } }
             }));
         }
@@ -215,7 +215,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             let formatted_min = min
                 .format(&well_known::Rfc3339)
                 .map_err(serde_json::Error::custom)?;
-            must.push(json!({
+            filter.push(json!({
                 "range": { "updated": { "gte": formatted_min } }
             }));
         }
@@ -226,14 +226,17 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             let formatted_max = max
                 .format(&well_known::Rfc3339)
                 .map_err(serde_json::Error::custom)?;
-            must.push(json!({
+            filter.push(json!({
                 "range": { "updated": { "lte": formatted_max } }
             }));
         }
 
         let mut body = json!({
             "query": {
-                "bool": { "must": must }
+                "bool": {
+                    "must": must,
+                    "filter": filter
+                },
             }
         });
 
