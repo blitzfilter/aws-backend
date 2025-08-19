@@ -129,6 +129,7 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
                     "shopName": {
                         "query": shop_name_query.deref(),
                         "fuzziness": "AUTO",
+                        "operator": "and"
                     }
                 }
             }));
