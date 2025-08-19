@@ -547,9 +547,9 @@ async fn should_search_item_documents_respecting_paging_when_sorted_by_price(#[c
         .map(|hit| hit.source)
         .collect::<Vec<_>>();
     let sorter = |l: &ItemDocument, r: &ItemDocument| match l
-        .price_eur
+        .price_usd
         .unwrap()
-        .cmp(&r.price_eur.unwrap())
+        .cmp(&r.price_usd.unwrap())
     {
         std::cmp::Ordering::Equal => l.item_id.to_string().cmp(&r.item_id.to_string()),
         ord => ord,
