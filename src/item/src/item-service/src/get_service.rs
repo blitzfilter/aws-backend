@@ -1,21 +1,17 @@
-use std::collections::HashMap;
-
 use async_trait::async_trait;
 use aws_sdk_dynamodb::config::http::HttpResponse;
 use aws_sdk_dynamodb::error::SdkError;
 use common::currency::domain::Currency;
 use common::language::domain::Language;
 use common::localized::Localized;
-use common::page::Page;
 use common::price::domain::{MonetaryAmountOverflowError, Price};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use common::sort::Sort;
 use item_core::description::Description;
-use item_core::item::{Item, LocalizedItemView, SortItemField};
+use item_core::item::{Item, LocalizedItemView};
 use item_core::title::Title;
 use item_dynamodb::repository::ItemDynamoDbRepository;
-use search_filter_core::search_filter::SearchFilter;
+use std::collections::HashMap;
 use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
@@ -51,9 +47,6 @@ pub mod api {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum SearchItemsError {}
-
 #[async_trait]
 #[mockall::automock]
 pub trait GetItemService {
@@ -70,15 +63,6 @@ pub trait GetItemService {
         languages: &[Language],
         currency: &Currency,
     ) -> Result<LocalizedItemView, GetItemError>;
-
-    async fn search_items(
-        &self,
-        search_filter: &SearchFilter,
-        language: &Language,
-        currency: &Currency,
-        sort: &Option<Sort<SortItemField>>,
-        page: &Option<Page>,
-    ) -> Result<Vec<LocalizedItemView>, SearchItemsError>;
 }
 
 pub struct GetItemServiceImpl<'a> {
@@ -203,17 +187,6 @@ impl<'a> GetItemService for GetItemServiceImpl<'a> {
         };
 
         Ok(item_view)
-    }
-
-    async fn search_items(
-        &self,
-        _search_filter: &SearchFilter,
-        _language: &Language,
-        _currency: &Currency,
-        _sort: &Option<Sort<SortItemField>>,
-        _page: &Option<Page>,
-    ) -> Result<Vec<LocalizedItemView>, SearchItemsError> {
-        todo!()
     }
 }
 
