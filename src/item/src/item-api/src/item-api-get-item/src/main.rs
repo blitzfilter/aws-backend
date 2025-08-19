@@ -3,7 +3,7 @@ use aws_lambda_events::apigw::ApiGatewayV2httpRequest;
 use aws_sdk_dynamodb::Client;
 use item_api_get_item::handler;
 use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
-use item_service::query_service::QueryItemServiceImpl;
+use item_service::get_service::GetItemServiceImpl;
 use lambda_runtime::tracing::info;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use std::env;
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Error> {
 
     let client = Client::new(&aws_config_builder.build());
     let repository = ItemDynamoDbRepositoryImpl::new(&client);
-    let service = QueryItemServiceImpl::new(&repository);
+    let service = GetItemServiceImpl::new(&repository);
 
     info!("Lambda cold start completed, client initialized.");
 

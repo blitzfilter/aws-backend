@@ -36,7 +36,7 @@ pub mod api {
     use common::api::error::ApiError;
     use common::api::error_code::{ITEM_NOT_FOUND, MONETARY_AMOUNT_OVERFLOW};
 
-    use crate::query_service::GetItemError;
+    use crate::get_service::GetItemError;
 
     impl From<GetItemError> for ApiError {
         fn from(err: GetItemError) -> Self {
@@ -56,7 +56,7 @@ pub enum SearchItemsError {}
 
 #[async_trait]
 #[mockall::automock]
-pub trait QueryItemService {
+pub trait GetItemService {
     async fn find_item(
         &self,
         shop_id: &ShopId,
@@ -81,18 +81,18 @@ pub trait QueryItemService {
     ) -> Result<Vec<LocalizedItemView>, SearchItemsError>;
 }
 
-pub struct QueryItemServiceImpl<'a> {
+pub struct GetItemServiceImpl<'a> {
     repository: &'a (dyn ItemDynamoDbRepository + Sync),
 }
 
-impl<'a> QueryItemServiceImpl<'a> {
+impl<'a> GetItemServiceImpl<'a> {
     pub fn new(repository: &'a (dyn ItemDynamoDbRepository + Sync)) -> Self {
         Self { repository }
     }
 }
 
 #[async_trait]
-impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
+impl<'a> GetItemService for GetItemServiceImpl<'a> {
     async fn find_item(
         &self,
         shop_id: &ShopId,
@@ -221,7 +221,7 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
 mod tests {
 
     mod find_item {
-        use crate::query_service::{GetItemError, QueryItemService, QueryItemServiceImpl};
+        use crate::get_service::{GetItemError, GetItemService, GetItemServiceImpl};
         use aws_sdk_dynamodb::{
             config::http::HttpResponse,
             error::{ConnectorError, SdkError},
@@ -236,7 +236,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(Faker.fake())) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual = service.find_item(&ShopId::new(), &ShopsItemId::new()).await;
@@ -251,7 +251,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(None) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual = service.find_item(&shop_id, &shops_item_id).await;
@@ -291,7 +291,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Err(expected) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual = service.find_item(&shop_id, &shops_item_id).await;
@@ -305,7 +305,7 @@ mod tests {
     }
 
     mod view_item {
-        use crate::query_service::{GetItemError, QueryItemService, QueryItemServiceImpl};
+        use crate::get_service::{GetItemError, GetItemService, GetItemServiceImpl};
         use aws_sdk_dynamodb::{
             config::http::HttpResponse,
             error::{ConnectorError, SdkError},
@@ -329,7 +329,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(Faker.fake())) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual = service
@@ -358,7 +358,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual_price = service
@@ -396,7 +396,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual_title = service
@@ -438,7 +438,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual_title = service
@@ -481,7 +481,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual_description = service
@@ -525,7 +525,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual_description = service
@@ -566,7 +566,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(Some(expected_record)) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual_description = service
@@ -590,7 +590,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Ok(None) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual = service
@@ -632,7 +632,7 @@ mod tests {
             repository
                 .expect_get_item_record()
                 .return_once(|_, _| Box::pin(async { Err(expected) }));
-            let service = QueryItemServiceImpl {
+            let service = GetItemServiceImpl {
                 repository: &repository,
             };
             let actual = service

@@ -13,14 +13,14 @@ use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use http::header::ACCEPT_LANGUAGE;
 use item_data::get_data::GetItemData;
-use item_service::query_service::QueryItemService;
+use item_service::get_service::GetItemService;
 use lambda_runtime::LambdaEvent;
 use tracing::error;
 
 #[tracing::instrument(skip(event, service), fields(requestId = %event.context.request_id))]
 pub async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
-    service: &impl QueryItemService,
+    service: &impl GetItemService,
 ) -> Result<ApiGatewayV2httpResponse, lambda_runtime::Error> {
     match handle(event, service).await {
         Ok(response) => Ok(response),
@@ -30,7 +30,7 @@ pub async fn handler(
 
 pub async fn handle(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
-    service: &impl QueryItemService,
+    service: &impl GetItemService,
 ) -> Result<ApiGatewayV2httpResponse, ApiError> {
     let languages = event
         .payload
@@ -118,7 +118,7 @@ mod tests {
     use common::shops_item_id::ShopsItemId;
     use http::header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE, ETAG, LAST_MODIFIED};
     use item_core::{hash::ItemHash, item::LocalizedItemView};
-    use item_service::query_service::{GetItemError, MockQueryItemService};
+    use item_service::get_service::{GetItemError, MockGetItemService};
     use lambda_runtime::LambdaEvent;
     use test_api::{ApiGatewayV2httpRequestProxy, extract_apigw_response_json_body};
     use time::OffsetDateTime;
@@ -167,7 +167,7 @@ mod tests {
             context: Default::default(),
         };
 
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service
             .expect_view_item()
             .return_once(move |shop_id, shops_item_id, _, _| {
@@ -221,7 +221,7 @@ mod tests {
             context: Default::default(),
         };
 
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service
             .expect_view_item()
             .return_once(move |shop_id, shops_item_id, _, _| {
@@ -281,7 +281,7 @@ mod tests {
             context: Default::default(),
         };
 
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service
             .expect_view_item()
             .return_once(move |shop_id, shops_item_id, _, _| {
@@ -313,7 +313,7 @@ mod tests {
     #[tokio::test]
     async fn should_include_event_id_as_header_e_tag() {
         let event_id = EventId::new();
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service
             .expect_view_item()
             .return_once(move |shop_id, shops_item_id, _, _| {
@@ -357,7 +357,7 @@ mod tests {
     async fn should_include_updated_timestamp_as_header_last_modified() {
         let timestamp = datetime!(2020-01-01 0:00 UTC);
         let event_id = EventId::new();
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service
             .expect_view_item()
             .return_once(move |shop_id, shops_item_id, _, _| {
@@ -399,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_400_when_currency_query_param_is_invalid() {
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service.expect_view_item().never();
 
         let shop_id = ShopId::new();
@@ -424,7 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_400_when_path_param_shop_id_is_missing() {
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service.expect_view_item().never();
         let lambda_event = LambdaEvent {
             payload: ApiGatewayV2httpRequestProxy::builder()
@@ -443,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_400_when_path_param_shops_item_id_is_missing() {
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service.expect_view_item().never();
         let lambda_event = LambdaEvent {
             payload: ApiGatewayV2httpRequestProxy::builder()
@@ -473,7 +473,7 @@ mod tests {
             context: Default::default(),
         };
 
-        let mut service = MockQueryItemService::default();
+        let mut service = MockGetItemService::default();
         service
             .expect_view_item()
             .return_once(move |shop_id, shops_item_id, _, _| {
