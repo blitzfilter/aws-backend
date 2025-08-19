@@ -573,9 +573,9 @@ pub mod tests {
             operation::batch_write_item::BatchWriteItemOutput,
         };
         use common::item_id::ItemKey;
+        use common::item_state::domain::ItemState;
         use common::{batch::dynamodb::BatchGetItemResult, price::domain::FixedFxRate};
         use fake::{Fake, Faker};
-        use common::item_state::domain::ItemState;
         use item_dynamodb::item_record::ItemRecord;
         use item_dynamodb::item_state_record::ItemStateRecord;
         use item_dynamodb::repository::MockItemDynamoDbRepository;
@@ -692,12 +692,12 @@ pub mod tests {
         use aws_sdk_dynamodb::{Client, Config};
         use common::currency::domain::Currency;
         use common::item_id::ItemKey;
+        use common::item_state::domain::ItemState;
         use common::language::record::{LanguageRecord, TextRecord};
         use common::price::domain::{FixedFxRate, Price};
         use common::shops_item_id::ShopsItemId;
         use item_core::hash::ItemHash;
         use item_core::item_event::ItemCommonEventPayload;
-        use common::item_state::domain::ItemState;
         use item_dynamodb::item_record::ItemRecord;
         use item_dynamodb::item_state_record::ItemStateRecord;
         use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;

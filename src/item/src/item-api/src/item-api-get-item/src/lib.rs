@@ -109,6 +109,7 @@ mod tests {
     use aws_lambda_events::encodings::Body::Text;
     use common::currency::data::CurrencyData;
     use common::event_id::EventId;
+    use common::item_state::domain::ItemState;
     use common::language::data::LanguageData;
     use common::language::domain::Language;
     use common::localized::Localized;
@@ -119,11 +120,10 @@ mod tests {
     use item_core::{hash::ItemHash, item::LocalizedItemView};
     use item_service::query_service::{GetItemError, MockQueryItemService};
     use lambda_runtime::LambdaEvent;
-    use test_api::{extract_apigw_response_json_body, ApiGatewayV2httpRequestProxy};
+    use test_api::{ApiGatewayV2httpRequestProxy, extract_apigw_response_json_body};
     use time::OffsetDateTime;
     use time::macros::datetime;
     use url::Url;
-    use common::item_state::domain::ItemState;
 
     #[tokio::test]
     #[rstest::rstest]

@@ -1,5 +1,6 @@
 use common::batch::Batch;
 use common::env::get_dynamodb_table_name;
+use common::item_state::domain::ItemState;
 use common::language::data::LocalizedTextData;
 use common::language::record::{LanguageRecord, TextRecord};
 use common::{
@@ -7,7 +8,6 @@ use common::{
     price::data::PriceData, shop_id::ShopId,
 };
 use item_core::hash::ItemHash;
-use common::item_state::domain::ItemState;
 use item_data::item_state_data::ItemStateData;
 use item_dynamodb::item_record::ItemRecord;
 use item_dynamodb::item_state_record::ItemStateRecord;

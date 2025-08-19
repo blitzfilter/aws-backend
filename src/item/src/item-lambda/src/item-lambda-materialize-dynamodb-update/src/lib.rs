@@ -110,6 +110,7 @@ mod tests {
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::update_item::UpdateItemOutput;
+    use common::item_state::domain::ItemState;
     use common::localized::Localized;
     use common::price::domain::Price;
     use common::shop_id::ShopId;
@@ -117,7 +118,6 @@ mod tests {
     use fake::{Fake, Faker};
     use item_core::item::Item;
     use item_core::item_event::{ItemCommonEventPayload, ItemEvent};
-    use common::item_state::domain::ItemState;
     use item_core::shop_name::ShopName;
     use item_dynamodb::item_event_record::ItemEventRecord;
     use item_dynamodb::item_update_record::ItemRecordUpdate;

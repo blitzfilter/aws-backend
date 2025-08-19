@@ -130,6 +130,7 @@ mod tests {
     use common::currency::command_data::CurrencyCommandData;
     use common::currency::data::CurrencyData;
     use common::currency::domain::Currency;
+    use common::item_state::domain::ItemState;
     use common::language::data::{LanguageData, LocalizedTextData};
     use common::price::command_data::PriceCommandData;
     use common::price::data::PriceData;
@@ -137,7 +138,6 @@ mod tests {
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use item_core::hash::ItemHash;
-    use common::item_state::domain::ItemState;
     use item_data::item_state_data::ItemStateData;
     use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandData};
     use item_service::item_state_command_data::ItemStateCommandData;

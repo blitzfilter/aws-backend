@@ -1,12 +1,12 @@
 use common::has_key::HasKey;
 use common::item_id::ItemKey;
+use common::item_state::domain::ItemState;
 use common::language::domain::Language;
 use common::localized::Localized;
 use common::price::domain::Price;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
 use item_core::description::Description;
-use common::item_state::domain::ItemState;
 use item_core::shop_name::ShopName;
 use item_core::title::Title;
 use std::collections::HashMap;

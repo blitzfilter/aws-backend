@@ -1,7 +1,7 @@
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::item_id::ItemId;
-use item_dynamodb::item_event_record::ItemEventRecord;
 use common::opensearch::bulk_response::{BulkItemResult, BulkResponse};
+use item_dynamodb::item_event_record::ItemEventRecord;
 use item_opensearch::item_document::ItemDocument;
 use item_opensearch::repository::ItemOpenSearchRepository;
 use lambda_runtime::LambdaEvent;
@@ -165,13 +165,13 @@ mod tests {
     use crate::handler;
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use common::event::Event;
+    use common::opensearch::bulk_response::BulkItemResult;
+    use common::opensearch::bulk_response::BulkOpResult;
+    use common::opensearch::bulk_response::{BulkError, BulkResponse};
     use fake::Fake;
     use fake::Faker;
     use item_core::item_event::{ItemCreatedEventPayload, ItemEventPayload};
     use item_dynamodb::item_event_record::ItemEventRecord;
-    use common::opensearch::bulk_response::{BulkError, BulkResponse};
-    use common::opensearch::bulk_response::BulkItemResult;
-    use common::opensearch::bulk_response::BulkOpResult;
     use item_opensearch::repository::MockItemOpenSearchRepository;
     use lambda_runtime::LambdaEvent;
     use std::collections::HashMap;

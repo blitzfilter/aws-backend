@@ -1,6 +1,6 @@
-use common::item_state::domain::ItemState;
 use blake3::Hash;
 use common::currency::domain::Currency;
+use common::item_state::domain::ItemState;
 use common::price::domain::{MonetaryAmount, Price};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -136,8 +136,8 @@ impl ItemHashContributor for Price {
 #[cfg(test)]
 mod tests {
     use crate::hash::ItemHash;
-    use common::{currency::domain::Currency, price::domain::Price};
     use common::item_state::domain::ItemState;
+    use common::{currency::domain::Currency, price::domain::Price};
 
     #[rstest::rstest]
     #[case(
