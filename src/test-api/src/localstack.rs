@@ -142,6 +142,7 @@ pub async fn spin_up_localstack_with_services(services: &[&str]) -> ContainerAsy
 /// - All tests use the same container instance for better performance
 /// - Individual tests should use service `tear_down()` methods to clean state
 /// - Container cleanup is handled automatically when the test process exits
+/// - Will retry container creation up to 3 times on failure
 pub async fn get_or_create_shared_container() -> &'static ContainerAsync<LocalStack> {
     SHARED_CONTAINER
         .get_or_init(|| async {
@@ -156,12 +157,86 @@ pub async fn get_or_create_shared_container() -> &'static ContainerAsync<LocalSt
 
             // Include all services used across the test suite
             let all_services = vec!["dynamodb", "opensearch", "s3", "sqs", "lambda"];
-            let container = spin_up_localstack_with_services(&all_services).await;
 
-            info!("Shared LocalStack container initialized successfully");
-            container
+            // Retry container creation up to 3 times with increasing delays
+            let mut last_error = None;
+            for attempt in 1..=3 {
+                match create_container_with_retry(&all_services, attempt).await {
+                    Ok(container) => {
+                        info!("Shared LocalStack container initialized successfully on attempt {}", attempt);
+                        return container;
+                    }
+                    Err(e) => {
+                        error!(error = %e, attempt = attempt, "Failed to create LocalStack container");
+                        last_error = Some(e);
+
+                        if attempt < 3 {
+                            let delay_secs = attempt * 2;
+                            info!("Retrying container creation in {} seconds...", delay_secs);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+                        }
+                    }
+                }
+            }
+
+            // If all retries failed, panic with the last error
+            panic!("Failed to create LocalStack container after 3 attempts: {:?}", last_error.unwrap());
         })
         .await
+}
+
+/// Creates a LocalStack container with cleanup of any existing containers.
+///
+/// This helper function attempts to clean up any existing LocalStack containers
+/// before creating a new one to avoid port conflicts and state issues.
+async fn create_container_with_retry(
+    services: &[&str],
+    attempt: u64,
+) -> Result<ContainerAsync<LocalStack>, Box<dyn std::error::Error + Send + Sync>> {
+    // Clean up any existing LocalStack containers on first attempt
+    if attempt == 1
+        && let Err(e) = cleanup_existing_containers().await
+    {
+        error!(error = %e, "Failed to cleanup existing containers, continuing anyway");
+    }
+
+    // Use a timeout for container creation
+    let create_future = spin_up_localstack_with_services(services);
+    let timeout_duration = tokio::time::Duration::from_secs(60);
+
+    match tokio::time::timeout(timeout_duration, create_future).await {
+        Ok(container) => Ok(container),
+        Err(_) => Err("Container creation timed out after 60 seconds".into()),
+    }
+}
+
+/// Attempts to clean up any existing LocalStack containers to prevent conflicts.
+async fn cleanup_existing_containers() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::process::Command;
+
+    debug!("Cleaning up existing LocalStack containers");
+
+    // Stop any running LocalStack containers
+    let output = Command::new("docker")
+        .args(["ps", "-q", "--filter", "ancestor=localstack/localstack"])
+        .output()?;
+
+    if output.status.success() && !output.stdout.is_empty() {
+        let container_ids = String::from_utf8(output.stdout)?;
+        for container_id in container_ids.lines() {
+            if !container_id.trim().is_empty() {
+                info!("Stopping existing LocalStack container: {}", container_id);
+                Command::new("docker")
+                    .args(["stop", container_id.trim()])
+                    .output()?;
+                Command::new("docker")
+                    .args(["rm", container_id.trim()])
+                    .output()?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Registers a cleanup handler to gracefully shut down the shared container.
