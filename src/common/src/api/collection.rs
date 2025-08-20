@@ -8,7 +8,7 @@ pub struct CollectionData<T> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct PaginationData {
-    pub from: u16,
-    pub size: u16,
-    pub total: u32,
+    pub from: u64,
+    pub size: u64,
+    pub total: u64,
 }
