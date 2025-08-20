@@ -14,6 +14,12 @@ pub enum Language {
     Es,
 }
 
+impl Default for Language {
+    fn default() -> Self {
+        Language::De
+    }
+}
+
 impl Language {
     pub fn resolve<T>(
         preferred: &[Language],
