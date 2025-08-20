@@ -6,18 +6,13 @@ use crate::language::record::LanguageRecord;
 use crate::localized::Localized;
 
 #[cfg_attr(feature = "test-data", derive(fake::Dummy))]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
 pub enum Language {
+    #[default]
     De,
     En,
     Fr,
     Es,
-}
-
-impl Default for Language {
-    fn default() -> Self {
-        Language::De
-    }
 }
 
 impl Language {
