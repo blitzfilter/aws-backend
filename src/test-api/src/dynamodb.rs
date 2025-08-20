@@ -79,7 +79,7 @@ async fn set_up_tables() -> Result<(), Error> {
 async fn set_up_table_items() -> Result<(), Error> {
     let table_name = get_dynamodb_table_name();
     let client = get_dynamodb_client().await;
-    
+
     // Check if table already exists
     match client.describe_table().table_name(table_name).send().await {
         Ok(_) => {
@@ -198,57 +198,54 @@ async fn clear_table_data() -> Result<(), Error> {
 
     // Scan the table to get all items
     let mut exclusive_start_key: Option<HashMap<String, AttributeValue>> = None;
-    
+
     loop {
         let mut scan_request = client.scan().table_name(table_name);
-        
+
         if let Some(start_key) = exclusive_start_key {
             scan_request = scan_request.set_exclusive_start_key(Some(start_key));
         }
-        
-        let scan_output = scan_request.send().await?;
-        
-        if let Some(items) = scan_output.items {
-            if !items.is_empty() {
-                // Delete items in batches
-                let delete_requests: Vec<WriteRequest> = items
-                    .into_iter()
-                    .map(|item| {
-                        let mut key = HashMap::new();
-                        key.insert("pk".to_string(), item.get("pk").unwrap().clone());
-                        key.insert("sk".to_string(), item.get("sk").unwrap().clone());
-                        
-                        WriteRequest::builder()
-                            .delete_request(
-                                DeleteRequest::builder()
-                                    .set_key(Some(key))
-                                    .build()
-                                    .unwrap()
-                            )
-                            .build()
-                    })
-                    .collect();
 
-                // Process deletes in batches of 25 (DynamoDB limit)
-                for chunk in delete_requests.chunks(25) {
-                    let mut request_items = HashMap::new();
-                    request_items.insert(table_name.to_string(), chunk.to_vec());
-                    
-                    client
-                        .batch_write_item()
-                        .set_request_items(Some(request_items))
-                        .send()
-                        .await?;
-                }
+        let scan_output = scan_request.send().await?;
+
+        if let Some(items) = scan_output.items
+            && !items.is_empty()
+        {
+            // Delete items in batches
+            let delete_requests: Vec<WriteRequest> = items
+                .into_iter()
+                .map(|item| {
+                    let mut key = HashMap::new();
+                    key.insert("pk".to_string(), item.get("pk").unwrap().clone());
+                    key.insert("sk".to_string(), item.get("sk").unwrap().clone());
+
+                    WriteRequest::builder()
+                        .delete_request(
+                            DeleteRequest::builder().set_key(Some(key)).build().unwrap(),
+                        )
+                        .build()
+                })
+                .collect();
+
+            // Process deletes in batches of 25 (DynamoDB limit)
+            for chunk in delete_requests.chunks(25) {
+                let mut request_items = HashMap::new();
+                request_items.insert(table_name.to_string(), chunk.to_vec());
+
+                client
+                    .batch_write_item()
+                    .set_request_items(Some(request_items))
+                    .send()
+                    .await?;
             }
         }
-        
+
         // Check if there are more items to scan
         exclusive_start_key = scan_output.last_evaluated_key;
         if exclusive_start_key.is_none() {
             break;
         }
     }
-    
+
     Ok(())
 }

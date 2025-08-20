@@ -6,7 +6,7 @@ use testcontainers::core::{IntoContainerPort, Mount};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::localstack::LocalStack;
-use tokio::sync::{OnceCell, Mutex};
+use tokio::sync::{Mutex, OnceCell};
 use tracing::{debug, error, info};
 
 /// A lazily-initialized, globally accessible AWS SDK configuration for integration tests.
@@ -146,18 +146,18 @@ pub async fn get_or_create_shared_container() -> &'static ContainerAsync<LocalSt
     SHARED_CONTAINER
         .get_or_init(|| async {
             let _lock = CONTAINER_INIT_LOCK.lock().await;
-            
+
             // Register cleanup handler if not already done
             if !CLEANUP_REGISTERED.swap(true, Ordering::SeqCst) {
                 register_container_cleanup();
             }
 
             info!("Initializing shared LocalStack container with comprehensive service list");
-            
+
             // Include all services used across the test suite
             let all_services = vec!["dynamodb", "opensearch", "s3", "sqs", "lambda"];
             let container = spin_up_localstack_with_services(&all_services).await;
-            
+
             info!("Shared LocalStack container initialized successfully");
             container
         })

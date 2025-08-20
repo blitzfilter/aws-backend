@@ -98,16 +98,27 @@ impl IntegrationTestService for OpenSearch {
 
 async fn set_up_domain() -> Result<CreateDomainOutput, SdkError<CreateDomainError>> {
     let client = aws_sdk_opensearch::Client::new(get_aws_config().await);
-    
+
     // Check if domain already exists
-    match client.describe_domain().domain_name(TEST_DOMAIN_NAME).send().await {
+    match client
+        .describe_domain()
+        .domain_name(TEST_DOMAIN_NAME)
+        .send()
+        .await
+    {
         Ok(_response) => {
-            debug!("OpenSearch domain '{}' already exists, skipping creation", TEST_DOMAIN_NAME);
+            debug!(
+                "OpenSearch domain '{}' already exists, skipping creation",
+                TEST_DOMAIN_NAME
+            );
             // Return a fake response since the domain exists
             return Ok(CreateDomainOutput::builder().build());
         }
         Err(_) => {
-            debug!("OpenSearch domain '{}' does not exist, creating it", TEST_DOMAIN_NAME);
+            debug!(
+                "OpenSearch domain '{}' does not exist, creating it",
+                TEST_DOMAIN_NAME
+            );
         }
     }
 
@@ -166,24 +177,24 @@ async fn wait_until_domain_processed(
 
 async fn set_up_indices() -> Result<Response, Error> {
     use opensearch::indices::IndicesExistsParts;
-    
+
     let client = get_opensearch_client().await;
-    
+
     // Check if index already exists
     let exists_response = client
         .indices()
         .exists(IndicesExistsParts::Index(&["items"]))
         .send()
         .await?;
-    
+
     if exists_response.status_code().is_success() {
         debug!("OpenSearch index 'items' already exists, skipping creation");
         // Return a mock response since index exists
         return Ok(exists_response);
     }
-    
+
     debug!("OpenSearch index 'items' does not exist, creating it");
-    
+
     let mapping = json!({
       "mappings": {
         "properties": {
