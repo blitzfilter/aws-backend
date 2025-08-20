@@ -77,7 +77,6 @@ pub mod api {
         use aws_lambda_events::query_map::QueryMap;
         use std::collections::HashMap;
 
-        #[tokio::test]
         #[rstest::rstest]
         #[case::eur("EUR", CurrencyData::Eur)]
         #[case::gbp("GBP", CurrencyData::Gbp)]
@@ -85,10 +84,7 @@ pub mod api {
         #[case::aud("AUD", CurrencyData::Aud)]
         #[case::cad("CAD", CurrencyData::Cad)]
         #[case::nzd("NZD", CurrencyData::Nzd)]
-        async fn should_extract_currency(
-            #[case] query_value: String,
-            #[case] expected: CurrencyData,
-        ) {
+        fn should_extract_currency(#[case] query_value: String, #[case] expected: CurrencyData) {
             let query = QueryMap::from(HashMap::from_iter([("currency".to_string(), query_value)]));
 
             let actual = extract_currency_query(&query).unwrap();
@@ -96,7 +92,6 @@ pub mod api {
             assert_eq!(expected, actual);
         }
 
-        #[tokio::test]
         #[rstest::rstest]
         #[case("invalid-currency")]
         #[case("boop")]
@@ -105,7 +100,7 @@ pub mod api {
         #[case("moneten")]
         #[case("knete")]
         #[case("knöpfe")]
-        async fn should_400_when_currency_query_param_is_invalid(#[case] query_value: String) {
+        fn should_400_when_currency_query_param_is_invalid(#[case] query_value: String) {
             let query = QueryMap::from(HashMap::from_iter([("currency".to_string(), query_value)]));
 
             let actual = extract_currency_query(&query).unwrap_err();

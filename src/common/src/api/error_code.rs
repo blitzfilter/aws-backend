@@ -19,6 +19,9 @@ pub const BAD_QUERY_PARAMETER_VALUE: ApiErrorCode = ApiErrorCode("BAD_QUERY_PARA
 pub const BAD_HEADER_VALUE: ApiErrorCode = ApiErrorCode("BAD_HEADER_VALUE");
 pub const BAD_PARAMETER: ApiErrorCode = ApiErrorCode("BAD_PARAMETER_VALUE");
 
+pub const BAD_PAGE_FROM_VALUE: ApiErrorCode = ApiErrorCode("BAD_PAGE_FROM_VALUE");
+pub const BAD_PAGE_SIZE_VALUE: ApiErrorCode = ApiErrorCode("BAD_PAGE_SIZE_VALUE");
+
 pub const ITEM_NOT_FOUND: ApiErrorCode = ApiErrorCode("ITEM_NOT_FOUND");
 pub const MONETARY_AMOUNT_OVERFLOW: ApiErrorCode = ApiErrorCode("MONETARY_AMOUNT_OVERFLOW");
 

@@ -130,7 +130,6 @@ pub mod api {
         use http::HeaderMap;
         use http::header::ACCEPT_LANGUAGE;
 
-        #[tokio::test]
         #[rstest::rstest]
         #[case("de", &[De])]
         #[case("de-DE", &[De])]
@@ -156,7 +155,7 @@ pub mod api {
         #[case("\"en-US\"", &[])]
         #[case("123", &[])]
         #[case("abcdefg", &[])]
-        async fn should_extract_languages(
+        fn should_extract_languages(
             #[case] accept_language_header_value: &str,
             #[case] expected: &[LanguageData],
         ) {
@@ -171,7 +170,6 @@ pub mod api {
             assert_eq!(expected, actual.as_slice())
         }
 
-        #[tokio::test]
         #[rstest::rstest]
         #[case("de", De)]
         #[case("de-DE", De)]
@@ -197,7 +195,7 @@ pub mod api {
         #[case("\"en-US\"", De)]
         #[case("123", De)]
         #[case("abcdefg", De)]
-        async fn should_extract_language(
+        fn should_extract_language(
             #[case] accept_language_header_value: &str,
             #[case] expected: LanguageData,
         ) {
