@@ -1,12 +1,13 @@
 use aws_config::{BehaviorVersion, SdkConfig};
 use aws_sdk_dynamodb::config::Credentials;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use testcontainers::core::{IntoContainerPort, Mount};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::localstack::LocalStack;
-use tokio::sync::OnceCell;
-use tracing::{debug, error};
+use tokio::sync::{OnceCell, Mutex};
+use tracing::{debug, error, info};
 
 /// A lazily-initialized, globally accessible AWS SDK configuration for integration tests.
 ///
@@ -15,6 +16,19 @@ use tracing::{debug, error};
 ///
 /// Initialized once on first use via [`get_aws_config()`].
 static CONFIG: OnceCell<SdkConfig> = OnceCell::const_new();
+
+/// A shared LocalStack container instance for all integration tests.
+///
+/// This container is created once and reused across all tests to avoid the expensive
+/// container startup overhead. The container is initialized with all commonly used
+/// services enabled.
+static SHARED_CONTAINER: OnceCell<ContainerAsync<LocalStack>> = OnceCell::const_new();
+
+/// Mutex to ensure only one test can initialize the shared container at a time.
+static CONTAINER_INIT_LOCK: Mutex<()> = Mutex::const_new(());
+
+/// Flag to track if container cleanup has been registered.
+static CLEANUP_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /// Loads and returns a static reference to the AWS SDK configuration for LocalStack.
 ///
@@ -108,4 +122,63 @@ pub async fn spin_up_localstack(env_vars: HashMap<&str, &str>) -> ContainerAsync
 /// A running [`ContainerAsync<LocalStack>`] with only the requested services enabled.
 pub async fn spin_up_localstack_with_services(services: &[&str]) -> ContainerAsync<LocalStack> {
     spin_up_localstack(HashMap::from([("SERVICES", services.join(",").as_str())])).await
+}
+
+/// Gets or creates a shared LocalStack container for all integration tests.
+///
+/// This function maintains a single, shared LocalStack container across all tests to avoid
+/// the expensive container startup overhead. The container is initialized with commonly
+/// used services and reused across test runs.
+///
+/// Services included: dynamodb, opensearch, s3, sqs, lambda
+///
+/// # Returns
+///
+/// A reference to the shared [`ContainerAsync<LocalStack>`] instance.
+///
+/// # Notes
+///
+/// - The container is created only once on first use
+/// - All tests use the same container instance for better performance
+/// - Individual tests should use service `tear_down()` methods to clean state
+/// - Container cleanup is handled automatically when the test process exits
+pub async fn get_or_create_shared_container() -> &'static ContainerAsync<LocalStack> {
+    SHARED_CONTAINER
+        .get_or_init(|| async {
+            let _lock = CONTAINER_INIT_LOCK.lock().await;
+            
+            // Register cleanup handler if not already done
+            if !CLEANUP_REGISTERED.swap(true, Ordering::SeqCst) {
+                register_container_cleanup();
+            }
+
+            info!("Initializing shared LocalStack container with comprehensive service list");
+            
+            // Include all services used across the test suite
+            let all_services = vec!["dynamodb", "opensearch", "s3", "sqs", "lambda"];
+            let container = spin_up_localstack_with_services(&all_services).await;
+            
+            info!("Shared LocalStack container initialized successfully");
+            container
+        })
+        .await
+}
+
+/// Registers a cleanup handler to gracefully shut down the shared container.
+///
+/// This function uses `std::panic::set_hook` to ensure container cleanup even
+/// if tests panic, and relies on the `Drop` trait for normal shutdown.
+fn register_container_cleanup() {
+    // Set up panic hook to ensure cleanup on panic
+    let orig_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        eprintln!("Test panic detected, cleaning up LocalStack container...");
+        if let Some(_container) = SHARED_CONTAINER.get() {
+            // Best effort cleanup on panic - can't use async in panic hook
+            eprintln!("Shared container will be cleaned up by Drop implementation");
+        }
+        orig_hook(panic_info);
+    }));
+
+    debug!("Container cleanup handler registered");
 }

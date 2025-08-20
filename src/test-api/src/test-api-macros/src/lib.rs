@@ -120,7 +120,8 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 result
             };
 
-            let __localstack = test_api::localstack::spin_up_localstack_with_services(&__services).await;
+            // Get the shared container instead of creating a new one
+            let _shared_container = test_api::localstack::get_or_create_shared_container().await;
 
             #( #setup_calls )*
 
@@ -129,7 +130,7 @@ pub fn localstack_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             #( #teardown_calls )*
 
-            drop(__localstack);
+            // Note: No explicit container drop - shared container is reused
         }
     };
 
