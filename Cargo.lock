@@ -2023,6 +2023,7 @@ dependencies = [
  "item-service",
  "lambda_runtime",
  "opensearch",
+ "search-filter-core",
  "serde_json",
  "tokio",
  "tracing",

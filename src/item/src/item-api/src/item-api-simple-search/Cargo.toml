@@ -9,6 +9,7 @@ item-core = { workspace = true }
 item-service = { workspace = true, features = ["opensearch"] }
 item-opensearch = { workspace = true }
 item-data = { workspace = true }
+search-filter-core = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
 dotenvy = { workspace = true }
