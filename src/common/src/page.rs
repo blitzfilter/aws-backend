@@ -35,7 +35,8 @@ pub mod api {
                 ApiError::bad_request(BAD_PAGE_SIZE_VALUE)
                     .with_query_field("size")
                     .with_message(err.to_string())
-            })?;
+            })?
+            .map(|size| size.min(100));
 
         if let Some(from) = from
             && let Some(size) = size
