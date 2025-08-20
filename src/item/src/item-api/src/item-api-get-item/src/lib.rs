@@ -66,13 +66,11 @@ pub async fn handle(
 mod tests {
     use crate::handler;
     use aws_lambda_events::encodings::Body::Text;
-    use common::currency::data::CurrencyData;
     use common::event_id::EventId;
     use common::item_state::domain::ItemState;
     use common::language::data::LanguageData;
     use common::language::domain::Language;
     use common::localized::Localized;
-    use common::price::domain::Price;
     use common::shop_id::ShopId;
     use common::shops_item_id::ShopsItemId;
     use http::header::{ACCEPT_LANGUAGE, CONTENT_LANGUAGE, ETAG, LAST_MODIFIED};
@@ -83,80 +81,6 @@ mod tests {
     use time::OffsetDateTime;
     use time::macros::datetime;
     use url::Url;
-
-    #[tokio::test]
-    #[rstest::rstest]
-    #[case("de", LanguageData::De)]
-    #[case("de-DE", LanguageData::De)]
-    #[case("en", LanguageData::En)]
-    #[case("en-US", LanguageData::En)]
-    #[case("en-GB", LanguageData::En)]
-    #[case("es", LanguageData::Es)]
-    #[case("es-ES", LanguageData::Es)]
-    #[case("de;q=0.9,en;q=0.8", LanguageData::De)]
-    #[case("en-GB,en;q=0.7,de;q=0.6", LanguageData::En)]
-    #[case("es-ES;q=0.9,en;q=0.8,de;q=0.7", LanguageData::Es)]
-    #[case("en,fr;q=0.5,de;q=0.3,es;q=0.2", LanguageData::En)]
-    #[case("pt-BR", LanguageData::De)]
-    #[case("ru", LanguageData::De)]
-    #[case("ja", LanguageData::De)]
-    #[case("zh-CN", LanguageData::De)]
-    #[case("ko-KR", LanguageData::De)]
-    #[case("*", LanguageData::De)]
-    #[case("fr-FR; q=0", LanguageData::De)] // not acceptable
-    #[case("", LanguageData::De)] // empty string
-    #[case("null", LanguageData::De)] // literal "null"
-    #[case("undefined", LanguageData::De)] // literal "undefined"
-    #[case("\"en-US\"", LanguageData::De)] // quotes
-    #[case("123", LanguageData::De)] // numeric
-    #[case("abcdefg", LanguageData::De)] // unrecognized
-    async fn should_respect_accept_language_header(
-        #[case] accept_language_header_value: &str,
-        #[case] expected_language: LanguageData,
-    ) {
-        let shop_id = ShopId::new();
-        let shops_item_id = ShopsItemId::new();
-        let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequestProxy::builder()
-                .http_method(http::Method::GET)
-                .path_parameter("shopId", shop_id)
-                .path_parameter("shopsItemId", shops_item_id)
-                .header(ACCEPT_LANGUAGE.as_str(), accept_language_header_value)
-                .build(),
-            context: Default::default(),
-        };
-
-        let mut service = MockGetItemService::default();
-        service
-            .expect_view_item()
-            .return_once(move |shop_id, shops_item_id, _, _| {
-                let item = LocalizedItemView {
-                    item_id: Default::default(),
-                    event_id: EventId::new(),
-                    shop_id: shop_id.clone(),
-                    shops_item_id: shops_item_id.clone(),
-                    shop_name: "".into(),
-                    title: Localized::new(expected_language.into(), "Native title".into()),
-                    description: None,
-                    price: None,
-                    state: ItemState::Listed,
-                    url: Url::parse("https://foo.com/boop").unwrap(),
-                    images: vec![],
-                    hash: ItemHash::new(&None, &ItemState::Listed),
-                    created: OffsetDateTime::now_utc(),
-                    updated: OffsetDateTime::now_utc(),
-                };
-                Box::pin(async move { Ok(item) })
-            });
-
-        let response = handler(lambda_event, &service).await.unwrap();
-        assert_eq!(200, response.status_code);
-        let json = extract_apigw_response_json_body!(response);
-        assert_eq!(
-            expected_language,
-            serde_json::from_value::<LanguageData>(json["title"]["language"].clone()).unwrap()
-        );
-    }
 
     #[tokio::test]
     #[rstest::rstest]
@@ -214,59 +138,6 @@ mod tests {
                 .to_str()
                 .unwrap()
         );
-    }
-
-    #[tokio::test]
-    #[rstest::rstest]
-    #[case::eur("EUR", CurrencyData::Eur)]
-    #[case::gbp("GBP", CurrencyData::Gbp)]
-    #[case::usd("USD", CurrencyData::Usd)]
-    #[case::aud("AUD", CurrencyData::Aud)]
-    #[case::cad("CAD", CurrencyData::Cad)]
-    #[case::nzd("NZD", CurrencyData::Nzd)]
-    async fn should_respect_currency_query_param(
-        #[case] query_value: &str,
-        #[case] expected_currency: CurrencyData,
-    ) {
-        let shop_id = ShopId::new();
-        let shops_item_id = ShopsItemId::new();
-        let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequestProxy::builder()
-                .http_method(http::Method::GET)
-                .path_parameter("shopId", shop_id)
-                .path_parameter("shopsItemId", shops_item_id)
-                .query_string_parameter("currency", query_value)
-                .build(),
-            context: Default::default(),
-        };
-
-        let mut service = MockGetItemService::default();
-        service
-            .expect_view_item()
-            .return_once(move |shop_id, shops_item_id, _, _| {
-                let item = LocalizedItemView {
-                    item_id: Default::default(),
-                    event_id: EventId::new(),
-                    shop_id: shop_id.clone(),
-                    shops_item_id: shops_item_id.clone(),
-                    shop_name: "".into(),
-                    title: Localized::new(Language::Es, "Native title".into()),
-                    description: None,
-                    price: Some(Price::new(50000u64.into(), expected_currency.into())),
-                    state: ItemState::Listed,
-                    url: Url::parse("https://foo.com/boop").unwrap(),
-                    images: vec![],
-                    hash: ItemHash::new(&None, &ItemState::Listed),
-                    created: OffsetDateTime::now_utc(),
-                    updated: OffsetDateTime::now_utc(),
-                };
-                Box::pin(async move { Ok(item) })
-            });
-
-        let response = handler(lambda_event, &service).await.unwrap();
-        assert_eq!(200, response.status_code);
-        let json = extract_apigw_response_json_body!(response);
-        assert_eq!(query_value, json["price"]["currency"]);
     }
 
     #[tokio::test]
@@ -354,31 +225,6 @@ mod tests {
             "Wed, 01 Jan 2020 00:00:00 GMT",
             response.headers.get(LAST_MODIFIED).unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn should_400_when_currency_query_param_is_invalid() {
-        let mut service = MockGetItemService::default();
-        service.expect_view_item().never();
-
-        let shop_id = ShopId::new();
-        let shops_item_id = ShopsItemId::new();
-
-        let lambda_event = LambdaEvent {
-            payload: ApiGatewayV2httpRequestProxy::builder()
-                .http_method(http::Method::GET)
-                .path_parameter("shopId", shop_id)
-                .path_parameter("shopsItemId", shops_item_id)
-                .query_string_parameter("currency", "invalid_currency")
-                .build(),
-            context: Default::default(),
-        };
-
-        let response = handler(lambda_event, &service).await.unwrap();
-        assert_eq!(400, response.status_code);
-        let json = extract_apigw_response_json_body!(response);
-        assert_eq!(400, json["status"]);
-        assert_eq!("currency", json["source"]["field"]);
     }
 
     #[tokio::test]

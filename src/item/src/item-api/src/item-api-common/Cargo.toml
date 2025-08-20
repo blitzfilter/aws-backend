@@ -12,3 +12,6 @@ accept-language = { workspace = true }
 http = { workspace = true }
 
 [dev-dependencies]
+test-api = { workspace = true }
+rstest = { workspace = true }
+tokio = { workspace = true }

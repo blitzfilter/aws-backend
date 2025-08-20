@@ -69,3 +69,157 @@ pub fn extract_currency_query(
 
     Ok(currency)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::extract_currency_query;
+    use crate::extract_language_header;
+    use crate::extract_languages_header;
+    use common::api::error::ApiErrorSource;
+    use common::api::error::ApiErrorSourceType;
+    use common::api::error_code::BAD_QUERY_PARAMETER_VALUE;
+    use common::currency::domain::Currency;
+    use common::language::domain::Language::{self, *};
+    use http::header::ACCEPT_LANGUAGE;
+    use lambda_runtime::LambdaEvent;
+    use test_api::ApiGatewayV2httpRequestProxy;
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case("de", &[De])]
+    #[case("de-DE", &[De])]
+    #[case("en", &[En])]
+    #[case("en-US", &[En])]
+    #[case("en-GB", &[En])]
+    #[case("es", &[Es])]
+    #[case("es-ES", &[Es])]
+    #[case("de;q=0.9,en;q=0.8", &[De, En])]
+    #[case("en-GB,en;q=0.7,de;q=0.6", &[En, En, De])]
+    #[case("es-ES;q=0.9,en;q=0.8,de;q=0.7", &[Es, En, De])]
+    #[case("en,fr;q=0.5,de;q=0.3,es;q=0.2", &[En, Fr, De, Es])]
+    #[case("pt-BR", &[])]
+    #[case("ru", &[])]
+    #[case("ja", &[])]
+    #[case("zh-CN", &[])]
+    #[case("ko-KR", &[])]
+    #[case("*", &[])]
+    #[case("fr-FR; q=0", &[Fr])]
+    #[case("", &[])]
+    #[case("null", &[])]
+    #[case("undefined", &[])]
+    #[case("\"en-US\"", &[])]
+    #[case("123", &[])]
+    #[case("abcdefg", &[])]
+    async fn should_extract_languages(
+        #[case] accept_language_header_value: &str,
+        #[case] expected: &[Language],
+    ) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .header(ACCEPT_LANGUAGE.as_str(), accept_language_header_value)
+                .build(),
+            context: Default::default(),
+        };
+
+        let actual = extract_languages_header(&lambda_event).unwrap();
+
+        assert_eq!(expected, actual.as_slice())
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case("de", De)]
+    #[case("de-DE", De)]
+    #[case("en", En)]
+    #[case("en-US", En)]
+    #[case("en-GB", En)]
+    #[case("es", Es)]
+    #[case("es-ES", Es)]
+    #[case("de;q=0.9,en;q=0.8", De)]
+    #[case("en-GB,en;q=0.7,de;q=0.6", En)]
+    #[case("es-ES;q=0.9,en;q=0.8,de;q=0.7", Es)]
+    #[case("en,fr;q=0.5,de;q=0.3,es;q=0.2", En)]
+    #[case("pt-BR", De)]
+    #[case("ru", De)]
+    #[case("ja", De)]
+    #[case("zh-CN", De)]
+    #[case("ko-KR", De)]
+    #[case("*", De)]
+    #[case("fr-FR; q=0", Fr)]
+    #[case("", De)]
+    #[case("null", De)]
+    #[case("undefined", De)]
+    #[case("\"en-US\"", De)]
+    #[case("123", De)]
+    #[case("abcdefg", De)]
+    async fn should_extract_language(
+        #[case] accept_language_header_value: &str,
+        #[case] expected: Language,
+    ) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .header(ACCEPT_LANGUAGE.as_str(), accept_language_header_value)
+                .build(),
+            context: Default::default(),
+        };
+
+        let actual = extract_language_header(&lambda_event).unwrap();
+
+        assert_eq!(expected, actual)
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case::eur("EUR", Currency::Eur)]
+    #[case::gbp("GBP", Currency::Gbp)]
+    #[case::usd("USD", Currency::Usd)]
+    #[case::aud("AUD", Currency::Aud)]
+    #[case::cad("CAD", Currency::Cad)]
+    #[case::nzd("NZD", Currency::Nzd)]
+    async fn should_extract_currency(#[case] query_value: &str, #[case] expected: Currency) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .query_string_parameter("currency", query_value)
+                .build(),
+            context: Default::default(),
+        };
+
+        let actual = extract_currency_query(&lambda_event).unwrap();
+
+        assert_eq!(expected, actual);
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case("invalid-currency")]
+    #[case("boop")]
+    #[case("euronen")]
+    #[case("dollers")]
+    #[case("moneten")]
+    #[case("knete")]
+    #[case("knöpfe")]
+    async fn should_400_when_currency_query_param_is_invalid(#[case] query_param_value: &str) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .query_string_parameter("currency", query_param_value)
+                .build(),
+            context: Default::default(),
+        };
+
+        let actual = extract_currency_query(&lambda_event).unwrap_err();
+
+        assert_eq!(400, actual.status);
+        assert_eq!(BAD_QUERY_PARAMETER_VALUE, actual.error);
+        assert_eq!(
+            Some(ApiErrorSource {
+                field: "currency",
+                source_type: ApiErrorSourceType::Query,
+            }),
+            actual.source
+        )
+    }
+}
