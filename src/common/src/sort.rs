@@ -39,6 +39,18 @@ pub struct Sort<T> {
     pub order: SortOrder,
 }
 
+impl<T> Sort<T> {
+    pub fn map<U, F>(self, f: F) -> Sort<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        Sort {
+            sort: f(self.sort),
+            order: self.order,
+        }
+    }
+}
+
 #[cfg(feature = "api")]
 pub mod api {
     use crate::{
