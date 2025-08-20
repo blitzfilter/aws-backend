@@ -35,6 +35,18 @@ pub struct ApiGatewayV2httpRequestProxy {
                 current.insert(key.into(), value.into());
                 self.headers = HeaderMap::try_from(&current).unwrap();
             }
+
+            pub fn try_header(self, key: impl Into<String>, value: Option<impl Into<String>>) {
+                if let Some(value) = value {
+                    let mut current: HashMap<String, String> = self
+                        .headers
+                        .iter()
+                        .map(|(key, value)| (key.to_string(), value.to_str().unwrap().to_owned()))
+                        .collect();
+                    current.insert(key.into(), value.into());
+                    self.headers = HeaderMap::try_from(&current).unwrap();
+                }
+            }
         ),
         via_mutators
     )]
@@ -51,6 +63,18 @@ pub struct ApiGatewayV2httpRequestProxy {
                     .collect();
                 current.insert(key.into(), value.into());
                 self.query_string_parameters = QueryMap::from(current);
+            }
+
+            pub fn try_query_string_parameter(self, key: impl Into<String>, value: Option<impl Into<String>>) {
+                if let Some(value) = value {
+                    let mut current: HashMap<String, String> = self
+                        .query_string_parameters
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    current.insert(key.into(), value.into());
+                    self.query_string_parameters = QueryMap::from(current);
+                }
             }
         ),
         via_mutators
