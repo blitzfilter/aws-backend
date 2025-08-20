@@ -24,6 +24,7 @@ aws-sdk-sqs = { workspace = true, optional = true }
 serde_dynamo = { workspace = true, features = [
     "aws-sdk-dynamodb+1",
 ], optional = true }
+accept-language = { workspace = true, optional = true }
 aws_lambda_events = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -34,11 +35,18 @@ opensearch = { workspace = true, optional = true }
 [dev-dependencies]
 rstest = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 default = []
 dynamodb = ["serde_dynamo", "aws-sdk-dynamodb"]
 opensearch = ["dep:opensearch", "serde_json"]
 sqs = ["aws-sdk-sqs", "serde_json"]
-api = ["aws_lambda_events/apigw", "http", "serde_json", "httpdate"]
+api = [
+    "aws_lambda_events/apigw",
+    "http",
+    "serde_json",
+    "httpdate",
+    "accept-language",
+]
 test-data = ["fake"]

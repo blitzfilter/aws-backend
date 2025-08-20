@@ -11,7 +11,13 @@ scrape = { workspace = true }
 test-api = { workspace = true }
 
 [workspace]
-members = ["src/common", "src/search-filter", "src/item", "src/scrape", "src/test-api"]
+members = [
+    "src/common",
+    "src/search-filter",
+    "src/item",
+    "src/scrape",
+    "src/test-api",
+]
 
 [workspace.dependencies]
 accept-language = "3.1.0"
@@ -38,7 +44,6 @@ httpdate = "1.0.3"
 item = { path = "src/item" }
 item-api = { path = "src/item/src/item-api" }
 item-data = { path = "src/item/src/item-data" }
-item-api-common = { path = "src/item/src/item-api/src/item-api-common" }
 item-api-get-item = { path = "src/item/src/item-api/src/item-api-get-item" }
 item-api-simple-search = { path = "src/item/src/item-api/src/item-api-simple-search" }
 item-core = { path = "src/item/src/item-core" }
@@ -56,6 +61,7 @@ itertools = "0.14.0"
 lambda_runtime = "0.14.3"
 mockall = "0.13.1"
 opensearch = { version = "2.3.0", features = ["aws-auth", "rustls-tls"] }
+query_map = { version = "0.7.0" }
 quote = "1.0.40"
 reqwest = { version = "0.12.23", features = ["rustls-tls"] }
 rstest = "0.26.1"

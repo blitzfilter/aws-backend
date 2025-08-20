@@ -869,6 +869,7 @@ dependencies = [
 name = "common"
 version = "0.1.0"
 dependencies = [
+ "accept-language",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
  "aws_lambda_events",
@@ -885,6 +886,7 @@ dependencies = [
  "strum_macros",
  "thiserror",
  "time",
+ "tokio",
  "tracing",
  "uuid",
 ]
@@ -1973,24 +1975,8 @@ dependencies = [
 name = "item-api"
 version = "0.1.0"
 dependencies = [
- "item-api-common",
  "item-api-get-item",
  "item-api-simple-search",
-]
-
-[[package]]
-name = "item-api-common"
-version = "0.1.0"
-dependencies = [
- "accept-language",
- "aws_lambda_events",
- "common",
- "http 1.3.1",
- "lambda_runtime",
- "rstest",
- "serde_json",
- "test-api",
- "tokio",
 ]
 
 [[package]]
@@ -2004,7 +1990,6 @@ dependencies = [
  "common",
  "dotenvy",
  "http 1.3.1",
- "item-api-common",
  "item-core",
  "item-data",
  "item-dynamodb",
@@ -2032,7 +2017,6 @@ dependencies = [
  "common",
  "dotenvy",
  "http 1.3.1",
- "item-api-common",
  "item-core",
  "item-data",
  "item-opensearch",

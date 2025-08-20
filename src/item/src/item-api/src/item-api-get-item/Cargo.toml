@@ -9,7 +9,6 @@ item-core = { workspace = true }
 item-service = { workspace = true, features = ["dynamodb", "api"] }
 item-dynamodb = { workspace = true, features = ["repository"] }
 item-data = { workspace = true }
-item-api-common = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
 dotenvy = { workspace = true }

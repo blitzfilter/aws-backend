@@ -4,6 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-item-api-common = { workspace = true }
 item-api-get-item = { workspace = true }
 item-api-simple-search = { workspace = true }
