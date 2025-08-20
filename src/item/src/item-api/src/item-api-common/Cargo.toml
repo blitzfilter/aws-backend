@@ -1,0 +1,14 @@
+[package]
+name = "item-api-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { workspace = true, features = ["api"] }
+aws_lambda_events = { workspace = true, features = ["apigw"] }
+lambda_runtime = { workspace = true }
+serde_json = { workspace = true }
+accept-language = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]

@@ -1,17 +1,10 @@
 use aws_lambda_events::apigw::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
-use aws_lambda_events::http::HeaderValue;
 use common::api::api_gateway_v2_http_response_builder::ApiGatewayV2HttpResponseBuilder;
 use common::api::error::ApiError;
-use common::api::error_code::{
-    BAD_HEADER_VALUE, BAD_PARAMETER, BAD_QUERY_PARAMETER_VALUE, INTERNAL_SERVER_ERROR,
-};
-use common::currency::data::CurrencyData;
-use common::currency::domain::Currency;
-use common::language::data::LanguageData;
-use common::language::domain::Language;
+use common::api::error_code::{BAD_PARAMETER, INTERNAL_SERVER_ERROR};
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
-use http::header::ACCEPT_LANGUAGE;
+use item_api_common::{extract_currency_query, extract_languages_header};
 use item_data::get_data::GetItemData;
 use item_service::get_service::GetItemService;
 use lambda_runtime::LambdaEvent;
@@ -32,42 +25,8 @@ pub async fn handle(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl GetItemService,
 ) -> Result<ApiGatewayV2httpResponse, ApiError> {
-    let languages = event
-        .payload
-        .headers
-        .get(ACCEPT_LANGUAGE)
-        .map(HeaderValue::to_str)
-        .map(|header_value_res| {
-            header_value_res.map_err(|_| {
-                ApiError::bad_request(BAD_HEADER_VALUE).with_header_field(ACCEPT_LANGUAGE.as_str())
-            })
-        })
-        .transpose()?
-        .map(accept_language::parse)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|accept_language| {
-            serde_json::from_str::<LanguageData>(&format!(r#""{accept_language}""#))
-        })
-        .filter_map(Result::ok)
-        .map(Language::from)
-        .collect::<Vec<_>>();
-    let currency = event
-        .payload
-        .query_string_parameters
-        .first("currency")
-        .filter(|str| !str.is_empty())
-        .map(|currency| serde_json::from_str::<CurrencyData>(&format!(r#""{currency}""#)))
-        .map(|currency_res| {
-            currency_res.map_err(|err| {
-                ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
-                    .with_query_field("currency")
-                    .with_message(err.to_string())
-            })
-        })
-        .transpose()?
-        .map(Currency::from)
-        .unwrap_or_default();
+    let languages = extract_languages_header(&event)?;
+    let currency = extract_currency_query(&event)?;
     let shop_id = event
         .payload
         .path_parameters

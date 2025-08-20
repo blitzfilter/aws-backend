@@ -38,6 +38,7 @@ httpdate = "1.0.3"
 item = { path = "src/item" }
 item-api = { path = "src/item/src/item-api" }
 item-data = { path = "src/item/src/item-data" }
+item-api-common = { path = "src/item/src/item-api/src/item-api-common" }
 item-api-get-item = { path = "src/item/src/item-api/src/item-api-get-item" }
 item-api-simple-search = { path = "src/item/src/item-api/src/item-api-simple-search" }
 item-core = { path = "src/item/src/item-core" }

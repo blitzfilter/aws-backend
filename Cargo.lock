@@ -1973,8 +1973,21 @@ dependencies = [
 name = "item-api"
 version = "0.1.0"
 dependencies = [
+ "item-api-common",
  "item-api-get-item",
  "item-api-simple-search",
+]
+
+[[package]]
+name = "item-api-common"
+version = "0.1.0"
+dependencies = [
+ "accept-language",
+ "aws_lambda_events",
+ "common",
+ "http 1.3.1",
+ "lambda_runtime",
+ "serde_json",
 ]
 
 [[package]]
@@ -1988,6 +2001,7 @@ dependencies = [
  "common",
  "dotenvy",
  "http 1.3.1",
+ "item-api-common",
  "item-core",
  "item-data",
  "item-dynamodb",
@@ -2015,6 +2029,7 @@ dependencies = [
  "common",
  "dotenvy",
  "http 1.3.1",
+ "item-api-common",
  "item-core",
  "item-data",
  "item-opensearch",
