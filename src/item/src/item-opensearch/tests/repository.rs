@@ -6,9 +6,9 @@ use common::language::domain::Language;
 use common::page::Page;
 use common::price::domain::MonetaryAmount;
 use common::shops_item_id::ShopsItemId;
-use common::sort::{Sort, SortDirection};
+use common::sort::{Sort, SortOrder};
 use fake::rand;
-use item_core::item::SortItemField;
+use item_core::sort_item_field::SortItemField;
 use item_opensearch::item_document::ItemDocument;
 use item_opensearch::item_state_document::ItemStateDocument;
 use item_opensearch::item_update_document::ItemUpdateDocument;
@@ -290,8 +290,8 @@ async fn should_search_item_documents_when_all_arguments_are_given() {
         }),
     };
     let sort = Sort {
-        field: SortItemField::Price,
-        direction: SortDirection::Asc,
+        sort: SortItemField::Price,
+        order: SortOrder::Asc,
     };
     let page = Page { from: 0, size: 20 };
     let response = repository
@@ -391,17 +391,17 @@ async fn should_search_item_documents_when_no_states_are_given() {
 
 #[rstest::rstest]
 #[test_attr(apply(test))]
-#[case(RangeQuery { min: Some(0u64.into()), max: Some(999999u64.into()) }, SortDirection::Asc)]
-#[case(RangeQuery { min: Some(0u64.into()), max: Some(999999u64.into()) }, SortDirection::Desc)]
-#[case(RangeQuery { min: Some(300u64.into()), max: Some(5000u64.into()) }, SortDirection::Asc)]
-#[case(RangeQuery { min: Some(500u64.into()), max: None }, SortDirection::Desc)]
-#[case(RangeQuery { min: None, max: Some(8888u64.into()) }, SortDirection::Asc)]
-#[case(RangeQuery { min: None, max: None }, SortDirection::Asc)]
-#[case(RangeQuery { min: None, max: None }, SortDirection::Desc)]
+#[case(RangeQuery { min: Some(0u64.into()), max: Some(999999u64.into()) }, SortOrder::Asc)]
+#[case(RangeQuery { min: Some(0u64.into()), max: Some(999999u64.into()) }, SortOrder::Desc)]
+#[case(RangeQuery { min: Some(300u64.into()), max: Some(5000u64.into()) }, SortOrder::Asc)]
+#[case(RangeQuery { min: Some(500u64.into()), max: None }, SortOrder::Desc)]
+#[case(RangeQuery { min: None, max: Some(8888u64.into()) }, SortOrder::Asc)]
+#[case(RangeQuery { min: None, max: None }, SortOrder::Asc)]
+#[case(RangeQuery { min: None, max: None }, SortOrder::Desc)]
 #[localstack_test(services = [OpenSearch()])]
 async fn should_search_item_documents_respecting_order_when_price_range_is_given(
     #[case] price_query: RangeQuery<MonetaryAmount>,
-    #[case] sort_direction: SortDirection,
+    #[case] sort_direction: SortOrder,
 ) {
     let cheap_items = fake::vec![ItemDocument; 50]
         .into_iter()
@@ -444,8 +444,8 @@ async fn should_search_item_documents_respecting_order_when_price_range_is_given
             &Language::De,
             &Currency::Eur,
             &Some(Sort {
-                field: SortItemField::Price,
-                direction: sort_direction,
+                sort: SortItemField::Price,
+                order: sort_direction,
             }),
             &Some(Page { from: 0, size: 100 }),
         )
@@ -464,8 +464,8 @@ async fn should_search_item_documents_respecting_order_when_price_range_is_given
     {
         std::cmp::Ordering::Equal => l.item_id.to_string().cmp(&r.item_id.to_string()),
         ord => match sort_direction {
-            SortDirection::Asc => ord,
-            SortDirection::Desc => ord.reverse(),
+            SortOrder::Asc => ord,
+            SortOrder::Desc => ord.reverse(),
         },
     };
 
@@ -533,8 +533,8 @@ async fn should_search_item_documents_respecting_paging_when_sorted_by_price(#[c
             &Language::En,
             &Currency::Usd,
             &Some(Sort {
-                field: SortItemField::Price,
-                direction: SortDirection::Asc,
+                sort: SortItemField::Price,
+                order: SortOrder::Asc,
             }),
             &Some(page),
         )

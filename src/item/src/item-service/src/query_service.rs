@@ -5,11 +5,8 @@ use common::price::domain::Price;
 use common::sort::Sort;
 use common::{currency::domain::Currency, localized::Localized};
 use item_core::hash::ItemHash;
-use item_core::{
-    description::Description,
-    item::{LocalizedItemView, SortItemField},
-    title::Title,
-};
+use item_core::sort_item_field::SortItemField;
+use item_core::{description::Description, item::LocalizedItemView, title::Title};
 use item_opensearch::repository::ItemOpenSearchRepository;
 use search_filter_core::search_filter::SearchFilter;
 use std::collections::HashMap;
@@ -174,9 +171,9 @@ mod tests {
             HitsMetadata, SearchHit, SearchResponse, ShardStats, TotalHits,
         },
         page::Page,
-        sort::{Sort, SortDirection},
+        sort::{Sort, SortOrder},
     };
-    use item_core::item::SortItemField;
+    use item_core::sort_item_field::SortItemField;
     use item_opensearch::{item_document::ItemDocument, repository::MockItemOpenSearchRepository};
     use search_filter_core::{
         array_query::AnyOfQuery, range_query::RangeQuery, search_filter::SearchFilter,
@@ -226,7 +223,7 @@ mod tests {
         },
         Language::De,
         Currency::Eur,
-        Some(Sort { field: SortItemField::Price, direction: SortDirection::Asc }),
+        Some(Sort { sort: SortItemField::Price, order: SortOrder::Asc }),
         Some(Page { from: 0, size: 20 }),
         100
     )]
@@ -241,7 +238,7 @@ mod tests {
         },
         Language::En,
         Currency::Usd,
-        Some(Sort { field: SortItemField::Price, direction: SortDirection::Desc }),
+        Some(Sort { sort: SortItemField::Price, order: SortOrder::Desc }),
         Some(Page { from: 10, size: 30 }),
         500
     )]

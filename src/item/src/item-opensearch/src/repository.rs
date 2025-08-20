@@ -8,8 +8,8 @@ use common::item_state::domain::ItemState;
 use common::language::domain::Language;
 use common::opensearch::{bulk_response::BulkResponse, search_response::SearchResponse};
 use common::page::Page;
-use common::sort::{Sort, SortDirection};
-use item_core::item::SortItemField;
+use common::sort::{Sort, SortOrder};
+use item_core::sort_item_field::SortItemField;
 use opensearch::{BulkOperation, BulkOperations, BulkParts, SearchParts};
 use search_filter_core::search_filter::SearchFilter;
 use serde::ser::Error;
@@ -251,14 +251,14 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
         }
 
         if let Some(sort) = sort {
-            let sort_field = match sort.field {
+            let sort_field = match sort.sort {
                 SortItemField::Price => price_field,
                 SortItemField::Created => "created",
                 SortItemField::Updated => "updated",
             };
-            let order = match sort.direction {
-                SortDirection::Asc => "asc",
-                SortDirection::Desc => "desc",
+            let order = match sort.order {
+                SortOrder::Asc => "asc",
+                SortOrder::Desc => "desc",
             };
             body.as_object_mut().unwrap().insert(
                 "sort".to_string(),

@@ -181,13 +181,6 @@ impl HasKey for Item {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SortItemField {
-    Price,
-    Updated,
-    Created,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalizedItemView {
     pub item_id: ItemId,
