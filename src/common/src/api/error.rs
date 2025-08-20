@@ -5,7 +5,7 @@ use http::StatusCode;
 use serde::Serialize;
 use std::error::Error;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct ApiError {
     pub status: u16,
 
@@ -127,7 +127,7 @@ impl From<ApiError> for ApiGatewayV2httpResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq, Clone, Copy)]
 pub struct ApiErrorSource {
     pub field: &'static str,
 
@@ -135,7 +135,7 @@ pub struct ApiErrorSource {
     pub source_type: ApiErrorSourceType,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ApiErrorSourceType {
     Header,

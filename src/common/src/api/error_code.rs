@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::fmt::Display;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq, Eq, Clone, Copy)]
 #[serde(transparent)]
 pub struct ApiErrorCode(&'static str);
 
