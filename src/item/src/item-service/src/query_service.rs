@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use common::language::domain::Language;
+use common::opensearch::search_result::SearchResult;
 use common::page::Page;
 use common::price::domain::Price;
 use common::sort::Sort;
@@ -45,7 +46,7 @@ pub trait QueryItemService {
         currency: &Currency,
         sort: &Option<Sort<SortItemField>>,
         page: &Option<Page>,
-    ) -> Result<Vec<LocalizedItemView>, SearchItemsError>;
+    ) -> Result<SearchResult<LocalizedItemView>, SearchItemsError>;
 }
 
 pub struct QueryItemServiceImpl<'a> {
@@ -67,7 +68,7 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
         currency: &Currency,
         sort: &Option<Sort<SortItemField>>,
         page: &Option<Page>,
-    ) -> Result<Vec<LocalizedItemView>, SearchItemsError> {
+    ) -> Result<SearchResult<LocalizedItemView>, SearchItemsError> {
         let search_response = self
             .repository
             .search_item_documents(search_filter, language, currency, sort, page)
@@ -154,7 +155,10 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
         })
         .collect::<Vec<_>>();
 
-        Ok(item_views)
+        Ok(SearchResult {
+            hits: item_views,
+            total: search_response.hits.total.value,
+        })
     }
 }
 
@@ -308,7 +312,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(count, actual.len());
+        assert_eq!(count, actual.hits.len());
+        assert_eq!(count, actual.total as usize);
     }
 
     #[tokio::test]
@@ -394,6 +399,7 @@ mod tests {
 
         assert!(
             actual
+                .hits
                 .iter()
                 .map(|item| item.price.unwrap())
                 .all(|price| price.currency == currency
@@ -442,9 +448,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(actual.iter().all(|item| item.title.localization == language
-            && item.title.payload.as_ref() == expected
-            && item.description.clone().unwrap().localization == language
-            && item.description.clone().unwrap().payload.as_ref() == expected));
+        assert!(
+            actual
+                .hits
+                .iter()
+                .all(|item| item.title.localization == language
+                    && item.title.payload.as_ref() == expected
+                    && item.description.clone().unwrap().localization == language
+                    && item.description.clone().unwrap().payload.as_ref() == expected)
+        );
     }
 }
