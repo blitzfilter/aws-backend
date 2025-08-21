@@ -1,12 +1,15 @@
 use aws_config::{BehaviorVersion, SdkConfig};
 use aws_sdk_dynamodb::config::Credentials;
 use std::collections::HashMap;
+use std::process::Command;
 use testcontainers::core::{IntoContainerPort, Mount};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::localstack::LocalStack;
 use tokio::sync::OnceCell;
 use tracing::{debug, error};
+
+const LOCALSTACK_CONTAINER_NAME: &str = "blitzfilter-aws-backend-localstack-test";
 
 /// A lazily-initialized, globally accessible AWS SDK configuration for integration tests.
 ///
@@ -42,6 +45,45 @@ pub async fn get_aws_config() -> &'static SdkConfig {
     cfg
 }
 
+static LOCALSTACK: OnceCell<ContainerAsync<LocalStack>> = OnceCell::const_new();
+
+pub async fn get_localstack(services: &[&str]) -> &'static ContainerAsync<LocalStack> {
+    LOCALSTACK
+        .get_or_init(|| async {
+            install_cleanup();
+            spin_up_localstack_with_services(services).await
+        })
+        .await
+}
+
+extern "C" fn cleanup() {
+    let _ = Command::new("docker")
+        .args(["rm", "-f", LOCALSTACK_CONTAINER_NAME])
+        .status();
+
+    // remove ephemeral containers spawned by localstack
+    if let Ok(out) = Command::new("docker")
+        .args([
+            "ps",
+            "-aq",
+            "--filter",
+            &format!("name=^/{LOCALSTACK_CONTAINER_NAME}"),
+        ])
+        .output()
+    {
+        for id in String::from_utf8_lossy(&out.stdout).lines() {
+            let _ = Command::new("docker").args(["rm", "-f", id]).status();
+        }
+    }
+}
+
+fn install_cleanup() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| unsafe {
+        libc::atexit(cleanup);
+    });
+}
+
 /// Spins up a LocalStack container with custom environment variables.
 ///
 /// This function uses [`testcontainers`] to start a LocalStack Docker container with:
@@ -73,9 +115,12 @@ pub async fn spin_up_localstack(env_vars: HashMap<&str, &str>) -> ContainerAsync
 
     let request = env_vars
         .iter()
-        .fold(LocalStack::default().with_tag("latest"), |ls, (k, v)| {
-            ls.with_env_var(*k, *v)
-        })
+        .fold(
+            LocalStack::default()
+                .with_container_name(LOCALSTACK_CONTAINER_NAME)
+                .with_tag("latest"),
+            |ls, (k, v)| ls.with_env_var(*k, *v),
+        )
         .with_mount(Mount::bind_mount(
             "/var/run/docker.sock",
             "/var/run/docker.sock",

@@ -66,6 +66,20 @@ impl IntegrationTestService for Lambda {
 
         let client = get_lambda_client().await;
 
+        let get_fun_result = client.get_function().function_name(self.name).send().await;
+        if get_fun_result.is_ok() {
+            debug!(
+                "Lambda-Function '{}' already exists, skipping creation",
+                self.name
+            );
+            return;
+        }
+
+        debug!(
+            "Lambda-Function '{}' does not exist, creating it.",
+            self.name
+        );
+
         client
             .create_function()
             .function_name(self.name)

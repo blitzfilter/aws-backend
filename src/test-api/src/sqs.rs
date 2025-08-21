@@ -76,4 +76,14 @@ impl IntegrationTestService for Sqs {
             self.queue_url()
         );
     }
+
+    async fn tear_down(&self) {
+        let sqs_client = get_sqs_client().await;
+        let _ = sqs_client
+            .purge_queue()
+            .queue_url(self.queue_url())
+            .send()
+            .await;
+        debug!("Purged SQS queue '{}' for test isolation", self.name);
+    }
 }

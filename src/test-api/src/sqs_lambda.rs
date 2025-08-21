@@ -2,6 +2,7 @@ use crate::{IntegrationTestService, Lambda, Sqs, get_lambda_client, get_sqs_clie
 use async_trait::async_trait;
 use aws_sdk_sqs::types::QueueAttributeName;
 use derive_builder::Builder;
+use tracing::debug;
 
 /// Marker type representing an EventSource-Mapping between SQS and Lambda services in LocalStack-based tests.
 ///
@@ -24,6 +25,7 @@ impl IntegrationTestService for SqsLambdaEventSourceMapping {
     async fn set_up(&self) {
         self.sqs.set_up().await;
         self.lambda.set_up().await;
+
         let sqs_client = get_sqs_client().await;
 
         let queue_arn = sqs_client
@@ -45,20 +47,58 @@ impl IntegrationTestService for SqsLambdaEventSourceMapping {
             .to_owned();
 
         let lambda_client = get_lambda_client().await;
-        lambda_client
-            .create_event_source_mapping()
-            .event_source_arn(queue_arn)
+
+        // check if mapping already exists
+        let mappings = lambda_client
+            .list_event_source_mappings()
             .function_name(self.lambda.name)
-            .batch_size(self.max_batch_size)
-            .maximum_batching_window_in_seconds(self.max_batch_window_seconds)
-            .enabled(true)
+            .event_source_arn(queue_arn.clone())
             .send()
             .await
             .unwrap_or_else(|e| {
                 panic!(
-                    "shouldn't fail creating EventSource-Mapping for Lambda '{}' with SQS '{}': {e}",
+                    "failed to list EventSourceMappings for Lambda '{}' and SQS '{}': {e}",
                     self.lambda.name, self.sqs.name
                 )
             });
+
+        let esm_already_exists = mappings
+            .event_source_mappings()
+            .iter()
+            .any(|m| m.function_arn().is_some());
+
+        if esm_already_exists {
+            debug!(
+                "EventSourceMapping already exists for Lambda '{}' and queue '{}'. Skipping creation.",
+                self.lambda.name, self.sqs.name
+            );
+            return;
+        }
+
+        debug!(
+            "EventSourceMapping does not yet exist for Lambda '{}' and queue '{}'. Creating it.",
+            self.lambda.name, self.sqs.name
+        );
+
+        lambda_client
+                .create_event_source_mapping()
+                .event_source_arn(queue_arn)
+                .function_name(self.lambda.name)
+                .batch_size(self.max_batch_size)
+                .maximum_batching_window_in_seconds(self.max_batch_window_seconds)
+                .enabled(true)
+                .send()
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "shouldn't fail creating EventSource-Mapping for Lambda '{}' with SQS '{}': {e}",
+                        self.lambda.name, self.sqs.name
+                    )
+                });
+
+        debug!(
+            "Created EventSourceMapping for Lambda '{}' and queue '{}'",
+            self.lambda.name, self.sqs.name
+        );
     }
 }

@@ -9,6 +9,7 @@ use aws_sdk_sqs::error::SdkError;
 use opensearch::http::Url;
 use opensearch::http::response::Response;
 use opensearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
+use opensearch::indices::IndicesExistsParts;
 use opensearch::params::Refresh;
 use opensearch::{Error, GetParts, IndexParts, OpenSearch as Client};
 use serde::de::DeserializeOwned;
@@ -85,10 +86,43 @@ impl IntegrationTestService for OpenSearch {
             .await
             .expect("shouldn't fail setting up indices");
     }
+
+    async fn tear_down(&self) {
+        // Clear all documents from the items index to ensure test isolation
+        clear_index_data("items")
+            .await
+            .expect("shouldn't fail clearing OpenSearch index data");
+        refresh_index("items").await;
+        debug!("Cleared OpenSearch index data for test isolation");
+    }
 }
 
 async fn set_up_domain() -> Result<CreateDomainOutput, SdkError<CreateDomainError>> {
-    aws_sdk_opensearch::Client::new(get_aws_config().await)
+    let client = aws_sdk_opensearch::Client::new(get_aws_config().await);
+
+    match client
+        .describe_domain()
+        .domain_name(TEST_DOMAIN_NAME)
+        .send()
+        .await
+    {
+        Ok(_response) => {
+            debug!(
+                "OpenSearch domain '{}' already exists, skipping creation",
+                TEST_DOMAIN_NAME
+            );
+            // Return a fake response since the domain exists
+            return Ok(CreateDomainOutput::builder().build());
+        }
+        Err(_) => {
+            debug!(
+                "OpenSearch domain '{}' does not exist, creating it",
+                TEST_DOMAIN_NAME
+            );
+        }
+    }
+
+    client
         .create_domain()
         .domain_name(TEST_DOMAIN_NAME)
         .domain_endpoint_options(
@@ -142,6 +176,22 @@ async fn wait_until_domain_processed(
 }
 
 async fn set_up_indices() -> Result<Response, Error> {
+    let client = get_opensearch_client().await;
+
+    let exists_response = client
+        .indices()
+        .exists(IndicesExistsParts::Index(&["items"]))
+        .send()
+        .await?;
+
+    if exists_response.status_code().is_success() {
+        debug!("OpenSearch index 'items' already exists, skipping creation");
+        // Return a mock response since index exists
+        return Ok(exists_response);
+    }
+
+    debug!("OpenSearch index 'items' does not exist, creating it");
+
     let mapping = json!({
       "mappings": {
         "properties": {
@@ -223,6 +273,29 @@ async fn set_up_indices() -> Result<Response, Error> {
         .indices()
         .create(opensearch::indices::IndicesCreateParts::Index("items"))
         .body(mapping)
+        .send()
+        .await
+}
+
+/// Clears all documents from the specified OpenSearch index.
+///
+/// This function uses the delete-by-query API to remove all documents while
+/// preserving the index structure and mappings.
+async fn clear_index_data(index: &str) -> Result<Response, Error> {
+    use opensearch::DeleteByQueryParts;
+    use serde_json::json;
+
+    let query = json!({
+        "query": {
+            "match_all": {}
+        }
+    });
+
+    get_opensearch_client()
+        .await
+        .delete_by_query(DeleteByQueryParts::Index(&[index]))
+        .body(query)
+        .refresh(true)
         .send()
         .await
 }
