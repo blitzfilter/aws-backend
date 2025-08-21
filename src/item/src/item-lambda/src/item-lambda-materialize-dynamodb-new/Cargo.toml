@@ -18,10 +18,9 @@ tracing = { workspace = true }
 dotenvy = { workspace = true }
 
 [dev-dependencies]
-test-api = { workspace = true }
+test-api = { workspace = true, features = ["dynamodb"] }
 serial_test = { workspace = true }
 rstest = { workspace = true }
-mockall = { workspace = true }
 url = { workspace = true }
 fake = { workspace = true }
 time = { workspace = true }

@@ -223,6 +223,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-account"
+version = "1.84.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27410d7cc2467a23d97ed1221e9b03f9f9da68b5a259576597903a8b871087e5"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-dynamodb"
 version = "1.90.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2111,7 +2133,6 @@ dependencies = [
  "item-core",
  "item-dynamodb",
  "lambda_runtime",
- "mockall",
  "rstest",
  "serde_json",
  "serial_test",
@@ -2137,12 +2158,9 @@ dependencies = [
  "item-core",
  "item-dynamodb",
  "lambda_runtime",
- "mockall",
  "rstest",
  "serde_dynamo",
  "serde_json",
- "serial_test",
- "test-api",
  "time",
  "tokio",
  "tracing",
@@ -2165,12 +2183,9 @@ dependencies = [
  "item-dynamodb",
  "item-opensearch",
  "lambda_runtime",
- "mockall",
  "opensearch",
  "rstest",
  "serde_json",
- "serial_test",
- "test-api",
  "time",
  "tokio",
  "tracing",
@@ -2192,12 +2207,9 @@ dependencies = [
  "item-dynamodb",
  "item-opensearch",
  "lambda_runtime",
- "mockall",
  "opensearch",
  "rstest",
  "serde_json",
- "serial_test",
- "test-api",
  "time",
  "tokio",
  "tracing",
@@ -2220,11 +2232,8 @@ dependencies = [
  "item-dynamodb",
  "item-service",
  "lambda_runtime",
- "mockall",
  "rstest",
  "serde_json",
- "serial_test",
- "test-api",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2246,11 +2255,8 @@ dependencies = [
  "item-dynamodb",
  "item-service",
  "lambda_runtime",
- "mockall",
  "rstest",
  "serde_json",
- "serial_test",
- "test-api",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4077,6 +4083,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "aws-config",
+ "aws-sdk-account",
  "aws-sdk-dynamodb",
  "aws-sdk-lambda",
  "aws-sdk-opensearch",
@@ -4094,6 +4101,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha2",
+ "test-api",
  "test-api-macros",
  "test_lambda",
  "testcontainers",

@@ -1,20 +1,32 @@
+#[cfg(feature = "api-gateway")]
 mod api_gateway;
+#[cfg(feature = "dynamodb")]
 mod dynamodb;
+#[cfg(feature = "lambda")]
 mod lambda;
 pub mod localstack;
+#[cfg(feature = "opensearch")]
 mod opensearch;
 mod s3;
+#[cfg(feature = "sqs")]
 mod sqs;
+#[cfg(all(feature = "sqs", feature = "lambda"))]
 mod sqs_lambda;
 
+#[cfg(feature = "api-gateway")]
 pub use api_gateway::*;
 use async_trait::async_trait;
+#[cfg(feature = "dynamodb")]
 pub use dynamodb::{DynamoDB, get_dynamodb_client, mk_partial_put_batch_failure};
+#[cfg(feature = "lambda")]
 pub use lambda::{Lambda, get_lambda_client};
+#[cfg(feature = "opensearch")]
 pub use opensearch::{OpenSearch, get_opensearch_client, read_by_id, refresh_index};
 pub use s3::S3;
 pub use serial_test::serial;
+#[cfg(feature = "sqs")]
 pub use sqs::{Sqs, SqsBuilder, SqsBuilderError, get_sqs_client};
+#[cfg(all(feature = "sqs", feature = "lambda"))]
 pub use sqs_lambda::{
     SqsLambdaEventSourceMapping, SqsLambdaEventSourceMappingBuilder,
     SqsLambdaEventSourceMappingBuilderError,

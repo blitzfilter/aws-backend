@@ -10,26 +10,47 @@ async-trait = { workspace = true }
 derive_builder = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
-aws_lambda_events = { workspace = true, features = ["apigw"] }
 serial_test = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_dynamo = { workspace = true, features = ["aws-sdk-dynamodb+1"] }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["localstack"] }
-opensearch = { workspace = true, features = ["aws-auth"] }
 aws-config = { workspace = true }
-aws-sdk-opensearch = { workspace = true }
-aws-sdk-dynamodb = { workspace = true }
-aws-sdk-sqs = { workspace = true }
-aws-sdk-lambda = { workspace = true }
+aws-sdk-account = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
 tracing = { workspace = true }
 typed-builder = { workspace = true }
 walkdir = { workspace = true }
-test_lambda = { path = "src/test_lambda" }
-
 once_cell = "1.21.3"
 libc = "0.2.175"
+
+# Optional deps
+aws_lambda_events = { workspace = true, optional = true, features = ["apigw"] }
+opensearch = { workspace = true, optional = true, features = ["aws-auth"] }
+aws-sdk-opensearch = { workspace = true, optional = true }
+aws-sdk-dynamodb = { workspace = true, optional = true }
+serde_dynamo = { workspace = true, optional = true, features = [
+    "aws-sdk-dynamodb+1",
+] }
+aws-sdk-sqs = { workspace = true, optional = true }
+aws-sdk-lambda = { workspace = true, optional = true }
+test_lambda = { path = "src/test_lambda", optional = true }
+
+[dev-dependencies]
+test-api = { workspace = true, features = [
+    "api-gateway",
+    "dynamodb",
+    "lambda",
+    "opensearch",
+    "sqs",
+] }
+
+[features]
+default = []
+api-gateway = ["aws_lambda_events", "aws_lambda_events/apigw"]
+dynamodb = ["dep:aws-sdk-dynamodb", "serde_dynamo"]
+lambda = ["dep:aws-sdk-lambda", "dep:test_lambda"]
+opensearch = ["dep:opensearch", "dep:aws-sdk-opensearch"]
+sqs = ["dep:aws-sdk-sqs"]

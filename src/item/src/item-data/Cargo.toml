@@ -9,7 +9,6 @@ item-core = { workspace = true }
 serde = { workspace = true }
 time = { workspace = true }
 url = { workspace = true }
-
 fake = { workspace = true, optional = true }
 
 [dev-dependencies]

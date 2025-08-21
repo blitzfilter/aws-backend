@@ -23,7 +23,7 @@ url = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 rstest = { workspace = true }
-test-api = { workspace = true }
+test-api = { workspace = true, features = ["sqs", "lambda", "opensearch"] }
 serial_test = { workspace = true }
 time = { workspace = true }
 url = { workspace = true, features = ["serde"] }

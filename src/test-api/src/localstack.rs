@@ -1,5 +1,4 @@
 use aws_config::{BehaviorVersion, SdkConfig};
-use aws_sdk_dynamodb::config::Credentials;
 use std::collections::HashMap;
 use std::process::Command;
 use testcontainers::core::{IntoContainerPort, Mount};
@@ -34,7 +33,7 @@ pub async fn get_aws_config() -> &'static SdkConfig {
     let cfg = CONFIG
         .get_or_init(|| async {
             aws_config::defaults(BehaviorVersion::latest())
-                .credentials_provider(Credentials::for_tests())
+                .credentials_provider(aws_sdk_account::config::Credentials::for_tests())
                 .region("eu-central-1")
                 .endpoint_url("http://localhost:4566")
                 .load()

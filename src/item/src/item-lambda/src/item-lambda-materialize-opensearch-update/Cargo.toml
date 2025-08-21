@@ -20,10 +20,7 @@ opensearch = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-test-api = { workspace = true }
-serial_test = { workspace = true }
 rstest = { workspace = true }
-mockall = { workspace = true }
 url = { workspace = true }
 item-opensearch = { workspace = true, features = ["test-data"] }
 fake = { workspace = true }

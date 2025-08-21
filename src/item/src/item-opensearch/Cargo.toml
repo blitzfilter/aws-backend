@@ -20,7 +20,7 @@ search-filter-core = { workspace = true }
 fake = { workspace = true, optional = true }
 
 [dev-dependencies]
-test-api = { workspace = true }
+test-api = { workspace = true, features = ["opensearch"] }
 serial_test = { workspace = true }
 rstest = { workspace = true }
 item-opensearch = { workspace = true, features = ["test-data"] }
