@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 common = { workspace = true, features = ["api"] }
 item-core = { workspace = true }
-item-service = { workspace = true, features = ["opensearch"] }
+item-service = { workspace = true, features = ["opensearch", "api"] }
 item-opensearch = { workspace = true }
 item-data = { workspace = true }
 search-filter-core = { workspace = true }
@@ -21,3 +21,11 @@ opensearch = { workspace = true }
 serde_json = { workspace = true }
 accept-language = { workspace = true }
 http = { workspace = true }
+
+[dev-dependencies]
+test-api = { workspace = true }
+mockall = { workspace = true }
+rstest = { workspace = true }
+http = { workspace = true }
+fake = { workspace = true }
+item-core = { workspace = true, features = ["test-data"] }

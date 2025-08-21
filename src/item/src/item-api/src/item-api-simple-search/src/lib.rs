@@ -86,3 +86,85 @@ pub async fn handle(
         .cors()
         .build())
 }
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+mod tests {
+    use crate::handler;
+    use common::opensearch::search_result::SearchResult;
+    use http::header::ACCEPT_LANGUAGE;
+    use item_core::item::LocalizedItemView;
+    use item_service::query_service::MockQueryItemService;
+    use lambda_runtime::LambdaEvent;
+    use test_api::ApiGatewayV2httpRequestProxy;
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(
+        Some("de"),
+        "cool item title keywords",
+        Some("EUR"),
+        Some("price"),
+        Some("asc"),
+        Some("5"),
+        Some("20")
+    )]
+    #[case(
+        Some("en"),
+        "boop doop",
+        Some("USD"),
+        Some("created"),
+        Some("desc"),
+        None,
+        None
+    )]
+    #[case(Some("en"), "boop doop", Some("USD"), None, None, Some("7"), None)]
+    #[case(
+        Some("en"),
+        "boop doop",
+        Some("AUD"),
+        Some("updated"),
+        Some("desc"),
+        None,
+        Some("10")
+    )]
+    #[case(None, "boop doop", None, None, None, None, None)]
+    async fn should_handle_request(
+        #[case] content_language: Option<&str>,
+        #[case] q: &str,
+        #[case] currency: Option<&str>,
+        #[case] sort: Option<&str>,
+        #[case] order: Option<&str>,
+        #[case] page_from: Option<&str>,
+        #[case] page_size: Option<&str>,
+    ) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .try_header(ACCEPT_LANGUAGE.as_str(), content_language)
+                .query_string_parameter("q", q)
+                .try_query_string_parameter("currency", currency)
+                .try_query_string_parameter("sort", sort)
+                .try_query_string_parameter("order", order)
+                .try_query_string_parameter("from", page_from)
+                .try_query_string_parameter("size", page_size)
+                .build(),
+            context: Default::default(),
+        };
+
+        let mut service = MockQueryItemService::default();
+        service
+            .expect_search_items()
+            .return_once(|_, _, _, _, page| {
+                let count = page.map(|page| page.size).unwrap_or(20) as usize;
+                let search_result = SearchResult {
+                    hits: fake::vec![LocalizedItemView; count],
+                    total: 789,
+                };
+                Box::pin(async move { Ok(search_result) })
+            });
+        let response = handler(lambda_event, &service).await.unwrap();
+
+        assert_eq!(200, response.status_code);
+    }
+}
