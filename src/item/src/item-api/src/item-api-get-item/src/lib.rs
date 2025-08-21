@@ -70,7 +70,6 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use crate::handler;
-    use aws_lambda_events::encodings::Body::Text;
     use common::event_id::EventId;
     use common::item_state::domain::ItemState;
     use common::language::data::LanguageData;

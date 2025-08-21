@@ -3619,6 +3619,7 @@ name = "search-filter-core"
 version = "0.1.0"
 dependencies = [
  "common",
+ "thiserror",
  "time",
 ]
 

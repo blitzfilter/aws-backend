@@ -233,7 +233,7 @@ async fn should_search_item_documents() {
     tokio::time::sleep(Duration::from_millis(3000)).await;
 
     let search_filter = SearchFilter {
-        item_query: "Hallo Welt".into(),
+        item_query: "Hallo Welt".try_into().unwrap(),
         shop_name_query: None,
         price_query: None,
         state_query: Default::default(),
@@ -270,8 +270,8 @@ async fn should_search_item_documents_when_all_arguments_are_given() {
     tokio::time::sleep(Duration::from_millis(3000)).await;
 
     let search_filter = SearchFilter {
-        item_query: "Lorem".into(),
-        shop_name_query: Some("LLC".into()),
+        item_query: "Lorem".try_into().unwrap(),
+        shop_name_query: Some("LLC".try_into().unwrap()),
         price_query: Some(RangeQuery {
             min: Some(100u64.into()),
             max: Some(999999u64.into()),
@@ -332,7 +332,7 @@ async fn should_search_item_documents_when_states_are_given(#[case] states: &[It
     tokio::time::sleep(Duration::from_millis(3000)).await;
 
     let search_filter = SearchFilter {
-        item_query: "The same title".into(),
+        item_query: "The same title".try_into().unwrap(),
         shop_name_query: None,
         price_query: None,
         state_query: AnyOfQuery(HashSet::from_iter(states.iter().copied())),
@@ -374,7 +374,7 @@ async fn should_search_item_documents_when_no_states_are_given() {
     tokio::time::sleep(Duration::from_millis(3000)).await;
 
     let search_filter = SearchFilter {
-        item_query: "The same title".into(),
+        item_query: "The same title".try_into().unwrap(),
         shop_name_query: None,
         price_query: None,
         state_query: AnyOfQuery(HashSet::new()),
@@ -431,7 +431,7 @@ async fn should_search_item_documents_respecting_order_when_price_range_is_given
     tokio::time::sleep(Duration::from_millis(3000)).await;
 
     let search_filter = SearchFilter {
-        item_query: "The same title".into(),
+        item_query: "The same title".try_into().unwrap(),
         shop_name_query: None,
         price_query: Some(price_query),
         state_query: Default::default(),
@@ -520,7 +520,7 @@ async fn should_search_item_documents_respecting_paging_when_sorted_by_price(#[c
     tokio::time::sleep(Duration::from_millis(3000)).await;
 
     let search_filter = SearchFilter {
-        item_query: "The same title".into(),
+        item_query: "The same title".try_into().unwrap(),
         shop_name_query: None,
         price_query: None,
         state_query: Default::default(),

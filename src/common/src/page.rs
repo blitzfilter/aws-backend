@@ -64,7 +64,7 @@ pub mod api {
         #[case(Some(" 69 "), Some(" 37 "), Some(Page { from: 69, size: 37 }))]
         #[case(Some(" 69"), Some(" 37"), Some(Page { from: 69, size: 37 }))]
         #[case(Some("1"), Some("1"), Some(Page { from: 1, size: 1 }))]
-        #[case(Some("7"), Some("65535"), Some(Page { from: 7, size: 65535 }))]
+        #[case::enforce_max_size(Some("7"), Some("65535"), Some(Page { from: 7, size: 100 }))]
         #[case(None, Some("1"), None)]
         #[case(None, Some("42"), None)]
         #[case(Some("31"), None, None)]

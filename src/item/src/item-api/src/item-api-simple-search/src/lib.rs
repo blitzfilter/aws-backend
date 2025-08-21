@@ -4,7 +4,7 @@ use common::{
         api_gateway_v2_http_response_builder::ApiGatewayV2HttpResponseBuilder,
         collection::{CollectionData, PaginationData},
         error::ApiError,
-        error_code::{BAD_PARAMETER, INTERNAL_SERVER_ERROR},
+        error_code::{BAD_PARAMETER, INTERNAL_SERVER_ERROR, TEXT_QUERY_TOO_SHORT},
     },
     currency::{data::api::extract_currency_query, domain::Currency},
     language::{data::api::extract_language_header, domain::Language},
@@ -15,7 +15,10 @@ use item_core::sort_item_field::SortItemField;
 use item_data::{get_data::GetItemData, sort_item_field_data::SortItemFieldData};
 use item_service::query_service::QueryItemService;
 use lambda_runtime::LambdaEvent;
-use search_filter_core::{search_filter::SearchFilter, text_query::TextQuery};
+use search_filter_core::{
+    search_filter::SearchFilter,
+    text_query::{TextQuery, TextQueryTooShortError},
+};
 use tracing::error;
 
 #[tracing::instrument(skip(event, service), fields(requestId = %event.context.request_id))]
@@ -45,7 +48,12 @@ pub async fn handle(
         .first("q")
         .map(str::trim)
         .ok_or(ApiError::bad_request(BAD_PARAMETER).with_query_field("q"))?
-        .into();
+        .try_into()
+        .map_err(|err: TextQueryTooShortError| {
+            ApiError::bad_request(TEXT_QUERY_TOO_SHORT)
+                .with_query_field("q")
+                .with_message(err.to_string())
+        })?;
     let search_filter = SearchFilter {
         item_query,
         shop_name_query: None,
@@ -97,6 +105,7 @@ mod tests {
     use item_service::query_service::MockQueryItemService;
     use lambda_runtime::LambdaEvent;
     use test_api::ApiGatewayV2httpRequestProxy;
+    use test_api::extract_apigw_response_json_body;
 
     #[tokio::test]
     #[rstest::rstest]
@@ -166,5 +175,71 @@ mod tests {
         let response = handler(lambda_event, &service).await.unwrap();
 
         assert_eq!(200, response.status_code);
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(None, "boop doop", None, None)]
+    async fn should_default_page_sizing_when_none_given(
+        #[case] content_language: Option<&str>,
+        #[case] q: &str,
+        #[case] page_from: Option<&str>,
+        #[case] page_size: Option<&str>,
+    ) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .try_header(ACCEPT_LANGUAGE.as_str(), content_language)
+                .query_string_parameter("q", q)
+                .try_query_string_parameter("from", page_from)
+                .try_query_string_parameter("size", page_size)
+                .build(),
+            context: Default::default(),
+        };
+
+        let mut service = MockQueryItemService::default();
+        service
+            .expect_search_items()
+            .return_once(|_, _, _, _, page| {
+                let count = page.map(|page| page.size).unwrap() as usize;
+                let search_result = SearchResult {
+                    hits: fake::vec![LocalizedItemView; count],
+                    total: 789,
+                };
+                Box::pin(async move { Ok(search_result) })
+            });
+        let response = handler(lambda_event, &service).await.unwrap();
+
+        assert_eq!(200, response.status_code);
+        let json = extract_apigw_response_json_body!(response);
+        assert_eq!(0, json["pagination"]["from"]);
+        assert_eq!(21, json["pagination"]["size"]);
+        assert_eq!(789, json["pagination"]["total"]);
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case("a")]
+    #[case("ab")]
+    #[case("ba")]
+    #[case("12")]
+    #[case("0")]
+    async fn should_400_when_text_query_is_too_short(#[case] q: &str) {
+        let lambda_event = LambdaEvent {
+            payload: ApiGatewayV2httpRequestProxy::builder()
+                .http_method(http::Method::GET)
+                .query_string_parameter("q", q)
+                .build(),
+            context: Default::default(),
+        };
+
+        let mut service = MockQueryItemService::default();
+        service.expect_search_items().never();
+        let response = handler(lambda_event, &service).await.unwrap();
+
+        assert_eq!(400, response.status_code);
+        let json = extract_apigw_response_json_body!(response);
+        assert_eq!(400, json["status"]);
+        assert_eq!("q", json["source"]["field"]);
     }
 }

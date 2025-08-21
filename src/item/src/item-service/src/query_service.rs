@@ -218,8 +218,8 @@ mod tests {
     #[rstest::rstest]
     #[case(
         SearchFilter {
-            item_query: "Hallo Welt".into(),
-            shop_name_query: Some("Hallo Shop".into()),
+            item_query: "Hallo Welt".try_into().unwrap(),
+            shop_name_query: Some("Hallo Shop".try_into().unwrap()),
             price_query: Some(RangeQuery { min: Some(100u64.into()), max: Some(999999u64.into()) }),
             state_query: AnyOfQuery(HashSet::from_iter([ItemState::Available, ItemState::Listed])),
             created_query: Some(RangeQuery { min: Some(datetime!(1000-01-01 0:00 UTC)), max: Some(datetime!(3000-01-01 0:00 UTC)) }),
@@ -233,8 +233,8 @@ mod tests {
     )]
     #[case(
         SearchFilter {
-            item_query: "Hallo Welt".into(),
-            shop_name_query: Some("Hallo Shop".into()),
+            item_query: "Hallo Welt".try_into().unwrap(),
+            shop_name_query: Some("Hallo Shop".try_into().unwrap()),
             price_query: Some(RangeQuery { min: Some(100u64.into()), max: Some(999999u64.into()) }),
             state_query: AnyOfQuery(HashSet::from_iter([ItemState::Available, ItemState::Listed])),
             created_query: Some(RangeQuery { min: Some(datetime!(1000-01-01 0:00 UTC)), max: Some(datetime!(3000-01-01 0:00 UTC)) }),
@@ -248,7 +248,7 @@ mod tests {
     )]
     #[case(
         SearchFilter {
-            item_query: "Hallo Welten!".into(),
+            item_query: "Hallo Welten!".try_into().unwrap(),
             shop_name_query: None,
             price_query: Some(RangeQuery { min: Some(100000u64.into()), max: Some(999999004u64.into()) }),
             state_query: AnyOfQuery(HashSet::from_iter([ItemState::Available, ItemState::Listed])),
@@ -263,7 +263,7 @@ mod tests {
     )]
     #[case(
         SearchFilter {
-            item_query: "Hallo Welten!".into(),
+            item_query: "Hallo Welten!".try_into().unwrap(),
             shop_name_query: None,
             price_query: None,
             state_query: Default::default(),
@@ -278,7 +278,7 @@ mod tests {
     )]
     #[case(
         SearchFilter {
-            item_query: "Hallo Welten!".into(),
+            item_query: "Hallo Welten!".try_into().unwrap(),
             shop_name_query: None,
             price_query: None,
             state_query: Default::default(),
@@ -333,7 +333,7 @@ mod tests {
         let actual = service
             .search_items(
                 &SearchFilter {
-                    item_query: "Hallo Welten!".into(),
+                    item_query: "Hallo Welten!".try_into().unwrap(),
                     shop_name_query: None,
                     price_query: None,
                     state_query: Default::default(),
@@ -382,7 +382,7 @@ mod tests {
         let actual = service
             .search_items(
                 &SearchFilter {
-                    item_query: "Hallo Welten!".into(),
+                    item_query: "Hallo Welten!".try_into().unwrap(),
                     shop_name_query: None,
                     price_query: None,
                     state_query: Default::default(),
@@ -433,7 +433,7 @@ mod tests {
         let actual = service
             .search_items(
                 &SearchFilter {
-                    item_query: "Hallo Welten!".into(),
+                    item_query: "Hallo Welten!".try_into().unwrap(),
                     shop_name_query: None,
                     price_query: None,
                     state_query: Default::default(),

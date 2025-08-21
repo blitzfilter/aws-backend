@@ -55,8 +55,10 @@ pub trait IntegrationTestService: Sized {
 macro_rules! extract_apigw_response_json_body {
     ($response:expr) => {{
         match &$response.clone().body {
-            Some(Text(body)) => serde_json::from_str::<serde_json::Value>(body)
-                .expect("Failed to parse JSON from response body"),
+            Some(aws_lambda_events::encodings::Body::Text(body)) => {
+                serde_json::from_str::<serde_json::Value>(body)
+                    .expect("Failed to parse JSON from response body")
+            }
             _ => panic!("Expected response body to be Text."),
         }
     }};
