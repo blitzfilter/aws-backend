@@ -51,6 +51,9 @@ pub async fn get_localstack(services: &[&str]) -> &'static ContainerAsync<LocalS
     LOCALSTACK
         .get_or_init(|| async {
             install_cleanup();
+            // Spins up with the first (!) supplied services only.
+            // No dealbreaker for now as each test-suite has it's own OnceCell
+            // And all tests within a test-suite require the same services
             spin_up_localstack_with_services(services).await
         })
         .await
