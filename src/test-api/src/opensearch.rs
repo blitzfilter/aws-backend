@@ -1,7 +1,7 @@
 use crate::IntegrationTestService;
 use crate::localstack::get_aws_config;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::config::http::HttpResponse;
+use aws_sdk_opensearch::config::http::HttpResponse;
 use aws_sdk_opensearch::operation::create_domain::{CreateDomainError, CreateDomainOutput};
 use aws_sdk_opensearch::operation::describe_domain::DescribeDomainError;
 use aws_sdk_opensearch::types::DomainEndpointOptions;
