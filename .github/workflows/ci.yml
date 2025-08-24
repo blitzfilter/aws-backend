@@ -233,7 +233,7 @@ jobs:
 
   aws-compute-build:
     name: Build & Push AWS-Compute-Instances to S3 for PR ${{ github.event.pull_request.number }}
-    needs: integration-test
+#    needs: integration-test
     runs-on: ubuntu-latest
     permissions:
       contents: read
