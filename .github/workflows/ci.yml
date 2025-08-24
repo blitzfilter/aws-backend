@@ -342,8 +342,3 @@ jobs:
             --template-file cfn/staging/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
-
-      - name: Show Stack Outputs
-        run: |
-          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
-          aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output table
