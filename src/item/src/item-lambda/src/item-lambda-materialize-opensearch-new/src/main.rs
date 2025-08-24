@@ -22,7 +22,7 @@ async fn main() -> Result<(), Error> {
         .load()
         .await;
 
-    let os_endpoint_url = Url::parse(&env::var("OPENSEARCH_ENDPOINT_URL")?)?;
+    let os_endpoint_url = Url::parse(&env::var("OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL")?)?;
     let transport = TransportBuilder::new(SingleNodeConnectionPool::new(os_endpoint_url))
         .auth(aws_config.try_into()?)
         .service_name("es")
