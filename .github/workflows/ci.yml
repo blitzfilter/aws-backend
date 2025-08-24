@@ -231,8 +231,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  aws-compute-build:
-    name: Build & Push AWS-Compute-Instances to S3 for PR ${{ github.event.pull_request.number }}
+  aws-compute-push:
+    name: Push AWS-Compute to S3 ${{ matrix.crate }}
 #    needs: integration-test
     runs-on: ubuntu-latest
     permissions:
@@ -240,7 +240,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        lambda-dir:
+        crate:
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-api/src/item-api-simple-search
     env:
@@ -274,25 +274,25 @@ jobs:
           fi
 
       - name: Build Lambda binary
-        working-directory: ${{ matrix.lambda-dir }}
+        working-directory: ${{ matrix.crate }}
         run: cargo lambda build --release --target x86_64-unknown-linux-musl --output-format zip
 
       - name: Copy Lambda zip artifact
-        working-directory: ${{ matrix.lambda-dir }}
+        working-directory: ${{ matrix.crate }}
         run: |
-          BIN_NAME=$(basename ${{ matrix.lambda-dir }})
+          BIN_NAME=$(basename ${{ matrix.crate }})
           OUT_DIR=$GITHUB_WORKSPACE/artifacts
           mkdir -p $OUT_DIR
           cp target/lambda/$BIN_NAME/release/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
 
       - name: Upload Lambda to S3
         run: |
-          BIN_NAME=$(basename ${{ matrix.lambda-dir }})
+          BIN_NAME=$(basename ${{ matrix.crate }})
           aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://$ARTIFACT_BUCKET/
 
 #  aws-cfn-deploy:
 #    name: Deploy Ephemeral CFN Stack
-#    needs: aws-compute-build
+#    needs: aws-compute-push
 #    runs-on: ubuntu-latest
 #    permissions:
 #      contents: read
