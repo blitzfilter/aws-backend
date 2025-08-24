@@ -9,7 +9,6 @@ use aws_sdk_dynamodb::types::{
     ProjectionType, PutRequest, TableClass, WriteRequest,
 };
 use aws_sdk_dynamodb::{Client, Error};
-use common::env::get_dynamodb_table_name;
 use serde::Serialize;
 use tokio::sync::OnceCell;
 use tracing::debug;
@@ -67,7 +66,7 @@ impl IntegrationTestService for DynamoDB {
 }
 
 async fn set_up_tables() -> Result<(), Error> {
-    set_up_table_items()
+    set_up_table_1()
         .await
         .expect("shouldn't fail setting up table 'items'");
 
@@ -76,24 +75,23 @@ async fn set_up_tables() -> Result<(), Error> {
     Ok(())
 }
 
-async fn set_up_table_items() -> Result<(), Error> {
-    let table_name = get_dynamodb_table_name();
+async fn set_up_table_1() -> Result<(), Error> {
     let client = get_dynamodb_client().await;
 
     // Check if table already exists
-    match client.describe_table().table_name(table_name).send().await {
+    match client.describe_table().table_name("table_1").send().await {
         Ok(_) => {
-            debug!("Table '{}' already exists, skipping creation", table_name);
+            debug!("Table '{}' already exists, skipping creation", "table_1");
             return Ok(());
         }
         Err(_) => {
-            debug!("Table '{}' does not exist, creating it", table_name);
+            debug!("Table '{}' does not exist, creating it", "table_1");
         }
     }
 
     client
         .create_table()
-        .table_name(table_name)
+        .table_name("table_1")
         .attribute_definitions(
             AttributeDefinition::builder()
                 .attribute_name("pk")
@@ -170,14 +168,13 @@ async fn set_up_table_items() -> Result<(), Error> {
 async fn clear_table_data() -> Result<(), Error> {
     use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest};
 
-    let table_name = get_dynamodb_table_name();
     let client = get_dynamodb_client().await;
 
     // Scan the table to get all items
     let mut exclusive_start_key: Option<HashMap<String, AttributeValue>> = None;
 
     loop {
-        let mut scan_request = client.scan().table_name(table_name);
+        let mut scan_request = client.scan().table_name("table_1");
 
         if let Some(start_key) = exclusive_start_key {
             scan_request = scan_request.set_exclusive_start_key(Some(start_key));
@@ -207,7 +204,7 @@ async fn clear_table_data() -> Result<(), Error> {
             // Process deletes in batches of 25 (DynamoDB limit)
             for chunk in delete_requests.chunks(25) {
                 let mut request_items = HashMap::new();
-                request_items.insert(table_name.to_string(), chunk.to_vec());
+                request_items.insert("table_1".to_string(), chunk.to_vec());
 
                 client
                     .batch_write_item()

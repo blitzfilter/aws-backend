@@ -22,12 +22,16 @@ async fn main() -> Result<(), Error> {
         .load()
         .await;
 
+    let table_name = std::env::var("DYNAMODB_TABLE_NAME")?;
     let client = Client::new(&aws_config);
-    let dynamodb_repository = ItemDynamoDbRepositoryImpl::new(&client);
+    let dynamodb_repository = ItemDynamoDbRepositoryImpl::new(&client, &table_name);
     let fx_rate = FixedFxRate::default();
     let service = CommandItemServiceImpl::new(&dynamodb_repository, &fx_rate);
 
-    info!("Lambda cold start completed, DynamoDB-Client initialized.");
+    info!(
+        dynamoDbTableName = %table_name,
+        "Lambda cold start completed, client initialized."
+    );
 
     run(service_fn(|event: LambdaEvent<SqsEvent>| async {
         handler(&service, event).await

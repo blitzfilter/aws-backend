@@ -21,11 +21,15 @@ async fn main() -> Result<(), Error> {
         .load()
         .await;
 
+    let table_name = std::env::var("DYNAMODB_TABLE_NAME")?;
     let client = Client::new(&aws_config);
-    let repository = ItemDynamoDbRepositoryImpl::new(&client);
+    let repository = ItemDynamoDbRepositoryImpl::new(&client, &table_name);
     let service = GetItemServiceImpl::new(&repository);
 
-    info!("Lambda cold start completed, client initialized.");
+    info!(
+        dynamoDbTableName = %table_name,
+        "Lambda cold start completed, client initialized."
+    );
 
     run(service_fn(
         |event: LambdaEvent<ApiGatewayV2httpRequest>| async { handler(event, &service).await },

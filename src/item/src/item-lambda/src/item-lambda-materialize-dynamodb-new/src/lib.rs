@@ -130,7 +130,6 @@ mod tests {
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::batch_write_item::BatchWriteItemOutput;
-    use common::env::get_dynamodb_table_name;
     use common::event::Event;
     use common::has_key::HasKey;
     use common::item_id::ItemKey;
@@ -361,10 +360,7 @@ mod tests {
                     .collect();
                 Box::pin(async move {
                     Ok(BatchWriteItemOutput::builder()
-                        .set_unprocessed_items(mk_partial_put_batch_failure(
-                            get_dynamodb_table_name(),
-                            unprocessed,
-                        ))
+                        .set_unprocessed_items(mk_partial_put_batch_failure("table_1", unprocessed))
                         .build())
                 })
             });

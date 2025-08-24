@@ -20,10 +20,14 @@ async fn main() -> Result<(), Error> {
         .load()
         .await;
 
+    let table_name = std::env::var("DYNAMODB_TABLE_NAME")?;
     let client = Client::new(&aws_config);
-    let repository = ItemDynamoDbRepositoryImpl::new(&client);
+    let repository = ItemDynamoDbRepositoryImpl::new(&client, &table_name);
 
-    info!("Lambda cold start completed, DynamoDB-Client initialized.");
+    info!(
+        dynamoDbTableName = %table_name,
+        "Lambda cold start completed, client initialized."
+    );
 
     run(service_fn(|event: LambdaEvent<SqsEvent>| async {
         handler(&repository, event).await
