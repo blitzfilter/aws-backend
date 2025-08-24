@@ -309,43 +309,41 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
-          aws-region: eu-central-1
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Upload Lambda to S3
         run: |
           BIN_NAME=$(basename ${{ matrix.crate }})
-          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://${{ secrets.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
+          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
-#  aws-cfn-deploy:
-#    name: Deploy Ephemeral CFN Stack
-#    needs: aws-compute-push
-#    runs-on: ubuntu-latest
-#    permissions:
-#      contents: read
-#      id-token: write
-#    env:
-#      ARTIFACT_BUCKET: ${{ secrets.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
-#      ENV_SUFFIX: ${{ github.event.pull_request.number }}
-#      ROLE_ARN: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
-#    steps:
-#      - uses: actions/checkout@v5
-#
-#      - name: Configure AWS credentials
-#        uses: aws-actions/configure-aws-credentials@v4
-#        with:
-#          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
-#          aws-region: eu-central-1
-#
-#      - name: Deploy CloudFormation
-#        run: |
-#          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
-#          aws cloudformation deploy \
-#            --stack-name $STACK_NAME \
-#            --template-file cfn/staging/template.yaml \
-#            --capabilities CAPABILITY_NAMED_IAM \
-#            --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=$ARTIFACT_BUCKET
-#
-#      - name: Show Stack Outputs
-#        run: |
-#          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
-#          aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output table
+  aws-cfn-deploy:
+    name: Deploy Ephemeral CFN Stack
+    needs: aws-compute-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENV_SUFFIX: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy CloudFormation
+        run: |
+          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
+          aws cloudformation deploy \
+            --stack-name $STACK_NAME \
+            --template-file cfn/staging/template.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
+
+      - name: Show Stack Outputs
+        run: |
+          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
+          aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output table

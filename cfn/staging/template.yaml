@@ -1,0 +1,230 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Ephemeral staging stack for per-PR testing
+
+Parameters:
+  EnvSuffix:
+    Type: String
+    Description: "PR-Number as suffix for unique naming"
+  ArtifactBucket:
+    Type: String
+    Description: "S3 bucket containing Lambda deployment zips"
+
+Resources:
+  TableOne:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "table_1-${EnvSuffix}"
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi_1_pk
+          AttributeType: S
+        - AttributeName: gsi_1_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsi_1
+          KeySchema:
+            - AttributeName: gsi_1_pk
+              KeyType: HASH
+            - AttributeName: gsi_1_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - item_id
+              - shop_id
+              - shops_item_id
+              - hash
+          ProvisionedThroughput:
+            ReadCapacityUnits: 10
+            WriteCapacityUnits: 10
+      BillingMode: PROVISIONED
+      TableClass: STANDARD
+
+  ItemsOpenSearchDomain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      DomainName: !Sub "${EnvSuffix}"
+      EngineVersion: "OpenSearch_2.19"
+      ClusterConfig:
+        InstanceType: t3.small.search
+        InstanceCount: 1
+        ZoneAwarenessEnabled: false
+      EBSOptions:
+        EBSEnabled: true
+        VolumeSize: 10
+        VolumeType: gp3
+      AccessPolicies:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "es:*"
+            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${EnvSuffix}/*"
+
+  ItemsApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "items-api-${EnvSuffix}"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - "*"
+  ItemsApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: !Sub "${EnvSuffix}"
+      ApiId: !Ref ItemsApi
+      AutoDeploy: true
+
+  ApiGetItemRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ItemsApi
+      RouteKey: "GET /api/v1/items/{shopId}/{shopsItemId}"
+      Target: !Sub "integrations/${ItemApiGetItemLambdaIntegration}"
+  ItemApiGetItemLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ItemsApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ItemApiGetItemLambda}"
+      PayloadFormatVersion: "2.0"
+  ItemApiGetItemRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-api-get-item-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                Resource: !GetAtt TableOne.Arn
+  ItemApiGetItemLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-api-get-item-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemApiGetItemRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-api-get-item-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 10
+      EphemeralStorage:
+        Size: 512
+      ReservedConcurrentExecutions: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableOne
+  ItemApiGetItemLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ItemApiGetItemLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items/*/*"
+
+  ApiSimpleSearchRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ItemsApi
+      RouteKey: "GET /api/v1/items"
+      Target: !Sub "integrations/${ItemApiSimpleSearchLambdaIntegration}"
+  ItemApiSimpleSearchLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ItemsApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ItemApiSimpleSearchLambda}"
+      PayloadFormatVersion: "2.0"
+  ItemApiSimpleSearchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-api-simple-search-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: OpenSearchReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - es:Describe*
+                  - es:List*
+                  - es:ESHttpGet
+                  - es:ESHttpHead
+                  - es:ESHttpPost
+                Resource: !Sub "${ItemsOpenSearchDomain.Arn}/*"
+  ItemApiSimpleSearchLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-api-simple-search-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemApiSimpleSearchRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-api-simple-search-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 10
+      EphemeralStorage:
+        Size: 512
+      ReservedConcurrentExecutions: 10
+      Environment:
+        Variables:
+          OPENSEARCH_DOMAIN: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
+  ItemApiSimpleSearchLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ItemApiSimpleSearchLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items*"
+
+Outputs:
+  DynamoDBTable:
+    Value: !Ref TableOne
+  OpenSearchDomainEndpoint:
+    Value: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
+  ApiEndpoint:
+    Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvSuffix}"
+
