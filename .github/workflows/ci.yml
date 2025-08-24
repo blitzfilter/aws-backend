@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
 
 concurrency:
@@ -179,7 +179,7 @@ jobs:
 
   sonar:
     name: SonarQube-Cloud Analysis
-    needs: [unit-test, integration-test]
+    needs: [ unit-test, integration-test ]
     if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
@@ -230,3 +230,87 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  aws-compute-build:
+    name: Build & Push AWS-Compute-Instances to S3 for PR ${{ github.event.pull_request.number }}
+    needs: integration-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        lambda-dir:
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-api/src/item-api-simple-search
+    env:
+      AWS_REGION: eu-central-1
+      ARTIFACT_BUCKET: ${{ secrets.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
+      ENV_SUFFIX: ${{ github.event.pull_request.number }}
+      ROLE_ARN: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Zig (for musl builds)
+        run: npm install -g @ziglang/cli
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda
+          fi
+
+      - name: Build Lambda binary
+        working-directory: ${{ matrix.lambda-dir }}
+        run: cargo lambda build --release --target x86_64-unknown-linux-musl --output-format zip
+
+      - name: Copy Lambda zip artifact
+        working-directory: ${{ matrix.lambda-dir }}
+        run: |
+          BIN_NAME=$(basename ${{ matrix.lambda-dir }})
+          OUT_DIR=$GITHUB_WORKSPACE/artifacts
+          mkdir -p $OUT_DIR
+          cp target/lambda/$BIN_NAME/release/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
+
+      - name: Upload Lambda to S3
+        run: |
+          BIN_NAME=$(basename ${{ matrix.lambda-dir }})
+          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://$ARTIFACT_BUCKET/
+
+#  aws-cfn-deploy:
+#    name: Deploy Ephemeral CFN Stack
+#    needs: aws-compute-build
+#    runs-on: ubuntu-latest
+#    permissions:
+#      contents: read
+#      id-token: write
+#    env:
+#      ARTIFACT_BUCKET: ${{ secrets.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
+#      ENV_SUFFIX: ${{ github.event.pull_request.number }}
+#      ROLE_ARN: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+#    steps:
+#      - uses: actions/checkout@v5
+#
+#      - name: Assume role
+#        run: |
+#          aws sts assume-role --role-arn $ROLE_ARN --role-session-name ci-session > creds.json
+#          export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' creds.json)
+#          export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' creds.json)
+#          export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' creds.json)
+#
+#      - name: Deploy CloudFormation
+#        run: |
+#          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
+#          aws cloudformation deploy \
+#            --stack-name $STACK_NAME \
+#            --template-file cfn/staging/template.yaml \
+#            --capabilities CAPABILITY_NAMED_IAM \
+#            --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=$ARTIFACT_BUCKET
+#
+#      - name: Show Stack Outputs
+#        run: |
+#          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
+#          aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output table
