@@ -42,9 +42,9 @@ Resources:
               - shop_id
               - shops_item_id
               - hash
-          ProvisionedThroughput:
-            ReadCapacityUnits: 10
-            WriteCapacityUnits: 10
+      ProvisionedThroughput:
+        ReadCapacityUnits: 25
+        WriteCapacityUnits: 25
       BillingMode: PROVISIONED
       TableClass: STANDARD
 
