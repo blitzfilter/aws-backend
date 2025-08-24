@@ -42,7 +42,7 @@ Resources:
               - shop_id
               - shops_item_id
               - hash
-      BillingMode: PER_PER_REQUEST
+      BillingMode: PAY_PER_REQUEST
       TableClass: STANDARD
 
   ItemsOpenSearchDomain:
