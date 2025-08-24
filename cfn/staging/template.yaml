@@ -140,7 +140,6 @@ Resources:
       Timeout: 10
       EphemeralStorage:
         Size: 512
-      ReservedConcurrentExecutions: 10
       Environment:
         Variables:
           TABLE_NAME: !Ref TableOne
@@ -205,7 +204,6 @@ Resources:
       Timeout: 10
       EphemeralStorage:
         Size: 512
-      ReservedConcurrentExecutions: 10
       Environment:
         Variables:
           OPENSEARCH_DOMAIN: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
