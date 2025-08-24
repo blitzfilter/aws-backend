@@ -1122,12 +1122,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenvy"
-version = "0.15.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
-
-[[package]]
 name = "downcast"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1966,7 +1960,6 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "http 1.3.1",
  "item-core",
  "item-data",
@@ -1990,7 +1983,6 @@ dependencies = [
  "aws-config",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "http 1.3.1",
  "item-core",
@@ -2077,7 +2069,6 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "item-core",
  "item-dynamodb",
@@ -2102,7 +2093,6 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "item-core",
  "item-dynamodb",
@@ -2124,7 +2114,6 @@ dependencies = [
  "aws-config",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "item-core",
  "item-dynamodb",
@@ -2148,7 +2137,6 @@ dependencies = [
  "aws-config",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "item-core",
  "item-dynamodb",
@@ -2173,7 +2161,6 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "item-dynamodb",
  "item-service",
@@ -2194,7 +2181,6 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws_lambda_events",
  "common",
- "dotenvy",
  "fake",
  "item-dynamodb",
  "item-service",

@@ -33,7 +33,6 @@ aws_lambda_events = { version = "0.17.0", default-features = false }
 blake3 = "1.8.2"
 common = { path = "src/common" }
 derive_builder = "0.20.2"
-dotenvy = "0.15.7"
 fake = { version = "4.4.0", features = ["derive", "time", "uuid"] }
 field = "0.1.0"
 search-filter = { path = "src/search-filter" }

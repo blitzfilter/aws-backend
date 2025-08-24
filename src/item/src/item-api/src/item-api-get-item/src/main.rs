@@ -6,7 +6,6 @@ use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
 use item_service::get_service::GetItemServiceImpl;
 use lambda_runtime::tracing::info;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
-use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -18,21 +17,11 @@ async fn main() -> Result<(), Error> {
         .without_time()
         .init();
 
-    if dotenvy::from_filename(".env.localstack").is_ok() {
-        info!("Successfully loaded '.env.localstack'.")
-    }
-
-    let mut aws_config_builder = aws_config::defaults(BehaviorVersion::v2025_01_17())
+    let aws_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
         .load()
-        .await
-        .into_builder();
+        .await;
 
-    if let Ok(endpoint_url) = env::var("AWS_ENDPOINT_URL") {
-        aws_config_builder.set_endpoint_url(Some(endpoint_url.clone()));
-        info!("Using environments custom AWS_ENDPOINT_URL '{endpoint_url}'");
-    }
-
-    let client = Client::new(&aws_config_builder.build());
+    let client = Client::new(&aws_config);
     let repository = ItemDynamoDbRepositoryImpl::new(&client);
     let service = GetItemServiceImpl::new(&repository);
 

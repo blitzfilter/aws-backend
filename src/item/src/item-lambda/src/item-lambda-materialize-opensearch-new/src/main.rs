@@ -18,10 +18,6 @@ async fn main() -> Result<(), Error> {
         .without_time()
         .init();
 
-    if dotenvy::from_filename(".env.localstack").is_ok() {
-        info!("Successfully loaded '.env.localstack'.")
-    }
-
     let aws_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
         .load()
         .await;

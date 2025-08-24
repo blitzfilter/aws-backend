@@ -12,7 +12,6 @@ item-data = { workspace = true }
 search-filter-core = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
-dotenvy = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 aws_lambda_events = { workspace = true, features = ["apigw"] }
 lambda_runtime = { workspace = true }
