@@ -51,7 +51,7 @@ Resources:
   ItemsOpenSearchDomain:
     Type: AWS::OpenSearchService::Domain
     Properties:
-      DomainName: !Sub "${EnvSuffix}"
+      DomainName: !Sub "staging-${EnvSuffix}"
       EngineVersion: "OpenSearch_2.19"
       ClusterConfig:
         InstanceType: t3.small.search
@@ -68,7 +68,7 @@ Resources:
             Principal:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: "es:*"
-            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${EnvSuffix}/*"
+            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${EnvSuffix}/*"
 
   ItemsApi:
     Type: AWS::ApiGatewayV2::Api
