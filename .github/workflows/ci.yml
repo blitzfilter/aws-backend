@@ -318,7 +318,7 @@ jobs:
 
   aws-cfn-deploy:
     name: Deploy Ephemeral CFN Stack
-    #    needs: aws-compute-push
+    needs: aws-compute-push
     runs-on: ubuntu-latest
     permissions:
       contents: read
