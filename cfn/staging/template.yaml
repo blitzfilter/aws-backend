@@ -142,7 +142,7 @@ Resources:
         Size: 512
       Environment:
         Variables:
-          TABLE_NAME: !Ref TableOne
+          DYNAMODB_TABLE_NAME: !Ref TableOne
   ItemApiGetItemLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -206,7 +206,7 @@ Resources:
         Size: 512
       Environment:
         Variables:
-          OPENSEARCH_DOMAIN: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
+          OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
   ItemApiSimpleSearchLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -216,10 +216,6 @@ Resources:
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items*"
 
 Outputs:
-  DynamoDBTable:
-    Value: !Ref TableOne
-  OpenSearchDomainEndpoint:
-    Value: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
   ApiEndpoint:
     Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvSuffix}"
 
