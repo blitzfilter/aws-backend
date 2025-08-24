@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 common = { workspace = true }
-item-core = { workspace = true }
 item-dynamodb = { workspace = true, features = ["repository"] }
 item-service = { workspace = true, features = ["dynamodb"] }
 lambda_runtime = { workspace = true }

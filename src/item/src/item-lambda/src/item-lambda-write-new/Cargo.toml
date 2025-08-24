@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 common = { workspace = true }
-item-core = { workspace = true }
 item-service = { workspace = true, features = ["dynamodb"] }
 item-dynamodb = { workspace = true, features = ["repository"] }
 lambda_runtime = { workspace = true }
@@ -20,7 +19,6 @@ dotenvy = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
-url = { workspace = true }
 item-service = { workspace = true, features = ["test-data", "dynamodb"] }
 fake = { workspace = true }
 uuid = { workspace = true }

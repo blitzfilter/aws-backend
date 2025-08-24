@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 common = { workspace = true }
 scrape-core = { workspace = true }
-item-core = { workspace = true }
 item-data = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 async-trait = { workspace = true }

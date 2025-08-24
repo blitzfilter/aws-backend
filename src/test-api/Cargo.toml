@@ -9,7 +9,6 @@ test-api-macros = { workspace = true }
 async-trait = { workspace = true }
 derive_builder = { workspace = true }
 hex = { workspace = true }
-http = { workspace = true }
 serial_test = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -23,8 +22,7 @@ tracing-subscriber = { workspace = true, features = ["json"] }
 tracing = { workspace = true }
 typed-builder = { workspace = true }
 walkdir = { workspace = true }
-once_cell = "1.21.3"
-libc = "0.2.175"
+libc = { workspace = true }
 
 # Optional deps
 aws_lambda_events = { workspace = true, optional = true, features = ["apigw"] }

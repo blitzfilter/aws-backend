@@ -8,14 +8,11 @@ common = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 blake3 = { workspace = true }
 time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
-thiserror = { workspace = true }
-field = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 
 fake = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 rstest = { workspace = true }
 
 [features]
