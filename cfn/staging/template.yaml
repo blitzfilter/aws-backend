@@ -206,7 +206,7 @@ Resources:
         Size: 512
       Environment:
         Variables:
-          OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL: !GetAtt ItemsOpenSearchDomain.DomainEndpoint
+          OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
   ItemApiSimpleSearchLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
