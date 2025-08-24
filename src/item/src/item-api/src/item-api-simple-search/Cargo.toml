@@ -19,12 +19,10 @@ lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
 opensearch = { workspace = true }
 serde_json = { workspace = true }
-accept-language = { workspace = true }
 http = { workspace = true }
 
 [dev-dependencies]
 test-api = { workspace = true, features = ["api-gateway"] }
-mockall = { workspace = true }
 rstest = { workspace = true }
 http = { workspace = true }
 fake = { workspace = true }
