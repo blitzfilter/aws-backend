@@ -159,9 +159,17 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-lambda
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-lambda
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-lambda-1.8.6
 
       - name: Install Zig via npm
         run: |
@@ -170,7 +178,7 @@ jobs:
       - name: Install cargo-lambda
         run: |
           if ! command -v cargo-lambda &> /dev/null; then
-            cargo install cargo-lambda
+            cargo install cargo-lambda --version 1.8.6
           fi
 
       - name: Test ${{ matrix.crate }}
@@ -200,9 +208,17 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-lambda
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-lambda
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-lambda-1.8.6
 
       - name: Install Zig via npm
         run: |
@@ -211,7 +227,7 @@ jobs:
       - name: Install cargo-lambda
         run: |
           if ! command -v cargo-lambda &> /dev/null; then
-            cargo install cargo-lambda
+            cargo install cargo-lambda --version 1.8.6
           fi
 
       - name: Install grcov
