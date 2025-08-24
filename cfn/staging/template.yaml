@@ -216,6 +216,10 @@ Resources:
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items*"
 
 Outputs:
+  DynamoDBTable:
+    Value: !Ref TableOne
+  OpenSearchDomainEndpoint:
+    Value: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
   ApiEndpoint:
     Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvSuffix}"
 
