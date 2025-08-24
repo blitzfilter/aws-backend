@@ -278,12 +278,11 @@ jobs:
         run: cargo lambda build --release --target x86_64-unknown-linux-musl --output-format zip
 
       - name: Copy Lambda zip artifact
-        working-directory: ${{ matrix.crate }}
         run: |
           BIN_NAME=$(basename ${{ matrix.crate }})
           OUT_DIR=$GITHUB_WORKSPACE/artifacts
           mkdir -p $OUT_DIR
-          cp target/lambda/$BIN_NAME/release/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
+          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
 
       - name: Upload Lambda to S3
         run: |
