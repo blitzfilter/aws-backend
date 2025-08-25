@@ -1,10 +1,9 @@
-use std::collections::HashMap;
-
+use aws_lambda_events::http::{HeaderMap, Method};
 use aws_lambda_events::{
     apigw::{ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext},
     query_map::QueryMap,
 };
-use http::{HeaderMap, Method};
+use std::collections::HashMap;
 use typed_builder::TypedBuilder;
 
 #[derive(TypedBuilder)]

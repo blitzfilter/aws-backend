@@ -3,7 +3,6 @@ pub mod currency;
 #[cfg(feature = "api")]
 pub mod api;
 pub mod batch;
-pub mod env;
 pub mod error;
 pub mod event;
 pub mod event_id;

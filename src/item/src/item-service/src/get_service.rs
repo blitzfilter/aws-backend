@@ -33,15 +33,20 @@ pub mod api {
     use crate::get_service::GetItemError;
     use common::api::error::ApiError;
     use common::api::error_code::{ITEM_NOT_FOUND, MONETARY_AMOUNT_OVERFLOW};
+    use tracing::error;
 
     impl From<GetItemError> for ApiError {
         fn from(err: GetItemError) -> Self {
             match err {
                 GetItemError::ItemNotFound(_, _) => ApiError::not_found(ITEM_NOT_FOUND),
-                GetItemError::MonetaryAmountOverflowError(_) => {
+                GetItemError::MonetaryAmountOverflowError(err) => {
+                    error!(error = %err, "Encountered MonetaryAmountOverflowError while getting item.");
                     ApiError::internal_server_error(MONETARY_AMOUNT_OVERFLOW)
                 }
-                GetItemError::SdkGetItemError(_) => err.into(),
+                GetItemError::SdkGetItemError(err) => {
+                    error!(error = ?err, "Encountered SdkGetItemError while getting item.");
+                    (*err).into()
+                }
             }
         }
     }

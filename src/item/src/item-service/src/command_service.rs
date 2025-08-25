@@ -760,7 +760,7 @@ pub mod tests {
             let mut skipped_count = 0;
             let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
             let service = CommandItemServiceImpl {
-                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
+                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client, "table_1"),
                 fx_rate: &FixedFxRate::default(),
             };
             let actuals = service.find_update_events_with_existing_items(
@@ -802,7 +802,7 @@ pub mod tests {
             let mut skipped_count = 0;
             let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
             let service = CommandItemServiceImpl {
-                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
+                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client, "table_1"),
                 fx_rate: &FixedFxRate::default(),
             };
             let actuals = service.find_update_events_with_existing_items(
@@ -870,7 +870,7 @@ pub mod tests {
             let mut skipped_count = 0;
             let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
             let service = CommandItemServiceImpl {
-                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
+                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client, "table_1"),
                 fx_rate: &FixedFxRate::default(),
             };
             let actuals = service.find_update_events_with_existing_items(

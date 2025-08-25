@@ -14,7 +14,6 @@ use aws_sdk_dynamodb::operation::update_item::{UpdateItemError, UpdateItemOutput
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
 use common::batch::Batch;
 use common::batch::dynamodb::BatchGetItemResult;
-use common::env::get_dynamodb_table_name;
 use common::item_id::ItemKey;
 use common::shop_id::ShopId;
 use common::shops_item_id::ShopsItemId;
@@ -68,11 +67,15 @@ pub trait ItemDynamoDbRepository {
 #[derive(Debug, Clone)]
 pub struct ItemDynamoDbRepositoryImpl<'a> {
     client: &'a Client,
+    table: String,
 }
 
 impl<'a> ItemDynamoDbRepositoryImpl<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self { client }
+    pub fn new(client: &'a Client, table: impl Into<String>) -> Self {
+        Self {
+            client,
+            table: table.into(),
+        }
     }
 }
 
@@ -85,7 +88,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         self.client
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
-                get_dynamodb_table_name().to_owned(),
+                self.table.clone(),
                 item_event_records.into_dynamodb_write_requests(),
             )])))
             .send()
@@ -99,7 +102,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         self.client
             .batch_write_item()
             .set_request_items(Some(HashMap::from([(
-                get_dynamodb_table_name().to_owned(),
+                self.table.clone(),
                 item_records.into_dynamodb_write_requests(),
             )])))
             .send()
@@ -135,7 +138,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
 
         self.client
             .update_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name(&self.table)
             .key("pk", AttributeValue::S(pk))
             .key("sk", AttributeValue::S(sk))
             .update_expression(update_expr)
@@ -153,7 +156,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let rec = self
             .client
             .get_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name(&self.table)
             .key("pk", AttributeValue::S(mk_pk(shop_id, shops_item_id)))
             .key("sk", AttributeValue::S(mk_sk().to_owned()))
             .send()
@@ -192,10 +195,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
             .set_keys(Some(keys))
             .build()
             .expect("shouldn't fail because we previously set the only required field 'keys'.");
-        let request_items = Some(HashMap::from([(
-            get_dynamodb_table_name().to_owned(),
-            keys_and_attributes,
-        )]));
+        let request_items = Some(HashMap::from([(self.table.clone(), keys_and_attributes)]));
         let response = self
             .client
             .batch_get_item()
@@ -206,7 +206,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let records = response
             .responses
             .unwrap_or_default()
-            .remove(get_dynamodb_table_name())
+            .remove(&self.table)
             .unwrap_or_default()
             .into_iter()
             .map(serde_dynamo::from_item::<_, ItemRecord>)
@@ -222,7 +222,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let unprocessed = response
             .unprocessed_keys
             .unwrap_or_default()
-            .remove(get_dynamodb_table_name())
+            .remove(&self.table)
             .map(|keys_and_attributes| keys_and_attributes.keys)
             .unwrap_or_default()
             .into_iter()
@@ -274,10 +274,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
             .projection_expression("pk")
             .build()
             .expect("shouldn't fail because we previously set the only required field 'keys'.");
-        let request_items = Some(HashMap::from([(
-            get_dynamodb_table_name().to_owned(),
-            keys_and_attributes,
-        )]));
+        let request_items = Some(HashMap::from([(self.table.clone(), keys_and_attributes)]));
         let response = self
             .client
             .batch_get_item()
@@ -288,7 +285,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let records = response
             .responses
             .unwrap_or_default()
-            .remove(get_dynamodb_table_name())
+            .remove(&self.table)
             .unwrap_or_default()
             .into_iter()
             .map(extract_item_key)
@@ -304,7 +301,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let unprocessed = response
             .unprocessed_keys
             .unwrap_or_default()
-            .remove(get_dynamodb_table_name())
+            .remove(&self.table)
             .map(|keys_and_attributes| keys_and_attributes.keys)
             .unwrap_or_default()
             .into_iter()
@@ -342,7 +339,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let records = self
             .client
             .query()
-            .table_name(get_dynamodb_table_name())
+            .table_name(&self.table)
             .index_name("gsi_1")
             .key_condition_expression("#gsi_1_pk = :gsi_1_pk_val")
             .expression_attribute_names("#gsi_1_pk", "gsi_1_pk")

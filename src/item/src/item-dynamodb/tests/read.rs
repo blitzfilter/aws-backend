@@ -1,6 +1,5 @@
 use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
-use common::env::get_dynamodb_table_name;
 use common::event_id::EventId;
 use common::has_key::HasKey;
 use common::item_id::{ItemId, ItemKey};
@@ -24,7 +23,7 @@ use time::format_description::well_known;
 use url::Url;
 
 async fn get_repository() -> ItemDynamoDbRepositoryImpl<'static> {
-    ItemDynamoDbRepositoryImpl::new(get_dynamodb_client().await)
+    ItemDynamoDbRepositoryImpl::new(get_dynamodb_client().await, "table_1")
 }
 
 #[localstack_test(services = [DynamoDB()])]
@@ -84,7 +83,7 @@ async fn should_return_item_record_for_get_item_record_when_exists() {
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&expected).ok())
         .send()
         .await
@@ -143,7 +142,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist() {
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&other).ok())
         .send()
         .await
@@ -230,7 +229,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&other1).ok())
         .send()
         .await
@@ -238,7 +237,7 @@ async fn should_return_nothing_for_get_item_record_when_only_others_exist_mix() 
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&other2).ok())
         .send()
         .await
@@ -309,7 +308,7 @@ async fn should_return_item_diff_record_for_query_item_diff_records_when_exists(
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&inserted).ok())
         .send()
         .await
@@ -409,7 +408,7 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&inserted1).ok())
         .send()
         .await
@@ -417,7 +416,7 @@ async fn should_return_item_diff_records_for_query_item_diff_records_when_exists
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&inserted2).ok())
         .send()
         .await
@@ -521,7 +520,7 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&inserted1).ok())
         .send()
         .await
@@ -529,7 +528,7 @@ async fn should_return_item_diff_records_sorted_by_created_latest_for_query_item
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&inserted2).ok())
         .send()
         .await
@@ -594,7 +593,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&other).ok())
         .send()
         .await
@@ -685,7 +684,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&other).ok())
         .send()
         .await
@@ -693,7 +692,7 @@ async fn should_return_nothing_for_query_item_diff_records_when_only_others_exis
     get_dynamodb_client()
         .await
         .put_item()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .set_item(serde_dynamo::to_item(&other2).ok())
         .send()
         .await
@@ -763,7 +762,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_all_exist() 
         let expected = mk_expected(n);
         client
             .put_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name("table_1")
             .set_item(serde_dynamo::to_item(&expected).ok())
             .send()
             .await
@@ -843,7 +842,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_some_do_not_
         let expected = mk_expected(n);
         client
             .put_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name("table_1")
             .set_item(serde_dynamo::to_item(&expected).ok())
             .send()
             .await
@@ -924,7 +923,7 @@ async fn should_return_item_records_for_batch_get_item_records_when_more_than_10
         let expected = mk_expected(n);
         client
             .put_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name("table_1")
             .set_item(serde_dynamo::to_item(&expected).ok())
             .send()
             .await
@@ -1007,7 +1006,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_all_exist() {
         let expected = mk_expected(n);
         client
             .put_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name("table_1")
             .set_item(serde_dynamo::to_item(&expected).ok())
             .send()
             .await
@@ -1086,7 +1085,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_some_do_not_e
         let expected = mk_expected(n);
         client
             .put_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name("table_1")
             .set_item(serde_dynamo::to_item(&expected).ok())
             .send()
             .await
@@ -1165,7 +1164,7 @@ async fn should_return_item_keys_for_batch_exist_item_records_when_more_than_100
         let expected = mk_expected(n);
         client
             .put_item()
-            .table_name(get_dynamodb_table_name())
+            .table_name("table_1")
             .set_item(serde_dynamo::to_item(&expected).ok())
             .send()
             .await

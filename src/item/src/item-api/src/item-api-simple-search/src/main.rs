@@ -19,16 +19,13 @@ async fn main() -> Result<(), Error> {
         .without_time()
         .init();
 
-    if dotenvy::from_filename(".env.localstack").is_ok() {
-        info!("Successfully loaded '.env.localstack'.")
-    }
-
     let aws_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
         .load()
         .await;
 
-    let os_endpoint_url = Url::parse(&env::var("OPENSEARCH_ENDPOINT_URL")?)?;
-    let transport = TransportBuilder::new(SingleNodeConnectionPool::new(os_endpoint_url))
+    let item_domain_endpoint = env::var("OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL")?;
+    let item_domain_endpoint_url = Url::parse(&item_domain_endpoint)?;
+    let transport = TransportBuilder::new(SingleNodeConnectionPool::new(item_domain_endpoint_url))
         .auth(aws_config.try_into()?)
         .service_name("es")
         .build()?;
@@ -36,7 +33,10 @@ async fn main() -> Result<(), Error> {
     let repository = ItemOpenSearchRepositoryImpl::new(&client);
     let service = QueryItemServiceImpl::new(&repository);
 
-    info!("Lambda cold start completed, DynamoDB-Client initialized.");
+    info!(
+        domainEndpointUrl = %item_domain_endpoint,
+        "Lambda cold start completed, client initialized."
+    );
 
     run(service_fn(
         |event: LambdaEvent<ApiGatewayV2httpRequest>| async { handler(event, &service).await },

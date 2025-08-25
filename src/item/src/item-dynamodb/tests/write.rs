@@ -1,6 +1,5 @@
 use common::batch::Batch;
 use common::currency::record::CurrencyRecord;
-use common::env::get_dynamodb_table_name;
 use common::event_id::EventId;
 use common::item_id::ItemId;
 use common::item_state::domain::ItemState;
@@ -21,7 +20,7 @@ use time::format_description::well_known;
 use url::Url;
 
 async fn get_repository() -> ItemDynamoDbRepositoryImpl<'static> {
-    ItemDynamoDbRepositoryImpl::new(get_dynamodb_client().await)
+    ItemDynamoDbRepositoryImpl::new(get_dynamodb_client().await, "table_1")
 }
 
 #[localstack_test(services = [DynamoDB()])]
@@ -227,7 +226,7 @@ async fn should_put_item_event_records_for_single_record() {
     let actual = get_dynamodb_client()
         .await
         .scan()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .send()
         .await
         .unwrap()
@@ -327,7 +326,7 @@ async fn should_put_item_event_records_for_multiple_records() {
     let actual = get_dynamodb_client()
         .await
         .scan()
-        .table_name(get_dynamodb_table_name())
+        .table_name("table_1")
         .send()
         .await
         .unwrap()

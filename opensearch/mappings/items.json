@@ -1,0 +1,75 @@
+{
+  "mappings": {
+    "properties": {
+      "itemId": {
+        "type": "keyword"
+      },
+      "eventId": {
+        "type": "keyword"
+      },
+      "shopId": {
+        "type": "keyword"
+      },
+      "shopsItemId": {
+        "type": "keyword"
+      },
+      "shopName": {
+        "type": "text"
+      },
+      "titleDe": {
+        "type": "text",
+        "analyzer": "german"
+      },
+      "titleEn": {
+        "type": "text",
+        "analyzer": "english"
+      },
+      "descriptionDe": {
+        "type": "text",
+        "analyzer": "german"
+      },
+      "descriptionEn": {
+        "type": "text",
+        "analyzer": "english"
+      },
+      "priceEur": {
+        "type": "unsigned_long"
+      },
+      "priceUsd": {
+        "type": "unsigned_long"
+      },
+      "priceBbp": {
+        "type": "unsigned_long"
+      },
+      "priceAud": {
+        "type": "unsigned_long"
+      },
+      "priceCad": {
+        "type": "unsigned_long"
+      },
+      "priceNze": {
+        "type": "unsigned_long"
+      },
+      "state": {
+        "type": "keyword"
+      },
+      "isAvailable": {
+        "type": "boolean"
+      },
+      "url": {
+        "type": "keyword"
+      },
+      "images": {
+        "type": "keyword"
+      },
+      "created": {
+        "type": "date",
+        "format": "strict_date_time"
+      },
+      "updated": {
+        "type": "date",
+        "format": "strict_date_time"
+      }
+    }
+  }
+}

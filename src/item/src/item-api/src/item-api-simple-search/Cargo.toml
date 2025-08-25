@@ -12,19 +12,16 @@ item-data = { workspace = true }
 search-filter-core = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
-dotenvy = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 aws_lambda_events = { workspace = true, features = ["apigw"] }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
 opensearch = { workspace = true }
 serde_json = { workspace = true }
-accept-language = { workspace = true }
 http = { workspace = true }
 
 [dev-dependencies]
 test-api = { workspace = true, features = ["api-gateway"] }
-mockall = { workspace = true }
 rstest = { workspace = true }
 http = { workspace = true }
 fake = { workspace = true }
