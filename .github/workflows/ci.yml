@@ -346,4 +346,4 @@ jobs:
       - name: Setup OpenSearch index 'items'
         run: |
           chmod +x ci/setup-opensearch-index-items.sh
-          ./scripts/setup-opensearch-index.sh
+          ./ci/setup-opensearch-index-items.sh
