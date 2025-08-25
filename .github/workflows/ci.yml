@@ -334,13 +334,6 @@ jobs:
           role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Upgrade AWS CLI
-        run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip -q awscliv2.zip
-          sudo ./aws/install --update
-          aws --version
-
       - name: Deploy CloudFormation
         run: |
           STACK_NAME=staging-${{ env.ENV_SUFFIX }}
@@ -349,6 +342,12 @@ jobs:
             --template-file cfn/staging/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
+
+      - name: Install OpenSearch CLI
+        run: |
+          curl -L "https://github.com/opensearch-project/opensearch-cli/releases/latest/download/opensearch-cli-linux-amd64" -o opensearch-cli
+          chmod +x opensearch-cli
+          mv opensearch-cli /usr/local/bin/opensearch-cli
 
       - name: Setup OpenSearch index 'items'
         run: |

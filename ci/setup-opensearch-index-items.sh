@@ -47,33 +47,20 @@ while true; do
   fi
 done
 
-# Delete index if it exists (check with signed GET)
-STATUS=$(aws opensearch \
-  --region "${AWS_REGION}" \
-  --endpoint https://"$ENDPOINT" \
-  es-http-head \
-  --path "/$INDEX_NAME" \
-  --output text \
-  --query "ResponseMetadata.HTTPStatusCode" 2>/dev/null || echo "404")
+opensearch-cli profile create --name aws_main \
+  --auth-type aws_iam \
+  --endpoint "$RAW_ENDPOINT"
 
-if [ "$STATUS" -eq 200 ]; then
-  echo "🔄 Deleting existing index $INDEX_NAME..."
-  aws opensearch \
-    --region "${AWS_REGION}" \
-    --endpoint https://"$ENDPOINT" \
-    es-http-delete \
-    --path "/$INDEX_NAME"
+# Delete index if exists
+if opensearch-cli curl get --path "$INDEX_NAME" --profile aws_main 2>/dev/null | jq -e '.error? | not' > /dev/null; then
+  echo "Deleting existing index $INDEX_NAME..."
+  opensearch-cli curl delete --path "$INDEX_NAME" --profile aws_main
 else
-  echo "ℹ️ Index $INDEX_NAME does not exist, skipping delete."
+  echo "Index $INDEX_NAME not found, skipping delete."
 fi
 
-# Recreate index with mapping
-echo "📦 Creating index $INDEX_NAME with mapping from $MAPPING_FILE..."
-aws opensearch \
-  --region "${AWS_REGION}" \
-  --endpoint https://"$ENDPOINT" \
-  es-http-put \
-  --path "/$INDEX_NAME" \
-  --body "file://$MAPPING_FILE"
+# Create index with mapping
+echo "Creating index with mapping from $MAPPING_FILE..."
+opensearch-cli curl put --path "$INDEX_NAME" --profile aws_main --body-file "$MAPPING_FILE"
 
 echo "🎉 Index $INDEX_NAME successfully created."
