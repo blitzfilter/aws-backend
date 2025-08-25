@@ -342,3 +342,8 @@ jobs:
             --template-file cfn/staging/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
+
+      - name: Setup OpenSearch index 'items'
+        run: |
+          chmod +x ci/setup-opensearch-index-items.sh
+          ./scripts/setup-opensearch-index.sh
