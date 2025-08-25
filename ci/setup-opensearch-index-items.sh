@@ -47,18 +47,24 @@ while true; do
   fi
 done
 
+# Configure CLI profile (auth-type should be 'aws')
+opensearch-cli profile create --name "ci" \
+  --endpoint "$RAW_ENDPOINT" \
+  --auth-type "aws-iam"
+
 # Delete index if exists
-if opensearch-cli curl get --path "$INDEX_NAME" --profile ci | jq -e '.[].status? // empty' >/dev/null 2>&1; then
-  echo "🔄 Deleting existing index $INDEX_NAME..."
-  opensearch-cli curl delete --path "$INDEX_NAME" --profile ci
-else
-  echo "ℹ️ Index $INDEX_NAME not found, skipping delete."
-fi
+#if opensearch-cli curl get --path "$INDEX_NAME" --profile ci | jq -e '.[].status? // empty' >/dev/null 2>&1; then
+#  echo "🔄 Deleting existing index $INDEX_NAME..."
+#  opensearch-cli curl delete --path "$INDEX_NAME" --profile ci
+#else
+#  echo "ℹ️ Index $INDEX_NAME not found, skipping delete."
+#fi
 
 # Create index with mapping (use --data with @file.json)
-echo "📦 Creating index with mapping from $MAPPING_FILE..."
-opensearch-cli curl put \
-  --path "$INDEX_NAME" \
-  --data "@$MAPPING_FILE" \
+#echo "📦 Creating index with mapping from $MAPPING_FILE..."
+#opensearch-cli curl put \
+#  --path "$INDEX_NAME" \
+#  --data "@$MAPPING_FILE" \
+#  --profile ci
 
-echo "🎉 Index $INDEX_NAME successfully created."
+#echo "🎉 Index $INDEX_NAME successfully created."
