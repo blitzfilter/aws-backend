@@ -47,11 +47,6 @@ while true; do
   fi
 done
 
-# Configure CLI profile (auth-type should be 'aws')
-opensearch-cli profile create --name ci \
-  --endpoint "$RAW_ENDPOINT" \
-  --auth-type aws-iam
-
 # Delete index if exists
 if opensearch-cli curl get --path "$INDEX_NAME" --profile ci | jq -e '.[].status? // empty' >/dev/null 2>&1; then
   echo "🔄 Deleting existing index $INDEX_NAME..."
@@ -64,7 +59,6 @@ fi
 echo "📦 Creating index with mapping from $MAPPING_FILE..."
 opensearch-cli curl put \
   --path "$INDEX_NAME" \
-  --profile ci
-#  --data "@$MAPPING_FILE" \
+  --data "@$MAPPING_FILE" \
 
 echo "🎉 Index $INDEX_NAME successfully created."
