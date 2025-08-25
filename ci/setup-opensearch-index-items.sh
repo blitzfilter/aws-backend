@@ -49,7 +49,7 @@ done
 
 # Delete index if it exists (check with signed GET)
 STATUS=$(aws opensearch \
-  --region "$REGION" \
+  --region "${AWS_REGION}" \
   --endpoint https://"$ENDPOINT" \
   es-http-head \
   --path "/$INDEX_NAME" \
@@ -59,7 +59,7 @@ STATUS=$(aws opensearch \
 if [ "$STATUS" -eq 200 ]; then
   echo "🔄 Deleting existing index $INDEX_NAME..."
   aws opensearch \
-    --region "$REGION" \
+    --region "${AWS_REGION}" \
     --endpoint https://"$ENDPOINT" \
     es-http-delete \
     --path "/$INDEX_NAME"
