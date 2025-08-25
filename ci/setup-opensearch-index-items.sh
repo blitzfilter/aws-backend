@@ -48,7 +48,7 @@ while true; do
 done
 
 # Configure CLI profile (auth-type should be 'aws')
-opensearch-cli profile create --name "ci" \
+echo -e "\n es" | opensearch-cli profile create --name "ci" \
   --endpoint "$RAW_ENDPOINT" \
   --auth-type "aws-iam"
 
