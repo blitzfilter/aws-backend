@@ -50,7 +50,7 @@ done
 # Configure CLI profile (auth-type should be 'aws')
 opensearch-cli profile create --name ci \
   --endpoint "https://$ENDPOINT" \
-  --auth-type aws
+  --auth-type aws-iam
 
 # Delete index if exists
 if opensearch-cli curl get --path "$INDEX_NAME" --profile ci | jq -e '.[].status? // empty' >/dev/null 2>&1; then
