@@ -21,11 +21,23 @@ fi
 ENDPOINT=${RAW_ENDPOINT#https://}
 echo "✅ Using OpenSearch endpoint: $ENDPOINT"
 
+
 # Wait until the domain is ACTIVE
 DOMAIN_NAME=$(echo "$ENDPOINT" | cut -d'.' -f1)
 echo "⏳ Waiting for OpenSearch domain $DOMAIN_NAME to become ACTIVE..."
-aws opensearch wait domain-available --domain-name "$DOMAIN_NAME"
-echo "✅ Domain $DOMAIN_NAME is ACTIVE."
+
+while true; do
+  PROCESSING=$(aws opensearch describe-domain --domain-name "$DOMAIN_NAME" \
+    --query "DomainStatus.Processing" --output text)
+
+  if [ "$PROCESSING" == "False" ]; then
+    echo "✅ Domain $DOMAIN_NAME is ACTIVE."
+    break
+  else
+    echo "⏳ Domain still processing... waiting 15s"
+    sleep 15
+  fi
+done
 
 # Delete index if it exists
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$ENDPOINT/$INDEX_NAME")
