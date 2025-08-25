@@ -7,10 +7,20 @@ MAPPING_FILE="opensearch/mappings/items.json"
 STACK_NAME="staging-${ENV_SUFFIX}"
 
 # Resolve OpenSearch endpoint from CloudFormation Outputs
+DOMAIN_NAME=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='OpenSearchDomainName'].OutputValue" \
+  --output text)
+
 RAW_ENDPOINT=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
   --query "Stacks[0].Outputs[?OutputKey=='OpenSearchDomainEndpoint'].OutputValue" \
   --output text)
+
+if [ -z "$DOMAIN_NAME" ]; then
+  echo "❌ Could not resolve OpenSearch domain-name from stack: $STACK_NAME"
+  exit 1
+fi
 
 if [ -z "$RAW_ENDPOINT" ]; then
   echo "❌ Could not resolve OpenSearch endpoint from stack: $STACK_NAME"
@@ -23,7 +33,6 @@ echo "✅ Using OpenSearch endpoint: $ENDPOINT"
 
 
 # Wait until the domain is ACTIVE
-DOMAIN_NAME=$(echo "$ENDPOINT" | cut -d'.' -f1)
 echo "⏳ Waiting for OpenSearch domain $DOMAIN_NAME to become ACTIVE..."
 
 while true; do

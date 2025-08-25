@@ -220,6 +220,8 @@ Outputs:
     Value: !Ref TableOne
   OpenSearchDomainEndpoint:
     Value: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
+  OpenSearchDomainName:
+    Value: !Ref ItemsOpenSearchDomain
   ApiEndpoint:
     Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvSuffix}"
 
