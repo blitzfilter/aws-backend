@@ -49,7 +49,7 @@ done
 
 # Configure CLI profile (auth-type should be 'aws')
 opensearch-cli profile create --name ci \
-  --endpoint "https://$ENDPOINT" \
+  --endpoint "$RAW_ENDPOINT" \
   --auth-type aws-iam
 
 # Delete index if exists
@@ -64,7 +64,7 @@ fi
 echo "📦 Creating index with mapping from $MAPPING_FILE..."
 opensearch-cli curl put \
   --path "$INDEX_NAME" \
-  --data "@$MAPPING_FILE" \
   --profile ci
+#  --data "@$MAPPING_FILE" \
 
 echo "🎉 Index $INDEX_NAME successfully created."
