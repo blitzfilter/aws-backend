@@ -111,6 +111,19 @@ Resources:
           StartingPosition: LATEST
           BatchSize: 10
           MaximumBatchingWindowInSeconds: 3
+        FilterCriteria:
+          Filters:
+            - Pattern: |
+                {
+                  "eventName": ["INSERT"],
+                  "dynamodb": {
+                    "NewImage": {
+                      "sk": {
+                        "S": [{ "prefix": "item#event#" }]
+                      }
+                    }
+                  }
+                }
       Target: !GetAtt DynamoDbEventBus.Arn
       TargetParameters:
         EventBridgeEventBusParameters:
