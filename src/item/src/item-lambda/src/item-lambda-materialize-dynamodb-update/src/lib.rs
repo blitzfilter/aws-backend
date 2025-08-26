@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMessage};
 use common::has_key::HasKey;
 use common::item_id::ItemKey;
-use item_dynamodb::item_event_record::ItemEventRecord;
 use item_dynamodb::item_update_record::ItemRecordUpdate;
 use item_dynamodb::repository::ItemDynamoDbRepository;
+use item_lambda_common::extract_item_event_record;
 use lambda_runtime::LambdaEvent;
 use tracing::{error, info};
 
@@ -75,57 +75,53 @@ fn extract_message_data(
 ) -> Option<(ItemKey, ItemRecordUpdate)> {
     let message_id = message
         .message_id
+        .clone()
         .expect("shouldn't receive an SQS-Message without 'message_id' because AWS sets it.");
-
-    match message.body {
-        None => {
-            info!("Received empty body. Skipping message.");
-            *skipped_count += 1;
-            None
-        }
-        Some(item_json) => match serde_json::from_str::<ItemEventRecord>(&item_json) {
-            Ok(event_record) => {
-                let key = event_record.key();
-                let update_record = ItemRecordUpdate::from(event_record);
-                message_ids.insert(key.clone(), message_id);
-                Some((key, update_record))
-            }
-            Err(e) => {
-                error!(
-                    error = %e,
-                    type = %std::any::type_name::<ItemEventRecord>(),
-                    payload = %item_json,
-                    "Failed deserializing."
-                );
-                failed_message_ids.push(message_id);
-                None
-            }
-        },
-    }
+    let item_event_record = extract_item_event_record(message, failed_message_ids, skipped_count)?;
+    let key = item_event_record.key();
+    let update_record = ItemRecordUpdate::from(item_event_record);
+    message_ids.insert(key.clone(), message_id);
+    Some((key, update_record))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_message_data, handler};
+    use super::handler;
+    use aws_lambda_events::dynamodb::StreamRecord;
+    use aws_lambda_events::eventbridge::EventBridgeEvent;
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::update_item::UpdateItemOutput;
-    use common::item_state::domain::ItemState;
-    use common::localized::Localized;
-    use common::price::domain::Price;
-    use common::shop_id::ShopId;
-    use common::shops_item_id::ShopsItemId;
     use fake::{Fake, Faker};
-    use item_core::item::Item;
     use item_core::item_event::{ItemCommonEventPayload, ItemEvent};
-    use item_core::shop_name::ShopName;
     use item_dynamodb::item_event_record::ItemEventRecord;
-    use item_dynamodb::item_update_record::ItemRecordUpdate;
     use item_dynamodb::repository::MockItemDynamoDbRepository;
     use lambda_runtime::{Context, LambdaEvent};
-    use std::collections::HashMap;
-    use url::Url;
+    use std::time::SystemTime;
     use uuid::Uuid;
+
+    fn mk_event_bridge_payload(item_event_record: &ItemEventRecord) -> String {
+        let event = EventBridgeEvent {
+            version: None,
+            id: None,
+            detail_type: "foo".to_string(),
+            source: "bar".to_string(),
+            account: None,
+            time: None,
+            region: None,
+            resources: None,
+            detail: StreamRecord {
+                approximate_creation_date_time: SystemTime::now().into(),
+                keys: Default::default(),
+                new_image: serde_dynamo::to_item(item_event_record).unwrap(),
+                old_image: Default::default(),
+                sequence_number: None,
+                size_bytes: 42,
+                stream_view_type: None,
+            },
+        };
+        serde_json::to_string(&event).unwrap()
+    }
 
     #[tokio::test]
     #[rstest::rstest]
@@ -145,12 +141,10 @@ mod tests {
             .into_iter()
             .map(ItemEventRecord::try_from)
             .map(Result::unwrap)
-            .map(|record| serde_json::to_string(&record))
-            .map(Result::unwrap)
-            .map(|json_payload| SqsMessage {
+            .map(|item_event_record| SqsMessage {
                 message_id: Some(Faker.fake()),
                 receipt_handle: None,
-                body: Some(json_payload),
+                body: Some(mk_event_bridge_payload(&item_event_record)),
                 md5_of_body: None,
                 md5_of_message_attributes: None,
                 attributes: Default::default(),
@@ -215,7 +209,7 @@ mod tests {
                 SqsMessage {
                     message_id: Some(message_id),
                     receipt_handle: None,
-                    body: Some(serde_json::to_string(&event_record).unwrap()),
+                    body: Some(mk_event_bridge_payload(&event_record)),
                     md5_of_body: None,
                     md5_of_message_attributes: None,
                     attributes: Default::default(),
@@ -257,294 +251,5 @@ mod tests {
         actual_failed_message_ids.sort();
 
         assert_eq!(expected_failed_message_ids, actual_failed_message_ids);
-    }
-
-    fn create_sample_item_event_record() -> ItemEventRecord {
-        let item = Item::create(
-            ShopId::new(),
-            ShopsItemId::new(),
-            ShopName::from("test shop"),
-            Localized::new(common::language::domain::Language::En, "Test Item".into()),
-            Default::default(),
-            None,
-            Default::default(),
-            Some(Price::new(
-                10000u64.into(),
-                common::currency::domain::Currency::Usd,
-            )),
-            Default::default(),
-            ItemState::Available,
-            Url::parse("https://example.com/item").unwrap(),
-            vec![],
-        );
-        item.try_into().unwrap()
-    }
-
-    #[tokio::test]
-    async fn should_fail_message_for_invalid_json_deserialization() {
-        let invalid_json_message = SqsMessage {
-            message_id: Some("msg1".to_string()),
-            receipt_handle: None,
-            body: Some("invalid json {".to_string()),
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let lambda_event = LambdaEvent {
-            payload: SqsEvent {
-                records: vec![invalid_json_message],
-            },
-            context: Context::default(),
-        };
-
-        let mut repository_mock = MockItemDynamoDbRepository::default();
-        // Repository should not be called since the message fails parsing
-        repository_mock.expect_update_item_record().times(0);
-
-        let response = handler(&repository_mock, lambda_event).await.unwrap();
-
-        assert_eq!(response.batch_item_failures.len(), 1);
-        assert_eq!(response.batch_item_failures[0].item_identifier, "msg1");
-    }
-
-    #[tokio::test]
-    async fn should_skip_message_for_empty_message_body() {
-        let empty_body_message = SqsMessage {
-            message_id: Some("msg2".to_string()),
-            receipt_handle: None,
-            body: None,
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let lambda_event = LambdaEvent {
-            payload: SqsEvent {
-                records: vec![empty_body_message],
-            },
-            context: Context::default(),
-        };
-
-        let mut repository_mock = MockItemDynamoDbRepository::default();
-        // Repository should not be called since the message has no body
-        repository_mock.expect_update_item_record().times(0);
-
-        let response = handler(&repository_mock, lambda_event).await.unwrap();
-
-        // Empty body should be skipped (not failed)
-        assert!(response.batch_item_failures.is_empty());
-    }
-
-    #[tokio::test]
-    async fn should_fail_message_for_repository_update_failure() {
-        let event_record = create_sample_item_event_record();
-        let valid_message = SqsMessage {
-            message_id: Some("msg3".to_string()),
-            receipt_handle: None,
-            body: Some(serde_json::to_string(&event_record).unwrap()),
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let lambda_event = LambdaEvent {
-            payload: SqsEvent {
-                records: vec![valid_message],
-            },
-            context: Context::default(),
-        };
-
-        let mut repository_mock = MockItemDynamoDbRepository::default();
-        repository_mock
-            .expect_update_item_record()
-            .times(1)
-            .returning(|_, _, _| {
-                Box::pin(async move { Err(SdkError::construction_failure("Update failed")) })
-            });
-
-        let response = handler(&repository_mock, lambda_event).await.unwrap();
-
-        assert_eq!(response.batch_item_failures.len(), 1);
-        assert_eq!(response.batch_item_failures[0].item_identifier, "msg3");
-    }
-
-    #[tokio::test]
-    async fn should_process_mixed_success_and_failure_scenarios_correctly() {
-        let event_record = create_sample_item_event_record();
-        let valid_message = SqsMessage {
-            message_id: Some("msg_success".to_string()),
-            receipt_handle: None,
-            body: Some(serde_json::to_string(&event_record).unwrap()),
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let invalid_message = SqsMessage {
-            message_id: Some("msg_invalid".to_string()),
-            receipt_handle: None,
-            body: Some("invalid json".to_string()),
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let empty_message = SqsMessage {
-            message_id: Some("msg_empty".to_string()),
-            receipt_handle: None,
-            body: None,
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let lambda_event = LambdaEvent {
-            payload: SqsEvent {
-                records: vec![valid_message, invalid_message, empty_message],
-            },
-            context: Context::default(),
-        };
-
-        let mut repository_mock = MockItemDynamoDbRepository::default();
-        repository_mock
-            .expect_update_item_record()
-            .times(1)
-            .returning(|_, _, _| Box::pin(async move { Ok(UpdateItemOutput::builder().build()) }));
-
-        let response = handler(&repository_mock, lambda_event).await.unwrap();
-
-        // Only the invalid JSON message should fail (empty is skipped, valid succeeds)
-        assert_eq!(response.batch_item_failures.len(), 1);
-        assert_eq!(
-            response.batch_item_failures[0].item_identifier,
-            "msg_invalid"
-        );
-    }
-
-    #[tokio::test]
-    async fn should_fail_extract_message_data_with_invalid_json() {
-        let mut failed_message_ids = Vec::new();
-        let mut skipped_count = 0;
-        let mut message_ids = HashMap::new();
-
-        let invalid_message = SqsMessage {
-            message_id: Some("test_msg".to_string()),
-            receipt_handle: None,
-            body: Some("{ invalid json".to_string()),
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let result = extract_message_data(
-            invalid_message,
-            &mut failed_message_ids,
-            &mut skipped_count,
-            &mut message_ids,
-        );
-
-        assert!(result.is_none());
-        assert_eq!(failed_message_ids.len(), 1);
-        assert_eq!(failed_message_ids[0], "test_msg");
-        assert_eq!(skipped_count, 0);
-        assert!(message_ids.is_empty());
-    }
-
-    #[tokio::test]
-    async fn should_skip_extract_message_data_with_empty_body() {
-        let mut failed_message_ids = Vec::new();
-        let mut skipped_count = 0;
-        let mut message_ids = HashMap::new();
-
-        let empty_message = SqsMessage {
-            message_id: Some("test_msg".to_string()),
-            receipt_handle: None,
-            body: None,
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let result = extract_message_data(
-            empty_message,
-            &mut failed_message_ids,
-            &mut skipped_count,
-            &mut message_ids,
-        );
-
-        assert!(result.is_none());
-        assert!(failed_message_ids.is_empty());
-        assert_eq!(skipped_count, 1);
-        assert!(message_ids.is_empty());
-    }
-
-    #[tokio::test]
-    async fn should_succeed_extract_message_data_with_valid_data() {
-        let mut failed_message_ids = Vec::new();
-        let mut skipped_count = 0;
-        let mut message_ids = HashMap::new();
-
-        let event_record = create_sample_item_event_record();
-        let valid_message = SqsMessage {
-            message_id: Some("test_msg".to_string()),
-            receipt_handle: None,
-            body: Some(serde_json::to_string(&event_record).unwrap()),
-            md5_of_body: None,
-            md5_of_message_attributes: None,
-            attributes: Default::default(),
-            message_attributes: Default::default(),
-            event_source_arn: None,
-            event_source: None,
-            aws_region: None,
-        };
-
-        let result = extract_message_data(
-            valid_message,
-            &mut failed_message_ids,
-            &mut skipped_count,
-            &mut message_ids,
-        );
-
-        assert!(result.is_some());
-        let (key, update) = result.unwrap();
-        assert!(failed_message_ids.is_empty());
-        assert_eq!(skipped_count, 0);
-        assert_eq!(message_ids.len(), 1);
-        assert!(message_ids.contains_key(&key));
-        assert_eq!(message_ids[&key], "test_msg");
-        assert!(matches!(update, ItemRecordUpdate { .. }));
     }
 }

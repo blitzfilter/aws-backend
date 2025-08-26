@@ -621,11 +621,13 @@ checksum = "f3cd5d79ca6be17e6cdc157fccf22a0190a8c83ea0e04dc8a4429aea65627740"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "http 1.3.1",
  "http-body 1.0.1",
  "http-serde",
  "query_map",
  "serde",
+ "serde_dynamo",
  "serde_json",
  "serde_with",
 ]
@@ -2054,12 +2056,25 @@ dependencies = [
 name = "item-lambda"
 version = "0.1.0"
 dependencies = [
+ "item-lambda-common",
  "item-lambda-materialize-dynamodb-new",
  "item-lambda-materialize-dynamodb-update",
  "item-lambda-materialize-opensearch-new",
  "item-lambda-materialize-opensearch-update",
  "item-lambda-write-new",
  "item-lambda-write-update",
+]
+
+[[package]]
+name = "item-lambda-common"
+version = "0.1.0"
+dependencies = [
+ "aws_lambda_events",
+ "fake",
+ "item-dynamodb",
+ "serde_dynamo",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -2073,8 +2088,10 @@ dependencies = [
  "fake",
  "item-core",
  "item-dynamodb",
+ "item-lambda-common",
  "lambda_runtime",
  "rstest",
+ "serde_dynamo",
  "serde_json",
  "serial_test",
  "test-api",
@@ -2097,6 +2114,7 @@ dependencies = [
  "fake",
  "item-core",
  "item-dynamodb",
+ "item-lambda-common",
  "lambda_runtime",
  "rstest",
  "serde_dynamo",
@@ -2118,10 +2136,12 @@ dependencies = [
  "fake",
  "item-core",
  "item-dynamodb",
+ "item-lambda-common",
  "item-opensearch",
  "lambda_runtime",
  "opensearch",
  "rstest",
+ "serde_dynamo",
  "serde_json",
  "time",
  "tokio",
@@ -2141,10 +2161,12 @@ dependencies = [
  "fake",
  "item-core",
  "item-dynamodb",
+ "item-lambda-common",
  "item-opensearch",
  "lambda_runtime",
  "opensearch",
  "rstest",
+ "serde_dynamo",
  "serde_json",
  "time",
  "tokio",
