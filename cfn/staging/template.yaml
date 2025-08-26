@@ -109,8 +109,8 @@ Resources:
       SourceParameters:
         DynamoDBStreamParameters:
           StartingPosition: LATEST
-          BatchSize: 1000
-          MaximumBatchingWindowInSeconds: 5
+          BatchSize: 10
+          MaximumBatchingWindowInSeconds: 3
       Target: !GetAtt DynamoDbEventBus.Arn
       TargetParameters:
         EventBridgeEventBusParameters:
