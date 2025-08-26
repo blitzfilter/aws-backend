@@ -44,6 +44,8 @@ Resources:
               - hash
       BillingMode: PAY_PER_REQUEST
       TableClass: STANDARD
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
 
   ItemsOpenSearchDomain:
     Type: AWS::OpenSearchService::Domain
@@ -66,6 +68,54 @@ Resources:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: "es:*"
             Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${EnvSuffix}/*"
+
+  DynamoDbEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "dynamodb-event-bus-${EnvSuffix}"
+
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "dynamodb-to-eventbridge-pipe-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pipes.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: !GetAtt DynamoDbEventBus.Arn
+
+  TableOneStreamToEventBusPipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Name: !Sub "tableone-stream-to-eventbus-${EnvSuffix}"
+      RoleArn: !GetAtt PipeRole.Arn
+      Source: !GetAtt TableOne.StreamArn
+      SourceParameters:
+        DynamoDBStreamParameters:
+          StartingPosition: LATEST
+      Target: !GetAtt DynamoDbEventBus.Arn
+      TargetParameters:
+        EventBridgeEventBusParameters:
+          DetailType: "DynamoDBStreamRecord"
+          Source: !Ref TableOne
 
   ItemsApi:
     Type: AWS::ApiGatewayV2::Api
