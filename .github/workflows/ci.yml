@@ -174,10 +174,7 @@ jobs:
       - name: Cache global npm packages
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.npm
-            /usr/local/lib/node_modules
-            /usr/local/bin
+          path: ~/.npm
           key: zig-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             zig-${{ runner.os }}-
@@ -236,10 +233,7 @@ jobs:
       - name: Cache global npm packages
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.npm
-            /usr/local/lib/node_modules
-            /usr/local/bin
+          path: ~/.npm
           key: zig-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             zig-${{ runner.os }}-
@@ -320,10 +314,7 @@ jobs:
       - name: Cache global npm packages
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.npm
-            /usr/local/lib/node_modules
-            /usr/local/bin
+          path: ~/.npm
           key: zig-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             zig-${{ runner.os }}-
