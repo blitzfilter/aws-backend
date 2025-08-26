@@ -601,7 +601,7 @@ Resources:
   ItemMaterializeOpenSearchUpdateRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-materialize-opensearch-new-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-materialize-opensearch-update-role-${EnvSuffix}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
