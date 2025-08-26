@@ -171,19 +171,10 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-lambda-1.8.6
 
-      - name: Cache global npm packages
-        uses: actions/cache@v4
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
         with:
-          path: ~/.npm
-          key: zig-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            zig-${{ runner.os }}-
-
-      - name: Install Zig (for musl builds)
-        run: |
-          if ! command -v zig &> /dev/null; then
-            npm install -g @ziglang/cli
-          fi
+          version: 0.14.1
 
       - name: Install cargo-lambda
         run: |
@@ -230,19 +221,10 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-lambda-1.8.6
 
-      - name: Cache global npm packages
-        uses: actions/cache@v4
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
         with:
-          path: ~/.npm
-          key: zig-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            zig-${{ runner.os }}-
-
-      - name: Install Zig (for musl builds)
-        run: |
-          if ! command -v zig &> /dev/null; then
-            npm install -g @ziglang/cli
-          fi
+          version: 0.14.1
 
       - name: Install cargo-lambda
         run: |
@@ -311,19 +293,10 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-lambda-1.8.6
 
-      - name: Cache global npm packages
-        uses: actions/cache@v4
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
         with:
-          path: ~/.npm
-          key: zig-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            zig-${{ runner.os }}-
-
-      - name: Install Zig (for musl builds)
-        run: |
-          if ! command -v zig &> /dev/null; then
-            npm install -g @ziglang/cli
-          fi
+          version: 0.14.1
 
       - name: Install cargo-lambda
         run: |
