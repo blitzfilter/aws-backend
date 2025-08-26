@@ -215,6 +215,374 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items*"
 
+  ItemWriteNewDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-write-new-dlq-${EnvSuffix}"
+      MessageRetentionPeriod: 1209600
+  ItemWriteNewQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-write-new-queue-${EnvSuffix}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ItemWriteNewDlq.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 360
+  ItemWriteNewRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-lambda-write-new-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: !GetAtt TableOne.Arn
+  ItemWriteNewLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-lambda-write-new-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemWriteNewRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-lambda-write-new-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 60
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref TableOne
+  ItemWriteNewMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref ItemWriteNewLambda
+      EventSourceArn: !GetAtt ItemWriteNewQ.Arn
+      Enabled: true
+      BatchSize: 200
+      MaximumBatchingWindowInSeconds: 5
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  ItemWriteUpdateDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-write-update-dlq-${EnvSuffix}"
+      MessageRetentionPeriod: 1209600
+  ItemWriteUpdateQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-write-update-queue-${EnvSuffix}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ItemWriteUpdateDlq.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 360
+  ItemWriteUpdateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-lambda-write-update-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: !GetAtt TableOne.Arn
+  ItemWriteUpdateLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-lambda-write-update-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemWriteUpdateRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-lambda-write-update-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 60
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref TableOne
+  ItemWriteUpdateMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref ItemWriteUpdateLambda
+      EventSourceArn: !GetAtt ItemWriteUpdateQ.Arn
+      Enabled: true
+      BatchSize: 200
+      MaximumBatchingWindowInSeconds: 5
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  ItemMaterializeDynamoDbNewDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-dynamodb-new-dlq-${EnvSuffix}"
+      MessageRetentionPeriod: 1209600
+  ItemMaterializeDynamoDbNewQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-dynamodb-new-queue-${EnvSuffix}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ItemMaterializeDynamoDbNewDlq.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 360
+  ItemMaterializeDynamoDbNewRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-lambda-materialize-dynamodb-new-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: !GetAtt TableOne.Arn
+  ItemMaterializeDynamoDbNewLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-lambda-materialize-dynamodb-new-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemMaterializeDynamoDbNewRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-lambda-materialize-dynamodb-new-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 60
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref TableOne
+  ItemMaterializeDynamoDbNewMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref ItemMaterializeDynamoDbNewLambda
+      EventSourceArn: !GetAtt ItemMaterializeDynamoDbNewQ.Arn
+      Enabled: true
+      BatchSize: 200
+      MaximumBatchingWindowInSeconds: 5
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  ItemMaterializeDynamoDbUpdateDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-dynamodb-update-dlq-${EnvSuffix}"
+      MessageRetentionPeriod: 1209600
+  ItemMaterializeDynamoDbUpdateQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-dynamodb-update-queue-${EnvSuffix}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ItemMaterializeDynamoDbUpdateDlq.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 360
+  ItemMaterializeDynamoDbUpdateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-lambda-materialize-dynamodb-update-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: !GetAtt TableOne.Arn
+  ItemMaterializeDynamoDbUpdateLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-lambda-materialize-dynamodb-update-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemMaterializeDynamoDbUpdateRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-lambda-materialize-dynamodb-update-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 60
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref TableOne
+  ItemMaterializeDynamoDbUpdateMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref ItemMaterializeDynamoDbUpdateLambda
+      EventSourceArn: !GetAtt ItemMaterializeDynamoDbUpdateQ.Arn
+      Enabled: true
+      BatchSize: 200
+      MaximumBatchingWindowInSeconds: 5
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  ItemMaterializeOpenSearchNewDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-opensearch-new-dlq-${EnvSuffix}"
+      MessageRetentionPeriod: 1209600
+  ItemMaterializeOpenSearchNewQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-opensearch-new-queue-${EnvSuffix}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ItemMaterializeOpenSearchNewDlq.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 360
+  ItemMaterializeOpenSearchNewRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-lambda-materialize-opensearch-new-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: OpenSearchAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - es:*
+                Resource: !GetAtt TableOne.Arn
+  ItemMaterializeOpenSearchNewLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-lambda-materialize-opensearch-new-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemMaterializeOpenSearchNewRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-lambda-materialize-opensearch-new-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 60
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
+  ItemMaterializeOpenSearchDbNewMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref ItemMaterializeOpenSearchNewLambda
+      EventSourceArn: !GetAtt ItemMaterializeOpenSearchNewQ.Arn
+      Enabled: true
+      BatchSize: 200
+      MaximumBatchingWindowInSeconds: 5
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  ItemMaterializeOpenSearchUpdateDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-opensearch-update-dlq-${EnvSuffix}"
+      MessageRetentionPeriod: 1209600
+  ItemMaterializeOpenSearchUpdateQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "item-lambda-materialize-opensearch-update-queue-${EnvSuffix}"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ItemMaterializeOpenSearchUpdateDlq.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 360
+  ItemMaterializeOpenSearchUpdateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "item-lambda-materialize-opensearch-update-role-${EnvSuffix}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: OpenSearchAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - es:*
+                Resource: !GetAtt TableOne.Arn
+  ItemMaterializeOpenSearchUpdateLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "item-lambda-materialize-opensearch-update-${EnvSuffix}"
+      Runtime: provided.al2023
+      Handler: lib.handler
+      Role: !GetAtt ItemMaterializeOpenSearchUpdateRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Sub "item-lambda-materialize-opensearch-update-${EnvSuffix}.zip"
+      MemorySize: 512
+      Timeout: 60
+      EphemeralStorage:
+        Size: 512
+      Environment:
+        Variables:
+          OPENSEARCH_ITEMS_DOMAIN_ENDPOINT_URL: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
+
 Outputs:
   DynamoDBTable:
     Value: !Ref TableOne

@@ -47,7 +47,7 @@ while true; do
   fi
 done
 
-# Configure CLI profile (auth-type should be 'aws')
+# Configure CLI profile
 echo -e "\n es" | opensearch-cli profile create --name "ci" \
   --endpoint "$RAW_ENDPOINT" \
   --auth-type "aws-iam"
@@ -60,7 +60,7 @@ else
   echo "ℹ️ Index $INDEX_NAME not found, skipping delete."
 fi
 
-# Create index with mapping (use --data with @file.json)
+# Create index with mapping
 echo "📦 Creating index with mapping from $MAPPING_FILE..."
 opensearch-cli curl put \
   --path "$INDEX_NAME" \
