@@ -73,7 +73,6 @@ Resources:
     Type: AWS::Events::EventBus
     Properties:
       Name: !Sub "dynamodb-event-bus-${EnvSuffix}"
-
   PipeRole:
     Type: AWS::IAM::Role
     Properties:
@@ -101,7 +100,6 @@ Resources:
                 Action:
                   - events:PutEvents
                 Resource: !GetAtt DynamoDbEventBus.Arn
-
   TableOneStreamToEventBusPipe:
     Type: AWS::Pipes::Pipe
     Properties:
@@ -111,11 +109,34 @@ Resources:
       SourceParameters:
         DynamoDBStreamParameters:
           StartingPosition: LATEST
+          BatchSize: 1000
+          MaximumBatchingWindowInSeconds: 5
       Target: !GetAtt DynamoDbEventBus.Arn
       TargetParameters:
         EventBridgeEventBusParameters:
           DetailType: "DynamoDBStreamRecord"
           Source: !Ref TableOne
+
+  DynamoDbEventBusQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ItemMaterializeDynamoDbNewQ
+        - !Ref ItemMaterializeDynamoDbUpdateQ
+        - !Ref ItemMaterializeOpenSearchNewQ
+        - !Ref ItemMaterializeOpenSearchUpdateQ
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource:
+              - !GetAtt ItemMaterializeDynamoDbNewQ.Arn
+              - !GetAtt ItemMaterializeDynamoDbUpdateQ.Arn
+              - !GetAtt ItemMaterializeOpenSearchNewQ.Arn
+              - !GetAtt ItemMaterializeOpenSearchUpdateQ.Arn
 
   ItemsApi:
     Type: AWS::ApiGatewayV2::Api
@@ -708,6 +729,93 @@ Resources:
       MaximumBatchingWindowInSeconds: 5
       FunctionResponseTypes:
         - ReportBatchItemFailures
+
+  DynamoDbItemEventRecordCreatedMaterializeDynamoDbItemRecordEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "ddb-item-mat-ddb-new-${EnvSuffix}"
+      EventBusName: !Ref DynamoDbEventBus
+      EventPattern:
+        source:
+          - !Ref TableOne
+        detail-type:
+          - "DynamoDBStreamRecord"
+        detail:
+          eventName:
+            - "INSERT"
+          dynamodb:
+            NewImage:
+              event_type:
+                S:
+                  - "CREATED"
+      Targets:
+        - Id: ItemMaterializeDynamoDbNewQ
+          Arn: !GetAtt ItemMaterializeDynamoDbNewQ.Arn
+  DynamoDbItemEventRecordUpdatedMaterializeDynamoDbItemRecordEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "ddb-item-mat-ddb-update-${EnvSuffix}"
+      EventBusName: !Ref DynamoDbEventBus
+      EventPattern:
+        source:
+          - !Ref TableOne
+        detail-type:
+          - "DynamoDBStreamRecord"
+        detail:
+          eventName:
+            - "INSERT"
+          dynamodb:
+            NewImage:
+              event_type:
+                S:
+                  - prefix: "PRICE_"
+                  - prefix: "STATE_"
+      Targets:
+        - Id: ItemMaterializeDynamoDbUpdateQ
+          Arn: !GetAtt ItemMaterializeDynamoDbUpdateQ.Arn
+  DynamoDbItemEventRecordCreatedMaterializeOpenSearchItemDocumentEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "ddb-item-mat-os-new-${EnvSuffix}"
+      EventBusName: !Ref DynamoDbEventBus
+      EventPattern:
+        source:
+          - !Ref TableOne
+        detail-type:
+          - "DynamoDBStreamRecord"
+        detail:
+          eventName:
+            - "INSERT"
+          dynamodb:
+            NewImage:
+              event_type:
+                S:
+                  - "CREATED"
+      Targets:
+        - Id: ItemMaterializeOpenSearchNewQ
+          Arn: !GetAtt ItemMaterializeOpenSearchNewQ.Arn
+  DynamoDbItemEventRecordUpdatedMaterializeOpenSearchItemDocumentEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "ddb-item-mat-os-update-${EnvSuffix}"
+      EventBusName: !Ref DynamoDbEventBus
+      EventPattern:
+        source:
+          - !Ref TableOne
+        detail-type:
+          - "DynamoDBStreamRecord"
+        detail:
+          eventName:
+            - "INSERT"
+          dynamodb:
+            NewImage:
+              event_type:
+                S:
+                  - prefix: "PRICE_"
+                  - prefix: "STATE_"
+      Targets:
+        - Id: ItemMaterializeOpenSearchUpdateQ
+          Arn: !GetAtt ItemMaterializeOpenSearchUpdateQ.Arn
 
 Outputs:
   DynamoDBTable:
