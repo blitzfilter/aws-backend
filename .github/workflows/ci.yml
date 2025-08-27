@@ -391,6 +391,7 @@ jobs:
         id: export-cfn-output
         shell: bash
         run: |
+          STACK_NAME=staging-${{ env.ENV_SUFFIX }}
           set -euo pipefail
           JSON=$(
             aws cloudformation describe-stacks \
