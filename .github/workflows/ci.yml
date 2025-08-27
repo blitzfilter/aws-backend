@@ -52,6 +52,7 @@ jobs:
         crate:
           - src/common
           - src/search-filter/src/search-filter-core
+          - src/staging-tests
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-api/src/item-api-simple-search
           - src/item/src/item-core

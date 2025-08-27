@@ -1,0 +1,9 @@
+[package]
+name = "staging-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+staging-tests-macros = { path = "src/staging-tests-macros" }
+tokio = { workspace = true, features = ["full"] }
+serial_test = { workspace = true }
