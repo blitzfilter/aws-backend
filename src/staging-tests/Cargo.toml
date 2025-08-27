@@ -13,3 +13,6 @@ aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 aws-sdk-sqs = { workspace = true }
 opensearch = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["default"] }
