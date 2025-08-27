@@ -388,11 +388,18 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Export CFN Output
+        id: export-cfn-output
+        shell: bash
         run: |
-          echo "CFN_OUTPUT=$(aws cloudformation describe-stacks \
-            --stack-name $STACK_NAME \
-            --query 'Stacks[0].Outputs | reduce(&merge(@, { [OutputKey]: OutputValue }), {})' \
-            --output json)" >> $GITHUB_ENV
+          set -euo pipefail
+          JSON=$(
+            aws cloudformation describe-stacks \
+              --stack-name $STACK_NAME \
+              --query 'Stacks[0].Outputs' \
+              --output json \
+            | jq -c 'map({(.OutputKey): .OutputValue}) | add'
+          )
+          echo "outputs_json=$JSON" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -409,4 +416,6 @@ jobs:
 
       - name: Test src/staging-tests
         working-directory: src/staging-tests
+        env:
+          CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
         run: cargo test --test '*' --all-features
