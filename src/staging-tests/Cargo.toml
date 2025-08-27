@@ -7,3 +7,10 @@ edition = "2024"
 staging-tests-macros = { path = "src/staging-tests-macros" }
 tokio = { workspace = true, features = ["full"] }
 serial_test = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-account = { workspace = true }
+aws-sdk-dynamodb = { workspace = true }
+aws-sdk-sqs = { workspace = true }
+opensearch = { workspace = true }

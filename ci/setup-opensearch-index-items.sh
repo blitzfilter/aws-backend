@@ -9,12 +9,12 @@ STACK_NAME="staging-${ENV_SUFFIX}"
 # Resolve OpenSearch domain name + endpoint from CloudFormation Outputs
 DOMAIN_NAME=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
-  --query "Stacks[0].Outputs[?OutputKey=='OpenSearchDomainName'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='OpensearchDomainName'].OutputValue" \
   --output text)
 
 RAW_ENDPOINT=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
-  --query "Stacks[0].Outputs[?OutputKey=='OpenSearchDomainEndpoint'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='OpensearchItemDomainEndpointUrl'].OutputValue" \
   --output text)
 
 if [ -z "$DOMAIN_NAME" ]; then

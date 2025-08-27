@@ -831,12 +831,41 @@ Resources:
           Arn: !GetAtt ItemMaterializeOpenSearchUpdateQ.Arn
 
 Outputs:
-  DynamoDBTable:
-    Value: !Ref TableOne
-  OpenSearchDomainEndpoint:
-    Value: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
-  OpenSearchDomainName:
-    Value: !Ref ItemsOpenSearchDomain
-  ApiEndpoint:
+  ApiGatewayEndpointUrl:
     Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvSuffix}"
+  OpensearchItemDomainEndpointUrl:
+    Value: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
+  OpensearchDomainName:
+    Value: !Ref ItemsOpenSearchDomain
+  DynamodbTable1Name:
+    Value: !Ref TableOne
 
+  ItemWriteNewQueueUrl:
+    Value: !Ref ItemWriteNewQ
+  ItemWriteNewDeadLetterQueueUrl:
+    Value: !Ref ItemWriteNewDlq
+
+  ItemWriteUpdateQueueUrl:
+    Value: !Ref ItemWriteUpdateQ
+  ItemWriteUpdateDeadLetterQueueUrl:
+    Value: !Ref ItemWriteUpdateDlq
+
+  ItemMaterializeDynamodbNewQueueUrl:
+    Value: !Ref ItemMaterializeDynamoDbNewQ
+  ItemMaterializeDynamodbNewDeadLetterQueueUrl:
+    Value: !Ref ItemMaterializeDynamoDbNewDlq
+
+  ItemMaterializeDynamodbUpdateQueueUrl:
+    Value: !Ref ItemMaterializeDynamoDbUpdateQ
+  ItemMaterializeDynamodbUpdateDeadLetterQueueUrl:
+    Value: !Ref ItemMaterializeDynamoDbUpdateDlq
+
+  ItemMaterializeOpensearchNewQueueUrl:
+    Value: !Ref ItemMaterializeOpenSearchNewQ
+  ItemMaterializeOpensearchNewDeadLetterQueueUrl:
+    Value: !Ref ItemMaterializeOpenSearchNewDlq
+
+  ItemMaterializeOpensearchUpdateQueueUrl:
+    Value: !Ref ItemMaterializeOpenSearchUpdateQ
+  ItemMaterializeOpensearchUpdateDeadLetterQueueUrl:
+    Value: !Ref ItemMaterializeOpenSearchUpdateDlq
