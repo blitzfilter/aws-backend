@@ -3922,6 +3922,7 @@ dependencies = [
  "staging-tests-macros",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]

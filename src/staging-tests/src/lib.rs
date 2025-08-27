@@ -1,8 +1,5 @@
 use aws_sdk_dynamodb::types::WriteRequest;
-use aws_sdk_sqs::{
-    config::http::HttpResponse,
-    operation::purge_queue::{PurgeQueueError, PurgeQueueOutput},
-};
+use aws_sdk_sqs::types::DeleteMessageBatchRequestEntry;
 use opensearch::http::Url;
 use opensearch::http::response::Response;
 use opensearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
@@ -201,20 +198,48 @@ async fn clear_os_index_data(index: &str) -> Result<Response, opensearch::Error>
         .await
 }
 
-async fn clear_q(
-    queue_url: String,
-) -> Result<PurgeQueueOutput, aws_sdk_sqs::error::SdkError<PurgeQueueError, HttpResponse>> {
-    get_sqs_client()
-        .await
-        .purge_queue()
-        .queue_url(queue_url)
-        .send()
-        .await
+// Manually deleting in batches as purging introduces 60s no-op window
+async fn clear_q(queue_url: String) -> Result<(), Box<dyn Error>> {
+    let client = get_sqs_client().await;
+    loop {
+        let resp = client
+            .receive_message()
+            .queue_url(queue_url.clone())
+            .max_number_of_messages(10)
+            .wait_time_seconds(1)
+            .send()
+            .await?;
+
+        let messages = resp.messages.unwrap_or_default();
+        if messages.is_empty() {
+            break;
+        }
+
+        let entries: Vec<_> = messages
+            .into_iter()
+            .filter_map(|m| {
+                m.receipt_handle.map(|handle| {
+                    DeleteMessageBatchRequestEntry::builder()
+                        .id(uuid::Uuid::new_v4().to_string())
+                        .receipt_handle(handle)
+                        .build()
+                        .unwrap()
+                })
+            })
+            .collect();
+
+        client
+            .delete_message_batch()
+            .queue_url(queue_url.clone())
+            .set_entries(Some(entries))
+            .send()
+            .await?;
+    }
+
+    Ok(())
 }
 
-async fn clear_qs(
-    queue_urls: Vec<String>,
-) -> Result<(), aws_sdk_sqs::error::SdkError<PurgeQueueError, HttpResponse>> {
+async fn clear_qs(queue_urls: Vec<String>) -> Result<(), Box<dyn Error>> {
     for queue_url in queue_urls {
         clear_q(queue_url).await?;
     }
