@@ -127,7 +127,9 @@ async fn clear_ddb_table_data() -> Result<(), Box<dyn Error>> {
     let mut exclusive_start_key: Option<HashMap<String, AttributeValue>> = None;
 
     loop {
-        let mut scan_request = client.scan().table_name("table_1");
+        let mut scan_request = client
+            .scan()
+            .table_name(get_cfn_output().dynamodb_table_1_name.clone());
 
         if let Some(start_key) = exclusive_start_key {
             scan_request = scan_request.set_exclusive_start_key(Some(start_key));
