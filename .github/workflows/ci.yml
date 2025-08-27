@@ -253,6 +253,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   aws-compute-push:
+    if: false
     name: Push to S3 ${{ matrix.crate }}
     #    needs: integration-test
     runs-on: ubuntu-latest
@@ -330,6 +331,7 @@ jobs:
           aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
   aws-cfn-deploy:
+    if: false
     name: Deploy Ephemeral CFN Stack
     needs: aws-compute-push
     runs-on: ubuntu-latest
@@ -390,7 +392,7 @@ jobs:
       - name: Export CFN Output
         run: |
           echo "CFN_OUTPUT=$(aws cloudformation describe-stacks \
-            --stack-name my-stack \
+            --stack-name $STACK_NAME \
             --query 'Stacks[0].Outputs | reduce(&merge(@, { [OutputKey]: OutputValue }), {})' \
             --output json)" >> $GITHUB_ENV
 
