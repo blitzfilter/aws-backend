@@ -419,4 +419,4 @@ jobs:
         working-directory: src/staging-tests
         env:
           CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
-        run: cargo test --test '*' --all-features
+        run: cargo test --test '*' --all-features --include-ignored

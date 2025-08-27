@@ -10,6 +10,7 @@ pub fn staging_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let block = &input.block;
 
     let expanded = quote! {
+        #[ignore]
         #[tokio::test]
         #[serial_test::serial]
         #vis #sig {
