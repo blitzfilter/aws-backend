@@ -3,7 +3,7 @@ use staging_tests::{get_cfn_output, staging_test};
 #[staging_test]
 async fn should_respond_404_when_item_does_not_exist() {
     let response = reqwest::get(format!(
-        "{}/items/foo/bar",
+        "{}/api/v1/items/foo/bar",
         get_cfn_output().api_gateway_endpoint_url
     ))
     .await
