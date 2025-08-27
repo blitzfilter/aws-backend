@@ -3909,6 +3909,11 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
+ "common",
+ "fake",
+ "item-core",
+ "item-dynamodb",
+ "item-opensearch",
  "opensearch",
  "reqwest",
  "serde",
@@ -3916,6 +3921,7 @@ dependencies = [
  "serial_test",
  "staging-tests-macros",
  "tokio",
+ "url",
 ]
 
 [[package]]
