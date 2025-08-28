@@ -25,6 +25,9 @@ async fn should_respond_200_when_item_does_exist() {
     ))
     .await
     .unwrap();
+
+    println!("{response:?}");
+
     assert_eq!(200, response.status());
 
     let body = response.json::<serde_json::Value>().await.unwrap();
