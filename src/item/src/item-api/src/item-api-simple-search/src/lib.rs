@@ -19,7 +19,7 @@ use search_filter_core::{
     search_filter::SearchFilter,
     text_query::{TextQuery, TextQueryTooShortError},
 };
-use tracing::error;
+use tracing::{error, info};
 
 #[tracing::instrument(
     skip(event, service),
@@ -33,6 +33,11 @@ pub async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl QueryItemService,
 ) -> Result<ApiGatewayV2httpResponse, lambda_runtime::Error> {
+    info!(
+        pathParams = ?event.payload.path_parameters,
+        queryParams = ?event.payload.query_string_parameters,
+        "Invoked handler."
+    );
     match handle(event, service).await {
         Ok(response) => Ok(response),
         Err(err) => Ok(ApiGatewayV2httpResponse::from(err)),
