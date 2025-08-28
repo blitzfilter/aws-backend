@@ -233,7 +233,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref ItemApiGetItemLambda
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items/*/*"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*"
 
   ApiSimpleSearchRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -297,7 +297,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref ItemApiSimpleSearchLambda
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*/*/api/v1/items*"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ItemsApi}/*"
 
   ItemWriteNewDlq:
     Type: AWS::SQS::Queue
