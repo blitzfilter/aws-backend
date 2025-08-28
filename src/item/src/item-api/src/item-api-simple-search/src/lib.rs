@@ -21,7 +21,14 @@ use search_filter_core::{
 };
 use tracing::error;
 
-#[tracing::instrument(skip(event, service), fields(requestId = %event.context.request_id))]
+#[tracing::instrument(
+    skip(event, service),
+    fields(
+        requestId = %event.context.request_id,
+        path = &event.payload.raw_path,
+        query = &event.payload.raw_query_string,
+    )
+)]
 pub async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl QueryItemService,

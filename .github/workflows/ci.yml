@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -191,7 +191,7 @@ jobs:
 
   sonar:
     name: SonarQube-Cloud Analysis
-    needs: [ unit-test, integration-test ]
+    needs: [unit-test, integration-test]
     if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
@@ -252,86 +252,86 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  #  aws-compute-push:
-  #    name: Push to S3 ${{ matrix.crate }}
-  #    #    needs: integration-test
-  #    runs-on: ubuntu-latest
-  #    permissions:
-  #      contents: read
-  #      id-token: write
-  #    strategy:
-  #      matrix:
-  #        crate:
-  #          - src/item/src/item-api/src/item-api-get-item
-  #          - src/item/src/item-api/src/item-api-simple-search
-  #          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
-  #          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
-  #          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
-  #          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
-  #          - src/item/src/item-lambda/src/item-lambda-write-new
-  #          - src/item/src/item-lambda/src/item-lambda-write-update
-  #    env:
-  #      ENV_SUFFIX: ${{ github.event.pull_request.number }}
-  #    steps:
-  #      - uses: actions/checkout@v5
-  #
-  #      - name: Set up Rust
-  #        uses: dtolnay/rust-toolchain@stable
-  #
-  #      - name: Cache cargo registry and target
-  #        uses: actions/cache@v4
-  #        with:
-  #          path: |
-  #            ~/.cargo/registry
-  #            ~/.cargo/git
-  #            target
-  #          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-  #
-  #      - name: Cache cargo-lambda
-  #        uses: actions/cache@v4
-  #        with:
-  #          path: |
-  #            ~/.cargo/bin/cargo-lambda
-  #            ~/.cargo/registry
-  #            ~/.cargo/git
-  #          key: ${{ runner.os }}-cargo-lambda-1.8.6
-  #
-  #      - name: Set up Zig
-  #        uses: mlugg/setup-zig@v2
-  #        with:
-  #          version: 0.14.1
-  #
-  #      - name: Install cargo-lambda
-  #        run: |
-  #          if ! command -v cargo-lambda &> /dev/null; then
-  #            cargo install cargo-lambda --version 1.8.6
-  #          fi
-  #
-  #      - name: Build Lambda binary
-  #        working-directory: ${{ matrix.crate }}
-  #        run: cargo lambda build --release --target x86_64-unknown-linux-musl --output-format zip
-  #
-  #      - name: Copy Lambda zip artifact
-  #        run: |
-  #          BIN_NAME=$(basename ${{ matrix.crate }})
-  #          OUT_DIR=$GITHUB_WORKSPACE/artifacts
-  #          mkdir -p $OUT_DIR
-  #          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
-  #
-  #      - name: Configure AWS credentials
-  #        uses: aws-actions/configure-aws-credentials@v4.3.1
-  #        with:
-  #          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
-  #          aws-region: ${{ vars.AWS_REGION }}
-  #
-  #      - name: Upload Lambda to S3
-  #        run: |
-  #          BIN_NAME=$(basename ${{ matrix.crate }})
-  #          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
+  aws-compute-push:
+    name: Push to S3 ${{ matrix.crate }}
+    #    needs: integration-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        crate:
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-api/src/item-api-simple-search
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+    env:
+      ENV_SUFFIX: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-lambda
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-lambda
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-lambda-1.8.6
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda --version 1.8.6
+          fi
+
+      - name: Build Lambda binary
+        working-directory: ${{ matrix.crate }}
+        run: cargo lambda build --release --target x86_64-unknown-linux-musl --output-format zip
+
+      - name: Copy Lambda zip artifact
+        run: |
+          BIN_NAME=$(basename ${{ matrix.crate }})
+          OUT_DIR=$GITHUB_WORKSPACE/artifacts
+          mkdir -p $OUT_DIR
+          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload Lambda to S3
+        run: |
+          BIN_NAME=$(basename ${{ matrix.crate }})
+          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
   aws-cfn-deploy:
     name: Deploy Ephemeral CFN Stack
-    #    needs: aws-compute-push
+    needs: aws-compute-push
     runs-on: ubuntu-latest
     permissions:
       contents: read
