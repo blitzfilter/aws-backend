@@ -10,7 +10,7 @@ use common::shops_item_id::ShopsItemId;
 use item_data::get_data::GetItemData;
 use item_service::get_service::GetItemService;
 use lambda_runtime::LambdaEvent;
-use tracing::error;
+use tracing::{error, info};
 
 #[tracing::instrument(
     skip(event, service),
@@ -24,6 +24,11 @@ pub async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl GetItemService,
 ) -> Result<ApiGatewayV2httpResponse, lambda_runtime::Error> {
+    info!(
+        pathParams = ?event.payload.path_parameters,
+        queryParams = ?event.payload.query_string_parameters,
+        "Invoked handler."
+    );
     match handle(event, service).await {
         Ok(response) => Ok(response),
         Err(err) => Ok(ApiGatewayV2httpResponse::from(err)),
