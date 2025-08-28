@@ -8,6 +8,8 @@ Parameters:
   ArtifactBucket:
     Type: String
     Description: "S3 bucket containing Lambda deployment zips"
+  CommitSHA:
+    Type: String
 
 Resources:
   TableOne:
@@ -219,7 +221,7 @@ Resources:
       Role: !GetAtt ItemApiGetItemRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-api-get-item-${EnvSuffix}.zip"
+        S3Key: !Sub "item-api-get-item-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 10
       EphemeralStorage:
@@ -283,7 +285,7 @@ Resources:
       Role: !GetAtt ItemApiSimpleSearchRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-api-simple-search-${EnvSuffix}.zip"
+        S3Key: !Sub "item-api-simple-search-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 10
       EphemeralStorage:
@@ -354,7 +356,7 @@ Resources:
       Role: !GetAtt ItemWriteNewRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-write-new-${EnvSuffix}.zip"
+        S3Key: !Sub "item-lambda-write-new-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -428,7 +430,7 @@ Resources:
       Role: !GetAtt ItemWriteUpdateRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-write-update-${EnvSuffix}.zip"
+        S3Key: !Sub "item-lambda-write-update-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -502,7 +504,7 @@ Resources:
       Role: !GetAtt ItemMaterializeDynamoDbNewRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-dynamodb-new-${EnvSuffix}.zip"
+        S3Key: !Sub "item-lambda-materialize-dynamodb-new-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -576,7 +578,7 @@ Resources:
       Role: !GetAtt ItemMaterializeDynamoDbUpdateRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-dynamodb-update-${EnvSuffix}.zip"
+        S3Key: !Sub "item-lambda-materialize-dynamodb-update-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -650,7 +652,7 @@ Resources:
       Role: !GetAtt ItemMaterializeOpenSearchNewRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-opensearch-new-${EnvSuffix}.zip"
+        S3Key: !Sub "item-lambda-materialize-opensearch-new-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -724,7 +726,7 @@ Resources:
       Role: !GetAtt ItemMaterializeOpenSearchUpdateRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-opensearch-update-${EnvSuffix}.zip"
+        S3Key: !Sub "item-lambda-materialize-opensearch-update-${EnvSuffix}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:

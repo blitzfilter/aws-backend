@@ -327,7 +327,7 @@ jobs:
       - name: Upload Lambda to S3
         run: |
           BIN_NAME=$(basename ${{ matrix.crate }})
-          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
+          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.ENV_SUFFIX }}-${GITHUB_SHA}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
   aws-cfn-deploy:
     name: Deploy Ephemeral CFN Stack
@@ -354,7 +354,7 @@ jobs:
             --stack-name $STACK_NAME \
             --template-file cfn/staging/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}
+            --parameter-overrides EnvSuffix=${{ env.ENV_SUFFIX }} ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }} CommitSHA=${GITHUB_SHA}
 
       - name: Install OpenSearch CLI
         run: |
