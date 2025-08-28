@@ -18,7 +18,7 @@ async fn should_respond_200_when_item_does_exist() {
     assert!(insert_res.unprocessed_items.unwrap_or_default().is_empty());
 
     let response = reqwest::get(format!(
-        "{}/api/v1/items/{}/{}?currency=USD",
+        "{}/api/v1/items/{}/{}",
         get_cfn_output().api_gateway_endpoint_url,
         record.shop_id,
         record.shops_item_id
@@ -33,8 +33,8 @@ async fn should_respond_200_when_item_does_exist() {
     assert_eq!(record.item_id.to_string(), body["itemId"]);
     assert_eq!(record.event_id.to_string(), body["eventId"]);
     assert_eq!(record.url.to_string(), body["url"]);
-    assert_eq!(record.price_usd.unwrap(), body["price"]["amount"]);
-    assert_eq!("USD", body["price"]["currency"]);
+    assert_eq!(record.price_eur.unwrap(), body["price"]["amount"]);
+    assert_eq!("EUR", body["price"]["currency"]);
 }
 
 #[staging_test]
