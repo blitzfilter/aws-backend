@@ -316,7 +316,7 @@ jobs:
           BIN_NAME=$(basename ${{ matrix.crate }})
           OUT_DIR=$GITHUB_WORKSPACE/artifacts
           mkdir -p $OUT_DIR
-          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}.zip
+          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.ENV_SUFFIX }}-${GITHUB_SHA}.zip
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4.3.1
