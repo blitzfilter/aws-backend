@@ -369,11 +369,11 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
     }
 }
 
-fn mk_pk(shop_id: &ShopId, shops_item_id: &ShopsItemId) -> String {
+pub fn mk_pk(shop_id: &ShopId, shops_item_id: &ShopsItemId) -> String {
     format!("item#shop_id#{shop_id}#shops_item_id#{shops_item_id}")
 }
 
-fn mk_sk() -> &'static str {
+pub fn mk_sk() -> &'static str {
     "item#materialized"
 }
 
