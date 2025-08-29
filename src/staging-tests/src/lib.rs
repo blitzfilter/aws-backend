@@ -41,6 +41,12 @@ static CONFIG: OnceCell<aws_config::SdkConfig> = OnceCell::const_new();
 pub async fn get_aws_config() -> &'static aws_config::SdkConfig {
     CONFIG
         .get_or_init(|| async {
+            let _ = tracing_subscriber::fmt()
+                .json()
+                .with_max_level(tracing::Level::INFO)
+                .with_current_span(true)
+                .with_ansi(false)
+                .try_init();
             aws_config::defaults(aws_config::BehaviorVersion::latest())
                 .load()
                 .await

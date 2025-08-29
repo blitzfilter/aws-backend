@@ -3921,6 +3921,8 @@ dependencies = [
  "serial_test",
  "staging-tests-macros",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]

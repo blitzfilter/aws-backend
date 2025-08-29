@@ -14,6 +14,8 @@ aws-sdk-dynamodb = { workspace = true }
 aws-sdk-sqs = { workspace = true }
 opensearch = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+tracing-subscriber = { workspace = true, features = ["json"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 common = { workspace = true, features = ["test-data"] }
