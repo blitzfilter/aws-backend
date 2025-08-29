@@ -34,8 +34,8 @@ async fn should_respond_200_when_item_does_exist() {
     assert_eq!(record.item_id.to_string(), body["itemId"]);
     assert_eq!(record.event_id.to_string(), body["eventId"]);
     assert_eq!(record.url.to_string(), body["url"]);
-    assert_eq!(record.price_usd.unwrap(), body["price"]["amount"]);
-    assert_eq!("USD", body["price"]["currency"]);
+    assert_eq!(record.price_gbp.unwrap(), body["price"]["amount"]);
+    assert_eq!("GBP", body["price"]["currency"]);
 }
 
 #[staging_test]
