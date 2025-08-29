@@ -84,7 +84,7 @@ impl<'a> QueryItemService for QueryItemServiceImpl<'a> {
                 sort = ?sort,
                 page = ?page,
                 took = search_response.took,
-                shard_stats = ?search_response.shards,
+                shardStats = ?search_response.shards,
                 "Search-Request to OpenSearch timed out when querying items."
             );
         }
