@@ -20,6 +20,7 @@ tracing = { workspace = true }
 [dev-dependencies]
 common = { workspace = true, features = ["test-data"] }
 item-core = { workspace = true, features = ["test-data"] }
+item-service = { workspace = true, features = ["test-data"] }
 item-dynamodb = { workspace = true, features = ["test-data", "repository"] }
 item-opensearch = { workspace = true, features = ["test-data"] }
 reqwest = { workspace = true, features = ["default"] }

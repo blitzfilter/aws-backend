@@ -3914,6 +3914,7 @@ dependencies = [
  "item-core",
  "item-dynamodb",
  "item-opensearch",
+ "item-service",
  "opensearch",
  "reqwest",
  "serde",
