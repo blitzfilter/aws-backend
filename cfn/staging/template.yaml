@@ -112,7 +112,7 @@ Resources:
         DynamoDBStreamParameters:
           StartingPosition: LATEST
           BatchSize: 10
-          MaximumBatchingWindowInSeconds: 3
+          MaximumBatchingWindowInSeconds: 1
         FilterCriteria:
           Filters:
             - Pattern: |
@@ -371,7 +371,7 @@ Resources:
       EventSourceArn: !GetAtt ItemWriteNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 5
+      MaximumBatchingWindowInSeconds: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -445,7 +445,7 @@ Resources:
       EventSourceArn: !GetAtt ItemWriteUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 5
+      MaximumBatchingWindowInSeconds: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -519,7 +519,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeDynamoDbNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 5
+      MaximumBatchingWindowInSeconds: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -593,7 +593,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeDynamoDbUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 5
+      MaximumBatchingWindowInSeconds: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -667,7 +667,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeOpenSearchNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 5
+      MaximumBatchingWindowInSeconds: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -741,7 +741,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeOpenSearchUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 5
+      MaximumBatchingWindowInSeconds: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
