@@ -224,9 +224,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-account"
-version = "1.84.0"
+version = "1.85.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27410d7cc2467a23d97ed1221e9b03f9f9da68b5a259576597903a8b871087e5"
+checksum = "6a3c27310fed79c857372b338d9bddd8e6c1cbe14c418ee3cc0bff5fcfc053c3"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -246,9 +246,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-dynamodb"
-version = "1.90.0"
+version = "1.91.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dba5f1b846a531444a1fbcbd10470aa571ea32bd387291e3e46782efd043893"
+checksum = "65b548fe38d7538b6ed26171e858770336d038ba36314db9c6dda6e033fc49d8"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -268,9 +268,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-lambda"
-version = "1.94.0"
+version = "1.95.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4066b5c41de4c8901314d50fcf99a9e322af244d8def067cb73aa0b23fdda90b"
+checksum = "3bfe4173eab4c3e451b83b95d209e6af0efc184b5891c1d4ed3d963e577dcb55"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -291,9 +291,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-opensearch"
-version = "1.95.0"
+version = "1.96.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6092f5def1577ffb6f6785a8a337b97a1af46aa98721ae739ebc017e1677b9f"
+checksum = "7f8c117ae8d7187b0be0a60bc134e9c8b11a879a88ae47e2765b3b1beb24163b"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -313,9 +313,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-sqs"
-version = "1.81.0"
+version = "1.82.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b17688adfe7471c885396c7f314736f349c425cb3536e8f80233ddebe64269cd"
+checksum = "fe6858d5bd13b69709fe602f62e8a0be7f43ba0e71bfae1c65a638ffac5123e6"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
