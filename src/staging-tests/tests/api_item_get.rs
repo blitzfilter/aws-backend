@@ -18,7 +18,7 @@ async fn should_respond_200_when_item_does_exist() {
     assert!(insert_res.unprocessed_items.unwrap_or_default().is_empty());
 
     let response = reqwest::get(format!(
-        "{}/api/v1/items/{}/{}?currency=USD",
+        "{}/api/v1/items/{}/{}?currency=GBP",
         get_cfn_output().api_gateway_endpoint_url,
         record.shop_id,
         record.shops_item_id
