@@ -18,7 +18,7 @@ async fn should_respond_200_when_item_does_exist() {
         .await
         .unwrap();
     assert!(insert_res.unprocessed_items.unwrap_or_default().is_empty());
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(120)).await;
 
     let response = reqwest::get(format!(
         "{}/api/v1/items/{}/{}?currency=GBP",
