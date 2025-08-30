@@ -62,7 +62,7 @@ async fn should_materialize_item_in_dynamodb_for_update_item_command() {
         .await
         .unwrap();
     assert!(insert_res.unprocessed_items.unwrap_or_default().is_empty());
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
 
     let sqs_client = get_sqs_client().await;
     let new_state = match materialized_old.state {
