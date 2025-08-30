@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub use staging_tests_macros::staging_test;
 use std::{collections::HashMap, error::Error, sync::OnceLock};
 use tokio::sync::OnceCell;
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -43,7 +44,7 @@ pub async fn get_aws_config() -> &'static aws_config::SdkConfig {
         .get_or_init(|| async {
             let _ = tracing_subscriber::fmt()
                 .json()
-                .with_max_level(tracing::Level::INFO)
+                .with_max_level(tracing::Level::DEBUG)
                 .with_current_span(true)
                 .with_ansi(false)
                 .try_init();
@@ -172,6 +173,7 @@ async fn clear_ddb_table_data() -> Result<(), Box<dyn Error>> {
                     .set_request_items(Some(request_items))
                     .send()
                     .await?;
+                debug!("Cleared a chunk of size '{}' from table", chunk.len());
             }
         }
 
@@ -181,6 +183,11 @@ async fn clear_ddb_table_data() -> Result<(), Box<dyn Error>> {
             break;
         }
     }
+
+    debug!(
+        "Cleared table '{}'.",
+        get_cfn_output().dynamodb_table_1_name
+    );
 
     Ok(())
 }
@@ -195,13 +202,17 @@ async fn clear_os_index_data(index: &str) -> Result<Response, opensearch::Error>
         }
     });
 
-    get_opensearch_client()
+    let res = get_opensearch_client()
         .await
         .delete_by_query(DeleteByQueryParts::Index(&[index]))
         .body(query)
         .refresh(true)
         .send()
-        .await
+        .await?;
+
+    debug!("Cleared index '{index}'.");
+
+    Ok(res)
 }
 
 // Manually deleting in batches as purging introduces 60s no-op window
@@ -237,10 +248,17 @@ async fn clear_q(queue_url: String) -> Result<(), Box<dyn Error>> {
         client
             .delete_message_batch()
             .queue_url(queue_url.clone())
-            .set_entries(Some(entries))
+            .set_entries(Some(entries.clone()))
             .send()
             .await?;
+        debug!(
+            "Removed batch of size '{}' from queue '{}'.",
+            entries.len(),
+            queue_url
+        );
     }
+
+    debug!("Cleared queue '{queue_url}'.");
 
     Ok(())
 }
