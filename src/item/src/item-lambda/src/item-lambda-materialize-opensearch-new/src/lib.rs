@@ -145,7 +145,7 @@ fn handle_bulk_response(
 #[cfg(test)]
 mod tests {
     use crate::handler;
-    use aws_lambda_events::dynamodb::StreamRecord;
+    use aws_lambda_events::dynamodb::{EventRecord, StreamRecord};
     use aws_lambda_events::eventbridge::EventBridgeEvent;
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use common::event::Event;
@@ -173,14 +173,25 @@ mod tests {
             time: None,
             region: None,
             resources: None,
-            detail: StreamRecord {
-                approximate_creation_date_time: SystemTime::now().into(),
-                keys: Default::default(),
-                new_image: serde_dynamo::to_item(item_event_record).unwrap(),
-                old_image: Default::default(),
-                sequence_number: None,
-                size_bytes: 42,
-                stream_view_type: None,
+            detail: EventRecord {
+                aws_region: "eu-central-1".to_string(),
+                change: StreamRecord {
+                    approximate_creation_date_time: SystemTime::now().into(),
+                    keys: Default::default(),
+                    new_image: serde_dynamo::to_item(item_event_record).unwrap(),
+                    old_image: Default::default(),
+                    sequence_number: None,
+                    size_bytes: 42,
+                    stream_view_type: None,
+                },
+                event_id: Uuid::new_v4().to_string(),
+                event_name: "INSERT".to_string(),
+                event_source: None,
+                event_version: None,
+                event_source_arn: None,
+                user_identity: None,
+                record_format: None,
+                table_name: None,
             },
         };
         serde_json::to_string(&event).unwrap()
