@@ -139,7 +139,7 @@ async fn clear_ddb_table_data() -> Result<(), Box<dyn Error>> {
             scan_request = scan_request.set_exclusive_start_key(Some(start_key));
         }
 
-        let scan_output = scan_request.send().await?;
+        let scan_output = scan_request.consistent_read(true).send().await?;
 
         if let Some(items) = scan_output.items
             && !items.is_empty()
