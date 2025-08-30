@@ -2118,6 +2118,7 @@ dependencies = [
  "serde_dynamo",
  "serde_json",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

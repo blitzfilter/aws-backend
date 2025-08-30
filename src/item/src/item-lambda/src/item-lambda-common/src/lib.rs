@@ -1,4 +1,3 @@
-use aws_lambda_events::dynamodb::StreamRecord;
 use aws_lambda_events::eventbridge::EventBridgeEvent;
 use aws_lambda_events::sqs::SqsMessage;
 use item_dynamodb::item_event_record::ItemEventRecord;
@@ -24,9 +23,11 @@ pub fn extract_item_event_record(
             None
         }
         Some(event_bridge_event_json) => {
-            match serde_json::from_str::<EventBridgeEvent<StreamRecord>>(&event_bridge_event_json) {
+            match serde_json::from_str::<EventBridgeEvent<aws_lambda_events::dynamodb::EventRecord>>(
+                &event_bridge_event_json,
+            ) {
                 Ok(event_bridge_event) => match serde_dynamo::from_item::<_, ItemEventRecord>(
-                    event_bridge_event.detail.new_image,
+                    event_bridge_event.detail.change.new_image,
                 ) {
                     Ok(item_event_record) => Some(item_event_record),
                     Err(e) => {
@@ -43,7 +44,7 @@ pub fn extract_item_event_record(
                 Err(e) => {
                     error!(
                         error = %e,
-                        type = %std::any::type_name::<EventBridgeEvent<StreamRecord>>(),
+                        type = %std::any::type_name::<EventBridgeEvent<aws_lambda_events::dynamodb::EventRecord>>(),
                         payload = %event_bridge_event_json,
                         "Failed deserializing."
                     );
@@ -59,11 +60,14 @@ pub fn extract_item_event_record(
 mod tests {
     use crate::extract_item_event_record;
     use aws_lambda_events::{
-        dynamodb::StreamRecord, eventbridge::EventBridgeEvent, sqs::SqsMessage,
+        dynamodb::{EventRecord, StreamRecord},
+        eventbridge::EventBridgeEvent,
+        sqs::SqsMessage,
     };
     use fake::{Fake, Faker};
     use item_dynamodb::item_event_record::ItemEventRecord;
     use std::time::SystemTime;
+    use uuid::Uuid;
 
     #[test]
     fn should_fail_when_invalid_json() {
@@ -150,14 +154,25 @@ mod tests {
             time: None,
             region: None,
             resources: None,
-            detail: StreamRecord {
-                approximate_creation_date_time: SystemTime::now().into(),
-                keys: Default::default(),
-                new_image: serde_dynamo::to_item(&expected).unwrap(),
-                old_image: Default::default(),
-                sequence_number: None,
-                size_bytes: 42,
-                stream_view_type: None,
+            detail: EventRecord {
+                aws_region: "eu-central-1".to_string(),
+                change: StreamRecord {
+                    approximate_creation_date_time: SystemTime::now().into(),
+                    keys: Default::default(),
+                    new_image: serde_dynamo::to_item(&expected).unwrap(),
+                    old_image: Default::default(),
+                    sequence_number: None,
+                    size_bytes: 42,
+                    stream_view_type: None,
+                },
+                event_id: Uuid::new_v4().to_string(),
+                event_name: "INSERT".to_string(),
+                event_source: None,
+                event_version: None,
+                event_source_arn: None,
+                user_identity: None,
+                record_format: None,
+                table_name: None,
             },
         };
         let msg = SqsMessage {
