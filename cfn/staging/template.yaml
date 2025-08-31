@@ -631,7 +631,6 @@ Resources:
               - Effect: Allow
                 Action:
                   - es:*
-                Resource: !GetAtt TableOne.Arn
         - PolicyName: SQSPollerAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -705,7 +704,6 @@ Resources:
               - Effect: Allow
                 Action:
                   - es:*
-                Resource: !GetAtt TableOne.Arn
         - PolicyName: SQSPollerAccess
           PolicyDocument:
             Version: "2012-10-17"
