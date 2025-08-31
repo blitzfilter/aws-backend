@@ -86,13 +86,18 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             ))?;
         }
 
-        self.client
+        let json = self
+            .client
             .bulk(BulkParts::Index("items"))
             .body(vec![ops])
             .send()
             .await?
-            .json::<BulkResponse>()
-            .await
+            .json::<serde_json::Value>()
+            .await?;
+
+        tracing::info!(json = %json);
+
+        Ok(serde_json::from_value(json)?)
     }
 
     async fn search_item_documents(
