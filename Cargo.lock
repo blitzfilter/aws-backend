@@ -3918,6 +3918,7 @@ dependencies = [
  "item-service",
  "opensearch",
  "reqwest",
+ "search-filter-core",
  "serde",
  "serde_json",
  "serial_test",

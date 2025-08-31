@@ -26,3 +26,4 @@ item-opensearch = { workspace = true, features = ["test-data"] }
 reqwest = { workspace = true, features = ["default"] }
 fake = { workspace = true }
 url = { workspace = true }
+search-filter-core = { workspace = true }
