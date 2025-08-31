@@ -157,6 +157,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
             .client
             .get_item()
             .table_name(&self.table)
+            .consistent_read(true)
             .key("pk", AttributeValue::S(mk_pk(shop_id, shops_item_id)))
             .key("sk", AttributeValue::S(mk_sk().to_owned()))
             .send()
@@ -193,6 +194,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
             .collect();
         let keys_and_attributes = KeysAndAttributes::builder()
             .set_keys(Some(keys))
+            .consistent_read(true)
             .build()
             .expect("shouldn't fail because we previously set the only required field 'keys'.");
         let request_items = Some(HashMap::from([(self.table.clone(), keys_and_attributes)]));
@@ -272,6 +274,7 @@ impl<'a> ItemDynamoDbRepository for ItemDynamoDbRepositoryImpl<'a> {
         let keys_and_attributes = KeysAndAttributes::builder()
             .set_keys(Some(keys))
             .projection_expression("pk")
+            .consistent_read(true)
             .build()
             .expect("shouldn't fail because we previously set the only required field 'keys'.");
         let request_items = Some(HashMap::from([(self.table.clone(), keys_and_attributes)]));
