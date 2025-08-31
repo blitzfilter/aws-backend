@@ -205,7 +205,7 @@ async fn should_materialize_item_in_opensearch_for_create_item_command() {
 
         if Instant::now() >= deadline {
             panic!(
-                "Timeout: ItemRecord with shop_id '{}' and shops_item_id '{}' not found in DynamoDB after 60 seconds",
+                "Timeout: ItemDocument with shop_id '{}' and shops_item_id '{}' not found in OpenSearch after 60 seconds",
                 cmd.shop_id, cmd.shops_item_id
             );
         }
@@ -289,7 +289,7 @@ async fn should_materialize_item_in_opensearch_for_update_item_command() {
 
         if Instant::now() >= deadline {
             panic!(
-                "Timeout: ItemRecord with shop_id '{}' and shops_item_id '{}' \
+                "Timeout: ItemDocument with shop_id '{}' and shops_item_id '{}' \
                     has not been updated in OpenSearch or been updated with expected state after 60 seconds",
                 cmd.shop_id, cmd.shops_item_id
             );
