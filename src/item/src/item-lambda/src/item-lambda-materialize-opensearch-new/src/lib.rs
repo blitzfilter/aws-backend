@@ -328,7 +328,6 @@ mod tests {
                             index: index.clone(),
                             id: unprocessed_doc.item_id.to_string(),
                             version: Some(2),
-                            result: "not created".to_string(),
                             status: 409,
                             error: Some(BulkError {
                                 error_type: "boop".to_string(),
@@ -355,7 +354,6 @@ mod tests {
                             index: index.clone(),
                             id: unprocessed_doc.item_id.to_string(),
                             version: Some(2),
-                            result: "created".to_string(),
                             status: 201,
                             error: None,
                         }

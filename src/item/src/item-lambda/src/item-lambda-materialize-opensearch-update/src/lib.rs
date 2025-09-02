@@ -304,7 +304,6 @@ mod tests {
                             index: index.clone(),
                             id: item_id.to_string(),
                             version: Some(2),
-                            result: "not updated".to_string(),
                             status: 409,
                             error: Some(BulkError {
                                 error_type: "boop".to_string(),
@@ -329,7 +328,6 @@ mod tests {
                             index: index.clone(),
                             id: item_id.to_string(),
                             version: Some(2),
-                            result: "updated".to_string(),
                             status: 200,
                             error: None,
                         }

@@ -44,8 +44,6 @@ pub struct BulkOpResult {
     #[serde(rename = "_version", default)]
     pub version: Option<u64>,
 
-    pub result: String,
-
     pub status: u16,
 
     #[serde(default)]
@@ -94,7 +92,6 @@ mod tests {
                         "_index": "items",
                         "_id": "1",
                         "_version": 2,
-                        "result": "updated",
                         "status": 200
                     }
                 }
@@ -111,7 +108,6 @@ mod tests {
         assert_eq!(update.index, "items");
         assert_eq!(update.id, "1");
         assert_eq!(update.version, Some(2));
-        assert_eq!(update.result, "updated");
         assert_eq!(update.status, 200);
         assert!(update.error.is_none());
     }
@@ -127,7 +123,6 @@ mod tests {
                         "_index": "items",
                         "_id": "2",
                         "_version": 3,
-                        "result": "noop",
                         "status": 200
                     }
                 },
@@ -136,7 +131,6 @@ mod tests {
                         "_index": "items",
                         "_id": "3",
                         "status": 409,
-                        "result": "error",
                         "error": {
                             "type": "version_conflict_engine_exception",
                             "reason": "[items][3]: version conflict, document already exists",
@@ -217,7 +211,6 @@ mod tests {
                         "_index": "items",
                         "_id": "10",
                         "_version": 1,
-                        "result": "created",
                         "status": 201
                     }
                 }
@@ -238,7 +231,6 @@ mod tests {
         assert_eq!(create.index, "items");
         assert_eq!(create.id, "10");
         assert_eq!(create.version, Some(1));
-        assert_eq!(create.result, "created");
         assert_eq!(create.status, 201);
         assert!(create.error.is_none());
     }
@@ -254,7 +246,6 @@ mod tests {
                         "_index": "items",
                         "_id": "11",
                         "status": 409,
-                        "result": "error",
                         "error": {
                             "type": "version_conflict_engine_exception",
                             "reason": "[items][11]: version conflict, document already exists",
@@ -290,5 +281,53 @@ mod tests {
         assert_eq!(err.index.as_deref(), Some("items"));
         assert_eq!(err.shard.as_deref(), Some("shard-2"));
         assert_eq!(err.index_uuid.as_deref(), Some("uuid456"));
+    }
+
+    #[test]
+    fn should_parse_failed_update_response_for_bulk_response() {
+        let json = json!({
+          "errors": true,
+          "items": [
+            {
+              "update": {
+                "_id": "d5d619d3-676c-eab2-bf31-a3c1c106b4fb",
+                "_index": "items",
+                "error": {
+                  "index": "items",
+                  "index_uuid": "dcnQL_5lQDaKMdxVpD3E9Q",
+                  "reason": "[d5d619d3-676c-eab2-bf31-a3c1c106b4fb]: document missing",
+                  "shard": "1",
+                  "type": "document_missing_exception"
+                },
+                "status": 404
+              }
+            }
+          ],
+          "took": 266
+        });
+
+        let response: BulkResponse = serde_json::from_value(json).unwrap();
+
+        assert_eq!(response.took, 266);
+        assert!(response.errors);
+        assert_eq!(response.items.len(), 1);
+
+        let update = match &response.items[0] {
+            BulkItemResult::Update { update } => update,
+            _ => panic!("Expected Update variant"),
+        };
+
+        assert_eq!(update.status, 404);
+        assert!(update.error.is_some());
+
+        let err = update.error.as_ref().unwrap();
+        assert_eq!(err.error_type, "document_missing_exception");
+        assert_eq!(
+            err.reason,
+            "[d5d619d3-676c-eab2-bf31-a3c1c106b4fb]: document missing"
+        );
+        assert_eq!(err.index.as_deref(), Some("items"));
+        assert_eq!(err.shard.as_deref(), Some("1"));
+        assert_eq!(err.index_uuid.as_deref(), Some("dcnQL_5lQDaKMdxVpD3E9Q"));
     }
 }
