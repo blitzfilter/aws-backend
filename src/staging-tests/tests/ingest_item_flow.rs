@@ -227,6 +227,7 @@ async fn should_materialize_item_in_opensearch_for_update_item_command() {
         .unwrap();
     assert!(!insert_res.errors);
     refresh_index("items").await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     let sqs_client = get_sqs_client().await;
     let new_state = match materialized_old.state {
