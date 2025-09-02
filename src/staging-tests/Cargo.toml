@@ -27,3 +27,4 @@ reqwest = { workspace = true, features = ["default"] }
 fake = { workspace = true }
 url = { workspace = true }
 search-filter-core = { workspace = true }
+futures-util = { version = "0.3.31" }

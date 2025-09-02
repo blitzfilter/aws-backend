@@ -3054,7 +3054,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3913,6 +3913,7 @@ dependencies = [
  "aws-sdk-sqs",
  "common",
  "fake",
+ "futures-util",
  "item-core",
  "item-dynamodb",
  "item-opensearch",
@@ -4080,7 +4081,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -14,21 +14,20 @@ pub fn staging_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[tokio::test]
         #[serial_test::serial]
         #vis #sig {
-            struct ResetGuard;
+            use futures_util::future::FutureExt;
 
-            impl Drop for ResetGuard {
-                fn drop(&mut self) {
-                    // Ensure cleanup always runs
-                    let fut = staging_tests::reset();
-                    let rt = tokio::runtime::Handle::current();
-                    rt.block_on(fut);
-                }
+            // Run the test body and catch any panic
+            let result = std::panic::AssertUnwindSafe(async { #block })
+                .catch_unwind()
+                .await;
+
+            // Always run reset after the test
+            staging_tests::reset().await;
+
+            // Rethrow panic if the test body panicked
+            if let Err(panic) = result {
+                std::panic::resume_unwind(panic);
             }
-
-            let _guard = ResetGuard;
-
-            // Run the test body normally
-            #block
         }
     };
 
