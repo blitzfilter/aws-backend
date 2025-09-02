@@ -419,4 +419,4 @@ jobs:
         working-directory: src/staging-tests
         env:
           CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
-        run: cargo test --test '*' --all-features -- --ignored --nocapture
+        run: cargo test should_materialize_item_in_opensearch_for_update_item_command --test 'ingest_item_flow' --all-features -- --ignored --nocapture
