@@ -17,8 +17,7 @@ time = { workspace = true, features = ["local-offset", "macros", "formatting"] }
 mockall = { workspace = true }
 search-filter-core = { workspace = true }
 
-tracing = { workspace = true }
-
+# Optional deps
 fake = { workspace = true, optional = true }
 
 [dev-dependencies]

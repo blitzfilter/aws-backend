@@ -2280,7 +2280,6 @@ dependencies = [
  "serial_test",
  "test-api",
  "time",
- "tracing",
  "url",
 ]
 
