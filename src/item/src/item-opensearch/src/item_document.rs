@@ -7,6 +7,8 @@ use common::shops_item_id::ShopsItemId;
 use common::{event_id::EventId, has_key::HasKey};
 use field::field;
 use item_dynamodb::item_event_record::ItemEventRecord;
+use item_dynamodb::item_record::ItemRecord;
+use item_dynamodb::item_state_record::ItemStateRecord;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use url::Url;
@@ -123,6 +125,34 @@ impl TryFrom<ItemEventRecord> for ItemDocument {
             is_available: matches!(state, ItemStateDocument::Available),
         };
         Ok(document)
+    }
+}
+
+impl From<ItemRecord> for ItemDocument {
+    fn from(record: ItemRecord) -> Self {
+        ItemDocument {
+            item_id: record.item_id,
+            event_id: record.event_id,
+            shop_id: record.shop_id,
+            shops_item_id: record.shops_item_id,
+            shop_name: record.shop_name,
+            title_de: record.title_de,
+            title_en: record.title_en,
+            description_de: record.description_de,
+            description_en: record.description_en,
+            price_eur: record.price_eur,
+            price_usd: record.price_gbp,
+            price_gbp: record.price_gbp,
+            price_aud: record.price_aud,
+            price_cad: record.price_cad,
+            price_nzd: record.price_nzd,
+            state: record.state.into(),
+            is_available: matches!(record.state, ItemStateRecord::Available),
+            url: record.url,
+            images: record.images,
+            created: record.created,
+            updated: record.updated,
+        }
     }
 }
 

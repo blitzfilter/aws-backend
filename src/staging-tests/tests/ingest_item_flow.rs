@@ -217,29 +217,38 @@ async fn should_materialize_item_in_opensearch_for_create_item_command() {
 #[staging_test]
 async fn should_materialize_item_in_opensearch_for_update_item_command() {
     let stack = get_cfn_output();
+    let dynamodb_client = get_dynamodb_client().await;
+    let repository = ItemDynamoDbRepositoryImpl::new(dynamodb_client, &stack.dynamodb_table_1_name);
+    let mut materialized_ddb_old: ItemRecord = Faker.fake();
+    materialized_ddb_old.title_en = Some("Exactly the expected title".to_string());
+    let insert_res = repository
+        .put_item_records([materialized_ddb_old.clone()].into())
+        .await
+        .unwrap();
+    assert!(insert_res.unprocessed_items.unwrap_or_default().is_empty());
+
     let opensearch_client = get_opensearch_client().await;
     let repository = ItemOpenSearchRepositoryImpl::new(opensearch_client);
-    let mut materialized_old: ItemDocument = Faker.fake();
-    materialized_old.title_en = Some("Exactly the expected title".to_string());
+    let materialized_os_old: ItemDocument = materialized_ddb_old.into();
     let insert_res = repository
-        .create_item_documents(vec![materialized_old.clone()])
+        .create_item_documents(vec![materialized_os_old.clone()])
         .await
         .unwrap();
     assert!(!insert_res.errors);
-    tracing::info!(items = ?insert_res.items, itemId = %materialized_old._id() , "Indexed ItemDocument");
+    tracing::info!(items = ?insert_res.items, itemId = %materialized_os_old._id() , "Indexed ItemDocument");
     refresh_index("items").await;
     tokio::time::sleep(Duration::from_secs(10)).await;
 
     let sqs_client = get_sqs_client().await;
-    let new_state = match materialized_old.state {
+    let new_state = match materialized_os_old.state {
         ItemStateDocument::Available => {
             item_service::item_state_command_data::ItemStateCommandData::Sold
         }
         _ => item_service::item_state_command_data::ItemStateCommandData::Available,
     };
     let cmd = UpdateItemCommandData {
-        shop_id: materialized_old.shop_id,
-        shops_item_id: materialized_old.shops_item_id,
+        shop_id: materialized_os_old.shop_id,
+        shops_item_id: materialized_os_old.shops_item_id,
         price: None,
         state: Some(new_state),
     };
