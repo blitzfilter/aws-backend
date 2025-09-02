@@ -131,14 +131,19 @@ pub mod dynamodb {
             self.0
                 .into_iter()
                 .filter_map(|record| match serde_dynamo::to_item(record) {
-                    Ok(item) => Some(
-                        WriteRequest::builder()
-                            .put_request(PutRequest::builder().set_item(Some(item)).build().expect(
-                                "should always succeed because PutRequest::set_item() \
+                    Ok(item) => {
+                        tracing::info!("serce_dynamo OK!!!");
+                        Some(
+                            WriteRequest::builder()
+                                .put_request(
+                                    PutRequest::builder().set_item(Some(item)).build().expect(
+                                        "should always succeed because PutRequest::set_item() \
                                                 is always called before PutRequest::build()",
-                            ))
-                            .build(),
-                    ),
+                                    ),
+                                )
+                                .build(),
+                        )
+                    }
                     Err(err) => {
                         error!(
                             error = %err,

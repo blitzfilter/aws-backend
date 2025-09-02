@@ -1,13 +1,10 @@
-use std::time::Duration;
-
 use fake::{Fake, Faker};
 use item_dynamodb::{
     item_record::ItemRecord,
     repository::{ItemDynamoDbRepository, ItemDynamoDbRepositoryImpl},
 };
-use opensearch::Info;
 use staging_tests::{get_cfn_output, get_dynamodb_client, staging_test};
-use tracing::info;
+use std::time::Duration;
 
 #[staging_test]
 async fn should_respond_200_when_item_does_exist() {
@@ -15,17 +12,12 @@ async fn should_respond_200_when_item_does_exist() {
     let repository =
         ItemDynamoDbRepositoryImpl::new(ddb_client, &get_cfn_output().dynamodb_table_1_name);
     let record = Faker.fake::<ItemRecord>();
-    tracing::info!(
-        shopId = %record.shop_id.clone(),
-        shopsItemId = %record.shops_item_id.clone(),
-        "Inserted Test-Record"
-    );
     let insert_res = repository
         .put_item_records([record.clone()].into())
         .await
         .unwrap();
     assert!(insert_res.unprocessed_items.unwrap().is_empty());
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     let url = format!(
         "{}/api/v1/items/{}/{}?currency=GBP",
@@ -33,7 +25,6 @@ async fn should_respond_200_when_item_does_exist() {
         record.shop_id,
         record.shops_item_id
     );
-    info!(url = url, "Requesting url.");
     let response = reqwest::get(url).await.unwrap();
 
     assert_eq!(200, response.status());
