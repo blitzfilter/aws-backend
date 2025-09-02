@@ -98,7 +98,7 @@ fn handle_bulk_response(
                 itemId = failure.id,
                 status = failure.status,
                 error = ?failure.error,
-                "Failed creating item in OpenSearch."
+                "Failed updating item in OpenSearch."
             );
             match ItemId::try_from(failure.id.as_str()) {
                 Ok(item_id) => match message_ids.remove(&item_id) {
