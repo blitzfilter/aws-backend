@@ -14,33 +14,21 @@ pub fn staging_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[tokio::test]
         #[serial_test::serial]
         #vis #sig {
-            use std::panic::{AssertUnwindSafe, catch_unwind};
+            struct ResetGuard;
 
-            // Spawn the test body into its own task so we can unwind safely
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                tokio::spawn(async #block)
-            }));
-
-            // Always run cleanup after the body (whether spawn panicked or not)
-            staging_tests::reset().await;
-
-            match result {
-                Ok(handle) => {
-                    // Await the task result
-                    match handle.await {
-                        Ok(_) => {} // test passed
-                        Err(join_err) if join_err.is_panic() => {
-                            // rethrow panic from inside the task
-                            std::panic::resume_unwind(join_err.into_panic());
-                        }
-                        Err(_) => panic!("test task was cancelled"),
-                    }
-                }
-                Err(panic) => {
-                    // rethrow immediate panic before spawn
-                    std::panic::resume_unwind(panic);
+            impl Drop for ResetGuard {
+                fn drop(&mut self) {
+                    // Ensure cleanup always runs
+                    let fut = staging_tests::reset();
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(fut);
                 }
             }
+
+            let _guard = ResetGuard;
+
+            // Run the test body normally
+            #block
         }
     };
 
