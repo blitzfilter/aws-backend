@@ -5,7 +5,9 @@ use item_dynamodb::{
     item_record::ItemRecord,
     repository::{ItemDynamoDbRepository, ItemDynamoDbRepositoryImpl},
 };
+use opensearch::Info;
 use staging_tests::{get_cfn_output, get_dynamodb_client, staging_test};
+use tracing::info;
 
 #[staging_test]
 async fn should_respond_200_when_item_does_exist() {
@@ -13,22 +15,26 @@ async fn should_respond_200_when_item_does_exist() {
     let repository =
         ItemDynamoDbRepositoryImpl::new(ddb_client, &get_cfn_output().dynamodb_table_1_name);
     let record = Faker.fake::<ItemRecord>();
-    tracing::info!(record = ?record);
+    tracing::info!(
+        shopId = %record.shop_id.clone(),
+        shopsItemId = %record.shops_item_id.clone(),
+        "Inserted Test-Record"
+    );
     let insert_res = repository
         .put_item_records([record.clone()].into())
         .await
         .unwrap();
-    assert!(insert_res.unprocessed_items.unwrap_or_default().is_empty());
+    assert!(insert_res.unprocessed_items.unwrap().is_empty());
     tokio::time::sleep(Duration::from_secs(10)).await;
 
-    let response = reqwest::get(format!(
+    let url = format!(
         "{}/api/v1/items/{}/{}?currency=GBP",
         get_cfn_output().api_gateway_endpoint_url,
         record.shop_id,
         record.shops_item_id
-    ))
-    .await
-    .unwrap();
+    );
+    info!(url = url, "Requesting url.");
+    let response = reqwest::get(url).await.unwrap();
 
     assert_eq!(200, response.status());
 
