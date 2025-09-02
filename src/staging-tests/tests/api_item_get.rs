@@ -13,6 +13,7 @@ async fn should_respond_200_when_item_does_exist() {
     let repository =
         ItemDynamoDbRepositoryImpl::new(ddb_client, &get_cfn_output().dynamodb_table_1_name);
     let record = Faker.fake::<ItemRecord>();
+    tracing::info!(record = ?record);
     let insert_res = repository
         .put_item_records([record.clone()].into())
         .await
