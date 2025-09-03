@@ -1,3 +1,4 @@
+use aws_tests_common::get_cfn_output;
 use common::{item_state::domain::ItemState, language::data::LocalizedTextData};
 use fake::{Fake, Faker};
 use item_dynamodb::{
@@ -14,9 +15,7 @@ use item_service::item_command_data::{CreateItemCommandData, UpdateItemCommandDa
 use opensearch::{GetParts, IndexParts, params::Refresh};
 use search_filter_core::search_filter::SearchFilter;
 use serde::de::DeserializeOwned;
-use staging_tests::{
-    get_cfn_output, get_dynamodb_client, get_opensearch_client, get_sqs_client, staging_test,
-};
+use staging_tests::{get_dynamodb_client, get_opensearch_client, get_sqs_client, staging_test};
 use std::time::{Duration, Instant};
 
 pub async fn read_by_id<T: DeserializeOwned>(index: &str, id: impl Into<String>) -> T {

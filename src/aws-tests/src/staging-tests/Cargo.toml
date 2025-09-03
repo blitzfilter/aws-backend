@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 staging-tests-macros = { path = "src/staging-tests-macros" }
+aws-tests-common = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-serial_test = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 aws-config = { workspace = true }
@@ -19,7 +19,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 common = { workspace = true, features = ["test-data"] }
-item-core = { workspace = true, features = ["test-data"] }
+serial_test = { workspace = true }
 item-service = { workspace = true, features = ["test-data"] }
 item-dynamodb = { workspace = true, features = ["test-data", "repository"] }
 item-opensearch = { workspace = true, features = ["test-data"] }

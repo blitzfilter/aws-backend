@@ -1,42 +1,13 @@
 use aws_sdk_dynamodb::types::WriteRequest;
 use aws_sdk_sqs::types::DeleteMessageBatchRequestEntry;
+use aws_tests_common::get_cfn_output;
 use opensearch::http::Url;
 use opensearch::http::response::Response;
 use opensearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
-use serde::{Deserialize, Serialize};
 pub use staging_tests_macros::staging_test;
-use std::{collections::HashMap, error::Error, sync::OnceLock};
+use std::{collections::HashMap, error::Error};
 use tokio::sync::OnceCell;
 use tracing::debug;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct CloudFormationOutput {
-    pub api_gateway_endpoint_url: String,
-    pub opensearch_item_domain_endpoint_url: String,
-    pub dynamodb_table_1_name: String,
-    pub item_write_new_queue_url: String,
-    pub item_write_new_dead_letter_queue_url: String,
-    pub item_write_update_queue_url: String,
-    pub item_write_update_dead_letter_queue_url: String,
-    pub item_materialize_dynamodb_new_queue_url: String,
-    pub item_materialize_dynamodb_new_dead_letter_queue_url: String,
-    pub item_materialize_dynamodb_update_queue_url: String,
-    pub item_materialize_dynamodb_update_dead_letter_queue_url: String,
-    pub item_materialize_opensearch_new_queue_url: String,
-    pub item_materialize_opensearch_new_dead_letter_queue_url: String,
-    pub item_materialize_opensearch_update_queue_url: String,
-    pub item_materialize_opensearch_update_dead_letter_queue_url: String,
-}
-
-static CFN_OUTPUT: OnceLock<CloudFormationOutput> = OnceLock::new();
-pub fn get_cfn_output() -> &'static CloudFormationOutput {
-    CFN_OUTPUT.get_or_init(|| {
-        let json = std::env::var("CFN_OUTPUT").expect("should have CFN_OUTPUT set in CI");
-        serde_json::from_str::<CloudFormationOutput>(&json)
-            .expect("shouldn't fail deserializing '$CFN_OUTPUT' to 'CloudFormationOutput'")
-    })
-}
 
 static CONFIG: OnceCell<aws_config::SdkConfig> = OnceCell::const_new();
 pub async fn get_aws_config() -> &'static aws_config::SdkConfig {

@@ -4,21 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aws-tests = { workspace = true }
 common = { workspace = true }
 search-filter = { workspace = true }
 item = { workspace = true }
 scrape = { workspace = true }
 test-api = { workspace = true }
-staging-tests = { workspace = true }
 
 [workspace]
 members = [
+    "src/aws-tests",
     "src/common",
     "src/search-filter",
     "src/item",
     "src/scrape",
     "src/test-api",
-    "src/staging-tests",
 ]
 
 [workspace.dependencies]
@@ -82,7 +82,10 @@ serde_dynamo = "4.2.14"
 serde_json = "1.0.143"
 serial_test = "3.2.0"
 sha2 = "0.10.9"
-staging-tests = { path = "src/staging-tests" }
+aws-tests = { path = "src/aws-tests" }
+aws-tests-common = { path = "src/aws-tests/src/aws-tests-common" }
+smoking-tests = { path = "src/aws-tests/src/smoking-tests" }
+staging-tests = { path = "src/aws-tests/src/staging-tests" }
 strum = "0.27.2"
 strum_macros = "0.27.2"
 syn = "2.0.106"

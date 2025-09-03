@@ -600,6 +600,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-tests"
+version = "0.1.0"
+dependencies = [
+ "aws-tests-common",
+ "smoking-tests",
+ "staging-tests",
+]
+
+[[package]]
+name = "aws-tests-common"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aws-types"
 version = "1.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -721,11 +738,11 @@ dependencies = [
 name = "blitzfilter-parent"
 version = "0.1.0"
 dependencies = [
+ "aws-tests",
  "common",
  "item",
  "scrape",
  "search-filter",
- "staging-tests",
  "test-api",
 ]
 
@@ -3878,6 +3895,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
+name = "smoking-tests"
+version = "0.1.0"
+dependencies = [
+ "aws-tests-common",
+ "futures-util",
+ "reqwest",
+ "serde_json",
+ "serial_test",
+ "smoking-tests-macros",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "smoking-tests-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3910,10 +3949,10 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
+ "aws-tests-common",
  "common",
  "fake",
  "futures-util",
- "item-core",
  "item-dynamodb",
  "item-opensearch",
  "item-service",
@@ -3935,7 +3974,6 @@ dependencies = [
 name = "staging-tests-macros"
 version = "0.1.0"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn",
 ]
@@ -4080,7 +4118,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -1,9 +1,10 @@
+use aws_tests_common::get_cfn_output;
 use fake::{Fake, Faker};
 use item_dynamodb::{
     item_record::ItemRecord,
     repository::{ItemDynamoDbRepository, ItemDynamoDbRepositoryImpl},
 };
-use staging_tests::{get_cfn_output, get_dynamodb_client, staging_test};
+use staging_tests::{get_dynamodb_client, staging_test};
 use std::time::Duration;
 
 #[staging_test]

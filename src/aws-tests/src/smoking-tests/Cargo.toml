@@ -1,0 +1,16 @@
+[package]
+name = "smoking-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aws-tests-common = { workspace = true }
+smoking-tests-macros = { path = "src/smoking-tests-macros" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+reqwest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+uuid = { workspace = true }
+futures-util = { version = "0.3.31" }

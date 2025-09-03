@@ -1,3 +1,4 @@
+use aws_tests_common::get_cfn_output;
 use common::{event_id::EventId, item_id::ItemId, shop_id::ShopId, shops_item_id::ShopsItemId};
 use item_opensearch::{
     item_document::ItemDocument,
@@ -5,7 +6,7 @@ use item_opensearch::{
     repository::{ItemOpenSearchRepository, ItemOpenSearchRepositoryImpl},
 };
 use opensearch::{IndexParts, params::Refresh};
-use staging_tests::{get_cfn_output, get_opensearch_client, staging_test};
+use staging_tests::{get_opensearch_client, staging_test};
 use std::{
     time::{Duration, SystemTime},
     vec,
@@ -50,7 +51,7 @@ async fn should_respond_200_when_hits() {
         .send()
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
 
     let response = reqwest::get(format!(
         "{}/api/v1/items?q=Chopin%20Etudes&language=en&currency=EUR&sort=price&order=asc&from=0&size=5",
