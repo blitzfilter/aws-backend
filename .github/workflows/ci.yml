@@ -14,7 +14,7 @@ env:
   STAGE: ${{ github.event_name == 'pull_request' && 'DEV' || github.ref == 'refs/heads/main' && 'PROD' }}
   STAGE_NAME: ${{ github.event_name == 'pull_request' && format('PR-{0}', github.event.pull_request.number) || github.ref == 'refs/heads/main' && 'PROD' }}
   STACK: application
-  STACK_NAME: ${STACK}-${STAGE_NAME}
+  STACK_NAME: application-${{ github.event_name == 'pull_request' && format('PR-{0}', github.event.pull_request.number) || github.ref == 'refs/heads/main' && 'PROD' }}
 
 jobs:
   lint:
