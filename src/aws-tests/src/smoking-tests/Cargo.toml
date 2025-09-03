@@ -9,8 +9,8 @@ smoking-tests-macros = { path = "src/smoking-tests-macros" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-reqwest = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default", "json"] }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 futures-util = { version = "0.3.31" }
