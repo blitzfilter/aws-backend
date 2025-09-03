@@ -70,4 +70,5 @@ opensearch-cli curl put \
     "index": {
       "refresh_interval": "5m"
     }
-  }'
+  }' \
+  --profile ci
