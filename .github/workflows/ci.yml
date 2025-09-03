@@ -425,7 +425,7 @@ jobs:
 
   aws-smoking-test:
     name: AWS Smoking-Test
-    if: ${{ github.event_name == 'push' }} ${{ github.ref }} == 'refs/heads/main'
+    if: ${{ github.event_name == 'push' }} && ${{ github.ref }} == 'refs/heads/main'
     needs: aws-cfn-deploy
     runs-on: ubuntu-latest
     permissions:
