@@ -51,6 +51,12 @@ async fn should_respond_200_when_hits() {
         .send()
         .await
         .unwrap();
+    os_client
+        .index(IndexParts::Index("items"))
+        .refresh(Refresh::True)
+        .send()
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_secs(30)).await;
 
     let response = reqwest::get(format!(
