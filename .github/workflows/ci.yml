@@ -332,7 +332,7 @@ jobs:
           aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-$STAGE_NAME-${GITHUB_SHA}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
   aws-cfn-deploy:
-    name: Deploy CFN-Stack '$STACK_NAME'
+    name: Deploy CFN-Stack '${{ env.STACK_NAME }}'
     needs: aws-push-lambda
     runs-on: ubuntu-latest
     permissions:
