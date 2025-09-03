@@ -6,8 +6,8 @@ Parameters:
     Type: String
     Description: "Type of the stage"
     AllowedValues:
-      - DEV
-      - PROD
+      - dev
+      - prod
   StageName:
     Type: String
     Description: "Unique name of the stage"
