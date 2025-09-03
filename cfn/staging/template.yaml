@@ -1,10 +1,16 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Ephemeral staging stack for per-PR testing
+Description: Full application stack for the Blitzfilter Backend
 
 Parameters:
-  EnvSuffix:
+  Stage:
     Type: String
-    Description: "PR-Number as suffix for unique naming"
+    Description: "Type of the stage"
+    AllowedValues:
+      - DEV
+      - PROD
+  StageName:
+    Type: String
+    Description: "Unique name of the stage"
   ArtifactBucket:
     Type: String
     Description: "S3 bucket containing Lambda deployment zips"
@@ -15,7 +21,7 @@ Resources:
   TableOne:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "table_1-${EnvSuffix}"
+      TableName: !Sub "table_1-${StageName}"
       AttributeDefinitions:
         - AttributeName: pk
           AttributeType: S
@@ -52,7 +58,7 @@ Resources:
   ItemsOpenSearchDomain:
     Type: AWS::OpenSearchService::Domain
     Properties:
-      DomainName: !Sub "staging-${EnvSuffix}"
+      DomainName: !Sub "staging-${StageName}"
       EngineVersion: "OpenSearch_2.19"
       ClusterConfig:
         InstanceType: t3.small.search
@@ -69,16 +75,16 @@ Resources:
             Principal:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: "es:*"
-            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${EnvSuffix}/*"
+            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${StageName}/*"
 
   DynamoDbEventBus:
     Type: AWS::Events::EventBus
     Properties:
-      Name: !Sub "dynamodb-event-bus-${EnvSuffix}"
+      Name: !Sub "dynamodb-event-bus-${StageName}"
   PipeRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "dynamodb-to-eventbridge-pipe-role-${EnvSuffix}"
+      RoleName: !Sub "dynamodb-to-eventbridge-pipe-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -105,7 +111,7 @@ Resources:
   TableOneStreamToEventBusPipe:
     Type: AWS::Pipes::Pipe
     Properties:
-      Name: !Sub "tableone-stream-to-eventbus-${EnvSuffix}"
+      Name: !Sub "tableone-stream-to-eventbus-${StageName}"
       RoleArn: !GetAtt PipeRole.Arn
       Source: !GetAtt TableOne.StreamArn
       SourceParameters:
@@ -156,7 +162,7 @@ Resources:
   ItemsApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub "items-api-${EnvSuffix}"
+      Name: !Sub "items-api-${StageName}"
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
@@ -172,7 +178,7 @@ Resources:
   ItemsApiStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
-      StageName: !Sub "${EnvSuffix}"
+      StageName: !Sub "${StageName}"
       ApiId: !Ref ItemsApi
       AutoDeploy: true
 
@@ -192,7 +198,7 @@ Resources:
   ItemApiGetItemRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-api-get-item-role-${EnvSuffix}"
+      RoleName: !Sub "item-api-get-item-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -215,13 +221,13 @@ Resources:
   ItemApiGetItemLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-api-get-item-${EnvSuffix}"
+      FunctionName: !Sub "item-api-get-item-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemApiGetItemRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-api-get-item-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-api-get-item-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 10
       EphemeralStorage:
@@ -253,7 +259,7 @@ Resources:
   ItemApiSimpleSearchRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-api-simple-search-role-${EnvSuffix}"
+      RoleName: !Sub "item-api-simple-search-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -279,13 +285,13 @@ Resources:
   ItemApiSimpleSearchLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-api-simple-search-${EnvSuffix}"
+      FunctionName: !Sub "item-api-simple-search-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemApiSimpleSearchRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-api-simple-search-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-api-simple-search-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 10
       EphemeralStorage:
@@ -304,12 +310,12 @@ Resources:
   ItemWriteNewDlq:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-write-new-dlq-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-write-new-dlq-${StageName}"
       MessageRetentionPeriod: 1209600
   ItemWriteNewQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-write-new-queue-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-write-new-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemWriteNewDlq.Arn
         maxReceiveCount: 3
@@ -317,7 +323,7 @@ Resources:
   ItemWriteNewRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-write-new-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-write-new-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -350,13 +356,13 @@ Resources:
   ItemWriteNewLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-lambda-write-new-${EnvSuffix}"
+      FunctionName: !Sub "item-lambda-write-new-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemWriteNewRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-write-new-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-lambda-write-new-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -378,12 +384,12 @@ Resources:
   ItemWriteUpdateDlq:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-write-update-dlq-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-write-update-dlq-${StageName}"
       MessageRetentionPeriod: 1209600
   ItemWriteUpdateQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-write-update-queue-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-write-update-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemWriteUpdateDlq.Arn
         maxReceiveCount: 3
@@ -391,7 +397,7 @@ Resources:
   ItemWriteUpdateRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-write-update-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-write-update-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -424,13 +430,13 @@ Resources:
   ItemWriteUpdateLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-lambda-write-update-${EnvSuffix}"
+      FunctionName: !Sub "item-lambda-write-update-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemWriteUpdateRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-write-update-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-lambda-write-update-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -452,12 +458,12 @@ Resources:
   ItemMaterializeDynamoDbNewDlq:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-dynamodb-new-dlq-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-dynamodb-new-dlq-${StageName}"
       MessageRetentionPeriod: 1209600
   ItemMaterializeDynamoDbNewQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-dynamodb-new-queue-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-dynamodb-new-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeDynamoDbNewDlq.Arn
         maxReceiveCount: 3
@@ -465,7 +471,7 @@ Resources:
   ItemMaterializeDynamoDbNewRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-materialize-dynamodb-new-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-materialize-dynamodb-new-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -498,13 +504,13 @@ Resources:
   ItemMaterializeDynamoDbNewLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-lambda-materialize-dynamodb-new-${EnvSuffix}"
+      FunctionName: !Sub "item-lambda-materialize-dynamodb-new-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemMaterializeDynamoDbNewRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-dynamodb-new-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-lambda-materialize-dynamodb-new-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -526,12 +532,12 @@ Resources:
   ItemMaterializeDynamoDbUpdateDlq:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-dynamodb-update-dlq-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-dynamodb-update-dlq-${StageName}"
       MessageRetentionPeriod: 1209600
   ItemMaterializeDynamoDbUpdateQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-dynamodb-update-queue-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-dynamodb-update-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeDynamoDbUpdateDlq.Arn
         maxReceiveCount: 3
@@ -539,7 +545,7 @@ Resources:
   ItemMaterializeDynamoDbUpdateRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-materialize-dynamodb-update-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-materialize-dynamodb-update-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -572,13 +578,13 @@ Resources:
   ItemMaterializeDynamoDbUpdateLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-lambda-materialize-dynamodb-update-${EnvSuffix}"
+      FunctionName: !Sub "item-lambda-materialize-dynamodb-update-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemMaterializeDynamoDbUpdateRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-dynamodb-update-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-lambda-materialize-dynamodb-update-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -600,12 +606,12 @@ Resources:
   ItemMaterializeOpenSearchNewDlq:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-opensearch-new-dlq-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-opensearch-new-dlq-${StageName}"
       MessageRetentionPeriod: 1209600
   ItemMaterializeOpenSearchNewQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-opensearch-new-queue-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-opensearch-new-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeOpenSearchNewDlq.Arn
         maxReceiveCount: 3
@@ -613,7 +619,7 @@ Resources:
   ItemMaterializeOpenSearchNewRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-materialize-opensearch-new-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-materialize-opensearch-new-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -631,7 +637,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - es:*
-                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${EnvSuffix}/*"
+                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${StageName}/*"
         - PolicyName: SQSPollerAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -646,13 +652,13 @@ Resources:
   ItemMaterializeOpenSearchNewLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-lambda-materialize-opensearch-new-${EnvSuffix}"
+      FunctionName: !Sub "item-lambda-materialize-opensearch-new-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemMaterializeOpenSearchNewRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-opensearch-new-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-lambda-materialize-opensearch-new-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -674,12 +680,12 @@ Resources:
   ItemMaterializeOpenSearchUpdateDlq:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-opensearch-update-dlq-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-opensearch-update-dlq-${StageName}"
       MessageRetentionPeriod: 1209600
   ItemMaterializeOpenSearchUpdateQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub "item-lambda-materialize-opensearch-update-queue-${EnvSuffix}"
+      QueueName: !Sub "item-lambda-materialize-opensearch-update-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeOpenSearchUpdateDlq.Arn
         maxReceiveCount: 3
@@ -687,7 +693,7 @@ Resources:
   ItemMaterializeOpenSearchUpdateRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "item-lambda-materialize-opensearch-update-role-${EnvSuffix}"
+      RoleName: !Sub "item-lambda-materialize-opensearch-update-role-${StageName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -705,7 +711,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - es:*
-                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${EnvSuffix}/*"
+                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${StageName}/*"
         - PolicyName: SQSPollerAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -720,13 +726,13 @@ Resources:
   ItemMaterializeOpenSearchUpdateLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "item-lambda-materialize-opensearch-update-${EnvSuffix}"
+      FunctionName: !Sub "item-lambda-materialize-opensearch-update-${StageName}"
       Runtime: provided.al2023
       Handler: lib.handler
       Role: !GetAtt ItemMaterializeOpenSearchUpdateRole.Arn
       Code:
         S3Bucket: !Ref ArtifactBucket
-        S3Key: !Sub "item-lambda-materialize-opensearch-update-${EnvSuffix}-${CommitSHA}.zip"
+        S3Key: !Sub "item-lambda-materialize-opensearch-update-${StageName}-${CommitSHA}.zip"
       MemorySize: 512
       Timeout: 60
       EphemeralStorage:
@@ -748,7 +754,7 @@ Resources:
   DynamoDbItemEventRecordCreatedMaterializeDynamoDbItemRecordEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "ddb-item-mat-ddb-new-${EnvSuffix}"
+      Name: !Sub "ddb-item-mat-ddb-new-${StageName}"
       EventBusName: !Ref DynamoDbEventBus
       EventPattern:
         source:
@@ -769,7 +775,7 @@ Resources:
   DynamoDbItemEventRecordUpdatedMaterializeDynamoDbItemRecordEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "ddb-item-mat-ddb-update-${EnvSuffix}"
+      Name: !Sub "ddb-item-mat-ddb-update-${StageName}"
       EventBusName: !Ref DynamoDbEventBus
       EventPattern:
         source:
@@ -791,7 +797,7 @@ Resources:
   DynamoDbItemEventRecordCreatedMaterializeOpenSearchItemDocumentEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "ddb-item-mat-os-new-${EnvSuffix}"
+      Name: !Sub "ddb-item-mat-os-new-${StageName}"
       EventBusName: !Ref DynamoDbEventBus
       EventPattern:
         source:
@@ -812,7 +818,7 @@ Resources:
   DynamoDbItemEventRecordUpdatedMaterializeOpenSearchItemDocumentEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub "ddb-item-mat-os-update-${EnvSuffix}"
+      Name: !Sub "ddb-item-mat-os-update-${StageName}"
       EventBusName: !Ref DynamoDbEventBus
       EventPattern:
         source:
@@ -834,7 +840,7 @@ Resources:
 
 Outputs:
   ApiGatewayEndpointUrl:
-    Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvSuffix}"
+    Value: !Sub "https://${ItemsApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
   OpensearchItemDomainEndpointUrl:
     Value: !Sub "https://${ItemsOpenSearchDomain.DomainEndpoint}"
   OpensearchDomainName:

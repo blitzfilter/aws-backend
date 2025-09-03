@@ -217,6 +217,8 @@ async fn should_materialize_item_in_opensearch_for_create_item_command() {
 #[staging_test]
 async fn should_materialize_item_in_opensearch_for_update_item_command() {
     let stack = get_cfn_output();
+
+    // we also need to ingest materialized into DynamoDB because item-write-lambda-update performs validity and existence checks in the primary data-store
     let dynamodb_client = get_dynamodb_client().await;
     let repository = ItemDynamoDbRepositoryImpl::new(dynamodb_client, &stack.dynamodb_table_1_name);
     let mut materialized_ddb_old: ItemRecord = Faker.fake();

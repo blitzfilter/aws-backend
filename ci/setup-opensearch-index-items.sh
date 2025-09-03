@@ -4,7 +4,6 @@ set -euo pipefail
 
 INDEX_NAME="items"
 MAPPING_FILE="opensearch/mappings/items.json"
-STACK_NAME="staging-${ENV_SUFFIX}"
 
 # Resolve OpenSearch domain name + endpoint from CloudFormation Outputs
 DOMAIN_NAME=$(aws cloudformation describe-stacks \
@@ -52,19 +51,13 @@ echo -e "\n es" | opensearch-cli profile create --name "ci" \
   --endpoint "$RAW_ENDPOINT" \
   --auth-type "aws-iam"
 
-# Delete index if exists
+# Create index if not exists
 if opensearch-cli curl get --path "$INDEX_NAME" --profile ci | jq -e '.[].status? // empty' >/dev/null 2>&1; then
-  echo "🔄 Deleting existing index $INDEX_NAME..."
-  opensearch-cli curl delete --path "$INDEX_NAME" --profile ci
+   echo "Index $INDEX_NAME exists already, skipping creation."
 else
-  echo "ℹ️ Index $INDEX_NAME not found, skipping delete."
+  echo "📦 Creating index with mapping from $MAPPING_FILE..."
+  opensearch-cli curl put \
+    --path "$INDEX_NAME" \
+    --data "@$MAPPING_FILE" \
+    --profile ci
 fi
-
-# Create index with mapping
-echo "📦 Creating index with mapping from $MAPPING_FILE..."
-opensearch-cli curl put \
-  --path "$INDEX_NAME" \
-  --data "@$MAPPING_FILE" \
-  --profile ci
-
-echo "🎉 Index $INDEX_NAME successfully created."
