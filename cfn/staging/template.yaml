@@ -17,6 +17,20 @@ Parameters:
   CommitSHA:
     Type: String
 
+Mappings:
+  ItemWriteQueuesMap:
+    MaximumBatchingWindowInSeconds:
+      dev: 1
+      prod: 10
+  ItemMaterializeDynamoDbQueuesMap:
+    MaximumBatchingWindowInSeconds:
+      dev: 1
+      prod: 10
+  ItemMaterializeOpenSearchQueuesMap:
+    MaximumBatchingWindowInSeconds:
+      dev: 1
+      prod: 300
+
 Resources:
   TableOne:
     Type: AWS::DynamoDB::Table
@@ -377,7 +391,7 @@ Resources:
       EventSourceArn: !GetAtt ItemWriteNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 1
+      MaximumBatchingWindowInSeconds: !FindInMap [ItemWriteQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -451,7 +465,7 @@ Resources:
       EventSourceArn: !GetAtt ItemWriteUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 1
+      MaximumBatchingWindowInSeconds: !FindInMap [ItemWriteQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -466,7 +480,7 @@ Resources:
       QueueName: !Sub "item-lambda-materialize-dynamodb-new-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeDynamoDbNewDlq.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 5
       VisibilityTimeout: 360
   ItemMaterializeDynamoDbNewRole:
     Type: AWS::IAM::Role
@@ -525,7 +539,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeDynamoDbNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 1
+      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeDynamoDbQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -540,7 +554,7 @@ Resources:
       QueueName: !Sub "item-lambda-materialize-dynamodb-update-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeDynamoDbUpdateDlq.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 5
       VisibilityTimeout: 360
   ItemMaterializeDynamoDbUpdateRole:
     Type: AWS::IAM::Role
@@ -599,7 +613,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeDynamoDbUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 1
+      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeDynamoDbQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -614,7 +628,7 @@ Resources:
       QueueName: !Sub "item-lambda-materialize-opensearch-new-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeOpenSearchNewDlq.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 5
       VisibilityTimeout: 360
   ItemMaterializeOpenSearchNewRole:
     Type: AWS::IAM::Role
@@ -673,7 +687,7 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeOpenSearchNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: 1
+      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeOpenSearchQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -688,7 +702,7 @@ Resources:
       QueueName: !Sub "item-lambda-materialize-opensearch-update-queue-${StageName}"
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ItemMaterializeOpenSearchUpdateDlq.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 5
       VisibilityTimeout: 360
   ItemMaterializeOpenSearchUpdateRole:
     Type: AWS::IAM::Role
@@ -746,8 +760,8 @@ Resources:
       FunctionName: !Ref ItemMaterializeOpenSearchUpdateLambda
       EventSourceArn: !GetAtt ItemMaterializeOpenSearchUpdateQ.Arn
       Enabled: true
-      BatchSize: 200
-      MaximumBatchingWindowInSeconds: 1
+      BatchSize: 2500
+      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeOpenSearchQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
