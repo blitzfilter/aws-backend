@@ -58,7 +58,7 @@ Resources:
   ItemsOpenSearchDomain:
     Type: AWS::OpenSearchService::Domain
     Properties:
-      DomainName: !Sub "staging-${StageName}"
+      DomainName: !Sub "application-${StageName}"
       EngineVersion: "OpenSearch_2.19"
       ClusterConfig:
         InstanceType: t3.small.search
@@ -75,7 +75,7 @@ Resources:
             Principal:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: "es:*"
-            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${StageName}/*"
+            Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/application-${StageName}/*"
 
   DynamoDbEventBus:
     Type: AWS::Events::EventBus
@@ -637,7 +637,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - es:*
-                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${StageName}/*"
+                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/application-${StageName}/*"
         - PolicyName: SQSPollerAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -711,7 +711,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - es:*
-                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/staging-${StageName}/*"
+                Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/application-${StageName}/*"
         - PolicyName: SQSPollerAccess
           PolicyDocument:
             Version: "2012-10-17"
