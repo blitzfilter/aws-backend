@@ -61,3 +61,13 @@ else
     --data "@$MAPPING_FILE" \
     --profile ci
 fi
+
+# Configure refresh-interval for index
+echo "Configuring refresh-interval for index $INDEX_NAME..."
+opensearch-cli index put-settings \
+  --index my-index \
+  --body '{
+    "index": {
+      "refresh_interval": "5m"
+    }
+  }'
