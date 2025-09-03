@@ -353,7 +353,7 @@ jobs:
             --stack-name ${{ env.STACK_NAME }} \
             --template-file cfn/staging/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides \ 
+            --parameter-overrides \
                 Stage=${{ env.STAGE }} \
                 StageName=${{ env.STAGE_NAME }} \
                 ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }} \
