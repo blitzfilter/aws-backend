@@ -318,7 +318,7 @@ jobs:
           BIN_NAME=$(basename ${{ matrix.crate }})
           OUT_DIR=$GITHUB_WORKSPACE/artifacts
           mkdir -p $OUT_DIR
-          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-$STAGE_NAME-${GITHUB_SHA}.zip
+          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4.3.1
@@ -329,7 +329,7 @@ jobs:
       - name: Upload Lambda to S3
         run: |
           BIN_NAME=$(basename ${{ matrix.crate }})
-          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-$STAGE_NAME-${GITHUB_SHA}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
+          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
   aws-cfn-deploy:
     name: Deploy CFN-Stack
@@ -350,12 +350,12 @@ jobs:
       - name: Deploy CloudFormation
         run: |
           aws cloudformation deploy \
-            --stack-name $STACK_NAME \
+            --stack-name ${{ env.STACK_NAME }} \
             --template-file cfn/staging/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \ 
-                Stage=$STAGE \
-                StageName=$STAGE_NAME \
+                Stage=${{ env.STAGE }} \
+                StageName=${{ env.STAGE_NAME }} \
                 ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }} \
                 CommitSHA=${GITHUB_SHA}
 
@@ -396,7 +396,7 @@ jobs:
           set -euo pipefail
           JSON=$(
             aws cloudformation describe-stacks \
-              --stack-name $STACK_NAME \
+              --stack-name ${{ env.STACK_NAME }} \
               --query 'Stacks[0].Outputs' \
               --output json \
             | jq -c 'map({(.OutputKey): .OutputValue}) | add'
