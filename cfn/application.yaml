@@ -391,7 +391,12 @@ Resources:
       EventSourceArn: !GetAtt ItemWriteNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: !FindInMap [ItemWriteQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
+      MaximumBatchingWindowInSeconds:
+        !FindInMap [
+          ItemWriteQueuesMap,
+          MaximumBatchingWindowInSeconds,
+          !Ref Stage,
+        ]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -465,7 +470,12 @@ Resources:
       EventSourceArn: !GetAtt ItemWriteUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: !FindInMap [ItemWriteQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
+      MaximumBatchingWindowInSeconds:
+        !FindInMap [
+          ItemWriteQueuesMap,
+          MaximumBatchingWindowInSeconds,
+          !Ref Stage,
+        ]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -539,7 +549,12 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeDynamoDbNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeDynamoDbQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
+      MaximumBatchingWindowInSeconds:
+        !FindInMap [
+          ItemMaterializeDynamoDbQueuesMap,
+          MaximumBatchingWindowInSeconds,
+          !Ref Stage,
+        ]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -613,7 +628,12 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeDynamoDbUpdateQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeDynamoDbQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
+      MaximumBatchingWindowInSeconds:
+        !FindInMap [
+          ItemMaterializeDynamoDbQueuesMap,
+          MaximumBatchingWindowInSeconds,
+          !Ref Stage,
+        ]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -687,7 +707,12 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeOpenSearchNewQ.Arn
       Enabled: true
       BatchSize: 200
-      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeOpenSearchQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
+      MaximumBatchingWindowInSeconds:
+        !FindInMap [
+          ItemMaterializeOpenSearchQueuesMap,
+          MaximumBatchingWindowInSeconds,
+          !Ref Stage,
+        ]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 
@@ -761,7 +786,12 @@ Resources:
       EventSourceArn: !GetAtt ItemMaterializeOpenSearchUpdateQ.Arn
       Enabled: true
       BatchSize: 2500
-      MaximumBatchingWindowInSeconds: !FindInMap [ItemMaterializeOpenSearchQueuesMap, MaximumBatchingWindowInSeconds, !Ref Stage]
+      MaximumBatchingWindowInSeconds:
+        !FindInMap [
+          ItemMaterializeOpenSearchQueuesMap,
+          MaximumBatchingWindowInSeconds,
+          !Ref Stage,
+        ]
       FunctionResponseTypes:
         - ReportBatchItemFailures
 

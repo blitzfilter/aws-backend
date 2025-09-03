@@ -333,7 +333,7 @@ jobs:
           aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
 
   aws-cfn-deploy:
-    name: Deploy CFN-Stack
+    name: Deploy & initialize CFN-Stack
     needs: aws-push-lambda
     runs-on: ubuntu-latest
     permissions:
@@ -352,7 +352,7 @@ jobs:
         run: |
           aws cloudformation deploy \
             --stack-name ${{ env.STACK_NAME }} \
-            --template-file cfn/staging/template.yaml \
+            --template-file cfn/application.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
                 Stage=${{ env.STAGE }} \
