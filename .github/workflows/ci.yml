@@ -56,7 +56,8 @@ jobs:
         crate:
           - src/common
           - src/search-filter/src/search-filter-core
-          - src/staging-tests
+          - src/aws-tests/src/smoking-tests
+          - src/aws-tests/src/staging-tests
           - src/item/src/item-api/src/item-api-get-item
           - src/item/src/item-api/src/item-api-simple-search
           - src/item/src/item-core
@@ -416,8 +417,58 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Test src/staging-tests
-        working-directory: src/staging-tests
+      - name: Run Staging-tests
+        working-directory: src/aws-tests/src/staging-tests
+        env:
+          CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
+        run: cargo test --test '*' --all-features -- --ignored --nocapture
+
+  aws-smoking-test:
+    name: AWS Smoking-Test
+    if: ${{ github.event_name == 'push' }} ${{ github.ref }} == 'refs/heads/main'
+    needs: aws-cfn-deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Export CFN Output
+        id: export-cfn-output
+        shell: bash
+        run: |
+          set -euo pipefail
+          JSON=$(
+            aws cloudformation describe-stacks \
+              --stack-name ${{ env.STACK_NAME }} \
+              --query 'Stacks[0].Outputs' \
+              --output json \
+            | jq -c 'map({(.OutputKey): .OutputValue}) | add'
+          )
+          echo "outputs_json=$JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run Smoking-Tests
+        working-directory: src/aws-tests/src/smoking-tests
         env:
           CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
         run: cargo test --test '*' --all-features -- --ignored --nocapture
