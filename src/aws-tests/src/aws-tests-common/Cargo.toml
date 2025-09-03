@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 serde_json = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
