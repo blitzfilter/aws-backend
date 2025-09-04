@@ -52,7 +52,10 @@ echo -e "\n es" | opensearch-cli profile create --name "ci" \
   --auth-type "aws-iam"
 
 # Create index if not exists
-if opensearch-cli curl get --path "$INDEX_NAME" --profile ci 2>/dev/null | grep -q '"status":404'; then
+INDEX_CHECK=$(opensearch-cli curl get \
+  --path "$INDEX_NAME/_settings" \
+  --profile ci --output-format raw 2>/dev/null)
+if echo "$INDEX_CHECK" | grep -q 'index_not_found_exception'; then
   echo "📦 Creating index with mapping from $MAPPING_FILE..."
   opensearch-cli curl put \
     --path "$INDEX_NAME" \
