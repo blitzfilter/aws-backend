@@ -261,8 +261,7 @@ jobs:
     name: Push Lambda to S3 ${{ matrix.crate }}
     needs: [unit-test, integration-test]
     environment:
-      name: prod
-    if: github.actor != 'dependabot[bot]'
+      name: aws-deploy
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -338,7 +337,6 @@ jobs:
   aws-cfn-deploy:
     name: Deploy & initialize CFN-Stack
     needs: aws-push-lambda
-    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -379,7 +377,7 @@ jobs:
 
   aws-staging-test:
     name: AWS Staging-Test
-    if: ${{ github.event_name == 'pull_request' }} && github.actor != 'dependabot[bot]'
+    if: ${{ github.event_name == 'pull_request' }}
     needs: aws-cfn-deploy
     runs-on: ubuntu-latest
     permissions:
@@ -429,7 +427,7 @@ jobs:
 
   aws-smoking-test:
     name: AWS Smoking-Test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/prod' && github.actor != 'dependabot[bot]'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/prod'
     needs: aws-cfn-deploy
     runs-on: ubuntu-latest
     permissions:
