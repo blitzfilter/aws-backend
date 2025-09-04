@@ -260,6 +260,7 @@ jobs:
   aws-push-lambda:
     name: Push Lambda to S3 ${{ matrix.crate }}
     needs: [unit-test, integration-test]
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
