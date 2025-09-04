@@ -52,14 +52,14 @@ echo -e "\n es" | opensearch-cli profile create --name "ci" \
   --auth-type "aws-iam"
 
 # Create index if not exists
-if opensearch-cli curl get --path "$INDEX_NAME" --profile ci >/dev/null 2>&1; then
-  echo "Index $INDEX_NAME exists already, skipping creation."
-else
+if opensearch-cli curl get --path "$INDEX_NAME" --profile ci 2>/dev/null | grep -q '"status":404'; then
   echo "📦 Creating index with mapping from $MAPPING_FILE..."
   opensearch-cli curl put \
     --path "$INDEX_NAME" \
     --data "@$MAPPING_FILE" \
     --profile ci
+else
+  echo "Index $INDEX_NAME exists already, skipping creation."
 fi
 
 # Configure refresh-interval for index
