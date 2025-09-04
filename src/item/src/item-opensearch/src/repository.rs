@@ -275,7 +275,13 @@ impl<'a> ItemOpenSearchRepository for ItemOpenSearchRepositoryImpl<'a> {
             .body(body)
             .send()
             .await?;
-        let search_response = response.json::<SearchResponse<ItemDocument>>().await?;
+        let payload = response.text().await?;
+        let search_response = serde_json::from_str::<SearchResponse<ItemDocument>>(&payload)
+            .map_err(|err| {
+                serde_json::Error::custom(format!(
+                    "Failed deserializing 'SearchResponse<ItemDocument>' with error '{err}'. Received payload: {payload}"
+                ))
+            })?;
 
         Ok(search_response)
     }
