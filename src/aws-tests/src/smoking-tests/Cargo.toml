@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 aws-tests-common = { workspace = true }
-smoking-tests-macros = { path = "src/smoking-tests-macros" }
+smoking-tests-macros = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
@@ -13,4 +13,4 @@ reqwest = { workspace = true, features = ["default", "json"] }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
-futures-util = { version = "0.3.31" }
+futures-util = { workspace = true }

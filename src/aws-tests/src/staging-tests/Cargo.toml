@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-staging-tests-macros = { path = "src/staging-tests-macros" }
+staging-tests-macros = { workspace = true }
 aws-tests-common = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 serde_json = { workspace = true }
@@ -27,4 +27,4 @@ reqwest = { workspace = true, features = ["default"] }
 fake = { workspace = true }
 url = { workspace = true }
 search-filter-core = { workspace = true }
-futures-util = { version = "0.3.31" }
+futures-util = { workspace = true }

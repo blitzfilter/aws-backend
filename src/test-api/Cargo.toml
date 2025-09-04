@@ -34,7 +34,7 @@ serde_dynamo = { workspace = true, optional = true, features = [
 ] }
 aws-sdk-sqs = { workspace = true, optional = true }
 aws-sdk-lambda = { workspace = true, optional = true }
-test_lambda = { path = "src/test_lambda", optional = true }
+test_lambda = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-api = { workspace = true, features = [
