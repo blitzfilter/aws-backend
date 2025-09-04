@@ -51,19 +51,12 @@ echo -e "\n es" | opensearch-cli profile create --name "ci" \
   --endpoint "$RAW_ENDPOINT" \
   --auth-type "aws-iam"
 
-# Create index if not exists
-INDEX_CHECK=$(opensearch-cli curl get \
-  --path "$INDEX_NAME/_settings" \
-  --profile ci --output-format raw 2>/dev/null)
-if echo "$INDEX_CHECK" | grep -q 'index_not_found_exception'; then
-  echo "📦 Creating index with mapping from $MAPPING_FILE..."
-  opensearch-cli curl put \
-    --path "$INDEX_NAME" \
-    --data "@$MAPPING_FILE" \
-    --profile ci
-else
-  echo "Index $INDEX_NAME exists already, skipping creation."
-fi
+# Create index
+echo "📦 Creating index with mapping from $MAPPING_FILE..."
+opensearch-cli curl put \
+  --path "$INDEX_NAME" \
+  --data "@$MAPPING_FILE" \
+  --profile ci
 
 # Configure refresh-interval for index
 if [ "$STAGE" = "prod" ]; then
