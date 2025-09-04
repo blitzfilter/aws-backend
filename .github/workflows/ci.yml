@@ -260,8 +260,6 @@ jobs:
   aws-push-lambda:
     name: Push Lambda to S3 ${{ matrix.crate }}
     needs: [unit-test, integration-test]
-    environment:
-      name: aws-deploy
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -337,6 +335,8 @@ jobs:
   aws-cfn-deploy:
     name: Deploy & initialize CFN-Stack
     needs: aws-push-lambda
+    environment:
+      name: aws-deploy
     runs-on: ubuntu-latest
     permissions:
       contents: read
