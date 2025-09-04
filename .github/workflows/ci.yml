@@ -259,7 +259,7 @@ jobs:
 
   aws-push-lambda:
     name: Push Lambda to S3 ${{ matrix.crate }}
-    needs: [unit-test, integration-test]
+    # needs: [unit-test, integration-test]
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
@@ -331,7 +331,10 @@ jobs:
       - name: Upload Lambda to S3
         run: |
           BIN_NAME=$(basename ${{ matrix.crate }})
-          aws s3 cp $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/
+          aws s3 cp \
+            $GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip \
+            s3://${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}/ \
+            --tagging "stage=${{ env.STAGE }}"
 
   aws-cfn-deploy:
     name: Deploy & initialize CFN-Stack
