@@ -51,13 +51,7 @@ async fn should_respond_200_when_hits() {
         .send()
         .await
         .unwrap();
-    os_client
-        .index(IndexParts::Index("items"))
-        .refresh(Refresh::True)
-        .send()
-        .await
-        .unwrap();
-    tokio::time::sleep(Duration::from_secs(30)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     let response = reqwest::get(format!(
         "{}/api/v1/items?q=Chopin%20Etudes&language=en&currency=EUR&sort=price&order=asc&from=0&size=5",

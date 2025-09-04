@@ -63,12 +63,14 @@ else
 fi
 
 # Configure refresh-interval for index
-echo "Configuring refresh-interval for index $INDEX_NAME..."
-opensearch-cli curl put \
-  --path "$INDEX_NAME/_settings" \
-  --data '{
-    "index": {
-      "refresh_interval": "5m"
-    }
-  }' \
-  --profile ci
+if [ "$STAGE" = "prod" ]; then
+    echo "Configuring refresh-interval for index $INDEX_NAME..."
+    opensearch-cli curl put \
+      --path "$INDEX_NAME/_settings" \
+      --data '{
+        "index": {
+          "refresh_interval": "5m"
+        }
+      }' \
+      --profile ci
+fi
