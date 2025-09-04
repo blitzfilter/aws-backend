@@ -259,7 +259,7 @@ jobs:
 
   aws-push-lambda:
     name: Push Lambda to S3 ${{ matrix.crate }}
-    # needs: [unit-test, integration-test]
+    needs: [unit-test, integration-test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
