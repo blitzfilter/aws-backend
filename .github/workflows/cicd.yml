@@ -11,17 +11,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  STAGE: ${{ github.event_name == 'pull_request' && 'dev' \
-    || github.ref == 'refs/heads/prod' && 'prod' \
+  STAGE: ${{ github.event_name == 'pull_request' && 'dev' 
+    || github.ref == 'refs/heads/prod' && 'prod' 
     || github.ref == 'refs/heads/develop' && 'staging' }}
   STAGE_NAME:
-    ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \
-    || github.ref == 'refs/heads/prod' && 'prod' \
+    ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)  
+    || github.ref == 'refs/heads/prod' && 'prod' 
     || github.ref == 'refs/heads/develop' && 'staging' }}
   STACK: application
   STACK_NAME:
-    application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \
-    || github.ref == 'refs/heads/prod' && 'prod' \
+    application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) 
+    || github.ref == 'refs/heads/prod' && 'prod' 
     || github.ref == 'refs/heads/develop' && 'staging' }}
 
 jobs:
