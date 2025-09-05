@@ -61,7 +61,7 @@ item-lambda-materialize-opensearch-update = { path = "src/item/src/item-lambda/s
 item-lambda-write-new = { path = "src/item/src/item-lambda/src/item-lambda-write-new" }
 item-lambda-write-update = { path = "src/item/src/item-lambda/src/item-lambda-write-update" }
 itertools = "0.14.0"
-lambda_runtime = "0.14.3"
+lambda_runtime = "0.14.4"
 libc = "0.2.175"
 mockall = "0.13.1"
 opensearch = { version = "2.3.0", default-features = false, features = [
