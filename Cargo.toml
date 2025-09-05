@@ -103,7 +103,7 @@ url = "2.5.7"
 uuid = "1.18.1"
 walkdir = "2.5.0"
 futures-util = "0.3.31"
-proc-macro2 = "1.0.95"
+proc-macro2 = "1.0.101"
 smoking-tests-macros = { path = "src/aws-tests/src/smoking-tests/src/smoking-tests-macros" }
 staging-tests-macros = { path = "src/aws-tests/src/staging-tests/src/staging-tests-macros" }
 test_lambda = { path = "src/test-api/src/test_lambda" }
