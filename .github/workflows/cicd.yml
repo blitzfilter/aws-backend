@@ -2,7 +2,7 @@ name: CI/CD
 
 on:
   push:
-    branches: [prod]
+    branches: [prod, develop]
   pull_request:
 
 concurrency:
@@ -11,10 +11,18 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  STAGE: ${{ github.event_name == 'pull_request' && 'dev' || github.ref == 'refs/heads/prod' && 'prod' }}
-  STAGE_NAME: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref == 'refs/heads/prod' && 'prod' }}
+  STAGE: ${{ github.event_name == 'pull_request' && 'dev' \
+    || github.ref == 'refs/heads/prod' && 'prod' \
+    || github.ref == 'refs/heads/develop' && 'staging' }}
+  STAGE_NAME:
+    ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \
+    || github.ref == 'refs/heads/prod' && 'prod' \
+    || github.ref == 'refs/heads/develop' && 'staging' }}
   STACK: application
-  STACK_NAME: application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref == 'refs/heads/prod' && 'prod' }}
+  STACK_NAME:
+    application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) \
+    || github.ref == 'refs/heads/prod' && 'prod' \
+    || github.ref == 'refs/heads/develop' && 'staging' }}
 
 jobs:
   lint:
@@ -260,7 +268,6 @@ jobs:
   aws-push-lambda:
     name: Push Lambda to S3 ${{ matrix.crate }}
     needs: [unit-test, integration-test]
-    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -432,7 +439,7 @@ jobs:
 
   aws-smoking-test:
     name: AWS Smoking-Test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/prod'
+    if: github.event_name == 'push'
     needs: aws-cfn-deploy
     runs-on: ubuntu-latest
     permissions:
