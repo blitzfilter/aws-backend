@@ -11,17 +11,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  STAGE: ${{ github.event_name == 'pull_request' && 'dev' 
-    || github.ref == 'refs/heads/prod' && 'prod' 
+  STAGE: ${{ github.event_name == 'pull_request' && 'dev'
+    || github.ref == 'refs/heads/prod' && 'prod'
     || github.ref == 'refs/heads/develop' && 'staging' }}
   STAGE_NAME:
-    ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)  
-    || github.ref == 'refs/heads/prod' && 'prod' 
+    ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)
+    || github.ref == 'refs/heads/prod' && 'prod'
     || github.ref == 'refs/heads/develop' && 'staging' }}
   STACK: application
   STACK_NAME:
-    application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) 
-    || github.ref == 'refs/heads/prod' && 'prod' 
+    application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)
+    || github.ref == 'refs/heads/prod' && 'prod'
     || github.ref == 'refs/heads/develop' && 'staging' }}
 
 jobs:
@@ -54,35 +54,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   build:
-    name: Build ${{ matrix.crate }}
+    name: Build Workspace
     needs: lint
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        crate:
-          - src/common
-          - src/search-filter/src/search-filter-core
-          - src/aws-tests/src/smoking-tests
-          - src/aws-tests/src/staging-tests
-          - src/item/src/item-api/src/item-api-get-item
-          - src/item/src/item-api/src/item-api-simple-search
-          - src/item/src/item-core
-          - src/item/src/item-data
-          - src/item/src/item-dynamodb
-          - src/item/src/item-opensearch
-          - src/item/src/item-lambda/src/item-lambda-common
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
-          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
-          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
-          - src/item/src/item-lambda/src/item-lambda-write-new
-          - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-service
-          - src/scrape/src/scrape-core
-          - src/scrape/src/scrape-static
-          - src/test-api
     steps:
       - uses: actions/checkout@v5
 
@@ -98,38 +74,15 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build ${{ matrix.crate }}
-        working-directory: ${{ matrix.crate }}
-        run: cargo build --all-features
+      - name: Build Workspace
+        run: cargo build --workspace --all-targets --all-features
 
   unit-test:
-    name: Unit-Test ${{ matrix.crate }}
+    name: Unit-Test Workspace
     needs: build
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        crate:
-          - src/common
-          - src/search-filter/src/search-filter-core
-          - src/item/src/item-api/src/item-api-get-item
-          - src/item/src/item-api/src/item-api-simple-search
-          - src/item/src/item-core
-          - src/item/src/item-data
-          - src/item/src/item-dynamodb
-          - src/item/src/item-opensearch
-          - src/item/src/item-lambda/src/item-lambda-common
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
-          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
-          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
-          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
-          - src/item/src/item-lambda/src/item-lambda-write-new
-          - src/item/src/item-lambda/src/item-lambda-write-update
-          - src/item/src/item-service
-          - src/scrape/src/scrape-core
-          - src/scrape/src/scrape-static
-          - src/test-api
     steps:
       - uses: actions/checkout@v5
 
@@ -146,9 +99,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Test ${{ matrix.crate }}
-        working-directory: ${{ matrix.crate }}
-        run: cargo test --lib --all-features -- --nocapture
+      - name: Unit-Test Workspace
+        run: cargo test --workspace --lib --all-targets --all-features -- --nocapture
 
   integration-test:
     name: Integration-Test ${{ matrix.crate }}
