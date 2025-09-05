@@ -97,7 +97,7 @@ thiserror = "2.0.16"
 time = "0.3.43"
 tokio = { version = "1.47.1", default-features = false }
 tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = "0.3.20"
 typed-builder = "0.21.2"
 url = "2.5.7"
 uuid = "1.18.0"
