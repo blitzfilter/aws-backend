@@ -236,9 +236,10 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
                     );
                     failures.extend(unprocessed);
                 }
-                let events = self.find_update_events_with_existing_items(
+                let events = self.determine_update_events(
                     update_chunk,
                     existing_item_records.items,
+                    failures,
                     skipped_count,
                 );
                 let event_records = events.into_iter().filter_map(|event| {
@@ -274,10 +275,11 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
         }
     }
 
-    fn find_update_events_with_existing_items(
+    fn determine_update_events(
         &self,
         update_chunk: HashMap<ItemKey, UpdateItemCommand>,
         existing_records: Vec<ItemRecord>,
+        failures: &mut Vec<ItemKey>,
         skipped_count: &mut usize,
     ) -> Vec<ItemEvent> {
         let mut update_chunk = update_chunk;
@@ -310,14 +312,14 @@ impl<T: FxRate + Sync> CommandItemServiceImpl<'_, T> {
             }
         }
 
-        for non_existent_key in update_chunk.keys() {
+        for non_existent_key in update_chunk.into_keys() {
             warn!(
                 shopId = non_existent_key.shop_id.to_string(),
                 shopsItemId = non_existent_key.shops_item_id.to_string(),
                 "Cannot update item because it doesn't exist."
             );
+            failures.push(non_existent_key);
         }
-        *skipped_count += update_chunk.len();
 
         events
     }
@@ -633,7 +635,7 @@ pub mod tests {
         #[case(0, 100)]
         #[case(0, 1)]
         #[case(1, 1)]
-        async fn should_skip_commands_when_items_with_key_do_not_exist(
+        async fn should_fail_commands_when_items_with_key_do_not_exist(
             #[case] existing_count: usize,
             #[case] batch_size: usize,
         ) {
@@ -681,8 +683,7 @@ pub mod tests {
                 )
                 .await;
 
-            assert_eq!(batch_size - existing_count, skipped_count);
-            assert!(failures.is_empty());
+            assert_eq!(batch_size - existing_count, failures.len());
         }
     }
 
@@ -706,7 +707,7 @@ pub mod tests {
         use url::Url;
 
         #[test]
-        fn should_find_update_events_with_existing_items() {
+        fn should_determine_update_events() {
             let update_chunk = HashMap::from([
                 (
                     ItemKey::new("123".into(), "abc".into()),
@@ -757,15 +758,17 @@ pub mod tests {
                 updated: OffsetDateTime::now_utc(),
             }];
 
+            let mut failures: Vec<ItemKey> = vec![];
             let mut skipped_count = 0;
             let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
             let service = CommandItemServiceImpl {
-                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
+                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client, "table_1"),
                 fx_rate: &FixedFxRate::default(),
             };
-            let actuals = service.find_update_events_with_existing_items(
+            let actuals = service.determine_update_events(
                 update_chunk,
                 existing_records,
+                &mut failures,
                 &mut skipped_count,
             );
 
@@ -774,11 +777,12 @@ pub mod tests {
                 actuals[0].payload.shops_item_id(),
                 &ShopsItemId::from("abc")
             );
-            assert_eq!(1, skipped_count);
+            assert_eq!(1, failures.len());
+            assert_eq!(0, skipped_count);
         }
 
         #[test]
-        fn should_find_no_update_events_when_no_items_exist() {
+        fn should_determine_no_update_events_when_no_items_exist() {
             let update_chunk = HashMap::from([
                 (
                     ItemKey::new("123".into(), "abc".into()),
@@ -799,20 +803,23 @@ pub mod tests {
                 ),
             ]);
 
+            let mut failures: Vec<ItemKey> = vec![];
             let mut skipped_count = 0;
             let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
             let service = CommandItemServiceImpl {
-                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
+                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client, "table_1"),
                 fx_rate: &FixedFxRate::default(),
             };
-            let actuals = service.find_update_events_with_existing_items(
+            let actuals = service.determine_update_events(
                 update_chunk,
                 vec![],
+                &mut failures,
                 &mut skipped_count,
             );
 
             assert!(actuals.is_empty());
-            assert_eq!(2, skipped_count);
+            assert_eq!(2, failures.len());
+            assert_eq!(0, skipped_count);
         }
 
         #[test]
@@ -867,20 +874,23 @@ pub mod tests {
                 updated: OffsetDateTime::now_utc(),
             }];
 
+            let mut failures: Vec<ItemKey> = vec![];
             let mut skipped_count = 0;
             let client = &Client::from_conf(Config::builder().behavior_version_latest().build());
             let service = CommandItemServiceImpl {
-                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client),
+                dynamodb_repository: &ItemDynamoDbRepositoryImpl::new(client, "table_1"),
                 fx_rate: &FixedFxRate::default(),
             };
-            let actuals = service.find_update_events_with_existing_items(
+            let actuals = service.determine_update_events(
                 update_chunk,
                 existing_records,
+                &mut failures,
                 &mut skipped_count,
             );
 
             assert!(actuals.is_empty());
-            assert_eq!(2, skipped_count);
+            assert_eq!(1, failures.len());
+            assert_eq!(1, skipped_count);
         }
     }
 }

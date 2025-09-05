@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aws-tests = { workspace = true }
 common = { workspace = true }
 search-filter = { workspace = true }
 item = { workspace = true }
@@ -12,6 +13,7 @@ test-api = { workspace = true }
 
 [workspace]
 members = [
+    "src/aws-tests",
     "src/common",
     "src/search-filter",
     "src/item",
@@ -33,7 +35,6 @@ aws_lambda_events = { version = "0.17.0", default-features = false }
 blake3 = "1.8.2"
 common = { path = "src/common" }
 derive_builder = "0.20.2"
-dotenvy = "0.15.7"
 fake = { version = "4.4.0", features = ["derive", "time", "uuid"] }
 field = "0.1.0"
 search-filter = { path = "src/search-filter" }
@@ -52,6 +53,7 @@ item-dynamodb = { path = "src/item/src/item-dynamodb" }
 item-opensearch = { path = "src/item/src/item-opensearch" }
 item-lambda = { path = "src/item/src/item-lambda" }
 item-service = { path = "src/item/src/item-service" }
+item-lambda-common = { path = "src/item/src/item-lambda/src/item-lambda-common" }
 item-lambda-materialize-dynamodb-new = { path = "src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new" }
 item-lambda-materialize-dynamodb-update = { path = "src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update" }
 item-lambda-materialize-opensearch-new = { path = "src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new" }
@@ -60,11 +62,16 @@ item-lambda-write-new = { path = "src/item/src/item-lambda/src/item-lambda-write
 item-lambda-write-update = { path = "src/item/src/item-lambda/src/item-lambda-write-update" }
 itertools = "0.14.0"
 lambda_runtime = "0.14.3"
+libc = "0.2.175"
 mockall = "0.13.1"
-opensearch = { version = "2.3.0", features = ["aws-auth", "rustls-tls"] }
-query_map = { version = "0.7.0" }
+opensearch = { version = "2.3.0", default-features = false, features = [
+    "aws-auth",
+    "rustls-tls",
+] }
 quote = "1.0.40"
-reqwest = { version = "0.12.23", features = ["rustls-tls"] }
+reqwest = { version = "0.12.23", default-features = false, features = [
+    "rustls-tls",
+] }
 rstest = "0.26.1"
 scrape = { path = "src/scrape" }
 scrape-core = { path = "src/scrape/src/scrape-core" }
@@ -75,6 +82,10 @@ serde_dynamo = "4.2.14"
 serde_json = "1.0.143"
 serial_test = "3.2.0"
 sha2 = "0.10.9"
+aws-tests = { path = "src/aws-tests" }
+aws-tests-common = { path = "src/aws-tests/src/aws-tests-common" }
+smoking-tests = { path = "src/aws-tests/src/smoking-tests" }
+staging-tests = { path = "src/aws-tests/src/staging-tests" }
 strum = "0.27.2"
 strum_macros = "0.27.2"
 syn = "2.0.106"
@@ -91,3 +102,8 @@ typed-builder = "0.21.2"
 url = "2.5.6"
 uuid = "1.18.0"
 walkdir = "2.5.0"
+futures-util = "0.3.31"
+proc-macro2 = "1.0.95"
+smoking-tests-macros = { path = "src/aws-tests/src/smoking-tests/src/smoking-tests-macros" }
+staging-tests-macros = { path = "src/aws-tests/src/staging-tests/src/staging-tests-macros" }
+test_lambda = { path = "src/test-api/src/test_lambda" }

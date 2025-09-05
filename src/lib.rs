@@ -1,3 +1,4 @@
+pub use aws_tests;
 pub use common;
 pub use item;
 pub use scrape;

@@ -1,0 +1,38 @@
+name: Delete ephemeral CFN Stack on PR-Close
+
+on:
+  pull_request:
+    types: [closed]
+
+env:
+  STACK_NAME: application-${{ format('pr-{0}', github.event.pull_request.number) }}
+
+jobs:
+  aws-cfn-delete:
+    name: Delete CFN Stack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Delete CloudFormation Stack
+        run: |
+          echo "Attempting to delete stack: ${{ env.STACK_NAME }}"
+
+          if aws cloudformation describe-stacks --stack-name "${{ env.STACK_NAME }}" >/dev/null 2>&1; then
+            echo "Stack exists. Deleting..."
+            aws cloudformation delete-stack --stack-name "${{ env.STACK_NAME }}"
+            aws cloudformation wait stack-delete-complete --stack-name "${{ env.STACK_NAME }}"
+            echo "✅ Stack deleted successfully."
+          else
+            echo "ℹ️ Stack '${{ env.STACK_NAME }}' does not exist. Nothing to delete."
+          fi

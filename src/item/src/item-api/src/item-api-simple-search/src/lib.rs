@@ -7,7 +7,7 @@ use common::{
         error_code::{BAD_PARAMETER, INTERNAL_SERVER_ERROR, TEXT_QUERY_TOO_SHORT},
     },
     currency::{data::api::extract_currency_query, domain::Currency},
-    language::{data::api::extract_language_header, domain::Language},
+    language::{data::api::extract_language_query, domain::Language},
     page::{Page, api::extract_page_query},
     sort::api::extract_sort_query,
 };
@@ -21,7 +21,14 @@ use search_filter_core::{
 };
 use tracing::error;
 
-#[tracing::instrument(skip(event, service), fields(requestId = %event.context.request_id))]
+#[tracing::instrument(
+    skip(event, service),
+    fields(
+        requestId = %event.context.request_id,
+        path = &event.payload.raw_path,
+        query = &event.payload.raw_query_string,
+    )
+)]
 pub async fn handler(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl QueryItemService,
@@ -36,7 +43,7 @@ pub async fn handle(
     event: LambdaEvent<ApiGatewayV2httpRequest>,
     service: &impl QueryItemService,
 ) -> Result<ApiGatewayV2httpResponse, ApiError> {
-    let language: Language = extract_language_header(&event.payload.headers)?.into();
+    let language: Language = extract_language_query(&event.payload.query_string_parameters)?.into();
     let currency: Currency = extract_currency_query(&event.payload.query_string_parameters)?.into();
     let sort = extract_sort_query::<SortItemFieldData>(&event.payload.query_string_parameters)?
         .map(|sort_data| sort_data.map(SortItemField::from));

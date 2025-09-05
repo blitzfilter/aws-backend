@@ -1,0 +1,30 @@
+[package]
+name = "staging-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+staging-tests-macros = { workspace = true }
+aws-tests-common = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+serde_json = { workspace = true }
+serde = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-dynamodb = { workspace = true }
+aws-sdk-sqs = { workspace = true }
+opensearch = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+tracing-subscriber = { workspace = true, features = ["json"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+common = { workspace = true, features = ["test-data"] }
+serial_test = { workspace = true }
+item-service = { workspace = true, features = ["test-data"] }
+item-dynamodb = { workspace = true, features = ["test-data", "repository"] }
+item-opensearch = { workspace = true, features = ["test-data"] }
+reqwest = { workspace = true, features = ["default"] }
+fake = { workspace = true }
+url = { workspace = true }
+search-filter-core = { workspace = true }
+futures-util = { workspace = true }

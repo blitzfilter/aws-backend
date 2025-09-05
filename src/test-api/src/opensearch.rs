@@ -175,6 +175,11 @@ async fn wait_until_domain_processed(
     Ok(())
 }
 
+static ITEMS_INDEX_MAPPING_STR: &str = include_str!(concat!(
+    env!("CARGO_WORKSPACE_DIR"),
+    "opensearch/mappings/items.json"
+));
+
 async fn set_up_indices() -> Result<Response, Error> {
     let client = get_opensearch_client().await;
 
@@ -192,87 +197,14 @@ async fn set_up_indices() -> Result<Response, Error> {
 
     debug!("OpenSearch index 'items' does not exist, creating it");
 
-    let mapping = json!({
-      "mappings": {
-        "properties": {
-          "itemId": {
-            "type": "keyword"
-          },
-          "eventId": {
-            "type": "keyword"
-          },
-          "shopId": {
-            "type": "keyword"
-          },
-          "shopsItemId": {
-            "type": "keyword"
-          },
-          "shopName": {
-            "type": "text",
-          },
-          "titleDe": {
-            "type": "text",
-            "analyzer": "german"
-          },
-          "titleEn": {
-            "type": "text",
-            "analyzer": "english"
-          },
-          "descriptionDe": {
-            "type": "text",
-            "analyzer": "german",
-          },
-          "descriptionEn": {
-            "type": "text",
-            "analyzer": "english",
-          },
-          "priceEur": {
-            "type": "unsigned_long",
-          },
-          "priceUsd": {
-            "type": "unsigned_long",
-          },
-          "priceBbp": {
-            "type": "unsigned_long",
-          },
-          "priceAud": {
-            "type": "unsigned_long",
-          },
-          "priceCad": {
-            "type": "unsigned_long",
-          },
-          "priceNze": {
-            "type": "unsigned_long",
-          },
-          "state": {
-            "type": "keyword"
-          },
-          "isAvailable": {
-            "type": "boolean"
-          },
-          "url": {
-            "type": "keyword"
-          },
-          "images": {
-            "type": "keyword"
-          },
-          "created": {
-            "type": "date",
-            "format": "strict_date_time"
-          },
-          "updated": {
-            "type": "date",
-            "format": "strict_date_time"
-          }
-        }
-      }
-    });
-
     get_opensearch_client()
         .await
         .indices()
         .create(opensearch::indices::IndicesCreateParts::Index("items"))
-        .body(mapping)
+        .body(
+            serde_json::from_str::<serde_json::Value>(ITEMS_INDEX_MAPPING_STR)
+                .expect("shouldn't fail parsing ITEMS_INDEX_MAPPING_STR as serde_json::Value"),
+        )
         .send()
         .await
 }

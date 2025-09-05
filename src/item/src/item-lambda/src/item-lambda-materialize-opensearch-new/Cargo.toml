@@ -8,6 +8,7 @@ common = { workspace = true }
 item-core = { workspace = true }
 item-opensearch = { workspace = true }
 item-dynamodb = { workspace = true }
+item-lambda-common = { workspace = true }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
 aws_lambda_events = { workspace = true, features = ["sqs"] }
@@ -15,10 +16,8 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["json"] }
 tracing = { workspace = true }
-dotenvy = { workspace = true }
 opensearch = { workspace = true }
 url = { workspace = true }
-field = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
@@ -27,3 +26,4 @@ item-opensearch = { workspace = true, features = ["test-data"] }
 fake = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
+serde_dynamo = { workspace = true }

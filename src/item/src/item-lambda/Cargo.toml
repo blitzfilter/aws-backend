@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+item-lambda-common = { workspace = true }
 item-lambda-write-new = { workspace = true }
 item-lambda-write-update = { workspace = true }
 item-lambda-materialize-dynamodb-new = { workspace = true }

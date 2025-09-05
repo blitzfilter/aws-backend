@@ -1,0 +1,481 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [prod]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  STAGE: ${{ github.event_name == 'pull_request' && 'dev' || github.ref == 'refs/heads/prod' && 'prod' }}
+  STAGE_NAME: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref == 'refs/heads/prod' && 'prod' }}
+  STACK: application
+  STACK_NAME: application-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref == 'refs/heads/prod' && 'prod' }}
+
+jobs:
+  lint:
+    name: Lint Workspace
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  build:
+    name: Build ${{ matrix.crate }}
+    needs: lint
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate:
+          - src/common
+          - src/search-filter/src/search-filter-core
+          - src/aws-tests/src/smoking-tests
+          - src/aws-tests/src/staging-tests
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-api/src/item-api-simple-search
+          - src/item/src/item-core
+          - src/item/src/item-data
+          - src/item/src/item-dynamodb
+          - src/item/src/item-opensearch
+          - src/item/src/item-lambda/src/item-lambda-common
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+          - src/item/src/item-service
+          - src/scrape/src/scrape-core
+          - src/scrape/src/scrape-static
+          - src/test-api
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build ${{ matrix.crate }}
+        working-directory: ${{ matrix.crate }}
+        run: cargo build --all-features
+
+  unit-test:
+    name: Unit-Test ${{ matrix.crate }}
+    needs: build
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate:
+          - src/common
+          - src/search-filter/src/search-filter-core
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-api/src/item-api-simple-search
+          - src/item/src/item-core
+          - src/item/src/item-data
+          - src/item/src/item-dynamodb
+          - src/item/src/item-opensearch
+          - src/item/src/item-lambda/src/item-lambda-common
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+          - src/item/src/item-service
+          - src/scrape/src/scrape-core
+          - src/scrape/src/scrape-static
+          - src/test-api
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Test ${{ matrix.crate }}
+        working-directory: ${{ matrix.crate }}
+        run: cargo test --lib --all-features -- --nocapture
+
+  integration-test:
+    name: Integration-Test ${{ matrix.crate }}
+    needs: build
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate:
+          - src/item/src/item-dynamodb
+          - src/item/src/item-opensearch
+          - src/scrape/src/scrape-core
+          - src/test-api
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-lambda
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-lambda
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-lambda-1.8.6
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda --version 1.8.6
+          fi
+
+      - name: Test ${{ matrix.crate }}
+        working-directory: ${{ matrix.crate }}
+        run: cargo test --test '*' --all-features -- --nocapture
+
+  sonar:
+    name: SonarQube-Cloud Analysis
+    needs: [unit-test, integration-test]
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-lambda
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-lambda
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-lambda-1.8.6
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda --version 1.8.6
+          fi
+
+      - name: Install grcov
+        run: cargo install grcov
+
+      - name: Generate coverage
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+          LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
+        run: |
+          cargo test --workspace --all-features -- --nocapture
+          grcov . --binary-path ./target/debug/deps/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" --ignore "*/target/*" --ignore "*/.cargo/*" -o coverage.lcov
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  aws-push-lambda:
+    name: Push Lambda to S3 ${{ matrix.crate }}
+    needs: [unit-test, integration-test]
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        crate:
+          - src/item/src/item-api/src/item-api-get-item
+          - src/item/src/item-api/src/item-api-simple-search
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-dynamodb-update
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-new
+          - src/item/src/item-lambda/src/item-lambda-materialize-opensearch-update
+          - src/item/src/item-lambda/src/item-lambda-write-new
+          - src/item/src/item-lambda/src/item-lambda-write-update
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-lambda
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-lambda
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-lambda-1.8.6
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-lambda
+        run: |
+          if ! command -v cargo-lambda &> /dev/null; then
+            cargo install cargo-lambda --version 1.8.6
+          fi
+
+      - name: Build Lambda binary
+        working-directory: ${{ matrix.crate }}
+        run: cargo lambda build --release --target x86_64-unknown-linux-musl --output-format zip
+
+      - name: Copy Lambda zip artifact
+        run: |
+          BIN_NAME=$(basename ${{ matrix.crate }})
+          OUT_DIR=$GITHUB_WORKSPACE/artifacts
+          mkdir -p $OUT_DIR
+          cp target/lambda/$BIN_NAME/bootstrap.zip $OUT_DIR/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload Lambda to S3
+        run: |
+          BIN_NAME=$(basename ${{ matrix.crate }})
+          aws s3api put-object \
+            --bucket "${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }}" \
+            --key "$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip" \
+            --body "$GITHUB_WORKSPACE/artifacts/$BIN_NAME-${{ env.STAGE_NAME }}-${GITHUB_SHA}.zip" \
+            --tagging "stage=${{ env.STAGE }}"
+
+  aws-cfn-deploy:
+    name: Deploy & initialize CFN-Stack
+    needs: aws-push-lambda
+    environment:
+      name: aws-deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy CloudFormation
+        run: |
+          aws cloudformation deploy \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-file cfn/application.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+                Stage=${{ env.STAGE }} \
+                StageName=${{ env.STAGE_NAME }} \
+                ArtifactBucket=${{ vars.S3_BINARY_ARTIFACTS_BUCKET_NAME }} \
+                CommitSHA=${GITHUB_SHA}
+
+      - name: Install OpenSearch CLI
+        run: |
+          DOWNLOAD_URL="https://artifacts.opensearch.org/opensearch-clients/opensearch-cli/opensearch-cli-1.2.0-linux-x64.zip"
+          curl -L "$DOWNLOAD_URL" -o opensearch-cli.zip
+          unzip -o opensearch-cli.zip -d opensearch-cli-bin
+          sudo mv opensearch-cli-bin/opensearch-cli /usr/local/bin/opensearch-cli
+          sudo chmod +x /usr/local/bin/opensearch-cli
+
+      - name: Setup OpenSearch index 'items'
+        run: |
+          chmod +x ci/setup-opensearch-index-items.sh
+          ./ci/setup-opensearch-index-items.sh
+
+  aws-staging-test:
+    name: AWS Staging-Test
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: aws-cfn-deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Export CFN Output
+        id: export-cfn-output
+        shell: bash
+        run: |
+          set -euo pipefail
+          JSON=$(
+            aws cloudformation describe-stacks \
+              --stack-name ${{ env.STACK_NAME }} \
+              --query 'Stacks[0].Outputs' \
+              --output json \
+            | jq -c 'map({(.OutputKey): .OutputValue}) | add'
+          )
+          echo "outputs_json=$JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run Staging-tests
+        working-directory: src/aws-tests/src/staging-tests
+        env:
+          CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
+        run: cargo test --test '*' --all-features -- --ignored --nocapture
+
+  aws-smoking-test:
+    name: AWS Smoking-Test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/prod'
+    needs: aws-cfn-deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.3.1
+        with:
+          role-to-assume: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Export CFN Output
+        id: export-cfn-output
+        shell: bash
+        run: |
+          set -euo pipefail
+          JSON=$(
+            aws cloudformation describe-stacks \
+              --stack-name ${{ env.STACK_NAME }} \
+              --query 'Stacks[0].Outputs' \
+              --output json \
+            | jq -c 'map({(.OutputKey): .OutputValue}) | add'
+          )
+          echo "outputs_json=$JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run Smoking-Tests
+        working-directory: src/aws-tests/src/smoking-tests
+        env:
+          CFN_OUTPUT: ${{ steps.export-cfn-output.outputs.outputs_json }}
+        run: cargo test --test '*' --all-features -- --ignored --nocapture

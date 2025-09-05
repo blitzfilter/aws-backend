@@ -2,6 +2,7 @@ use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent, SqsMe
 use common::item_id::ItemId;
 use common::opensearch::bulk_response::{BulkItemResult, BulkResponse};
 use item_dynamodb::item_event_record::ItemEventRecord;
+use item_lambda_common::extract_item_event_record;
 use item_opensearch::item_document::ItemDocument;
 use item_opensearch::repository::ItemOpenSearchRepository;
 use lambda_runtime::LambdaEvent;
@@ -67,43 +68,24 @@ fn extract_message_data(
 ) -> Option<ItemDocument> {
     let message_id = message
         .message_id
+        .clone()
         .expect("shouldn't receive an SQS-Message without 'message_id' because AWS sets it.");
-
-    match message.body {
-        None => {
-            info!("Received empty body. Skipping message.");
-            *skipped_count += 1;
+    let item_event_record = extract_item_event_record(message, failed_message_ids, skipped_count)?;
+    match ItemDocument::try_from(item_event_record) {
+        Ok(document) => {
+            message_ids.insert(document._id(), message_id);
+            Some(document)
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                fromType = %std::any::type_name::<ItemEventRecord>(),
+                toType = %std::any::type_name::<ItemDocument>(),
+                "Failed mapping types."
+            );
+            failed_message_ids.push(message_id);
             None
         }
-        Some(item_json) => match serde_json::from_str::<ItemEventRecord>(&item_json) {
-            Ok(event_record) => match ItemDocument::try_from(event_record) {
-                Ok(document) => {
-                    message_ids.insert(document._id(), message_id);
-                    Some(document)
-                }
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        fromType = %std::any::type_name::<ItemEventRecord>(),
-                        toType = %std::any::type_name::<ItemDocument>(),
-                        payload = %item_json,
-                        "Failed mapping types."
-                    );
-                    failed_message_ids.push(message_id);
-                    None
-                }
-            },
-            Err(e) => {
-                error!(
-                    error = %e,
-                    type = %std::any::type_name::<ItemEventRecord>(),
-                    payload = %item_json,
-                    "Failed deserializing."
-                );
-                failed_message_ids.push(message_id);
-                None
-            }
-        },
     }
 }
 
@@ -163,6 +145,8 @@ fn handle_bulk_response(
 #[cfg(test)]
 mod tests {
     use crate::handler;
+    use aws_lambda_events::dynamodb::{EventRecord, StreamRecord};
+    use aws_lambda_events::eventbridge::EventBridgeEvent;
     use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
     use common::event::Event;
     use common::opensearch::bulk_response::BulkItemResult;
@@ -175,8 +159,43 @@ mod tests {
     use item_opensearch::repository::MockItemOpenSearchRepository;
     use lambda_runtime::LambdaEvent;
     use std::collections::HashMap;
+    use std::time::SystemTime;
     use time::OffsetDateTime;
     use uuid::Uuid;
+
+    fn mk_event_bridge_payload(item_event_record: &ItemEventRecord) -> String {
+        let event = EventBridgeEvent {
+            version: None,
+            id: None,
+            detail_type: "foo".to_string(),
+            source: "bar".to_string(),
+            account: None,
+            time: None,
+            region: None,
+            resources: None,
+            detail: EventRecord {
+                aws_region: "eu-central-1".to_string(),
+                change: StreamRecord {
+                    approximate_creation_date_time: SystemTime::now().into(),
+                    keys: Default::default(),
+                    new_image: serde_dynamo::to_item(item_event_record).unwrap(),
+                    old_image: Default::default(),
+                    sequence_number: None,
+                    size_bytes: 42,
+                    stream_view_type: None,
+                },
+                event_id: Uuid::new_v4().to_string(),
+                event_name: "INSERT".to_string(),
+                event_source: None,
+                event_version: None,
+                event_source_arn: None,
+                user_identity: None,
+                record_format: None,
+                table_name: None,
+            },
+        };
+        serde_json::to_string(&event).unwrap()
+    }
 
     #[tokio::test]
     #[rstest::rstest]
@@ -214,12 +233,10 @@ mod tests {
             })
             .map(ItemEventRecord::try_from)
             .map(Result::unwrap)
-            .map(|record| serde_json::to_string(&record))
-            .map(Result::unwrap)
-            .map(|json_payload| SqsMessage {
+            .map(|event_record| SqsMessage {
                 message_id: Some(Faker.fake()),
                 receipt_handle: None,
-                body: Some(json_payload),
+                body: Some(mk_event_bridge_payload(&event_record)),
                 md5_of_body: None,
                 md5_of_message_attributes: None,
                 attributes: Default::default(),
@@ -274,13 +291,13 @@ mod tests {
             })
             .map(ItemEventRecord::try_from)
             .map(Result::unwrap)
-            .map(|record| {
+            .map(|event_record| {
                 let uuid = Uuid::new_v4().to_string();
-                message_ids.insert(record.item_id, uuid.clone());
+                message_ids.insert(event_record.item_id, uuid.clone());
                 SqsMessage {
                     message_id: Some(uuid),
                     receipt_handle: None,
-                    body: Some(serde_json::to_string(&record).unwrap()),
+                    body: Some(mk_event_bridge_payload(&event_record)),
                     md5_of_body: None,
                     md5_of_message_attributes: None,
                     attributes: Default::default(),
@@ -311,7 +328,6 @@ mod tests {
                             index: index.clone(),
                             id: unprocessed_doc.item_id.to_string(),
                             version: Some(2),
-                            result: "not created".to_string(),
                             status: 409,
                             error: Some(BulkError {
                                 error_type: "boop".to_string(),
@@ -338,7 +354,6 @@ mod tests {
                             index: index.clone(),
                             id: unprocessed_doc.item_id.to_string(),
                             version: Some(2),
-                            result: "created".to_string(),
                             status: 201,
                             error: None,
                         }

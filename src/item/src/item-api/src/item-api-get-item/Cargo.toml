@@ -11,20 +11,16 @@ item-dynamodb = { workspace = true, features = ["repository"] }
 item-data = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
-dotenvy = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 aws_lambda_events = { workspace = true, features = ["apigw"] }
 lambda_runtime = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
 serde_json = { workspace = true }
-accept-language = { workspace = true }
 http = { workspace = true }
 
 [dev-dependencies]
 test-api = { workspace = true, features = ["api-gateway"] }
-serial_test = { workspace = true }
-mockall = { workspace = true }
 rstest = { workspace = true }
 time = { workspace = true }
 http = { workspace = true }

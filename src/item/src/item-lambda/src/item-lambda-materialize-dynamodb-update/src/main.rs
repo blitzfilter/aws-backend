@@ -4,7 +4,6 @@ use aws_sdk_dynamodb::Client;
 use item_dynamodb::repository::ItemDynamoDbRepositoryImpl;
 use item_lambda_materialize_dynamodb_update::handler;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
-use std::env;
 use tracing::info;
 
 #[tokio::main]
@@ -17,24 +16,18 @@ async fn main() -> Result<(), Error> {
         .without_time()
         .init();
 
-    if dotenvy::from_filename(".env.localstack").is_ok() {
-        info!("Successfully loaded '.env.localstack'.")
-    }
-
-    let mut aws_config_builder = aws_config::defaults(BehaviorVersion::v2025_01_17())
+    let aws_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
         .load()
-        .await
-        .into_builder();
+        .await;
 
-    if let Ok(endpoint_url) = env::var("AWS_ENDPOINT_URL") {
-        info!("Using environments custom AWS_ENDPOINT_URL '{endpoint_url}'");
-        aws_config_builder.set_endpoint_url(Some(endpoint_url));
-    }
+    let table_name = std::env::var("DYNAMODB_TABLE_NAME")?;
+    let client = Client::new(&aws_config);
+    let repository = ItemDynamoDbRepositoryImpl::new(&client, &table_name);
 
-    let client = Client::new(&aws_config_builder.build());
-    let repository = ItemDynamoDbRepositoryImpl::new(&client);
-
-    info!("Lambda cold start completed, DynamoDB-Client initialized.");
+    info!(
+        dynamoDbTableName = %table_name,
+        "Lambda cold start completed, client initialized."
+    );
 
     run(service_fn(|event: LambdaEvent<SqsEvent>| async {
         handler(&repository, event).await

@@ -1,0 +1,9 @@
+[package]
+name = "aws-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+smoking-tests = { workspace = true }
+staging-tests = { workspace = true }
+aws-tests-common = { workspace = true }
