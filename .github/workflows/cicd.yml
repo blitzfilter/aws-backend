@@ -77,6 +77,13 @@ jobs:
       - name: Build Workspace
         run: cargo build --workspace --all-targets --all-features
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-target
+          path: target
+          retention-days: 1
+
   unit-test:
     name: Unit-Test Workspace
     needs: build
@@ -99,8 +106,14 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-target
+          path: target
+
       - name: Unit-Test Workspace
-        run: cargo test --workspace --lib --all-targets --all-features -- --nocapture
+        run: cargo test --workspace --lib --all-features -- --nocapture
 
   integration-test:
     name: Integration-Test ${{ matrix.crate }}
@@ -138,6 +151,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-lambda-1.8.6
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-target
+          path: target
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
@@ -188,6 +207,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-lambda-1.8.6
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-target
+          path: target
 
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
