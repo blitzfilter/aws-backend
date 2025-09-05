@@ -18,7 +18,7 @@ async fn main() -> Result<(), Error> {
         .without_time()
         .init();
 
-    let aws_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
+    let aws_config = aws_config::defaults(BehaviorVersion::v2025_08_07())
         .load()
         .await;
 
