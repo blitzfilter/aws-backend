@@ -2,7 +2,7 @@
 
 ## GitHub
 
-[![CI](https://github.com/blitzfilter/aws-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/ci.yml)
+[![CI](https://github.com/blitzfilter/aws-backend/actions/workflows/cicd.yml/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/cicd.yml)
 [![CodeQL](https://github.com/blitzfilter/aws-backend/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/github-code-scanning/codeql)
 [![Dependabot Updates](https://github.com/blitzfilter/aws-backend/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/blitzfilter/aws-backend/actions/workflows/dependabot/dependabot-updates)
 
