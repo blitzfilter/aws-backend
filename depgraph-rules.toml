@@ -52,7 +52,7 @@ oauth-service = ["application", "credential-core", "domain-primitives", "oauth-c
 product-listing-service = ["application", "domain-primitives", "embedding", "fxrate-core", "fxrate-service", "html-to-markdown-rs", "listing-source-core", "listing-source-service", "localization", "money", "notification-core", "notification-service", "product-listing-core", "product-listing-normalization", "search-filter-core", "sha2", "strum", "strum_macros", "user-core"]
 search-filter-core = ["domain-primitives", "fxrate-core", "product-listing-core", "user-core"]
 
-shopify-lambda = ["application", "platform-observability", "platform-postgres", "fxrate-postgres", "listing-source-core", "listing-source-postgres", "listing-source-service", "product-listing-core", "product-listing-postgres", "product-listing-service"]
+shopify-lambda = ["application", "platform-observability", "platform-postgres", "fxrate-postgres", "listing-source-core", "listing-source-postgres", "listing-source-service", "product-listing-normalization", "product-listing-postgres", "product-listing-service"]
 stripe-lambda = ["application", "platform-observability", "platform-postgres", "user-core", "user-postgres", "user-service"]
 user-postgres = ["application", "domain-primitives", "geo", "localization", "money", "platform-postgres", "user-core", "user-service"]
 user-zoho = ["application", "user-core", "user-service"]

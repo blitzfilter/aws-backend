@@ -19,7 +19,7 @@ See `docs/hetzner_postgres_sequin_migration.md` for the ADR.
 
 | FxRate Lambda | AWS Lambda | Captures immutable canonical EUR-base FX snapshots in Postgres. |
 | `aura-historia-cron` | Rust process | UTC scheduled triggers for service-owned use cases. |
-| Shopify Lambda | AWS Lambda | Handles Shopify events, writes Postgres directly. |
+| Shopify Lambda | AWS Lambda | Captures changed Shopify raw ProductListing revisions; canonical normalization is asynchronous. |
 | Stripe Lambda | AWS Lambda | Handles Stripe subscription events, writes Postgres directly. |
 
 | CloudWatch log-retention Lambda | AWS Lambda | Keeps AWS log retention policy. |
@@ -41,7 +41,7 @@ flowchart TD
     FX["FxRate Lambda"]
 
     API -->|"sync business transaction"| PG
-    SHOPIFY -->|"sync ProductListing/event transaction"| PG
+    SHOPIFY -->|"sync raw-revision capture transaction"| PG
     STRIPE -->|"sync user update"| PG
 
 
@@ -68,7 +68,7 @@ flowchart TD
 
 ## ProductListing write flow
 
-ProductListing writes are synchronous. PostgreSQL `product_listings` remains authoritative; `product_listing_events` is its transactional domain journal and direct Sequin CDC source, not an outbox. One logical domain write produces zero or one event: initial state is `PRODUCT_LISTING_DISCOVERED`; later semantic mutations are one non-empty `PRODUCT_LISTING_CHANGED` object. Discovery carries immutable `listing_source_id` and `source_listing_id`, initial facts, and image count only. Changed carries separate main-price, estimate, availability, URL, image-count, auction, lifecycle, and sale-observation dimensions. Sale observation is encoded as `None -> Some` for observation and `Some -> None` for retraction; correction from one observation to another is rejected. Payloads never contain image URLs or a redundant `kind`. Generic create, update, and upsert never capture FX or infer a sale observation from `SoldOut`.
+Partner/API ProductListing writes are synchronous. Shopify captures only an immutable raw revision after provider-owned status, inventory, and field mapping; its `source_payload` preserves complete semantic Shopify product JSON while generic `raw_values` plus source configuration form the normalization input. `Changed` and `Unchanged` capture outcomes acknowledge the SQS record. The `product-listing-normalization` worker later performs the canonical ProductListing transaction. ProductListing writes are synchronous. PostgreSQL `product_listings` remains authoritative; `product_listing_events` is its transactional domain journal and direct Sequin CDC source, not an outbox. One logical domain write produces zero or one event: initial state is `PRODUCT_LISTING_DISCOVERED`; later semantic mutations are one non-empty `PRODUCT_LISTING_CHANGED` object. Discovery carries immutable `listing_source_id` and `source_listing_id`, initial facts, and image count only. Changed carries separate main-price, estimate, availability, URL, image-count, auction, lifecycle, and sale-observation dimensions. Sale observation is encoded as `None -> Some` for observation and `Some -> None` for retraction; correction from one observation to another is rejected. Payloads never contain image URLs or a redundant `kind`. Generic create, update, and upsert never capture FX or infer a sale observation from `SoldOut`.
 
 ```mermaid
 sequenceDiagram

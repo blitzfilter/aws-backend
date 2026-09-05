@@ -7070,7 +7070,6 @@ dependencies = [
  "fxrate-postgres",
  "fxrate-service",
  "html-to-markdown-rs",
- "indexmap 2.14.1",
  "lambda_runtime",
  "listing-source-core",
  "listing-source-postgres",
@@ -7079,9 +7078,10 @@ dependencies = [
  "money",
  "platform-observability",
  "platform-postgres",
- "product-listing-core",
+ "product-listing-normalization",
  "product-listing-postgres",
  "product-listing-service",
+ "product-service",
  "serde",
  "serde_json",
  "serial_test",
@@ -7092,7 +7092,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "url",
  "uuid",
 ]
 

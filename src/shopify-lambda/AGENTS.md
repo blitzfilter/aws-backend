@@ -8,9 +8,9 @@
 
 - Worker Lambda for Shopify product ingestion from EventBridge through SQS.
 - Root modules: `types`.
-- Main neighbors: `application`, `listing-source-core`, `listing-source-service`, `listing-source-postgres`, `platform-observability`, `platform-postgres`, `product-listing-service`, and `product-listing-postgres`.
-- Event/runtime edge crate. It parses provider-native SQS/EventBridge payloads and invokes canonical ProductListing service handlers; Postgres listing/event writes stay in ProductListing service. Withdrawals resolve the configured Shopify ListingSource by domain and use `(ListingSourceId, SourceListingId)`.
-- Shopify `active` create/update maps tracked positive inventory to `InStock`, tracked non-positive inventory to `OutOfStock`, and missing or untracked inventory to clear. `archived`, `draft`, and delete withdraw the matching listing; missing ListingSource or listing is acknowledged for idempotency. Missing or unsupported status is ignored without destructive write.
+- Main neighbors: `application`, `listing-source-core`, `listing-source-service`, `listing-source-postgres`, `platform-observability`, `platform-postgres`, `product-listing-normalization`, `product-listing-service`, and `product-listing-postgres`.
+- Event/runtime edge crate. It parses provider-native SQS/EventBridge payloads, retains the complete semantic Shopify product object, maps it into the generic raw-input contract, and captures it through ProductListing service. It never writes canonical ProductListings or ProductListing events. The normalization worker performs canonical mutation later.
+- Shopify `active` create/update maps tracked positive inventory to generic `InStock` intent, tracked non-positive inventory to generic `OutOfStock` intent, and missing or untracked inventory to explicit clear. `archived`, `draft`, and delete capture `DELETE`; missing ListingSource is acknowledged for idempotency. Missing or unsupported status is acknowledged without capture. Provenance retains topic and delivery IDs but raw input hashing excludes them.
 
 ## Ownership
 

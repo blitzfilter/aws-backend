@@ -1,16 +1,18 @@
-use application::patch_field::PatchField;
-use indexmap::IndexSet;
-use listing_source_core::Domain;
-use product_listing_core::{
-    listing_availability::ListingAvailability, source_listing_id::SourceListingId,
+use listing_source_service::ports::ShopifySource;
+use product_listing_normalization::{
+    NormalizationContext, NormalizationInputError, ProductListingNormalizationContextV1,
+    ProductListingNormalizationInput, ProductListingRawValuesPatch, ProductListingRawValuesV1,
+    RawProductListingOperation, RawProductListingPayloadFormat, RawProductListingValues,
+    SourcePayload,
 };
-use product_listing_service::use_cases::IngestShopifyProductListingCommand;
 use serde::Deserialize;
-use url::Url;
+use serde_json::Value;
+
+const PAYLOAD_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShopifyEventDetail {
-    pub payload: ShopifyProductPayload,
+    pub payload: Value,
     pub metadata: ShopifyEventMetadata,
 }
 
@@ -53,7 +55,7 @@ pub struct ShopifyVariantPayload {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShopifyImagePayload {
-    pub src: Url,
+    pub src: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,19 +65,24 @@ pub enum ShopifyProductEventKind {
     Delete,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ShopifyListingAction {
-    Ingest(Box<IngestShopifyProductListingCommand>),
-    Withdraw,
+    Capture(ShopifyRawObservation),
     Ignore,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShopifyRawObservation {
+    pub source_record_key: String,
+    pub input: ProductListingNormalizationInput,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShopifyProductEventError {
-    #[error("Shopify product source listing ID is invalid")]
-    InvalidSourceListingId(
-        #[source] product_listing_core::source_listing_id::InvalidSourceListingId,
-    ),
+    #[error("Shopify product payload is malformed")]
+    MalformedPayload(#[source] serde_json::Error),
+    #[error("Shopify product source payload is invalid")]
+    InvalidSourcePayload(#[source] NormalizationInputError),
     #[error("Shopify product title is missing")]
     MissingTitle,
     #[error("Shopify product handle is missing")]
@@ -83,60 +90,129 @@ pub enum ShopifyProductEventError {
 }
 
 impl ShopifyProductEventKind {
+    /// Maps Shopify's provider vocabulary to Aura's generic raw-input contract.
+    /// Unknown Shopify object keys stay in `source_payload` unchanged.
     pub fn listing_action(
         self,
-        source_domain: Domain,
-        payload: ShopifyProductPayload,
+        source: &ShopifySource,
+        payload: Value,
     ) -> Result<ShopifyListingAction, ShopifyProductEventError> {
-        if self == Self::Delete {
-            return Ok(ShopifyListingAction::Withdraw);
-        }
+        let source_payload = SourcePayload::new(payload.clone())
+            .map_err(ShopifyProductEventError::InvalidSourcePayload)?;
+        let product = serde_json::from_value::<ShopifyProductPayload>(payload)
+            .map_err(ShopifyProductEventError::MalformedPayload)?;
+        let source_record_key = product.id.to_string();
 
-        match payload.status.as_deref() {
-            Some("archived" | "draft") => Ok(ShopifyListingAction::Withdraw),
-            Some("active") => Self::active_command(source_domain, payload)
-                .map(Box::new)
-                .map(ShopifyListingAction::Ingest),
-            Some(_) | None => Ok(ShopifyListingAction::Ignore),
-        }
+        let operation = if self == Self::Delete {
+            Some(RawProductListingOperation::Delete)
+        } else {
+            match product.status.as_deref() {
+                Some("active") => Some(RawProductListingOperation::Upsert),
+                Some("archived" | "draft") => Some(RawProductListingOperation::Delete),
+                Some(_) | None => None,
+            }
+        };
+        let Some(operation) = operation else {
+            return Ok(ShopifyListingAction::Ignore);
+        };
+
+        let raw_values = match operation {
+            RawProductListingOperation::Upsert => active_raw_values(source, &product)?,
+            RawProductListingOperation::Delete => {
+                RawProductListingValues::new(serde_json::json!({}))
+                    .map_err(ShopifyProductEventError::InvalidSourcePayload)?
+            }
+        };
+        let context = normalization_context(source)?;
+        let input = ProductListingNormalizationInput::new(
+            operation,
+            RawProductListingPayloadFormat::ShopifyProduct,
+            PAYLOAD_SCHEMA_VERSION,
+            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            source_payload,
+            raw_values,
+            context,
+        )
+        .map_err(ShopifyProductEventError::InvalidSourcePayload)?;
+
+        Ok(ShopifyListingAction::Capture(ShopifyRawObservation {
+            source_record_key,
+            input,
+        }))
     }
+}
 
-    fn active_command(
-        source_domain: Domain,
-        payload: ShopifyProductPayload,
-    ) -> Result<IngestShopifyProductListingCommand, ShopifyProductEventError> {
-        let availability = product_availability(&payload);
-        let title = payload
-            .title
-            .filter(|value| !value.trim().is_empty())
-            .ok_or(ShopifyProductEventError::MissingTitle)?;
-        let handle = payload
-            .handle
-            .filter(|value| !value.trim().is_empty())
-            .ok_or(ShopifyProductEventError::MissingHandle)?;
-
-        Ok(IngestShopifyProductListingCommand {
-            source_domain,
-            source_listing_id: SourceListingId::try_from(payload.id.to_string())
-                .map_err(ShopifyProductEventError::InvalidSourceListingId)?,
-            title,
-            description: payload
-                .body_html
-                .as_deref()
-                .map(fallbacked_html_to_markdown)
-                .filter(|value| !value.is_empty()),
-            handle,
-            price: payload
+fn active_raw_values(
+    source: &ShopifySource,
+    product: &ShopifyProductPayload,
+) -> Result<RawProductListingValues, ShopifyProductEventError> {
+    let title = product
+        .title
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(ShopifyProductEventError::MissingTitle)?;
+    let handle = product
+        .handle
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(ShopifyProductEventError::MissingHandle)?;
+    let raw_values = ProductListingRawValuesV1 {
+        source_listing_id: product.id.to_string(),
+        title: ProductListingRawValuesPatch::Set(title.to_owned()),
+        description: match product.body_html.as_deref() {
+            Some(html) => {
+                ProductListingRawValuesPatch::Set(vec![fallbacked_html_to_markdown(html)])
+            }
+            None => ProductListingRawValuesPatch::Clear,
+        },
+        price: patch(
+            product
                 .variants
                 .first()
                 .and_then(|variant| variant.price.clone()),
-            availability,
-            image_urls: payload
+        ),
+        price_estimate_min: ProductListingRawValuesPatch::Unchanged,
+        price_estimate_max: ProductListingRawValuesPatch::Unchanged,
+        availability: product_availability(product),
+        url: ProductListingRawValuesPatch::Set(format!(
+            "https://{}/products/{handle}",
+            source.domain
+        )),
+        images: ProductListingRawValuesPatch::Set(
+            product
                 .images
-                .into_iter()
-                .map(|image| image.src)
-                .collect::<IndexSet<_>>(),
-        })
+                .iter()
+                .map(|image| image.src.clone())
+                .collect(),
+        ),
+        auction_start: ProductListingRawValuesPatch::Unchanged,
+        auction_end: ProductListingRawValuesPatch::Unchanged,
+        attributes: Default::default(),
+    };
+    serde_json::to_value(raw_values)
+        .map_err(NormalizationInputError::JsonSerialization)
+        .and_then(RawProductListingValues::new)
+        .map_err(ShopifyProductEventError::InvalidSourcePayload)
+}
+
+fn normalization_context(
+    source: &ShopifySource,
+) -> Result<NormalizationContext, ShopifyProductEventError> {
+    let context = ProductListingNormalizationContextV1 {
+        base_url: format!("https://{}/", source.domain),
+        fallback_currency: source.currency.map(|currency| currency.as_str().to_owned()),
+        fallback_language: source.language.map(|language| language.as_str().to_owned()),
+    };
+    serde_json::to_value(context)
+        .map_err(NormalizationInputError::JsonSerialization)
+        .and_then(NormalizationContext::new)
+        .map_err(ShopifyProductEventError::InvalidSourcePayload)
+}
+
+fn patch(value: Option<String>) -> ProductListingRawValuesPatch<String> {
+    match value {
+        Some(value) => ProductListingRawValuesPatch::Set(value),
+        None => ProductListingRawValuesPatch::Clear,
     }
 }
 
@@ -148,100 +224,152 @@ pub fn fallbacked_html_to_markdown(html: &str) -> String {
 }
 
 /// Maps only reliable Shopify inventory facts. Missing and untracked inventory
-/// explicitly clears Aura's current availability assertion.
-pub fn product_availability(payload: &ShopifyProductPayload) -> PatchField<ListingAvailability> {
-    let tracked_quantities = payload.variants.iter().filter_map(|variant| {
-        variant
-            .inventory_management
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .and(variant.inventory_quantity)
-    });
-    let quantities: Vec<i64> = tracked_quantities.collect();
+/// explicitly clear Aura's current availability assertion.
+pub fn product_availability(
+    payload: &ShopifyProductPayload,
+) -> ProductListingRawValuesPatch<String> {
+    let quantities: Vec<i64> = payload
+        .variants
+        .iter()
+        .filter_map(|variant| {
+            variant
+                .inventory_management
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .and(variant.inventory_quantity)
+        })
+        .collect();
 
     if quantities.iter().any(|quantity| *quantity > 0) {
-        PatchField::Set(ListingAvailability::InStock)
+        ProductListingRawValuesPatch::Set("in stock".to_owned())
     } else if !quantities.is_empty() {
-        PatchField::Set(ListingAvailability::OutOfStock)
+        ProductListingRawValuesPatch::Set("out of stock".to_owned())
     } else {
-        PatchField::Clear
+        ProductListingRawValuesPatch::Clear
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use listing_source_core::{Domain, ListingSourceId};
+    use localization::Language;
+    use money::Currency;
+    use serde_json::json;
 
     #[test]
-    fn should_map_active_tracked_positive_inventory_to_in_stock() {
+    fn should_map_active_product_to_generic_raw_values_and_context() {
+        let action = ShopifyProductEventKind::Create
+            .listing_action(
+                &source(),
+                json!({
+                    "id": 42,
+                    "title": "Cabinet",
+                    "body_html": "<p>Imported cabinet</p>",
+                    "handle": "cabinet",
+                    "status": "active",
+                    "variants": [{"price": "42.00", "inventory_quantity": 1, "inventory_management": "shopify"}],
+                    "images": [{"src": "https://images.example/cabinet.jpg"}],
+                    "futureShopifyKey": {"nested": true}
+                }),
+            )
+            .unwrap_or_else(|error| panic!("mapping failed: {error}"));
+
+        let ShopifyListingAction::Capture(observation) = action else {
+            panic!("active product must capture");
+        };
+        assert_eq!(observation.source_record_key, "42");
         assert_eq!(
-            PatchField::Set(ListingAvailability::InStock),
-            product_availability(&payload_with_inventory(Some(1), Some("shopify")))
+            observation.input.operation(),
+            RawProductListingOperation::Upsert
+        );
+        assert_eq!(
+            observation.input.raw_values().value()["availability"],
+            json!({"action": "SET", "value": "in stock"})
+        );
+        assert_eq!(
+            observation.input.normalization_context().value()["fallbackCurrency"],
+            json!("USD")
+        );
+        assert_eq!(
+            observation.input.normalization_context().value()["fallbackLanguage"],
+            json!("de")
+        );
+        assert_eq!(
+            observation.input.source_payload().value()["futureShopifyKey"]["nested"],
+            json!(true)
         );
     }
 
     #[test]
-    fn should_map_active_tracked_non_positive_inventory_to_out_of_stock() {
-        assert_eq!(
-            PatchField::Set(ListingAvailability::OutOfStock),
-            product_availability(&payload_with_inventory(Some(0), Some("shopify")))
-        );
-    }
-
-    #[test]
-    fn should_clear_availability_when_inventory_is_missing_or_untracked() {
-        assert_eq!(
-            PatchField::Clear,
-            product_availability(&payload_with_inventory(None, Some("shopify")))
-        );
-        assert_eq!(
-            PatchField::Clear,
-            product_availability(&payload_with_inventory(Some(1), None))
-        );
-    }
-
-    #[test]
-    fn should_withdraw_for_delete_archived_and_draft() {
-        let domain = domain();
+    fn should_map_archived_draft_and_delete_to_raw_delete() {
         for (kind, status) in [
             (ShopifyProductEventKind::Delete, Some("active")),
             (ShopifyProductEventKind::Update, Some("archived")),
             (ShopifyProductEventKind::Update, Some("draft")),
         ] {
-            let mut payload = payload_with_inventory(Some(1), Some("shopify"));
-            payload.status = status.map(str::to_owned);
+            let action = kind
+                .listing_action(&source(), payload(status))
+                .unwrap_or_else(|error| panic!("mapping failed: {error}"));
             assert!(matches!(
-                kind.listing_action(domain.clone(), payload),
-                Ok(ShopifyListingAction::Withdraw)
+                action,
+                ShopifyListingAction::Capture(ShopifyRawObservation { input, .. })
+                    if input.operation() == RawProductListingOperation::Delete
             ));
         }
     }
 
     #[test]
-    fn should_ignore_missing_or_unsupported_status_without_requiring_listing_data() {
-        let mut payload = payload_with_inventory(Some(1), Some("shopify"));
-        payload.status = None;
+    fn should_ignore_missing_or_unsupported_status_without_capture() {
         assert!(matches!(
-            ShopifyProductEventKind::Update.listing_action(domain(), payload),
+            ShopifyProductEventKind::Update.listing_action(&source(), payload(None)),
+            Ok(ShopifyListingAction::Ignore)
+        ));
+        assert!(matches!(
+            ShopifyProductEventKind::Update.listing_action(&source(), payload(Some("published"))),
             Ok(ShopifyListingAction::Ignore)
         ));
     }
 
     #[test]
-    fn should_create_active_command_with_clear_for_untracked_inventory() {
-        let action = ShopifyProductEventKind::Create
-            .listing_action(domain(), payload_with_inventory(Some(1), None))
-            .unwrap_or_else(|error| panic!("mapping failed: {error}"));
-        assert!(matches!(
-            action,
-            ShopifyListingAction::Ingest(command)
-                if command.availability == PatchField::Clear
-        ));
+    fn should_map_inventory_to_explicit_generic_intent() {
+        assert_eq!(
+            ProductListingRawValuesPatch::Set("in stock".to_owned()),
+            product_availability(&payload_with_inventory(Some(1), Some("shopify")))
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Set("out of stock".to_owned()),
+            product_availability(&payload_with_inventory(Some(0), Some("shopify")))
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Clear,
+            product_availability(&payload_with_inventory(None, Some("shopify")))
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Clear,
+            product_availability(&payload_with_inventory(Some(1), None))
+        );
     }
 
-    fn domain() -> Domain {
-        Domain::try_from("partner.example")
-            .unwrap_or_else(|error| panic!("invalid domain: {error}"))
+    fn source() -> ShopifySource {
+        ShopifySource {
+            listing_source_id: ListingSourceId::new(),
+            domain: Domain::try_from("partner.example")
+                .unwrap_or_else(|error| panic!("invalid domain: {error}")),
+            currency: Some(Currency::Usd),
+            language: Some(Language::De),
+        }
+    }
+
+    fn payload(status: Option<&str>) -> Value {
+        json!({
+            "id": 42,
+            "title": "Cabinet",
+            "handle": "cabinet",
+            "status": status,
+            "variants": [],
+            "images": []
+        })
     }
 
     fn payload_with_inventory(

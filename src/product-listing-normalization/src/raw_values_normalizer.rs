@@ -63,6 +63,8 @@ pub struct ProductListingNormalizationContextV1 {
     pub base_url: String,
     #[serde(default)]
     pub fallback_currency: Option<String>,
+    #[serde(default)]
+    pub fallback_language: Option<String>,
 }
 
 /// Deterministically normalized values for an UPSERT observation.
@@ -105,6 +107,8 @@ pub enum ProductListingRawValuesNormalizationError {
     InvalidUrl(#[source] url::ParseError),
     #[error("normalization context fallback currency is unsupported")]
     UnsupportedFallbackCurrency,
+    #[error("normalization context fallback language is unsupported")]
+    UnsupportedFallbackLanguage,
     #[error("source listing ID or text is invalid")]
     Text(#[source] NormalizationError),
     #[error("price is invalid")]
@@ -174,10 +178,22 @@ impl ProductListingRawValuesNormalizer {
                     .ok_or(ProductListingRawValuesNormalizationError::UnsupportedFallbackCurrency)
             })
             .transpose()?;
+        let fallback_language = context
+            .fallback_language
+            .as_deref()
+            .map(|code| {
+                Language::from_code(code)
+                    .ok_or(ProductListingRawValuesNormalizationError::UnsupportedFallbackLanguage)
+            })
+            .transpose()?;
 
         let description_language = match &raw.description {
-            ProductListingRawValuesPatch::Set(fragments) => detect_description_language(fragments),
-            ProductListingRawValuesPatch::Clear | ProductListingRawValuesPatch::Unchanged => None,
+            ProductListingRawValuesPatch::Set(fragments) => {
+                detect_description_language(fragments).or(fallback_language)
+            }
+            ProductListingRawValuesPatch::Clear | ProductListingRawValuesPatch::Unchanged => {
+                fallback_language
+            }
         };
         let source_listing_id = normalize_source_listing_id_with_url_sha_fallback(
             raw.source_listing_id.as_str(),
@@ -185,7 +201,10 @@ impl ProductListingRawValuesNormalizer {
         )
         .map_err(ProductListingRawValuesNormalizationError::Text)?;
         let title = normalize_title_patch(raw.title, description_language)?;
-        let description = normalize_description_patch(raw.description, title_language(&title))?;
+        let description = normalize_description_patch(
+            raw.description,
+            title_language(&title).or(fallback_language),
+        )?;
         let price = normalize_price_patch(raw.price, fallback_currency, PriceField::Price)?;
         let price_estimate_min = normalize_price_patch(
             raw.price_estimate_min,
@@ -437,7 +456,8 @@ mod tests {
     fn context() -> serde_json::Value {
         json!({
             "baseUrl": "https://example.test/catalogue/",
-            "fallbackCurrency": "EUR"
+            "fallbackCurrency": "EUR",
+            "fallbackLanguage": "en"
         })
     }
 

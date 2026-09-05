@@ -6,13 +6,12 @@ import { Construct } from "constructs";
 import type { StageConfig, StageName } from "../config";
 import { ssmValue } from "../config";
 import type { ApplicationParameters } from "../parameters";
-import type { Search } from "./opensearch";
+
 import type { PostgresConnectionSettings } from "./storage";
 
 interface LambdaEnvironmentContext {
   readonly config: StageConfig;
   readonly postgres: PostgresConnectionSettings;
-  readonly search: Search;
 }
 
 interface LambdaDefinition {
@@ -49,12 +48,6 @@ const LAMBDA_DEFINITIONS = defineLambdaDefinitions({
     memorySize: 256,
     postgres: true,
     timeoutSeconds: 30,
-    environment: (context) =>
-      withOpenSearchCredentials(context.config, {
-        GEMINI_API_KEY: secretOrTest(context.config, "gemini-api-key", "test-key"),
-        GOOGLE_GEOCODING_API_KEY: secretOrTest(context.config, "google-geocoding-api-key", "test-key"),
-        OPENSEARCH_ENDPOINT_URL: context.search.endpointUrl,
-      }),
   },
   stripe: {
     id: "StripeLambda",
@@ -92,7 +85,6 @@ export interface LambdasProps {
   readonly artifactBucket: s3.IBucket;
   readonly mailTemplateBucket: s3.IBucket;
   readonly postgres: PostgresConnectionSettings;
-  readonly search: Search;
 }
 
 export class Lambdas extends Construct {
@@ -105,7 +97,6 @@ export class Lambdas extends Construct {
     const environmentContext: LambdaEnvironmentContext = {
       config: props.config,
       postgres: props.postgres,
-      search: props.search,
     };
 
     for (const [key, definition] of Object.entries(LAMBDA_DEFINITIONS) as [LambdaKey, LambdaDefinition][]) {
@@ -151,8 +142,7 @@ function withPostgresEnvironment(context: LambdaEnvironmentContext, env: Record<
   };
 }
 
-function grantRuntimeAccess(props: LambdasProps, functions: LambdaFunctions): void {
-  props.search.grantReadWrite(functions.shopify);
+function grantRuntimeAccess(_props: LambdasProps, functions: LambdaFunctions): void {
   functions.cloudWatchLogRetention.addToRolePolicy(
     new iam.PolicyStatement({
       actions: ["logs:DescribeLogGroups", "logs:PutRetentionPolicy"],
@@ -190,20 +180,4 @@ export function importLambdaCatalog(scope: Construct, id: string, config: StageC
 
 export function lambdaFunctionName(key: LambdaKey, stage: StageName): string {
   return `${LAMBDA_DEFINITIONS[key].binaryName}-${stage}`;
-}
-
-function withOpenSearchCredentials(config: StageConfig, env: Record<string, string>): Record<string, string> {
-  if (config.isEphemeral) {
-    return env;
-  }
-
-  return {
-    ...env,
-    OPENSEARCH_USERNAME: ssmValue(`/opensearch/${config.stage}/username`),
-    OPENSEARCH_PASSWORD: ssmValue(`/opensearch/${config.stage}/password`),
-  };
-}
-
-function secretOrTest(config: StageConfig, name: string, testValue: string): string {
-  return config.isEphemeral ? testValue : ssmValue(`/secrets/${config.stage}/${name}`);
 }

@@ -433,6 +433,9 @@ fn normalization_error_code(error: &ProductListingRawValuesNormalizationError) -
         ProductListingRawValuesNormalizationError::UnsupportedFallbackCurrency => {
             "FALLBACK_CURRENCY_UNSUPPORTED"
         }
+        ProductListingRawValuesNormalizationError::UnsupportedFallbackLanguage => {
+            "FALLBACK_LANGUAGE_UNSUPPORTED"
+        }
         ProductListingRawValuesNormalizationError::Text(_) => "TEXT_NORMALIZATION_INVALID",
         ProductListingRawValuesNormalizationError::Price(_) => "PRICE_NORMALIZATION_INVALID",
         ProductListingRawValuesNormalizationError::ImageUrl(_) => "IMAGE_URL_NORMALIZATION_INVALID",
