@@ -443,8 +443,8 @@ impl From<listing_source_service::ports::ListingSourceRepositoryError>
 mod tests {
     use super::*;
     use application::{
-        error::box_error,
-        operation_context::{CorrelationId, Principal, RequestId},
+        error::{box_error, static_error},
+        operation_context::{CorrelationId, OperationContext, Principal, RequestId},
         transaction::TransactionError,
     };
     use domain_primitives::versioned::Versioned;
@@ -452,6 +452,7 @@ mod tests {
         ListingIngestionMethod, ListingSourceName, ListingSourcePresentation,
     };
     use listing_source_service::ports::{
+        ListingIngestionConfiguration, ListingSourceIngestionConfigurations,
         ListingSourceRepository, ListingSourceRepositoryError, ListingSourceStorageVersion,
         StoredListingSource,
     };
@@ -467,7 +468,21 @@ mod tests {
         sync::{Arc, Mutex, MutexGuard},
     };
     use time::OffsetDateTime;
-    use user_service::ports::{UserAdminActorView, UserAdminReadError, UserAdminReader};
+    use user_service::ports::{
+        UserAdminActorView, UserAdminReadError, UserAdminReader, UserAdminReaderFactory,
+    };
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Binding {
+        Admin,
+        Application,
+        Party,
+        Source,
+        Partnership,
+        Membership,
+        Grant,
+        Notification,
+    }
 
     #[derive(Clone)]
     struct FakeUnitOfWork {
@@ -475,6 +490,7 @@ mod tests {
     }
 
     struct FakeTransaction {
+        id: usize,
         state: Arc<Mutex<FakeState>>,
     }
 
@@ -497,8 +513,16 @@ mod tests {
         type Tx = FakeTransaction;
 
         async fn begin(&self) -> Result<Self::Tx, TransactionError> {
-            lock(&self.state).begun += 1;
+            let mut state = lock(&self.state);
+            state.begun += 1;
+            if state.begin_fails {
+                return Err(TransactionError::BeginFailed);
+            }
+            state.next_transaction_id += 1;
+            let id = state.next_transaction_id;
+            drop(state);
             Ok(FakeTransaction {
+                id,
                 state: Arc::clone(&self.state),
             })
         }
@@ -527,18 +551,21 @@ mod tests {
     struct FakeGrantRepository {
         state: Arc<Mutex<FakeState>>,
     }
-    struct FakeAdminReader;
+    struct FakeAdminReader {
+        state: Arc<Mutex<FakeState>>,
+    }
     struct FakeNotificationCreator {
         state: Arc<Mutex<FakeState>>,
     }
 
     macro_rules! factory {
-        ($factory:ident, $repository_trait:ident, $repository:ident) => {
+        ($factory:ident, $repository_trait:ident, $repository:ident, $binding:expr) => {
             impl $factory<FakeTransaction> for FakeFactories {
                 fn in_transaction<'tx>(
                     &'tx self,
-                    _tx: &'tx mut FakeTransaction,
+                    tx: &'tx mut FakeTransaction,
                 ) -> impl $repository_trait + 'tx {
+                    bind(&self.state, $binding, tx.id);
                     $repository {
                         state: Arc::clone(&self.state),
                     }
@@ -550,44 +577,58 @@ mod tests {
     factory!(
         PartnershipApplicationRepositoryFactory,
         PartnershipApplicationRepository,
-        FakeApplicationRepository
+        FakeApplicationRepository,
+        Binding::Application
     );
-    factory!(PartyRepositoryFactory, PartyRepository, FakePartyRepository);
+    factory!(
+        PartyRepositoryFactory,
+        PartyRepository,
+        FakePartyRepository,
+        Binding::Party
+    );
     factory!(
         ListingSourceRepositoryFactory,
         ListingSourceRepository,
-        FakeSourceRepository
+        FakeSourceRepository,
+        Binding::Source
     );
     factory!(
         PartnershipRepositoryFactory,
         PartnershipRepository,
-        FakePartnershipRepository
+        FakePartnershipRepository,
+        Binding::Partnership
     );
     factory!(
         PartnershipMembershipRepositoryFactory,
         PartnershipMembershipRepository,
-        FakeMembershipRepository
+        FakeMembershipRepository,
+        Binding::Membership
     );
     factory!(
         ListingSourceGrantRepositoryFactory,
         ListingSourceGrantRepository,
-        FakeGrantRepository
+        FakeGrantRepository,
+        Binding::Grant
     );
 
     impl UserAdminReaderFactory<FakeTransaction> for FakeFactories {
         fn in_transaction<'tx>(
             &'tx self,
-            _tx: &'tx mut FakeTransaction,
+            tx: &'tx mut FakeTransaction,
         ) -> impl UserAdminReader + 'tx {
-            FakeAdminReader
+            bind(&self.state, Binding::Admin, tx.id);
+            FakeAdminReader {
+                state: Arc::clone(&self.state),
+            }
         }
     }
 
     impl NotificationCreatorFactory<FakeTransaction> for FakeFactories {
         fn in_transaction<'tx>(
             &'tx self,
-            _tx: &'tx mut FakeTransaction,
+            tx: &'tx mut FakeTransaction,
         ) -> impl NotificationCreator + 'tx {
+            bind(&self.state, Binding::Notification, tx.id);
             FakeNotificationCreator {
                 state: Arc::clone(&self.state),
             }
@@ -600,7 +641,12 @@ mod tests {
             &mut self,
             _user_id: user_core::user_id::UserId,
         ) -> Result<Option<UserAdminActorView>, UserAdminReadError> {
-            Ok(None)
+            let mut state = lock(&self.state);
+            state.admin_reads += 1;
+            if let Some(error) = state.admin_error.take() {
+                return Err(error);
+            }
+            Ok(state.admin.clone())
         }
     }
 
@@ -633,10 +679,14 @@ mod tests {
     impl PartnershipApplicationRepository for FakeApplicationRepository {
         async fn find_by_id(
             &mut self,
-            _id: PartnershipApplicationId,
+            id: PartnershipApplicationId,
         ) -> Result<Option<VersionedPartnershipApplication>, PartnershipApplicationRepositoryError>
         {
-            let state = lock(&self.state);
+            let mut state = lock(&self.state);
+            state.application_finds += 1;
+            if let Some(error) = state.application_find_error.take() {
+                return Err(error);
+            }
             let version =
                 PartnershipApplicationStorageVersion::try_from(1_i64).map_err(|error| {
                     PartnershipApplicationRepositoryError::Internal {
@@ -646,6 +696,7 @@ mod tests {
             Ok(state
                 .application
                 .clone()
+                .filter(|application| application.id() == id)
                 .map(|application| Versioned::new(application, version)))
         }
 
@@ -690,6 +741,9 @@ mod tests {
         {
             let mut state = lock(&self.state);
             state.application_updates += 1;
+            if let Some(error) = state.application_update_error.take() {
+                return Err(error);
+            }
             state.application = Some(application.clone());
             let version =
                 PartnershipApplicationStorageVersion::try_from(2_i64).map_err(|error| {
@@ -707,7 +761,12 @@ mod tests {
             &mut self,
             id: PartyId,
         ) -> Result<Option<StoredParty>, PartyRepositoryError> {
-            Ok(lock(&self.state)
+            let mut state = lock(&self.state);
+            state.party_reads += 1;
+            if let Some(error) = state.party_find_error.take() {
+                return Err(error);
+            }
+            Ok(state
                 .existing_party
                 .clone()
                 .filter(|party| party.party.id() == id))
@@ -722,6 +781,9 @@ mod tests {
 
         async fn insert(&mut self, party: &Party) -> Result<StoredParty, PartyRepositoryError> {
             let mut state = lock(&self.state);
+            if let Some(error) = state.party_insert_error.take() {
+                return Err(error);
+            }
             if state.party_insert_fails {
                 return Err(PartyRepositoryError::SlugConflict {
                     source: static_error("party slug already exists"),
@@ -758,7 +820,12 @@ mod tests {
             &mut self,
             id: ListingSourceId,
         ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
-            Ok(lock(&self.state)
+            let mut state = lock(&self.state);
+            state.source_reads += 1;
+            if let Some(error) = state.source_find_error.take() {
+                return Err(error);
+            }
+            Ok(state
                 .existing_source
                 .clone()
                 .filter(|source| source.source.id() == id))
@@ -778,6 +845,9 @@ mod tests {
             _woocommerce_webhook_secret: Option<&str>,
         ) -> Result<StoredListingSource, ListingSourceRepositoryError> {
             let mut state = lock(&self.state);
+            if let Some(error) = state.source_insert_error.take() {
+                return Err(error);
+            }
             state.source_inserts += 1;
             let version = ListingSourceStorageVersion::try_from(1_i64).map_err(|error| {
                 ListingSourceRepositoryError::Internal {
@@ -833,6 +903,9 @@ mod tests {
             new_partnership_id: PartnershipId,
         ) -> Result<VersionedPartnership, PartnershipRepositoryError> {
             let mut state = lock(&self.state);
+            if let Some(error) = state.partnership_error.take() {
+                return Err(error);
+            }
             let partnership = state
                 .partnership
                 .clone()
@@ -862,9 +935,11 @@ mod tests {
             user_id: user_core::user_id::UserId,
             partnership_id: PartnershipId,
         ) -> Result<PartnershipMembershipAddOutcome, PartnershipGrantError> {
-            lock(&self.state)
-                .memberships
-                .insert((user_id, partnership_id));
+            let mut state = lock(&self.state);
+            if let Some(error) = state.membership_error.take() {
+                return Err(error);
+            }
+            state.memberships.insert((user_id, partnership_id));
             Ok(PartnershipMembershipAddOutcome::Added)
         }
 
@@ -891,9 +966,11 @@ mod tests {
             partnership_id: PartnershipId,
             listing_source_id: ListingSourceId,
         ) -> Result<ListingSourceGrantOutcome, PartnershipGrantError> {
-            let added = lock(&self.state)
-                .grants
-                .insert((partnership_id, listing_source_id));
+            let mut state = lock(&self.state);
+            if let Some(error) = state.grant_error.take() {
+                return Err(error);
+            }
+            let added = state.grants.insert((partnership_id, listing_source_id));
             Ok(if added {
                 ListingSourceGrantOutcome::Granted
             } else {
@@ -917,48 +994,51 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
     struct FakeState {
         application: Option<PartnershipApplication>,
         existing_source: Option<StoredListingSource>,
         existing_party: Option<StoredParty>,
         partnership: Option<Partnership>,
+        admin: Option<UserAdminActorView>,
+        admin_error: Option<UserAdminReadError>,
+        application_find_error: Option<PartnershipApplicationRepositoryError>,
+        application_update_error: Option<PartnershipApplicationRepositoryError>,
+        party_find_error: Option<PartyRepositoryError>,
+        party_insert_error: Option<PartyRepositoryError>,
+        source_find_error: Option<ListingSourceRepositoryError>,
+        source_insert_error: Option<ListingSourceRepositoryError>,
+        partnership_error: Option<PartnershipRepositoryError>,
+        membership_error: Option<PartnershipGrantError>,
+        grant_error: Option<PartnershipGrantError>,
         memberships: HashSet<(user_core::user_id::UserId, PartnershipId)>,
         grants: HashSet<(PartnershipId, ListingSourceId)>,
         party_insert_fails: bool,
+        begin_fails: bool,
         commit_fails: bool,
+        next_transaction_id: usize,
         begun: usize,
         commit_attempts: usize,
         committed: usize,
+        admin_reads: usize,
+        application_finds: usize,
+        application_updates: usize,
+        party_reads: usize,
+        source_reads: usize,
         party_inserts: usize,
         source_inserts: usize,
         partnership_inserts: usize,
-        application_updates: usize,
         notification_calls: usize,
         notification_fails: bool,
         notifications: Vec<Notification>,
+        bindings: Vec<(Binding, usize)>,
     }
 
     impl FakeState {
         fn with_application(application: PartnershipApplication) -> Self {
             Self {
                 application: Some(application),
-                existing_source: None,
-                existing_party: None,
-                partnership: None,
-                memberships: HashSet::new(),
-                grants: HashSet::new(),
-                party_insert_fails: false,
-                commit_fails: false,
-                begun: 0,
-                commit_attempts: 0,
-                committed: 0,
-                party_inserts: 0,
-                source_inserts: 0,
-                partnership_inserts: 0,
-                application_updates: 0,
-                notification_calls: 0,
-                notification_fails: false,
-                notifications: Vec::new(),
+                ..Default::default()
             }
         }
     }
@@ -970,11 +1050,31 @@ mod tests {
         }
     }
 
-    fn system_context() -> OperationContext {
+    fn bind(state: &Arc<Mutex<FakeState>>, binding: Binding, transaction_id: usize) {
+        lock(state).bindings.push((binding, transaction_id));
+    }
+
+    fn context(principal: Principal) -> OperationContext {
         OperationContext {
-            principal: Principal::System,
+            principal,
             request_id: RequestId::new("request"),
             correlation_id: CorrelationId::new("correlation"),
+        }
+    }
+
+    fn system_context() -> OperationContext {
+        context(Principal::System)
+    }
+
+    fn assert_same_transaction(state: &FakeState, expected: &[Binding]) {
+        let bindings = state
+            .bindings
+            .iter()
+            .map(|(binding, _)| *binding)
+            .collect::<Vec<_>>();
+        assert_eq!(expected, bindings.as_slice());
+        if let Some((_, transaction_id)) = state.bindings.first() {
+            assert!(state.bindings.iter().all(|(_, id)| id == transaction_id));
         }
     }
 
@@ -1042,6 +1142,104 @@ mod tests {
         )
     }
 
+    fn assert_transaction_groups(state: &FakeState, expected: &[&[Binding]]) {
+        let expected_bindings = expected
+            .iter()
+            .flat_map(|group| group.iter().copied())
+            .collect::<Vec<_>>();
+        let actual_bindings = state
+            .bindings
+            .iter()
+            .map(|(binding, _)| *binding)
+            .collect::<Vec<_>>();
+        assert_eq!(expected_bindings, actual_bindings);
+        let mut offset = 0;
+        for group in expected {
+            if let Some((_, transaction_id)) = state.bindings.get(offset) {
+                assert!(
+                    state.bindings[offset..offset + group.len()]
+                        .iter()
+                        .all(|(_, id)| id == transaction_id)
+                );
+            }
+            offset += group.len();
+        }
+    }
+
+    fn application_with_state(
+        state: PartnershipApplicationState,
+        proposal: PartnershipProposal,
+    ) -> PartnershipApplication {
+        let approval_result = (state == PartnershipApplicationState::Approved).then(|| {
+            PartnershipApplicationApprovalResult::new(PartnershipId::new(), ListingSourceId::new())
+        });
+        PartnershipApplication::rehydrate(
+            partnership_core::partnership_application::RehydratedPartnershipApplicationState {
+                id: PartnershipApplicationId::new(),
+                applicant_user_id: user_core::user_id::UserId::new(),
+                state,
+                proposal,
+                approval_result,
+            },
+        )
+        .unwrap_or_else(|error| panic!("valid test application: {error}"))
+    }
+
+    fn existing_application(listing_source_id: ListingSourceId) -> PartnershipApplication {
+        application_with_state(
+            PartnershipApplicationState::InReview,
+            PartnershipProposal::ExistingListingSource { listing_source_id },
+        )
+    }
+
+    fn existing_records(
+        listing_source_id: ListingSourceId,
+        party_id: PartyId,
+    ) -> (StoredParty, StoredListingSource) {
+        let party = Party::create(NewParty {
+            id: party_id,
+            name: PartyName::try_from("Existing Operator")
+                .unwrap_or_else(|error| panic!("valid test party name: {error}")),
+            contact: PartyContact {
+                phone: None,
+                email: None,
+            },
+        });
+        let source = ListingSource::create(NewListingSource {
+            id: listing_source_id,
+            name: ListingSourceName::try_from("Existing Source")
+                .unwrap_or_else(|error| panic!("valid test source name: {error}")),
+            operator_party_id: party_id,
+            ingestion_methods: HashSet::from([ListingIngestionMethod::PartnerApi]),
+            presentation: ListingSourcePresentation {
+                url: None,
+                image: None,
+            },
+            referral_configuration: None,
+        });
+        let party_version = PartyStorageVersion::try_from(1_i64)
+            .unwrap_or_else(|error| panic!("valid test party version: {error}"));
+        let source_version = ListingSourceStorageVersion::try_from(1_i64)
+            .unwrap_or_else(|error| panic!("valid test source version: {error}"));
+        (
+            StoredParty {
+                party,
+                version: party_version,
+                created: OffsetDateTime::UNIX_EPOCH,
+                updated: OffsetDateTime::UNIX_EPOCH,
+            },
+            StoredListingSource {
+                source,
+                configuration: ListingSourceIngestionConfigurations(vec![
+                    ListingIngestionConfiguration::PartnerApi,
+                ]),
+                version: source_version,
+                created: OffsetDateTime::UNIX_EPOCH,
+                updated: OffsetDateTime::UNIX_EPOCH,
+            },
+        )
+    }
+
     #[tokio::test]
     async fn should_approve_proposed_source_atomically_and_replay_without_duplicate_grants() {
         let application = proposed_application();
@@ -1085,6 +1283,22 @@ mod tests {
         ));
         assert_eq!(1, state.memberships.len());
         assert_eq!(1, state.grants.len());
+        assert_transaction_groups(
+            &state,
+            &[
+                &[
+                    Binding::Application,
+                    Binding::Party,
+                    Binding::Source,
+                    Binding::Partnership,
+                    Binding::Membership,
+                    Binding::Grant,
+                    Binding::Application,
+                    Binding::Notification,
+                ],
+                &[Binding::Application],
+            ],
+        );
         assert_eq!(
             PartnershipApplicationState::Approved,
             state
@@ -1173,6 +1387,19 @@ mod tests {
         assert_eq!(1, state.memberships.len());
         assert_eq!(1, state.grants.len());
         assert_eq!(1, state.committed);
+        assert_same_transaction(
+            &state,
+            &[
+                Binding::Application,
+                Binding::Source,
+                Binding::Party,
+                Binding::Partnership,
+                Binding::Membership,
+                Binding::Grant,
+                Binding::Application,
+                Binding::Notification,
+            ],
+        );
     }
 
     #[tokio::test]
@@ -1282,5 +1509,649 @@ mod tests {
         assert_eq!(0, state.application_updates);
         assert_eq!(0, state.memberships.len());
         assert_eq!(0, state.grants.len());
+    }
+
+    #[tokio::test]
+    async fn should_authorize_admin_and_approve_everything_in_one_transaction() {
+        let application = proposed_application();
+        let application_id = application.id();
+        let admin_id = user_core::user_id::UserId::new();
+        let state = Arc::new(Mutex::new(FakeState {
+            application: Some(application),
+            admin: Some(UserAdminActorView {
+                user_id: admin_id,
+                role: user_core::role::UserRole::Admin,
+            }),
+            ..Default::default()
+        }));
+
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &context(Principal::User(admin_id)),
+                ApprovePartnershipApplicationCommand { application_id },
+            )
+            .await;
+
+        assert!(result.is_ok());
+        let state = lock(&state);
+        assert_eq!(1, state.admin_reads);
+        assert_same_transaction(
+            &state,
+            &[
+                Binding::Admin,
+                Binding::Application,
+                Binding::Party,
+                Binding::Source,
+                Binding::Partnership,
+                Binding::Membership,
+                Binding::Grant,
+                Binding::Application,
+                Binding::Notification,
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn should_reject_anonymous_and_non_admin_before_later_approval_work() {
+        let user_id = user_core::user_id::UserId::new();
+        let cases = [
+            (Principal::Anonymous, None),
+            (
+                Principal::User(user_id),
+                Some(UserAdminActorView {
+                    user_id,
+                    role: user_core::role::UserRole::User,
+                }),
+            ),
+        ];
+
+        for (principal, admin) in cases {
+            let expected_admin_reads = if matches!(principal, Principal::Anonymous) {
+                0
+            } else {
+                1
+            };
+            let application = proposed_application();
+            let application_id = application.id();
+            let state = Arc::new(Mutex::new(FakeState {
+                application: Some(application),
+                admin,
+                ..Default::default()
+            }));
+
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &context(principal),
+                    ApprovePartnershipApplicationCommand { application_id },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(ApprovePartnershipApplicationError::Forbidden)
+            ));
+            let state = lock(&state);
+            assert_eq!(expected_admin_reads, state.admin_reads);
+            assert_eq!(0, state.application_finds);
+            assert_eq!(0, state.party_reads);
+            assert_eq!(0, state.source_reads);
+            assert_eq!(0, state.party_inserts);
+            assert_eq!(0, state.source_inserts);
+            assert_eq!(0, state.grants.len());
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_translate_admin_failures_without_loading_application() {
+        let errors = [
+            UserAdminReadError::TemporarilyUnavailable {
+                source: static_error("temporary"),
+            },
+            UserAdminReadError::InvalidReadModel {
+                source: static_error("invalid"),
+            },
+            UserAdminReadError::Internal {
+                source: static_error("internal"),
+            },
+        ];
+
+        for (index, error) in errors.into_iter().enumerate() {
+            let admin_id = user_core::user_id::UserId::new();
+            let mut initial = FakeState {
+                application: Some(proposed_application()),
+                admin: Some(UserAdminActorView {
+                    user_id: admin_id,
+                    role: user_core::role::UserRole::Admin,
+                }),
+                ..Default::default()
+            };
+            initial.admin_error = Some(error);
+            let state = Arc::new(Mutex::new(initial));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &context(Principal::User(admin_id)),
+                    ApprovePartnershipApplicationCommand {
+                        application_id: PartnershipApplicationId::new(),
+                    },
+                )
+                .await;
+
+            match index {
+                0 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
+                )),
+                1 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::InvalidPersistedState { .. })
+                )),
+                _ => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::Internal { .. })
+                )),
+            }
+            let state = lock(&state);
+            assert_eq!(0, state.application_finds);
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_report_begin_failure_before_binding_any_factory() {
+        let state = Arc::new(Mutex::new(FakeState {
+            begin_fails: true,
+            ..Default::default()
+        }));
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand {
+                    application_id: PartnershipApplicationId::new(),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::BeginTransactionFailed)
+        ));
+        let state = lock(&state);
+        assert_eq!(1, state.begun);
+        assert!(state.bindings.is_empty());
+        assert_eq!(0, state.committed);
+    }
+
+    #[tokio::test]
+    async fn should_return_not_found_without_later_approval_work() {
+        let state = Arc::new(Mutex::new(FakeState::default()));
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand {
+                    application_id: PartnershipApplicationId::new(),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::NotFound)
+        ));
+        let state = lock(&state);
+        assert_eq!(1, state.application_finds);
+        assert_eq!(0, state.party_reads);
+        assert_eq!(0, state.source_reads);
+        assert_eq!(0, state.party_inserts);
+        assert_eq!(0, state.source_inserts);
+        assert_eq!(0, state.application_updates);
+        assert_eq!(0, state.notification_calls);
+        assert_eq!(0, state.committed);
+    }
+
+    #[tokio::test]
+    async fn should_reject_each_non_review_state_without_writes_or_commit() {
+        let proposed = proposed_application();
+        for state_value in [
+            PartnershipApplicationState::Submitted,
+            PartnershipApplicationState::Rejected,
+            PartnershipApplicationState::Withdrawn,
+        ] {
+            let application = application_with_state(state_value, proposed.proposal().clone());
+            let application_id = application.id();
+            let state = Arc::new(Mutex::new(FakeState::with_application(application)));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &system_context(),
+                    ApprovePartnershipApplicationCommand { application_id },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(ApprovePartnershipApplicationError::ApplicationNotApprovable)
+            ));
+            let state = lock(&state);
+            assert_eq!(0, state.party_reads);
+            assert_eq!(0, state.source_reads);
+            assert_eq!(0, state.party_inserts);
+            assert_eq!(0, state.source_inserts);
+            assert_eq!(0, state.grants.len());
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+    }
+
+    #[test]
+    fn should_reject_an_invalid_approved_state_at_the_rehydration_boundary() {
+        let result = PartnershipApplication::rehydrate(
+            partnership_core::partnership_application::RehydratedPartnershipApplicationState {
+                id: PartnershipApplicationId::new(),
+                applicant_user_id: user_core::user_id::UserId::new(),
+                state: PartnershipApplicationState::Approved,
+                proposal: PartnershipProposal::ExistingListingSource {
+                    listing_source_id: ListingSourceId::new(),
+                },
+                approval_result: None,
+            },
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn should_translate_application_find_failures_without_later_work() {
+        let errors = [
+            PartnershipApplicationRepositoryError::ConcurrencyConflict,
+            PartnershipApplicationRepositoryError::TemporarilyUnavailable {
+                source: static_error("temporary"),
+            },
+            PartnershipApplicationRepositoryError::InvalidPersistedState {
+                source: static_error("invalid"),
+            },
+            PartnershipApplicationRepositoryError::Internal {
+                source: static_error("internal"),
+            },
+        ];
+        for (index, error) in errors.into_iter().enumerate() {
+            let application = proposed_application();
+            let application_id = application.id();
+            let mut initial = FakeState::with_application(application);
+            initial.application_find_error = Some(error);
+            let state = Arc::new(Mutex::new(initial));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &system_context(),
+                    ApprovePartnershipApplicationCommand { application_id },
+                )
+                .await;
+
+            match index {
+                0 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::ConcurrencyConflict)
+                )),
+                1 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
+                )),
+                2 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::InvalidPersistedState { .. })
+                )),
+                _ => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::Internal { .. })
+                )),
+            }
+            let state = lock(&state);
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_translate_application_update_conflict_without_notification_or_commit() {
+        let application = proposed_application();
+        let application_id = application.id();
+        let mut initial = FakeState::with_application(application);
+        initial.application_update_error =
+            Some(PartnershipApplicationRepositoryError::ConcurrencyConflict);
+        let state = Arc::new(Mutex::new(initial));
+
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand { application_id },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::ConcurrencyConflict)
+        ));
+        let state = lock(&state);
+        assert_eq!(1, state.application_updates);
+        assert_eq!(0, state.notification_calls);
+        assert_eq!(0, state.committed);
+    }
+
+    #[tokio::test]
+    async fn should_report_missing_existing_source_or_party_without_later_writes() {
+        let listing_source_id = ListingSourceId::new();
+        let application = existing_application(listing_source_id);
+        let application_id = application.id();
+        let state = Arc::new(Mutex::new(FakeState::with_application(application)));
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand { application_id },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::ListingSourceNotFound)
+        ));
+        {
+            let state = lock(&state);
+            assert_eq!(1, state.source_reads);
+            assert_eq!(0, state.party_reads);
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+
+        let party_id = PartyId::new();
+        let (_, source) = existing_records(listing_source_id, party_id);
+        let application = existing_application(listing_source_id);
+        let application_id = application.id();
+        let state = Arc::new(Mutex::new(FakeState {
+            application: Some(application),
+            existing_source: Some(source),
+            ..Default::default()
+        }));
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand { application_id },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::ListingSourceNotFound)
+        ));
+        let state = lock(&state);
+        assert_eq!(1, state.source_reads);
+        assert_eq!(1, state.party_reads);
+        assert_eq!(0, state.application_updates);
+        assert_eq!(0, state.notification_calls);
+        assert_eq!(0, state.committed);
+    }
+
+    #[tokio::test]
+    async fn should_translate_existing_source_snapshot_failures_without_later_work() {
+        let source_errors = [
+            ListingSourceRepositoryError::SlugConflict {
+                source: static_error("slug"),
+            },
+            ListingSourceRepositoryError::TemporarilyUnavailable {
+                source: static_error("temporary"),
+            },
+            ListingSourceRepositoryError::InvalidPersistedState {
+                source: static_error("invalid"),
+            },
+            ListingSourceRepositoryError::Internal {
+                source: static_error("internal"),
+            },
+        ];
+        for (index, error) in source_errors.into_iter().enumerate() {
+            let listing_source_id = ListingSourceId::new();
+            let application = existing_application(listing_source_id);
+            let application_id = application.id();
+            let mut initial = FakeState::with_application(application);
+            initial.source_find_error = Some(error);
+            let state = Arc::new(Mutex::new(initial));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &system_context(),
+                    ApprovePartnershipApplicationCommand { application_id },
+                )
+                .await;
+            match index {
+                0 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::SlugConflict { .. })
+                )),
+                1 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
+                )),
+                _ => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::Internal { .. })
+                )),
+            }
+            let state = lock(&state);
+            assert_eq!(0, state.party_reads);
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+
+        let listing_source_id = ListingSourceId::new();
+        let party_id = PartyId::new();
+        let (_, source) = existing_records(listing_source_id, party_id);
+        let party_errors = [
+            PartyRepositoryError::SlugConflict {
+                source: static_error("slug"),
+            },
+            PartyRepositoryError::TemporarilyUnavailable {
+                source: static_error("temporary"),
+            },
+            PartyRepositoryError::InvalidPersistedState {
+                source: static_error("invalid"),
+            },
+            PartyRepositoryError::Internal {
+                source: static_error("internal"),
+            },
+        ];
+        for (index, error) in party_errors.into_iter().enumerate() {
+            let application = existing_application(listing_source_id);
+            let application_id = application.id();
+            let mut initial = FakeState {
+                application: Some(application),
+                existing_source: Some(source.clone()),
+                ..Default::default()
+            };
+            initial.party_find_error = Some(error);
+            let state = Arc::new(Mutex::new(initial));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &system_context(),
+                    ApprovePartnershipApplicationCommand { application_id },
+                )
+                .await;
+            match index {
+                0 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::SlugConflict { .. })
+                )),
+                1 => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
+                )),
+                _ => assert!(matches!(
+                    result,
+                    Err(ApprovePartnershipApplicationError::Internal { .. })
+                )),
+            }
+            let state = lock(&state);
+            assert_eq!(1, state.source_reads);
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_stop_after_each_approval_write_failure() {
+        let party_application = proposed_application();
+        let party_application_id = party_application.id();
+        let mut party_error_state = FakeState::with_application(party_application);
+        party_error_state.party_insert_error = Some(PartyRepositoryError::TemporarilyUnavailable {
+            source: static_error("party"),
+        });
+        let state = Arc::new(Mutex::new(party_error_state));
+        let application_id = party_application_id;
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand { application_id },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
+        ));
+        {
+            let state = lock(&state);
+            assert_eq!(0, state.source_inserts);
+            assert_eq!(0, state.partnership_inserts);
+            assert_eq!(0, state.memberships.len());
+            assert_eq!(0, state.grants.len());
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+
+        let mut source_error_state = FakeState::with_application(proposed_application());
+        source_error_state.source_insert_error = Some(ListingSourceRepositoryError::Internal {
+            source: static_error("source"),
+        });
+        let source_application_id = source_error_state
+            .application
+            .as_ref()
+            .map(PartnershipApplication::id)
+            .unwrap_or_default();
+        let source_state = Arc::new(Mutex::new(source_error_state));
+        let result = handler(Arc::clone(&source_state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand {
+                    application_id: source_application_id,
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::Internal { .. })
+        ));
+        {
+            let state = lock(&source_state);
+            assert_eq!(1, state.party_inserts);
+            assert_eq!(0, state.source_inserts);
+            assert_eq!(0, state.partnership_inserts);
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+
+        let mut partnership_error_state = FakeState::with_application(proposed_application());
+        partnership_error_state.partnership_error = Some(PartnershipRepositoryError::Internal {
+            source: static_error("partnership"),
+        });
+        let partnership_application_id = partnership_error_state
+            .application
+            .as_ref()
+            .map(PartnershipApplication::id)
+            .unwrap_or_default();
+        let partnership_state = Arc::new(Mutex::new(partnership_error_state));
+        let result = handler(Arc::clone(&partnership_state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand {
+                    application_id: partnership_application_id,
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::Internal { .. })
+        ));
+        {
+            let state = lock(&partnership_state);
+            assert_eq!(0, state.memberships.len());
+            assert_eq!(0, state.grants.len());
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+
+        let mut membership_error_state = FakeState::with_application(proposed_application());
+        membership_error_state.membership_error =
+            Some(PartnershipGrantError::TemporarilyUnavailable {
+                source: static_error("membership"),
+            });
+        let membership_application_id = membership_error_state
+            .application
+            .as_ref()
+            .map(PartnershipApplication::id)
+            .unwrap_or_default();
+        let membership_state = Arc::new(Mutex::new(membership_error_state));
+        let result = handler(Arc::clone(&membership_state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand {
+                    application_id: membership_application_id,
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
+        ));
+        {
+            let state = lock(&membership_state);
+            assert_eq!(0, state.memberships.len());
+            assert_eq!(0, state.grants.len());
+            assert_eq!(0, state.application_updates);
+            assert_eq!(0, state.notification_calls);
+            assert_eq!(0, state.committed);
+        }
+
+        let mut grant_error_state = FakeState::with_application(proposed_application());
+        grant_error_state.grant_error = Some(PartnershipGrantError::Internal {
+            source: static_error("grant"),
+        });
+        let grant_application_id = grant_error_state
+            .application
+            .as_ref()
+            .map(PartnershipApplication::id)
+            .unwrap_or_default();
+        let grant_state = Arc::new(Mutex::new(grant_error_state));
+        let result = handler(Arc::clone(&grant_state))
+            .execute(
+                &system_context(),
+                ApprovePartnershipApplicationCommand {
+                    application_id: grant_application_id,
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ApprovePartnershipApplicationError::Internal { .. })
+        ));
+        let state = lock(&grant_state);
+        assert_eq!(1, state.memberships.len());
+        assert_eq!(0, state.grants.len());
+        assert_eq!(0, state.application_updates);
+        assert_eq!(0, state.notification_calls);
+        assert_eq!(0, state.committed);
     }
 }

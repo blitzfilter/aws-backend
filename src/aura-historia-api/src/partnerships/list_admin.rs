@@ -583,6 +583,35 @@ mod tests {
         }
     }
 
+    #[rstest::rstest]
+    #[case("{}")]
+    #[case("[]")]
+    #[case("[\"timestamp-only\"]")]
+    #[case("[\"timestamp\",\"uuid\",\"extra\"]")]
+    #[case("[123,\"uuid\"]")]
+    #[case("[\"timestamp\",123]")]
+    fn should_reject_search_after_when_json_shape_is_invalid(#[case] value: &str) {
+        let error = parse_search_after(value).expect_err("invalid cursor shape must be rejected");
+
+        assert_eq!(BAD_QUERY_PARAMETER_VALUE, error.code());
+        let body = serde_json::to_value(&error).unwrap_or_else(|serialization_error| {
+            panic!("query error serializes: {serialization_error}")
+        });
+        assert_eq!("searchAfter", body["source"]["field"]);
+        assert_eq!("QUERY", body["source"]["type"]);
+    }
+
+    #[test]
+    fn should_return_internal_error_when_service_cursor_cannot_be_formatted_as_rfc3339() {
+        let error = partnership_cursor_value(PartnershipSearchCursor {
+            position: time::Date::MIN.midnight().assume_utc(),
+            partnership_id: PartnershipId::new(),
+        })
+        .expect_err("the minimum timestamp is outside RFC3339's representable range");
+
+        assert_eq!(PARTNERSHIP_INTERNAL_ERROR, error.code());
+    }
+
     #[test]
     fn should_map_only_safe_partnership_summary_fields() -> Result<(), serde_json::Error> {
         let value = serde_json::to_value(PartnershipSummaryData::from(summary()))?;

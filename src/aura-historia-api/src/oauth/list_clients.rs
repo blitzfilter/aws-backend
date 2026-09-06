@@ -258,6 +258,81 @@ mod tests {
         }
     }
 
+    #[rstest::rstest]
+    #[case("{}")]
+    #[case("[]")]
+    #[case(concat!("[", "\"timestamp-only\"", "]"))]
+    #[case(concat!("[", "\"timestamp\",\"uuid\",\"extra\"", "]"))]
+    #[case(concat!("[123,", "\"uuid\"", "]"))]
+    #[case(concat!("[", "\"timestamp\",123]"))]
+    #[tokio::test]
+    async fn should_reject_search_after_when_json_value_is_not_a_two_string_array(
+        #[case] value: &str,
+    ) {
+        let error = parse_search_after(value).expect_err("invalid cursor shape must be rejected");
+
+        assert_eq!(BAD_QUERY_PARAMETER_VALUE, error.code());
+        let body = axum::body::to_bytes(error.into_response().into_body(), usize::MAX)
+            .await
+            .unwrap_or_else(|error| panic!("problem response must serialize: {error}"));
+        let body: Value = serde_json::from_slice(&body)
+            .unwrap_or_else(|error| panic!("problem response must be JSON: {error}"));
+        assert_eq!("searchAfter", body["source"]["field"]);
+        assert_eq!("QUERY", body["source"]["type"]);
+    }
+
+    #[test]
+    fn should_default_page_size_when_only_search_after_is_provided() -> Result<(), ApiError> {
+        let client_id = OAuthClientId::new();
+        let cursor = OAuthClientSearchCursor {
+            position: time::macros::datetime!(2026-09-04 12:00 UTC),
+            client_id,
+        };
+        let raw_cursor = serde_json::json!([
+            cursor
+                .position
+                .format(&Rfc3339)
+                .map_err(|_| ApiError::internal_server_error(OAUTH_INTERNAL_ERROR))?,
+            client_id.to_string()
+        ])
+        .to_string();
+        let request = parse_list_oauth_clients_query(Some(&format!("searchAfter={raw_cursor}")))?;
+
+        assert_eq!(
+            Some(Cursor {
+                size: Cursor::<OAuthClientSearchCursor>::default().size,
+                search_after: Some(cursor),
+            }),
+            request.cursor
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_clamp_page_size_to_one_when_zero() -> Result<(), ApiError> {
+        let request = parse_list_oauth_clients_query(Some("size=0"))?;
+
+        assert_eq!(
+            Some(Cursor {
+                size: 1,
+                search_after: None,
+            }),
+            request.cursor
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_return_internal_error_when_search_after_timestamp_cannot_be_serialized_as_rfc3339() {
+        let error = serialize_search_after(OAuthClientSearchCursor {
+            position: time::Date::MIN.midnight().assume_utc(),
+            client_id: OAuthClientId::new(),
+        })
+        .expect_err("the minimum timestamp is outside RFC3339's representable range");
+
+        assert_eq!(OAUTH_INTERNAL_ERROR, error.code());
+    }
+
     #[test]
     fn should_omit_client_secret_from_admin_list_item() {
         let client = oauth_service::ports::OAuthClientView {

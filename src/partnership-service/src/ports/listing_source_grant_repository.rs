@@ -9,19 +9,6 @@ pub enum ListingSourceGrantOutcome {
     AlreadyGranted,
 }
 
-impl ListingSourceGrantOutcome {
-    pub fn changed(self) -> bool {
-        matches!(self, Self::Granted)
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Granted => "granted",
-            Self::AlreadyGranted => "already_granted",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingSourceGrantRemoveOutcome {
     Removed,

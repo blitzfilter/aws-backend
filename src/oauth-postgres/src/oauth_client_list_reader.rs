@@ -31,13 +31,9 @@ impl OAuthClientListReader for SqlxOAuthClientListReader {
     ) -> Result<ListOAuthClientsResult, OAuthClientReadError> {
         let cursor = request.cursor.unwrap_or_default();
         let size = cursor.size.clamp(1, MAX_CURSOR_SIZE);
-        let size_usize =
-            usize::try_from(size).map_err(|source| OAuthClientReadError::Internal {
-                source: box_error(source),
-            })?;
-        let limit = i64::try_from(size + 1).map_err(|source| OAuthClientReadError::Internal {
-            source: box_error(source),
-        })?;
+        // `size` is clamped to 1..=100, so these casts are safe on supported targets.
+        let size_usize = size as usize;
+        let limit = (size + 1) as i64;
 
         let mut query = QueryBuilder::<Postgres>::new("SELECT ");
         query
