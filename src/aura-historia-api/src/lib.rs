@@ -30,6 +30,7 @@ use crate::state::{
     ReadinessCheck, SearchFiltersState, UsersState, WatchlistState, WebhooksState,
 };
 use crate::transport::with_transport_middleware;
+use crate::webhooks::woocommerce_intake::WoocommerceWebhookIntake;
 use axum::Router;
 use axum::routing::{delete, get, patch, post};
 use billing_service::use_cases::{
@@ -113,12 +114,12 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
-    SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRepositoryFactory,
+    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use product_listing_service::use_cases::{
-    CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
-    GetSimilarProductListingsHandler, IngestWoocommerceProductListingHandler,
+    CaptureProductListingRawObservationHandler, CreateProductListingHandler,
+    GetProductListingHandler, GetProductListingHistoryHandler, GetSimilarProductListingsHandler,
     SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
     WithdrawProductListingHandler,
 };
@@ -830,13 +831,15 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxProductListingEventAppenderFactory::new(),
         SqlxPartnerProductListingAuthorizerFactory::new(),
     );
-    let ingest_woocommerce_product = IngestWoocommerceProductListingHandler::new(
+    let capture_woocommerce_product = CaptureProductListingRawObservationHandler::new(
         unit_of_work.clone(),
-        SqlxProductListingRepositoryFactory::new(),
-        SqlxProductListingEventAppenderFactory::new(),
+        SqlxProductListingRawCaptureWriterFactory::new(),
         SqlxPartnerProductListingAuthorizerFactory::new(),
+    );
+    let intake_woocommerce_product = WoocommerceWebhookIntake::new(
         SqlxListingSourceReaders::new(pool.clone()),
         SqlxListingSourceReaders::new(pool.clone()),
+        capture_woocommerce_product,
     );
     let list_watchlist = ListWatchlistHandler::new(
         unit_of_work.clone(),
@@ -1086,7 +1089,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         .with_partner_product_listings(partner_product_listings_state)
         .with_listing_sources(listing_sources_state)
         .with_webhooks(WebhooksState::new(
-            Arc::new(ingest_woocommerce_product),
+            Arc::new(intake_woocommerce_product),
             Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
         ))
         .with_oauth(oauth_state)

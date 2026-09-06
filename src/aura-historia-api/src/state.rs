@@ -1,4 +1,5 @@
 use crate::auth::TokenAuthenticator;
+use crate::webhooks::woocommerce_intake::WoocommerceWebhookIntakeUseCase;
 use async_trait::async_trait;
 use billing_service::use_cases::{
     CreateBillingCheckoutSessionUseCase, CreateBillingManagementSessionUseCase,
@@ -41,9 +42,8 @@ use party_service::use_cases::queries::get_party::GetPartyUseCase;
 use party_service::use_cases::queries::search_parties::SearchPartiesUseCase;
 use product_listing_service::use_cases::{
     CreateProductListingUseCase, GetProductListingHistoryUseCase, GetProductListingUseCase,
-    GetSimilarProductListingsUseCase, IngestWoocommerceProductListingUseCase,
-    SearchProductListingsUseCase, UpdateProductListingUseCase, UpsertProductListingUseCase,
-    WithdrawProductListingUseCase,
+    GetSimilarProductListingsUseCase, SearchProductListingsUseCase, UpdateProductListingUseCase,
+    UpsertProductListingUseCase, WithdrawProductListingUseCase,
 };
 use search_filter_service::use_cases::{
     CreateSearchFilterUseCase, DeleteOwnedSearchFilterUseCase, GetOwnedSearchFilterUseCase,
@@ -242,17 +242,17 @@ impl NotificationsState {
 
 #[derive(Clone)]
 pub struct WebhooksState {
-    pub(crate) ingest: Arc<dyn IngestWoocommerceProductListingUseCase>,
+    pub(crate) intake: Arc<dyn WoocommerceWebhookIntakeUseCase>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
 impl WebhooksState {
     pub fn new(
-        ingest: Arc<dyn IngestWoocommerceProductListingUseCase>,
+        intake: Arc<dyn WoocommerceWebhookIntakeUseCase>,
         authenticator: Arc<dyn TokenAuthenticator>,
     ) -> Self {
         Self {
-            ingest,
+            intake,
             authenticator,
         }
     }

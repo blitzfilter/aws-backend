@@ -34,7 +34,7 @@ info:
     \ Both headers are CORS-exposed.\n- Requests are limited to 1 MiB and time out after 30 seconds.\n- `GET /health` is a\
     \ process liveness check. `GET /ready` returns `204` only when the configured PostgreSQL and OpenSearch dependencies are\
     \ reachable; it otherwise returns `503`.\n- WooCommerce webhook ingestion responds with **`204 No Content`** only after\
-    \ signed validation\n  and canonical Product persistence commits; partner Product batch writes are synchronous\n\n## Environment\
+    \ signed validation and durable raw ProductListing input capture; canonical normalization is asynchronous, while partner Product batch writes remain synchronous\n\n## Environment\
     \ endpoints\n\n- **Development:** `https://api.dev.aura-historia.com`\n- **Production:** `https://api.aura-historia.com`\n\
     \n## Notes for integrators\n\n- Treat Aura Historia identifiers such as `listingSourceId`, `productListingId`, `eventId`,\
     \ `userSearchFilterId`,\n  and `partnershipApplicationId` as opaque values\n- For partner product ingestion, `sourceListingId`\
@@ -867,9 +867,7 @@ paths:
       responses:
         "204":
           description:
-            "Webhook signature and partner authorization are validated, then canonical Product
-
-            persistence commits synchronously. The backend returns no response body on success.
+            "Webhook signature and partner authorization are validated, then the semantic WooCommerce product input is durably captured. Canonical ProductListing normalization runs asynchronously. The backend returns no response body on success.
 
             "
           headers:
@@ -1001,7 +999,7 @@ paths:
                 title: Not Found
                 error: LISTING_SOURCE_NOT_FOUND
         "503":
-          description: Service unavailable — signed webhook validation or canonical Product persistence is temporarily unavailable
+          description: Service unavailable — signed webhook validation or durable raw ProductListing capture is temporarily unavailable
           content:
             application/problem+json:
               schema:

@@ -10,6 +10,7 @@ use aura_historia_api::state::{
     PartiesState, PartnerProductListingsState, PartnershipApplicationsState, ProductListingsState,
     SearchFiltersState, UsersState, WatchlistState, WebhooksState,
 };
+use aura_historia_api::webhooks::woocommerce_intake::WoocommerceWebhookIntake;
 use aura_historia_api::{app, state};
 use billing_service::ports::{
     CreateStripeCheckoutSessionRequest, CreateStripeCustomerRequest,
@@ -96,15 +97,15 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
-    SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRepositoryFactory,
+    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use user_core::stripe_customer_id::StripeCustomerId;
 use user_core::user_id::UserId;
 
 use product_listing_service::use_cases::{
-    CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
-    GetSimilarProductListingsHandler, IngestWoocommerceProductListingHandler,
+    CaptureProductListingRawObservationHandler, CreateProductListingHandler,
+    GetProductListingHandler, GetProductListingHistoryHandler, GetSimilarProductListingsHandler,
     SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
     WithdrawProductListingHandler,
 };
@@ -970,13 +971,14 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
     );
 
     let webhooks_state = WebhooksState::new(
-        Arc::new(IngestWoocommerceProductListingHandler::new(
-            unit_of_work.clone(),
-            SqlxProductListingRepositoryFactory::new(),
-            SqlxProductListingEventAppenderFactory::new(),
-            SqlxPartnerProductListingAuthorizerFactory::new(),
+        Arc::new(WoocommerceWebhookIntake::new(
             SqlxListingSourceReaders::new(pool.clone()),
             SqlxListingSourceReaders::new(pool.clone()),
+            CaptureProductListingRawObservationHandler::new(
+                unit_of_work.clone(),
+                SqlxProductListingRawCaptureWriterFactory::new(),
+                SqlxPartnerProductListingAuthorizerFactory::new(),
+            ),
         )),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );

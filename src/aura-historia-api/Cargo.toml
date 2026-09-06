@@ -19,6 +19,7 @@ fxrate-postgres = { workspace = true }
 google-cloud-auth = { workspace = true }
 http = { workspace = true }
 httpdate = { workspace = true }
+html-to-markdown-rs = { workspace = true }
 indexmap = { workspace = true }
 oauth-core = { workspace = true }
 oauth-postgres = { workspace = true }
@@ -49,6 +50,7 @@ serde_json = { workspace = true }
 serde_qs = { workspace = true }
 sqlx = { workspace = true }
 product-listing-core = { workspace = true }
+product-listing-normalization = { workspace = true }
 product-listing-opensearch = { workspace = true }
 product-listing-postgres = { workspace = true }
 product-listing-service = { workspace = true }

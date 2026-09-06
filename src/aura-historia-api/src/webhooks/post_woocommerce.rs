@@ -1,47 +1,19 @@
 use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_UUID};
 use crate::state::WebhooksState;
+use crate::webhooks::woocommerce_intake::{
+    WoocommerceProductEventKind, WoocommerceWebhookIntakeCommand,
+};
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
-use indexmap::IndexSet;
 use listing_source_core::ListingSourceId;
-use product_listing_service::use_cases::{
-    IngestWoocommerceProductListingCommand, WoocommerceProductEventKind,
-};
-use serde::Deserialize;
-use url::Url;
 
 const TOPIC_HEADER: &str = "x-wc-webhook-topic";
 const SIGNATURE_HEADER: &str = "x-wc-webhook-signature";
-
-#[derive(Debug, Deserialize)]
-struct WoocommerceProductDto {
-    id: u64,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    permalink: Option<Url>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    short_description: Option<String>,
-    #[serde(default)]
-    price: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    stock_status: Option<String>,
-    #[serde(default)]
-    images: Vec<WoocommerceImageDto>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WoocommerceImageDto {
-    src: Url,
-}
+const DELIVERY_ID_HEADER: &str = "x-wc-webhook-delivery-id";
 
 pub async fn post_woocommerce(
     State(state): State<WebhooksState>,
@@ -66,50 +38,24 @@ pub async fn post_woocommerce(
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
-    let payload = match serde_json::from_slice::<WoocommerceProductDto>(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return ApiError::bad_request(BAD_BODY_VALUE)
-                .with_detail("Body must contain a valid WooCommerce product JSON value.")
-                .into_response();
-        }
-    };
-    let source_listing_id = match product_listing_core::source_listing_id::SourceListingId::try_from(
-        payload.id.to_string(),
-    ) {
-        Ok(value) => value,
-        Err(error) => {
-            return ApiError::bad_request(BAD_BODY_VALUE)
-                .with_detail(error.to_string())
-                .into_response();
-        }
-    };
+    let delivery_id = headers
+        .get(DELIVERY_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let (context, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
     match state
-        .ingest
+        .intake
         .execute(
             &context,
-            IngestWoocommerceProductListingCommand {
+            WoocommerceWebhookIntakeCommand {
                 listing_source_id,
                 kind,
                 signature,
                 raw_body: body.to_vec(),
-                source_listing_id,
-                title: payload.name,
-                permalink: payload.permalink,
-                description_html: payload.description,
-                short_description_html: payload.short_description,
-                price: payload.price,
-                status: payload.status,
-                stock_status: payload.stock_status,
-                image_urls: payload
-                    .images
-                    .into_iter()
-                    .map(|image| image.src)
-                    .collect::<IndexSet<_>>(),
+                delivery_id,
             },
         )
         .await

@@ -196,7 +196,7 @@ fn raw_write(
 ) -> ProductListingRawCaptureWrite {
     let input = ProductListingNormalizationInput::new(
         RawProductListingOperation::Upsert,
-        RawProductListingPayloadFormat::ShopifyProduct,
+        RawProductListingPayloadFormat::WoocommerceProduct,
         1,
         1,
         SourcePayload::new(json!({"retainedUnknown": record_key}))
@@ -228,7 +228,7 @@ fn raw_write(
         .unwrap_or_else(|error| panic!("normalization input hash: {error}"));
     ProductListingRawCaptureWrite {
         listing_source_id,
-        ingestion_method: ProductListingRawIngestionMethod::Shopify,
+        ingestion_method: ProductListingRawIngestionMethod::Woocommerce,
         source_record_key: record_key.to_owned(),
         source_record_key_sha256: SourceRecordKeySha256::new([hash_byte; 32]),
         input,
