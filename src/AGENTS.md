@@ -82,6 +82,8 @@
 
 ## Child DOX Index
 
+- `src/admin-overview-service/AGENTS.md` — admin overview read use case and bounded count model.
+- `src/admin-overview-postgres/AGENTS.md` — authoritative PostgreSQL admin overview reader.
 - `src/application/AGENTS.md` — shared technology-neutral application contracts.
 - `src/aura-historia-api/AGENTS.md` — `aura-historia-api` crate.
 - `src/aura-historia-worker/AGENTS.md` — `aura-historia-worker` crate.

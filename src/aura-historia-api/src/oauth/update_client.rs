@@ -1,4 +1,4 @@
-use super::create_client::OAuthClientMetadataData;
+use super::list_clients::OAuthClientAdminData;
 use super::{no_store, parse_scopes};
 use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
@@ -68,34 +68,38 @@ pub async fn update_client(
 ) -> Response {
     let (context, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
         Ok(value) => value,
-        Err(response) => return *response,
+        Err(response) => return no_store(*response),
     };
     let client_id = match OAuthClientId::try_from(raw.as_str()) {
         Ok(value) => value,
         Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("clientId")
-                .into_response();
+            return no_store(
+                ApiError::bad_request(INVALID_UUID)
+                    .with_path_field("clientId")
+                    .into_response(),
+            );
         }
     };
     let data: UpdateOAuthClientData = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(error) => {
-            return ApiError::bad_request(BAD_BODY_VALUE)
-                .with_detail(error.to_string())
-                .into_response();
+            return no_store(
+                ApiError::bad_request(BAD_BODY_VALUE)
+                    .with_detail(error.to_string())
+                    .into_response(),
+            );
         }
     };
     let command = match UpdateOAuthClientCommand::try_from(data) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return no_store(response),
     };
     match state
         .update_client
         .execute(&context, &client_id, command)
         .await
     {
-        Ok(result) => no_store(Json(OAuthClientMetadataData::from(result)).into_response()),
-        Err(error) => ApiError::from(error).into_response(),
+        Ok(result) => no_store(Json(OAuthClientAdminData::from(result)).into_response()),
+        Err(error) => no_store(ApiError::from(error).into_response()),
     }
 }

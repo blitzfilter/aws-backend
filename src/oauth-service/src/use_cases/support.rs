@@ -1,6 +1,7 @@
 use crate::error::OAuthServiceError;
 use crate::ports::{OAuthClientAuthenticationReader, OAuthClientRepository};
-use application::operation_context::{CredentialCapability, OperationContext};
+use application::error::static_error;
+use application::operation_context::{CredentialCapability, OperationContext, Principal};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credential_core::oauth_client_id::OAuthClientId;
@@ -9,6 +10,9 @@ use oauth_core::client::OAuthClient;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use user_core::access_token::RawOAuthClientSecret;
+use user_service::use_cases::queries::check_user_admin::{
+    CheckUserAdminError, CheckUserAdminRequest, CheckUserAdminUseCase,
+};
 
 pub(crate) const AUTHORIZATION_CODE_TTL: time::Duration = time::Duration::minutes(10);
 pub(crate) const THIRD_PARTY_EXCHANGE_CODE_TTL: time::Duration = time::Duration::seconds(60);
@@ -27,6 +31,46 @@ pub(crate) fn authorize_oauth_client_read(
         .require()
         .credential_capability(CredentialCapability::AccessTokensRead)
         .authorize::<OAuthServiceError>()
+}
+
+pub(crate) async fn authorize_oauth_client_admin<A>(
+    context: &OperationContext,
+    check_user_admin: &A,
+) -> Result<(), OAuthServiceError>
+where
+    A: CheckUserAdminUseCase,
+{
+    match context.principal {
+        Principal::Service(_) | Principal::System => Ok(()),
+        Principal::User(_) | Principal::DelegatedUser { .. } => check_user_admin
+            .execute(context, CheckUserAdminRequest)
+            .await
+            .map(|_| ())
+            .map_err(OAuthServiceError::from),
+        Principal::Anonymous => Err(OAuthServiceError::AuthenticatedActorRequired),
+    }
+}
+
+impl From<CheckUserAdminError> for OAuthServiceError {
+    fn from(error: CheckUserAdminError) -> Self {
+        match error {
+            CheckUserAdminError::AuthenticatedActorRequired => Self::AuthenticatedActorRequired,
+            CheckUserAdminError::Forbidden => Self::Forbidden,
+            CheckUserAdminError::TemporarilyUnavailable { source } => {
+                Self::TemporarilyUnavailable { source }
+            }
+            CheckUserAdminError::InvalidReadModel { source } => {
+                Self::InvalidPersistedState { source }
+            }
+            CheckUserAdminError::Internal { source } => Self::Internal { source },
+            CheckUserAdminError::BeginTransactionFailed => Self::TemporarilyUnavailable {
+                source: static_error("check user admin transaction begin failed"),
+            },
+            CheckUserAdminError::CommitTransactionFailed => Self::TemporarilyUnavailable {
+                source: static_error("check user admin transaction commit failed"),
+            },
+        }
+    }
 }
 
 pub(crate) async fn authenticate_client<R: OAuthClientRepository>(

@@ -1,4 +1,9 @@
 mod application_reader;
 mod listing_source_authorization;
+mod partnership_details_reader;
+mod partnership_search_reader;
+
 pub use application_reader::SqlxPartnershipApplicationReaderFactory;
 pub use listing_source_authorization::SqlxListingSourceAuthorization;
+pub use partnership_details_reader::SqlxPartnershipDetailsReaderFactory;
+pub use partnership_search_reader::SqlxPartnershipSearchReaderFactory;

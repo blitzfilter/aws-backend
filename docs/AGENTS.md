@@ -37,6 +37,7 @@
 
 ## Child DOX Index
 
+- `admin-overview.md` — administrator overview source and count semantics.
 - `party-and-listing-source.md` — Party, ListingSource, and Partnership contract.
 - `product-listing.md` — canonical ProductListing domain contract.
 - `product-listing-raw-normalization-runbook.md` — raw capture, normalization, backlog, and crawler operator checks.

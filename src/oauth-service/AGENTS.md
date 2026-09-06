@@ -7,9 +7,10 @@
 ## Core Design
 
 - One OAuth use-case module per command/query.
-- `ports/` owns transaction-scoped OAuth aggregate repositories, including one-time code repositories that only insert or atomically consume, plus purpose-specific client details/list readers returning `OAuthClientView` and persisted client write metadata, and a narrow client-authentication reader that exposes secret hash material only to OAuth service handlers.
+- `ports/` owns transaction-scoped OAuth aggregate repositories, including one-time code repositories that only insert or atomically consume, plus purpose-specific client details/list readers returning `OAuthClientView` and persisted client write metadata, and a narrow client-authentication reader that exposes secret hash material only to OAuth service handlers. The admin client list reader is bounded, supports exact ID/name search, and returns a deterministic created/client-ID cursor.
+- OAuth client metadata updates and deletion are admin-only: user and delegated-user principals require the persisted `ADMIN` role, while delegated callers also require `access-tokens:write`; update responses never expose or rotate the client secret. Deletion atomically revokes OAuth-issued access tokens and authorization/exchange codes through PostgreSQL cascades.
 - OAuth token issue/revoke flows compose public User repository contracts in the same PostgreSQL transaction.
-- OAuth authorization derives identity from `OperationContext`; delegated callers need `access-tokens:write` and may request only scopes present on their credential. Client get/list queries enforce `access-tokens:read` in the service.
+- OAuth token issue/revoke flows compose public User repository contracts in the same PostgreSQL transaction. OAuth authorization derives identity from `OperationContext`; delegated callers need `access-tokens:write` and may request only scopes present on their credential. Client registration requires delegated `access-tokens:write` plus the persisted `ADMIN` role for user and delegated-user principals. Client detail and collection reads require delegated `access-tokens:read` plus the persisted `ADMIN` role for user and delegated-user principals; collection reads also use bounded deterministic cursor search.
 - No HTTP, Lambda, or storage records.
 
 ## Ownership

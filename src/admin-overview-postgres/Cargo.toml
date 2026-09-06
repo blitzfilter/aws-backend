@@ -1,0 +1,19 @@
+[package]
+name = "admin-overview-postgres"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+admin-overview-service = { workspace = true }
+application = { workspace = true }
+async-trait = { workspace = true }
+platform-postgres = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+test-api = { workspace = true, features = ["postgres"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
+uuid = { workspace = true }

@@ -27,6 +27,11 @@ pub enum PartnershipRepositoryError {
 
 #[async_trait::async_trait]
 pub trait PartnershipRepository: Send {
+    async fn find_by_id(
+        &mut self,
+        partnership_id: PartnershipId,
+    ) -> Result<Option<VersionedPartnership>, PartnershipRepositoryError>;
+
     async fn find_or_create_for_party(
         &mut self,
         party_id: PartyId,

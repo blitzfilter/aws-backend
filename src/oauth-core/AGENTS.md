@@ -6,7 +6,7 @@
 
 ## Core Design
 
-- Hold OAuth client, authorization-code, and third-party exchange-code domain types.
+- Hold OAuth client, OAuth client search, authorization-code, and third-party exchange-code domain types. Third-party exchange grants retain their issued access-token identity so revoking that token also invalidates its one-time exchange code. OAuth client search carries optional exact client identity and name-query values for bounded admin reads.
 - OAuth aggregates keep only domain state. PostgreSQL owns timestamps and storage versions; persisted application views expose those operational values.
 - No persistence, API, Lambda, or service orchestration.
 

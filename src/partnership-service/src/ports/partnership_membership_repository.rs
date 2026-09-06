@@ -16,13 +16,31 @@ pub enum PartnershipGrantError {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartnershipMembershipAddOutcome {
+    Added,
+    AlreadyMember,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartnershipMembershipRemoveOutcome {
+    Removed,
+    AlreadyAbsent,
+}
+
 #[async_trait::async_trait]
 pub trait PartnershipMembershipRepository: Send {
     async fn add_member(
         &mut self,
         user_id: UserId,
         partnership_id: PartnershipId,
-    ) -> Result<(), PartnershipGrantError>;
+    ) -> Result<PartnershipMembershipAddOutcome, PartnershipGrantError>;
+
+    async fn remove_member(
+        &mut self,
+        user_id: UserId,
+        partnership_id: PartnershipId,
+    ) -> Result<PartnershipMembershipRemoveOutcome, PartnershipGrantError>;
 }
 
 pub trait PartnershipMembershipRepositoryFactory<Tx>: Send + Sync {

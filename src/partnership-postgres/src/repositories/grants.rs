@@ -32,17 +32,43 @@ impl ListingSourceGrantRepository for Repository<'_> {
         &mut self,
         partnership_id: PartnershipId,
         listing_source_id: ListingSourceId,
-    ) -> Result<(), PartnershipGrantError> {
-        sqlx::query(
+    ) -> Result<ListingSourceGrantOutcome, PartnershipGrantError> {
+        let result = sqlx::query(
             "INSERT INTO partnership_listing_source_grants(partnership_id, listing_source_id) VALUES($1, $2) ON CONFLICT DO NOTHING",
         )
         .bind(uuid::Uuid::from(partnership_id))
         .bind(uuid::Uuid::from(listing_source_id))
         .execute(&mut *self.connection)
         .await
-        .map(|_| ())
         .map_err(|source| PartnershipGrantError::Internal {
             source: box_error(source),
+        })?;
+        Ok(if result.rows_affected() > 0 {
+            ListingSourceGrantOutcome::Granted
+        } else {
+            ListingSourceGrantOutcome::AlreadyGranted
+        })
+    }
+
+    async fn remove_source_access(
+        &mut self,
+        partnership_id: PartnershipId,
+        listing_source_id: ListingSourceId,
+    ) -> Result<ListingSourceGrantRemoveOutcome, PartnershipGrantError> {
+        let result = sqlx::query(
+            "DELETE FROM partnership_listing_source_grants WHERE partnership_id=$1 AND listing_source_id=$2",
+        )
+        .bind(uuid::Uuid::from(partnership_id))
+        .bind(uuid::Uuid::from(listing_source_id))
+        .execute(&mut *self.connection)
+        .await
+        .map_err(|source| PartnershipGrantError::Internal {
+            source: box_error(source),
+        })?;
+        Ok(if result.rows_affected() > 0 {
+            ListingSourceGrantRemoveOutcome::Removed
+        } else {
+            ListingSourceGrantRemoveOutcome::AlreadyAbsent
         })
     }
 }

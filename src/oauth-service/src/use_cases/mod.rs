@@ -26,7 +26,10 @@ pub use get_client::{GetOAuthClientHandler, GetOAuthClientUseCase};
 pub use introspect_token::{
     IntrospectTokenHandler, IntrospectTokenRequest, IntrospectTokenResponse, IntrospectTokenUseCase,
 };
-pub use list_clients::{ListOAuthClientsHandler, ListOAuthClientsUseCase};
+pub use list_clients::{
+    ListOAuthClientsHandler, ListOAuthClientsRequest, ListOAuthClientsResult,
+    ListOAuthClientsUseCase, OAuthClientSearchCursor,
+};
 pub use revoke_token::{RevokeTokenHandler, RevokeTokenRequest, RevokeTokenUseCase};
 pub use token_by_authorization_code::{
     OAuthGrantType, OAuthTokenType, TokenByAuthorizationCodeHandler,

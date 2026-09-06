@@ -1,3 +1,4 @@
+pub(crate) mod admin_overview;
 pub mod auth;
 pub mod billing;
 pub mod error;
@@ -9,6 +10,7 @@ pub(crate) mod pagination_data;
 pub mod parties;
 pub mod partner_product_listings;
 pub(crate) mod partnership_applications;
+pub(crate) mod partnerships;
 pub(crate) mod patch_value;
 pub mod product_listings;
 pub mod search_filters;
@@ -25,12 +27,15 @@ use crate::auth::{
     CognitoJwtConfig, JwksProvider, ReqwestJwksProvider, TokenAuthenticator,
 };
 use crate::state::{
-    AppState, BillingState, ListingSourcesState, NewsletterState, NotificationsState, OAuthState,
-    PartiesState, PartnerProductListingsState, PartnershipApplicationsState, ProductListingsState,
-    ReadinessCheck, SearchFiltersState, UsersState, WatchlistState, WebhooksState,
+    AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
+    NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
+    PartnershipApplicationsState, PartnershipsState, ProductListingsState, ReadinessCheck,
+    SearchFiltersState, UsersState, WatchlistState, WebhooksState,
 };
 use crate::transport::with_transport_middleware;
 use crate::webhooks::woocommerce_intake::WoocommerceWebhookIntake;
+use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
+use admin_overview_service::GetAdminOverviewHandler;
 use axum::Router;
 use axum::routing::{delete, get, patch, post};
 use billing_service::use_cases::{
@@ -83,20 +88,27 @@ use listing_source_service::use_cases::queries::search_listing_sources::SearchLi
 use partnership_postgres::{
     SqlxListingSourceAuthorization, SqlxListingSourceGrantRepositoryFactory,
     SqlxPartnershipApplicationReaderFactory, SqlxPartnershipApplicationRepositoryFactory,
-    SqlxPartnershipRepositoryFactory,
+    SqlxPartnershipDetailsReaderFactory, SqlxPartnershipRepositoryFactory,
+    SqlxPartnershipSearchReaderFactory,
 };
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationHandler,
+        grant_partnership_listing_source::GrantPartnershipListingSourceHandler,
+        grant_partnership_membership::GrantPartnershipMembershipHandler,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewHandler,
         reject_partnership_application::RejectPartnershipApplicationHandler,
+        revoke_partnership_listing_source::RevokePartnershipListingSourceHandler,
+        revoke_partnership_membership::RevokePartnershipMembershipHandler,
         submit_partnership_application::SubmitPartnershipApplicationHandler,
         withdraw_partnership_application::WithdrawPartnershipApplicationHandler,
     },
     queries::{
+        get_admin_partnership::GetAdminPartnershipHandler,
         get_own_partnership_application::GetOwnPartnershipApplicationHandler,
         get_partnership_application::GetPartnershipApplicationHandler,
         list_admin_partnership_applications::ListAdminPartnershipApplicationsHandler,
+        list_admin_partnerships::ListAdminPartnershipsHandler,
         list_administered_listing_sources::ListAdministeredListingSourcesHandler,
         list_own_partnership_applications::ListOwnPartnershipApplicationsHandler,
     },
@@ -411,6 +423,17 @@ pub fn app(state: AppState) -> Router {
         );
     }
 
+    if let Some(admin_overview) = state.admin_overview {
+        routes = routes.merge(
+            Router::new()
+                .route(
+                    "/api/v1/admin/overview",
+                    get(admin_overview::get_admin_overview),
+                )
+                .with_state(admin_overview),
+        );
+    }
+
     if let Some(listing_sources) = state.listing_sources {
         routes = routes.merge(
             Router::new()
@@ -440,12 +463,12 @@ pub fn app(state: AppState) -> Router {
         routes = routes.merge(
             Router::new()
                 .route(
-                    "/api/v1/oauth/clients",
+                    "/api/v1/admin/oauth-clients",
                     get(oauth::list_clients::list_clients)
                         .post(oauth::create_client::create_client),
                 )
                 .route(
-                    "/api/v1/oauth/clients/{client_id}",
+                    "/api/v1/admin/oauth-clients/{client_id}",
                     get(oauth::get_client::get_client)
                         .patch(oauth::update_client::update_client)
                         .delete(oauth::delete_client::delete_client),
@@ -560,6 +583,10 @@ pub fn app(state: AppState) -> Router {
         routes = routes.merge(partnership_applications::router(partnership_applications));
     }
 
+    if let Some(partnerships) = state.partnerships {
+        routes = routes.merge(partnerships::router(partnerships));
+    }
+
     with_transport_middleware(routes)
 }
 
@@ -609,6 +636,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         google_application_default_credentials()?,
     ));
 
+    let get_admin_overview = GetAdminOverviewHandler::new(
+        unit_of_work.clone(),
+        SqlxAdminOverviewReaderFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
     let create_listing_source = CreateListingSourceHandler::new(
         unit_of_work.clone(),
         SqlxListingSourceRepositoryFactory::new(),
@@ -744,6 +776,44 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     let list_admin_partnership_applications = ListAdminPartnershipApplicationsHandler::new(
         unit_of_work.clone(),
         SqlxPartnershipApplicationReaderFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let list_admin_partnerships = ListAdminPartnershipsHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipSearchReaderFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let get_admin_partnership = GetAdminPartnershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipDetailsReaderFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let grant_partnership_membership = GrantPartnershipMembershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxUserAccountReaderFactory::new(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let revoke_partnership_membership = RevokePartnershipMembershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxUserAccountReaderFactory::new(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let grant_partnership_listing_source = GrantPartnershipListingSourceHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxListingSourceRepositoryFactory::new(),
+        SqlxListingSourceGrantRepositoryFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let revoke_partnership_listing_source = RevokePartnershipListingSourceHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxListingSourceRepositoryFactory::new(),
+        SqlxListingSourceGrantRepositoryFactory::new(),
         SqlxUserAdminReaderFactory::new(),
     );
     let get_partnership_application = GetPartnershipApplicationHandler::new(
@@ -1011,20 +1081,25 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         create_client: Arc::new(CreateOAuthClientHandler::new(
             unit_of_work.clone(),
             SqlxOAuthClientRepositoryFactory::new(),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
         )),
         list_clients: Arc::new(ListOAuthClientsHandler::new(
             SqlxOAuthClientListReader::new(pool.clone()),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
         )),
         get_client: Arc::new(GetOAuthClientHandler::new(
             SqlxOAuthClientDetailsReader::new(pool.clone()),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
         )),
         update_client: Arc::new(UpdateOAuthClientHandler::new(
             unit_of_work.clone(),
             SqlxOAuthClientRepositoryFactory::new(),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
         )),
         delete_client: Arc::new(DeleteOAuthClientHandler::new(
             unit_of_work.clone(),
             SqlxOAuthClientRepositoryFactory::new(),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
         )),
         authorize: Arc::new(AuthorizeHandler::new(
             unit_of_work.clone(),
@@ -1066,6 +1141,15 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         Arc::new(reject_partnership_application),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );
+    let partnerships_state = PartnershipsState::new(
+        Arc::new(list_admin_partnerships),
+        Arc::new(get_admin_partnership),
+        Arc::new(grant_partnership_membership),
+        Arc::new(revoke_partnership_membership),
+        Arc::new(grant_partnership_listing_source),
+        Arc::new(revoke_partnership_listing_source),
+        Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+    );
 
     let readiness = Arc::new(RuntimeReadiness {
         postgres: pool,
@@ -1073,10 +1157,15 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     });
 
     Ok(AppState::new()
+        .with_admin_overview(AdminOverviewState::new(
+            Arc::new(get_admin_overview),
+            Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+        ))
         .with_parties(parties_state)
         .with_users(users_state)
         .with_watchlist(watchlist_state)
         .with_partnership_applications(partnership_state)
+        .with_partnerships(partnerships_state)
         .with_products(
             ProductListingsState::new(
                 Arc::new(get_product),

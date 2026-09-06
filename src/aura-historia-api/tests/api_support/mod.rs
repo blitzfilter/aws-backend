@@ -1,14 +1,17 @@
 #![allow(dead_code)]
 
+use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
+use admin_overview_service::GetAdminOverviewHandler;
 use application::transaction::{Transaction, UnitOfWork};
 use aura_historia_api::auth::{
     ApiAuthService, AuraAccessTokenAuthenticator, AuthError, RequestMetadata, TokenAuthenticator,
     TransportPrincipal,
 };
 use aura_historia_api::state::{
-    AppState, BillingState, ListingSourcesState, NewsletterState, NotificationsState, OAuthState,
-    PartiesState, PartnerProductListingsState, PartnershipApplicationsState, ProductListingsState,
-    SearchFiltersState, UsersState, WatchlistState, WebhooksState,
+    AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
+    NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
+    PartnershipApplicationsState, PartnershipsState, ProductListingsState, SearchFiltersState,
+    UsersState, WatchlistState, WebhooksState,
 };
 use aura_historia_api::webhooks::woocommerce_intake::WoocommerceWebhookIntake;
 use aura_historia_api::{app, state};
@@ -58,24 +61,33 @@ use oauth_service::use_cases::{
     IntrospectTokenHandler, ListOAuthClientsHandler, RevokeTokenHandler,
     TokenByAuthorizationCodeHandler, TokenByThirdPartyCodeHandler, UpdateOAuthClientHandler,
 };
-use partnership_core::partnership_application_id::PartnershipApplicationId;
+use partnership_core::{
+    partnership_application_id::PartnershipApplicationId, partnership_id::PartnershipId,
+};
 use partnership_postgres::{
     SqlxListingSourceAuthorization, SqlxListingSourceGrantRepositoryFactory,
     SqlxPartnershipApplicationReaderFactory, SqlxPartnershipApplicationRepositoryFactory,
-    SqlxPartnershipRepositoryFactory,
+    SqlxPartnershipDetailsReaderFactory, SqlxPartnershipRepositoryFactory,
+    SqlxPartnershipSearchReaderFactory,
 };
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationHandler,
+        grant_partnership_listing_source::GrantPartnershipListingSourceHandler,
+        grant_partnership_membership::GrantPartnershipMembershipHandler,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewHandler,
         reject_partnership_application::RejectPartnershipApplicationHandler,
+        revoke_partnership_listing_source::RevokePartnershipListingSourceHandler,
+        revoke_partnership_membership::RevokePartnershipMembershipHandler,
         submit_partnership_application::SubmitPartnershipApplicationHandler,
         withdraw_partnership_application::WithdrawPartnershipApplicationHandler,
     },
     queries::{
+        get_admin_partnership::GetAdminPartnershipHandler,
         get_own_partnership_application::GetOwnPartnershipApplicationHandler,
         get_partnership_application::GetPartnershipApplicationHandler,
         list_admin_partnership_applications::ListAdminPartnershipApplicationsHandler,
+        list_admin_partnerships::ListAdminPartnershipsHandler,
         list_administered_listing_sources::ListAdministeredListingSourcesHandler,
         list_own_partnership_applications::ListOwnPartnershipApplicationsHandler,
     },
@@ -324,6 +336,65 @@ pub async fn seed_partnership_application(
         panic!("failed to seed partnership application: {error}");
     }
     application_id
+}
+
+pub async fn seed_partnership_for_search(
+    party_name: &str,
+    created: OffsetDateTime,
+    updated: OffsetDateTime,
+    member_user_ids: &[UserId],
+    listing_source_ids: &[uuid::Uuid],
+) -> (PartnershipId, PartyId) {
+    let party_id = PartyId::new();
+    let partnership_id = PartnershipId::new();
+    let pool = get_postgres_client().await;
+    let mut transaction = pool
+        .begin()
+        .await
+        .unwrap_or_else(|error| panic!("failed to begin partnership seed transaction: {error}"));
+
+    sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+        .bind(uuid::Uuid::from(party_id))
+        .bind(format!("api-partnership-party-{party_id}"))
+        .bind(party_name)
+        .execute(&mut *transaction)
+        .await
+        .unwrap_or_else(|error| panic!("failed to seed partnership party: {error}"));
+    sqlx::query(
+        "INSERT INTO partnerships (partnership_id, party_id, created, updated) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(uuid::Uuid::from(partnership_id))
+    .bind(uuid::Uuid::from(party_id))
+    .bind(created)
+    .bind(updated)
+    .execute(&mut *transaction)
+    .await
+    .unwrap_or_else(|error| panic!("failed to seed partnership: {error}"));
+
+    for user_id in member_user_ids {
+        sqlx::query("INSERT INTO partnership_members (user_id, partnership_id) VALUES ($1, $2)")
+            .bind(uuid::Uuid::from(*user_id))
+            .bind(uuid::Uuid::from(partnership_id))
+            .execute(&mut *transaction)
+            .await
+            .unwrap_or_else(|error| panic!("failed to seed partnership member: {error}"));
+    }
+    for listing_source_id in listing_source_ids {
+        sqlx::query(
+            "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
+        )
+        .bind(uuid::Uuid::from(partnership_id))
+        .bind(*listing_source_id)
+        .execute(&mut *transaction)
+        .await
+        .unwrap_or_else(|error| panic!("failed to seed partnership listing-source grant: {error}"));
+    }
+
+    transaction
+        .commit()
+        .await
+        .unwrap_or_else(|error| panic!("failed to commit partnership seed transaction: {error}"));
+    (partnership_id, party_id)
 }
 
 pub async fn seed_approved_partnership_application(
@@ -873,6 +944,44 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         SqlxPartnershipApplicationReaderFactory::new(),
         user_postgres::SqlxUserAdminReaderFactory::new(),
     );
+    let list_admin_partnerships = ListAdminPartnershipsHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipSearchReaderFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
+    let get_admin_partnership = GetAdminPartnershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipDetailsReaderFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
+    let grant_partnership_membership = GrantPartnershipMembershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        user_postgres::SqlxUserAccountReaderFactory::new(),
+        SqlxPartnershipRepositoryFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
+    let revoke_partnership_membership = RevokePartnershipMembershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        user_postgres::SqlxUserAccountReaderFactory::new(),
+        SqlxPartnershipRepositoryFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
+    let grant_partnership_listing_source = GrantPartnershipListingSourceHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxListingSourceRepositoryFactory::new(),
+        SqlxListingSourceGrantRepositoryFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
+    let revoke_partnership_listing_source = RevokePartnershipListingSourceHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxListingSourceRepositoryFactory::new(),
+        SqlxListingSourceGrantRepositoryFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
     let get_partnership_application = GetPartnershipApplicationHandler::new(
         unit_of_work.clone(),
         SqlxPartnershipApplicationRepositoryFactory::new(),
@@ -1166,6 +1275,15 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(reject_partnership_application),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );
+    let partnerships_state = PartnershipsState::new(
+        Arc::new(list_admin_partnerships),
+        Arc::new(get_admin_partnership),
+        Arc::new(grant_partnership_membership),
+        Arc::new(revoke_partnership_membership),
+        Arc::new(grant_partnership_listing_source),
+        Arc::new(revoke_partnership_listing_source),
+        Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+    );
 
     let billing_prices = BillingPriceIds {
         pro_monthly: "price_pro_monthly".to_owned(),
@@ -1215,20 +1333,40 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(CreateOAuthClientHandler::new(
             unit_of_work.clone(),
             SqlxOAuthClientRepositoryFactory::new(),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
         )),
         Arc::new(ListOAuthClientsHandler::new(
             SqlxOAuthClientListReader::new(pool.clone()),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
         )),
         Arc::new(GetOAuthClientHandler::new(
             SqlxOAuthClientDetailsReader::new(pool.clone()),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
         )),
         Arc::new(UpdateOAuthClientHandler::new(
             unit_of_work.clone(),
             SqlxOAuthClientRepositoryFactory::new(),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
         )),
         Arc::new(DeleteOAuthClientHandler::new(
             unit_of_work.clone(),
             SqlxOAuthClientRepositoryFactory::new(),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
         )),
         Arc::new(AuthorizeHandler::new(
             unit_of_work.clone(),
@@ -1258,10 +1396,19 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );
     state::AppState::new()
+        .with_admin_overview(AdminOverviewState::new(
+            Arc::new(GetAdminOverviewHandler::new(
+                unit_of_work.clone(),
+                SqlxAdminOverviewReaderFactory::new(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            )),
+            Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+        ))
         .with_parties(parties_state)
         .with_users(users_state)
         .with_watchlist(watchlist_state)
         .with_partnership_applications(partnership_applications_state)
+        .with_partnerships(partnerships_state)
         .with_listing_sources(listing_sources_state)
         .with_newsletter(NewsletterState::new(
             Arc::new(UpsertNewsletterSubscriptionHandler::new(

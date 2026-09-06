@@ -60,6 +60,24 @@ fn map(row: Row) -> Result<VersionedPartnership, PartnershipRepositoryError> {
 }
 #[async_trait::async_trait]
 impl PartnershipRepository for Repository<'_> {
+    async fn find_by_id(
+        &mut self,
+        partnership_id: PartnershipId,
+    ) -> Result<Option<VersionedPartnership>, PartnershipRepositoryError> {
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT partnership_id,party_id,version FROM partnerships WHERE partnership_id=$1",
+        )
+        .bind(uuid::Uuid::from(partnership_id))
+        .fetch_optional(&mut *self.connection)
+        .await
+        .map_err(
+            |source| PartnershipRepositoryError::TemporarilyUnavailable {
+                source: box_error(source),
+            },
+        )?;
+        row.map(map).transpose()
+    }
+
     async fn find_or_create_for_party(
         &mut self,
         party_id: PartyId,
@@ -103,7 +121,42 @@ impl PartnershipMembershipRepository for Repository<'_> {
         &mut self,
         user_id: user_core::user_id::UserId,
         partnership_id: PartnershipId,
-    ) -> Result<(), PartnershipGrantError> {
-        sqlx::query("INSERT INTO partnership_members(user_id,partnership_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(uuid::Uuid::from(user_id)).bind(uuid::Uuid::from(partnership_id)).execute(&mut*self.connection).await.map(|_|()).map_err(|e|PartnershipGrantError::Internal{source:box_error(e)})
+    ) -> Result<PartnershipMembershipAddOutcome, PartnershipGrantError> {
+        let result = sqlx::query(
+            "INSERT INTO partnership_members(user_id,partnership_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(uuid::Uuid::from(user_id))
+        .bind(uuid::Uuid::from(partnership_id))
+        .execute(&mut *self.connection)
+        .await
+        .map_err(|source| PartnershipGrantError::Internal {
+            source: box_error(source),
+        })?;
+        Ok(if result.rows_affected() > 0 {
+            PartnershipMembershipAddOutcome::Added
+        } else {
+            PartnershipMembershipAddOutcome::AlreadyMember
+        })
+    }
+
+    async fn remove_member(
+        &mut self,
+        user_id: user_core::user_id::UserId,
+        partnership_id: PartnershipId,
+    ) -> Result<PartnershipMembershipRemoveOutcome, PartnershipGrantError> {
+        let result =
+            sqlx::query("DELETE FROM partnership_members WHERE user_id=$1 AND partnership_id=$2")
+                .bind(uuid::Uuid::from(user_id))
+                .bind(uuid::Uuid::from(partnership_id))
+                .execute(&mut *self.connection)
+                .await
+                .map_err(|source| PartnershipGrantError::Internal {
+                    source: box_error(source),
+                })?;
+        Ok(if result.rows_affected() > 0 {
+            PartnershipMembershipRemoveOutcome::Removed
+        } else {
+            PartnershipMembershipRemoveOutcome::AlreadyAbsent
+        })
     }
 }

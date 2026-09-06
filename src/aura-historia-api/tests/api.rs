@@ -6,6 +6,8 @@ const BUSINESS_SCHEMA: Postgres = Postgres::new_schema_once("migrations");
 const OPENSEARCH: OpenSearch = OpenSearch();
 static AURA_API: AuraHistoriaApi = AuraHistoriaApi::new(api_support::aura_api_app);
 
+#[path = "api_cases/admin_overview.rs"]
+mod admin_overview;
 #[path = "api_cases/billing.rs"]
 mod billing;
 #[path = "api_cases/listing_sources.rs"]
@@ -22,6 +24,8 @@ mod parties;
 mod partner_product_listings;
 #[path = "api_cases/partnership_applications.rs"]
 mod partnership_applications;
+#[path = "api_cases/partnerships.rs"]
+mod partnerships;
 #[path = "api_cases/product_listings.rs"]
 mod product_listings;
 #[path = "api_cases/search_filters.rs"]

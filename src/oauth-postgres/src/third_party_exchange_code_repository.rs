@@ -1,5 +1,6 @@
 use crate::mapping::{
-    THIRD_PARTY_EXCHANGE_CODE_COLUMNS, scope_values, third_party_exchange_code_uuid,
+    THIRD_PARTY_EXCHANGE_CODE_COLUMNS, access_token_id_uuid, scope_values,
+    third_party_exchange_code_uuid,
 };
 use crate::rows::ThirdPartyExchangeCodeRow;
 use application::error::box_error;
@@ -45,13 +46,16 @@ impl ThirdPartyExchangeCodeRepository for SqlxThirdPartyExchangeCodeRepository<'
     ) -> Result<(), OAuthCodeRepositoryError> {
         let code_uuid =
             third_party_exchange_code_uuid(&grant.code()).map_err(invalid_code_state)?;
+        let access_token_id =
+            access_token_id_uuid(grant.access_token_id()).map_err(invalid_code_state)?;
         let access_token: String = grant.access_token().clone().into();
         sqlx::query(
             "INSERT INTO oauth_third_party_exchange_codes (\
-                third_party_exchange_code, access_token, access_token_expires_at, scopes, expires_at\
-             ) VALUES ($1, $2, $3, $4, $5)",
+                third_party_exchange_code, access_token_id, access_token, access_token_expires_at, scopes, expires_at\
+             ) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(code_uuid)
+        .bind(access_token_id)
         .bind(access_token)
         .bind(grant.access_token_expires())
         .bind(scope_values(grant.scopes()))

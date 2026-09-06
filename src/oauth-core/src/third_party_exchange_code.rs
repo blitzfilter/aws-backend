@@ -2,13 +2,14 @@ use credential_core::scope::Scope;
 use domain_primitives::uuid_v7_newtype;
 use std::collections::HashSet;
 use time::OffsetDateTime;
-use user_core::access_token::RawAccessToken;
+use user_core::access_token::{AccessTokenId, RawAccessToken};
 
 uuid_v7_newtype!(ThirdPartyExchangeCode);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThirdPartyExchangeCodeGrant {
     code: ThirdPartyExchangeCode,
+    access_token_id: AccessTokenId,
     access_token: RawAccessToken,
     access_token_expires: Option<OffsetDateTime>,
     scopes: HashSet<Scope>,
@@ -19,6 +20,7 @@ pub struct ThirdPartyExchangeCodeGrant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RehydratedThirdPartyExchangeCodeGrantState {
     pub code: ThirdPartyExchangeCode,
+    pub access_token_id: AccessTokenId,
     pub access_token: RawAccessToken,
     pub access_token_expires: Option<OffsetDateTime>,
     pub scopes: HashSet<Scope>,
@@ -34,6 +36,7 @@ impl ThirdPartyExchangeCodeGrant {
     pub fn rehydrate(state: RehydratedThirdPartyExchangeCodeGrantState) -> Self {
         Self {
             code: state.code,
+            access_token_id: state.access_token_id,
             access_token: state.access_token,
             access_token_expires: state.access_token_expires,
             scopes: state.scopes,
@@ -43,6 +46,10 @@ impl ThirdPartyExchangeCodeGrant {
 
     pub fn code(&self) -> ThirdPartyExchangeCode {
         self.code
+    }
+
+    pub fn access_token_id(&self) -> AccessTokenId {
+        self.access_token_id
     }
 
     pub fn access_token(&self) -> &RawAccessToken {

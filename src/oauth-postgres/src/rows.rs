@@ -47,6 +47,7 @@ pub(crate) struct AuthorizationCodeRow {
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct ThirdPartyExchangeCodeRow {
     pub(crate) code: Uuid,
+    pub(crate) access_token_id: Uuid,
     pub(crate) access_token: String,
     pub(crate) access_token_expires: Option<OffsetDateTime>,
     pub(crate) scopes: Vec<String>,

@@ -89,6 +89,7 @@ async fn should_register_and_apply_pg_ttl_for_expiring_oauth_credentials() {
         seed_third_party_exchange_code(
             &pool,
             EXPIRED_THIRD_PARTY_EXCHANGE_CODE,
+            EXPIRED_ACCESS_TOKEN_ID,
             "dummy-third-party-code-expired",
             expired_at,
         )
@@ -96,6 +97,7 @@ async fn should_register_and_apply_pg_ttl_for_expiring_oauth_credentials() {
         seed_third_party_exchange_code(
             &pool,
             FUTURE_THIRD_PARTY_EXCHANGE_CODE,
+            FUTURE_ACCESS_TOKEN_ID,
             "dummy-third-party-code-future",
             future_at,
         )
@@ -198,15 +200,17 @@ async fn seed_authorization_code(
 async fn seed_third_party_exchange_code(
     pool: &PgPool,
     third_party_exchange_code: Uuid,
+    access_token_id: Uuid,
     access_token: &str,
     expires_at: OffsetDateTime,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO oauth_third_party_exchange_codes ( \
-             third_party_exchange_code, access_token, expires_at \
-         ) VALUES ($1, $2, $3)",
+             third_party_exchange_code, access_token_id, access_token, expires_at \
+         ) VALUES ($1, $2, $3, $4)",
     )
     .bind(third_party_exchange_code)
+    .bind(access_token_id)
     .bind(access_token)
     .bind(expires_at)
     .execute(pool)

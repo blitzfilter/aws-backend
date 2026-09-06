@@ -137,6 +137,7 @@ where
         let third_party_exchange_code =
             ThirdPartyExchangeCodeGrant::create(RehydratedThirdPartyExchangeCodeGrantState {
                 code: ThirdPartyExchangeCode::new(),
+                access_token_id: access_token.id(),
                 access_token: raw_access_token.clone(),
                 access_token_expires: access_token.expires(),
                 scopes: access_token.scopes().clone(),

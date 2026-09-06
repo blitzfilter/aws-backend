@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+admin-overview-postgres = { workspace = true }
+admin-overview-service = { workspace = true }
 async-trait = { workspace = true }
 application = { workspace = true }
 axum = { workspace = true }

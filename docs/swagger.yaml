@@ -5349,7 +5349,7 @@ paths:
                     status: 400
                     title: Bad Request
                     error: BAD_BODY_VALUE
-                    detail: "unknown scope `product-listings_write`, expected one of: listing-sources:manage, product-listings:write"
+                    detail: "unknown scope `product-listings_write`, expected one of: product-listings:write, users:read, users:write, access-tokens:read, access-tokens:write, search-filters:write, watchlist:read, watchlist:write"
         "401":
           description: Unauthorized - invalid or missing JWT token
           content:
@@ -7780,25 +7780,197 @@ paths:
                 status: 500
                 title: Internal Server Error
                 error: INTERNAL_SERVER_ERROR
-  /api/v1/oauth/clients:
-    post:
-      summary: Create OAuth client metadata
-      description: "Creates a new OAuth client metadata record.
 
-        The plaintext `client_secret` is returned only in this create response; later reads return
+  /api/v1/admin/oauth-clients:
+    get:
+      summary: List OAuth client metadata for administration
+      description: |
+        Lists registered OAuth client metadata for authenticated administrators.
 
-        a masked secret display value.
+        User and delegated-user principals must have the persisted `ADMIN` business role.
+        Delegated Aura Historia access-token callers must also have the `access-tokens:read`
+        capability. The OAuth protocol routes remain under `/api/v1/oauth`.
 
-        Requires an authenticated direct user, or a delegated Aura Historia access token with
+        Results use bounded keyset pagination in fixed `created` ascending, then OAuth client
+        UUID ascending order. Page sizes are clamped to 1–100, with a default of 21. The
+        `searchAfter` value is a JSON-encoded `[created RFC3339 timestamp, client UUID]`
+        cursor; it is omitted on the terminal page and must be sent with the same filters.
 
-        `access-tokens:write`.
-
-        "
-      operationId: postOAuthClient
+        `clientId` is an exact UUID filter. `name` is a case-insensitive substring filter.
+        The response contains no plaintext client secret, secret hash, or masked secret value.
+        Every success and error response uses `Cache-Control: no-store`.
+      operationId: adminListOAuthClients
       tags:
         - OAuth
       security:
         - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: clientId
+          in: query
+          required: false
+          description: Optional exact UUID filter for one OAuth client.
+          schema:
+            type: string
+            format: uuid
+          example: 01970f22-2bf0-7000-8000-000000000010
+        - name: name
+          in: query
+          required: false
+          description: Optional case-insensitive substring filter for the OAuth client display name.
+          schema:
+            type: string
+          example: dashboard
+        - name: searchAfter
+          in: query
+          required: false
+          description: JSON-encoded `[created RFC3339 timestamp, client UUID]` cursor returned by the previous page.
+          schema:
+            type: string
+          example: '["2026-09-04T12:00:00Z","01970f22-2bf0-7000-8000-000000000010"]'
+        - name: size
+          in: query
+          required: false
+          description: Number of OAuth client summaries requested per page. The server clamps values to 1–100.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 21
+          example: 21
+      responses:
+        "200":
+          description: OAuth client summaries returned successfully.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because administrator OAuth data is returned.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthClientAdminCollectionData"
+              example:
+                items:
+                  - client_id: 01970f22-2bf0-7000-8000-000000000010
+                    client_name: Dashboard integration
+                    tos_uri: https://client.example/tos
+                    policy_uri: https://client.example/policy
+                    client_uri: https://client.example
+                    logo_uri: https://client.example/logo.png
+                    redirect_uris:
+                      - https://client.example/callback
+                    scope:
+                      - access-tokens:read
+                    client_id_issued_at: 1748539200
+                size: 21
+                searchAfter:
+                  - "2026-09-04T12:00:00Z"
+                  - 01970f22-2bf0-7000-8000-000000000010
+        "400":
+          description: Bad request — an OAuth client filter, page size, or cursor is invalid.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: BAD_QUERY_PARAMETER_VALUE
+                source:
+                  field: searchAfter
+                  sourceType: QUERY
+        "401":
+          description: Unauthorized — invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden — the caller is not an administrator or a delegated caller lacks `access-tokens:read`.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: OAuth client administration requires the ADMIN role; delegated callers also require access-tokens:read.
+        "500":
+          description: Internal authentication, authorization, or OAuth client read failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: OAUTH_INTERNAL_ERROR
+        "503":
+          description: Temporary authentication, authorization, or OAuth client read failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: OAUTH_TEMPORARILY_UNAVAILABLE
+    post:
+      summary: Create OAuth client metadata for administration
+      description: |
+        Creates a new OAuth client metadata record for an authenticated administrator.
+
+        User and delegated-user principals must have the persisted `ADMIN` business role.
+        Delegated Aura Historia access-token callers must also have the `access-tokens:write`
+        capability. The plaintext `client_secret` is returned only in this create response and
+        is never logged or returned by later reads.
+
+        Redirect URIs must be non-empty HTTPS URLs without fragments. Requested scopes must be
+        supported OAuth scopes.
+      operationId: adminCreateOAuthClient
+      tags:
+        - OAuth
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
       requestBody:
         required: true
         description: OAuth client metadata creation payload.
@@ -7821,13 +7993,13 @@ paths:
           description: OAuth client metadata created successfully.
           headers:
             Location:
-              description: URL of the created OAuth client metadata resource.
+              description: URL of the created admin OAuth client detail resource.
               schema:
                 type: string
                 format: uri
-              example: https://api.aura-historia.com/api/v1/oauth/clients/01970f22-2bf0-7000-8000-000000000010
+              example: /api/v1/admin/oauth-clients/01970f22-2bf0-7000-8000-000000000010
             Cache-Control:
-              description: Always set to `no-store`.
+              description: Always set to `no-store` because the response contains the raw secret.
               schema:
                 type: string
               example: no-store
@@ -7849,7 +8021,13 @@ paths:
                   - product-listings:write
                 client_id_issued_at: 1748539200
         "400":
-          description: Bad request — missing, empty, malformed JSON body, or invalid OAuth client metadata.
+          description: Bad request — missing, empty, malformed JSON body, invalid redirect URI, or unsupported scope.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -7877,98 +8055,29 @@ paths:
                     error: OAUTH_INVALID_CLIENT_METADATA
                     detail: "OAuth client metadata is invalid: OAuth redirect URI must use HTTPS: http://client.example/callback"
         "401":
-          description: Unauthorized — invalid or missing JWT token.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 401
-                title: Unauthorized
-                error: UNAUTHORIZED
-        "403":
-          description: Forbidden — the authenticated principal cannot administer OAuth clients. Delegated callers need `access-tokens:write`.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 403
-                title: Forbidden
-                error: FORBIDDEN
-                detail: OAuth client administration requires access-tokens:write for delegated callers.
-        "500":
-          description: Internal server error.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 500
-                title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
-    get:
-      summary: List OAuth client metadata
-      description: "Lists registered OAuth client metadata records.
-
-        The returned `client_secret` value is masked and does not reveal the plaintext secret.
-
-        Requires an authenticated direct user, or a delegated Aura Historia access token with
-
-        `access-tokens:read`.
-
-        "
-      operationId: getOAuthClients
-      tags:
-        - OAuth
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: OAuth client metadata retrieved successfully.
+          description: Unauthorized — invalid or missing bearer credentials.
           headers:
             Cache-Control:
-              description: Always set to `no-store`.
+              description: Error responses are never stored.
               schema:
                 type: string
               example: no-store
           content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/OAuthClientMetadataResponseData"
-              examples:
-                one_client:
-                  summary: One OAuth client metadata record
-                  value:
-                    - client_id: 01970f22-2bf0-7000-8000-000000000010
-                      client_secret: aurahistoria_oauth_client_secret_abcdefghijk_****
-                      client_name: Acceptance OAuth client
-                      tos_uri: https://client.example/tos
-                      policy_uri: https://client.example/policy
-                      client_uri: https://client.example
-                      logo_uri: https://client.example/logo.png
-                      redirect_uris:
-                        - https://client.example/callback
-                      scope:
-                        - product-listings:write
-                      client_id_issued_at: 1748539200
-                no_clients:
-                  summary: No OAuth clients exist
-                  value: []
-        "401":
-          description: Unauthorized — invalid or missing JWT token.
-          content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
               example:
                 status: 401
                 title: Unauthorized
-                error: UNAUTHORIZED
+                error: INVALID_CREDENTIALS
         "403":
-          description: Forbidden — the delegated caller lacks `access-tokens:read`.
+          description: Forbidden — the caller is not an administrator or a delegated caller lacks `access-tokens:write`.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -7977,9 +8086,15 @@ paths:
                 status: 403
                 title: Forbidden
                 error: FORBIDDEN
-                detail: OAuth client reads require access-tokens:read for delegated callers.
+                detail: OAuth client creation requires the ADMIN role; delegated callers also require access-tokens:write.
         "500":
-          description: Internal server error.
+          description: Internal authentication or OAuth client creation failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -7987,24 +8102,40 @@ paths:
               example:
                 status: 500
                 title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
-  /api/v1/oauth/clients/{clientId}:
+                error: OAUTH_INTERNAL_ERROR
+        "503":
+          description: Temporary authentication, authorization, or OAuth client persistence failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: OAUTH_TEMPORARILY_UNAVAILABLE
+  /api/v1/admin/oauth-clients/{clientId}:
     get:
-      summary: Get OAuth client metadata
-      description: "Retrieves one OAuth client metadata record.
+      summary: Get OAuth client metadata for administration
+      description: |
+        Retrieves one OAuth client metadata record for an authenticated administrator.
 
-        The returned `client_secret` value is masked and does not reveal the plaintext secret.
-
-        Requires an authenticated direct user, or a delegated Aura Historia access token with
-
-        `access-tokens:read`.
-
-        "
-      operationId: getOAuthClient
+        User and delegated-user principals must have the persisted `ADMIN` business role.
+        Delegated Aura Historia access-token callers must also have the `access-tokens:read`
+        capability. The response contains client metadata, redirect URIs, and scopes, but never
+        a plaintext client secret, secret hash, or masked secret value. Every success and error
+        response uses `Cache-Control: no-store`.
+      operationId: adminGetOAuthClient
       tags:
         - OAuth
       security:
         - BearerAuth: []
+        - AccessTokenAuth: []
       parameters:
         - name: clientId
           in: path
@@ -8019,17 +8150,16 @@ paths:
           description: OAuth client metadata retrieved successfully.
           headers:
             Cache-Control:
-              description: Always set to `no-store`.
+              description: Responses are never stored because administrator OAuth data is returned.
               schema:
                 type: string
               example: no-store
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OAuthClientMetadataResponseData"
+                $ref: "#/components/schemas/OAuthClientAdminData"
               example:
                 client_id: 01970f22-2bf0-7000-8000-000000000010
-                client_secret: aurahistoria_oauth_client_secret_abcdefghijk_****
                 client_name: Acceptance OAuth client
                 tos_uri: https://client.example/tos
                 policy_uri: https://client.example/policy
@@ -8041,54 +8171,48 @@ paths:
                   - product-listings:write
                 client_id_issued_at: 1748539200
         "400":
-          description: Bad request — invalid or missing OAuth client path parameter.
+          description: Bad request — the OAuth client path parameter is not a valid UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              examples:
-                missing_client_id:
-                  summary: Missing OAuth client path parameter
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_PATH_PARAMETER_VALUE
-                    source:
-                      field: clientId
-                      sourceType: path
-                    detail: Missing path parameter clientId
-                invalid_client_id:
-                  summary: Invalid OAuth client identifier
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: INVALID_UUID
-                    source:
-                      field: clientId
-                      sourceType: path
-                    detail: invalid character in UUID
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: clientId
+                  sourceType: PATH
         "401":
-          description: Unauthorized — invalid or missing JWT token, or the OAuth client does not exist.
+          description: Unauthorized — invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              examples:
-                missing_bearer:
-                  summary: Missing or invalid bearer token
-                  value:
-                    status: 401
-                    title: Unauthorized
-                    error: UNAUTHORIZED
-                client_not_found:
-                  summary: OAuth client not found
-                  value:
-                    status: 401
-                    title: Unauthorized
-                    error: OAUTH_CLIENT_NOT_FOUND
-                    detail: OAuth client not found.
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
         "403":
-          description: Forbidden — the delegated caller lacks `access-tokens:read`.
+          description: Forbidden — the caller is not an administrator or a delegated caller lacks `access-tokens:read`.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -8097,9 +8221,32 @@ paths:
                 status: 403
                 title: Forbidden
                 error: FORBIDDEN
-                detail: OAuth client reads require access-tokens:read for delegated callers.
+                detail: OAuth client administration requires the ADMIN role; delegated callers also require access-tokens:read.
+        "404":
+          description: OAuth client was not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: OAUTH_CLIENT_NOT_FOUND
+                detail: OAuth client not found.
         "500":
-          description: Internal server error.
+          description: Internal authentication, authorization, or OAuth client read failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -8107,26 +8254,44 @@ paths:
               example:
                 status: 500
                 title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
+                error: OAUTH_INTERNAL_ERROR
+        "503":
+          description: Temporary authentication, authorization, or OAuth client read failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: OAUTH_TEMPORARILY_UNAVAILABLE
     patch:
-      summary: Update OAuth client metadata
-      description:
-        "Updates one OAuth client metadata record. Omitted properties leave existing values unchanged;
+      summary: Update OAuth client metadata for administration
+      description: |
+        Updates one OAuth client metadata record for an authenticated administrator.
 
-        every explicit `null` is invalid because OAuth metadata is non-nullable. `{}` is a no-op.
+        Omitted properties leave existing values unchanged; every explicit `null` is invalid
+        because OAuth metadata is non-nullable; and `{}` is a valid no-op.
 
-        The returned `client_secret` value is masked and does not reveal the plaintext secret.
+        User and delegated-user principals must have the persisted `ADMIN` business role.
+        Delegated Aura Historia access-token callers must also have the `access-tokens:write`
+        capability. Redirect URIs remain non-empty HTTPS URLs without fragments, and requested
+        scopes must be supported OAuth scopes.
 
-        Requires an authenticated direct user, or a delegated Aura Historia access token with
-
-        `access-tokens:write`.
-
-        "
-      operationId: patchOAuthClient
+        The response is secret-free. This operation never exposes or rotates the client secret.
+        Every success and error response uses `Cache-Control: no-store`.
+      operationId: adminPatchOAuthClient
       tags:
         - OAuth
       security:
         - BearerAuth: []
+        - AccessTokenAuth: []
       parameters:
         - name: clientId
           in: path
@@ -8152,10 +8317,10 @@ paths:
               redirect_uris:
                 - https://client.example/updated
               scope:
-                - listing-sources:write
+                - access-tokens:read
       responses:
         "200":
-          description: OAuth client metadata updated successfully.
+          description: OAuth client metadata updated successfully without exposing a secret.
           headers:
             Cache-Control:
               description: Always set to `no-store`.
@@ -8165,10 +8330,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OAuthClientMetadataResponseData"
+                $ref: "#/components/schemas/OAuthClientAdminData"
               example:
                 client_id: 01970f22-2bf0-7000-8000-000000000010
-                client_secret: aurahistoria_oauth_client_secret_abcdefghijk_****
                 client_name: Updated acceptance OAuth client
                 tos_uri: https://client.example/updated-tos
                 policy_uri: https://client.example/updated-policy
@@ -8177,27 +8341,21 @@ paths:
                 redirect_uris:
                   - https://client.example/updated
                 scope:
-                  - listing-sources:manage
+                  - access-tokens:read
                 client_id_issued_at: 1748539200
         "400":
-          description:
-            Bad request — invalid or missing OAuth client path parameter, empty body, malformed JSON body, or invalid
-            OAuth client metadata.
+          description: Bad request — invalid client ID, empty/malformed body, null patch member, invalid redirect URI, or unsupported scope.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
               examples:
-                missing_client_id:
-                  summary: Missing OAuth client path parameter
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_PATH_PARAMETER_VALUE
-                    source:
-                      field: clientId
-                      sourceType: path
-                    detail: Missing path parameter clientId
                 invalid_client_id:
                   summary: Invalid OAuth client identifier
                   value:
@@ -8206,15 +8364,7 @@ paths:
                     error: INVALID_UUID
                     source:
                       field: clientId
-                      sourceType: path
-                    detail: invalid character in UUID
-                missing_body:
-                  summary: Missing request body
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_BODY_VALUE
-                    detail: Body cannot be empty
+                      sourceType: PATH
                 insecure_redirect_uri:
                   summary: Redirect URI must use HTTPS
                   value:
@@ -8223,27 +8373,29 @@ paths:
                     error: OAUTH_INVALID_CLIENT_METADATA
                     detail: "OAuth client metadata is invalid: OAuth redirect URI must use HTTPS: http://client.example/updated"
         "401":
-          description: Unauthorized — invalid or missing JWT token, or the OAuth client does not exist.
+          description: Unauthorized — invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              examples:
-                missing_bearer:
-                  summary: Missing or invalid bearer token
-                  value:
-                    status: 401
-                    title: Unauthorized
-                    error: UNAUTHORIZED
-                client_not_found:
-                  summary: OAuth client not found
-                  value:
-                    status: 401
-                    title: Unauthorized
-                    error: OAUTH_CLIENT_NOT_FOUND
-                    detail: OAuth client not found.
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
         "403":
-          description: Forbidden — the authenticated principal cannot administer OAuth clients. Delegated callers need `access-tokens:write`.
+          description: Forbidden — the caller is not an administrator or a delegated caller lacks `access-tokens:write`.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -8252,9 +8404,31 @@ paths:
                 status: 403
                 title: Forbidden
                 error: FORBIDDEN
-                detail: OAuth client administration requires access-tokens:write for delegated callers.
+                detail: OAuth client administration requires the ADMIN role; delegated callers also require access-tokens:write.
+        "404":
+          description: OAuth client was not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: OAUTH_CLIENT_NOT_FOUND
         "500":
-          description: Internal server error.
+          description: Internal authentication, authorization, or OAuth client update failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -8262,21 +8436,39 @@ paths:
               example:
                 status: 500
                 title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
+                error: OAUTH_INTERNAL_ERROR
+        "503":
+          description: Temporary authentication, authorization, or OAuth client update failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: OAUTH_TEMPORARILY_UNAVAILABLE
     delete:
-      summary: Delete OAuth client metadata
-      description: "Deletes one OAuth client metadata record.
+      summary: Delete OAuth client metadata for administration
+      description: |
+        Deletes one OAuth client metadata record for an authenticated administrator.
 
-        Requires an authenticated direct user, or a delegated Aura Historia access token with
-
-        `access-tokens:write`.
-
-        "
-      operationId: deleteOAuthClient
+        User and delegated-user principals must have the persisted `ADMIN` business role.
+        Delegated Aura Historia access-token callers must also have the `access-tokens:write`
+        capability. Deletion atomically invalidates pending authorization codes, OAuth-issued
+        Aura access tokens, and their one-time third-party exchange codes. The OAuth protocol
+        routes remain under `/api/v1/oauth`; this administrative mutation is not a protocol route.
+      operationId: adminDeleteOAuthClient
       tags:
         - OAuth
       security:
         - BearerAuth: []
+        - AccessTokenAuth: []
       parameters:
         - name: clientId
           in: path
@@ -8288,56 +8480,56 @@ paths:
           example: 01970f22-2bf0-7000-8000-000000000010
       responses:
         "204":
-          description: OAuth client metadata deleted successfully. Empty response body.
+          description: OAuth client and all client-issued credentials were deleted successfully.
+          headers:
+            Cache-Control:
+              description: Responses are never stored.
+              schema:
+                type: string
+              example: no-store
         "400":
-          description: Bad request — invalid or missing OAuth client path parameter.
+          description: Bad request — the OAuth client path parameter is not a valid UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              examples:
-                missing_client_id:
-                  summary: Missing OAuth client path parameter
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_PATH_PARAMETER_VALUE
-                    source:
-                      field: clientId
-                      sourceType: path
-                    detail: Missing path parameter clientId
-                invalid_client_id:
-                  summary: Invalid OAuth client identifier
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: INVALID_UUID
-                    source:
-                      field: clientId
-                      sourceType: path
-                    detail: invalid character in UUID
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: clientId
+                  sourceType: PATH
         "401":
-          description: Unauthorized — invalid or missing JWT token, or the OAuth client does not exist.
+          description: Unauthorized — invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              examples:
-                missing_bearer:
-                  summary: Missing or invalid bearer token
-                  value:
-                    status: 401
-                    title: Unauthorized
-                    error: UNAUTHORIZED
-                client_not_found:
-                  summary: OAuth client not found
-                  value:
-                    status: 401
-                    title: Unauthorized
-                    error: OAUTH_CLIENT_NOT_FOUND
-                    detail: OAuth client not found.
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
         "403":
-          description: Forbidden — the authenticated principal cannot administer OAuth clients. Delegated callers need `access-tokens:write`.
+          description: Forbidden — the caller is not an administrator or a delegated caller lacks `access-tokens:write`.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -8346,9 +8538,31 @@ paths:
                 status: 403
                 title: Forbidden
                 error: FORBIDDEN
-                detail: OAuth client administration requires access-tokens:write for delegated callers.
+                detail: OAuth client administration requires the ADMIN role; delegated callers also require access-tokens:write.
+        "404":
+          description: OAuth client was not found, including repeated deletion.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: OAUTH_CLIENT_NOT_FOUND
         "500":
-          description: Internal server error.
+          description: Internal authentication, authorization, or OAuth client deletion failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
           content:
             application/problem+json:
               schema:
@@ -8356,7 +8570,23 @@ paths:
               example:
                 status: 500
                 title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
+                error: OAUTH_INTERNAL_ERROR
+        "503":
+          description: Temporary authentication, authorization, or OAuth client deletion failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: OAUTH_TEMPORARILY_UNAVAILABLE
   /api/v1/listing-sources/by-slug/{listingSourceSlugId}:
     get:
       summary: Get a ListingSource by slug
@@ -8669,6 +8899,1102 @@ paths:
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
+  /api/v1/admin/overview:
+    get:
+      summary: Get the administrator operational overview
+      description: |
+        Returns a bounded landing-page summary for authenticated administrators. `schemaVersion` is
+        required so clients can select a compatible response decoder. Every counter is read from
+        authoritative PostgreSQL by one aggregate statement; OpenSearch and other rebuildable
+        projections are not used.
+
+        `listingSources.methodAssignments` counts source-method assignments, not distinct sources,
+        so its values may sum to more than `listingSources.total`. ProductListing availability
+        counts include only `ACTIVE` listings; `activeWithoutAvailability` identifies active rows
+        without a current source availability assertion. Responses contain no PII, secrets, or
+        embedded collections and always use `Cache-Control: no-store`.
+      operationId: getAdminOverview
+      tags:
+        - Administration
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "200":
+          description: Authoritative operational counters returned successfully.
+          headers:
+            Cache-Control:
+              description: Administrator overview responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOverviewData"
+        "401":
+          description: Missing or invalid bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: The caller does not have the persisted ADMIN role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+        "500":
+          description: An invalid authoritative read model or internal overview failure occurred.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: ADMIN_OVERVIEW_INTERNAL_ERROR
+        "503":
+          description: PostgreSQL or persisted administrator authorization is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: ADMIN_OVERVIEW_TEMPORARILY_UNAVAILABLE
+  /api/v1/admin/partnerships:
+    get:
+      summary: List Partnerships for administration
+      description: |
+        Lists active Partnerships for authenticated administrators.
+
+        Results use bounded keyset cursor pagination in fixed `created` descending, then
+        partnership UUID descending order. Page sizes are clamped to 1–100, with a default
+        of 21. The returned `searchAfter` value is a JSON-encoded
+        `[created RFC3339 timestamp, partnership UUID]` cursor; it is omitted on the terminal
+        page and should be sent with the same filters for the next page.
+
+        Optional `partyId`, `memberUserId`, and `listingSourceId` filters are exact UUID
+        matches and are combined when supplied. Each result is a safe summary containing
+        the Partnership ID, Party ID/immutable slug/name, member count, ListingSource-grant
+        count, and creation/update timestamps. Member identities, grant identities, Party
+        contact data, persistence versions, provider credentials, webhook secrets, and
+        crawler-local configuration are never returned. Responses always use
+        `Cache-Control: no-store`.
+      operationId: adminSearchPartnerships
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partyId
+          in: query
+          required: false
+          description: Optional exact Party UUID filter.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        - name: memberUserId
+          in: query
+          required: false
+          description: Optional exact member user UUID filter.
+          schema:
+            type: string
+            format: uuid
+          example: 660e8400-e29b-41d4-a716-446655440000
+        - name: listingSourceId
+          in: query
+          required: false
+          description: Optional exact ListingSource grant UUID filter.
+          schema:
+            type: string
+            format: uuid
+          example: 770e8400-e29b-41d4-a716-446655440000
+        - name: searchAfter
+          in: query
+          required: false
+          description: JSON-encoded `[created RFC3339 timestamp, partnership UUID]` cursor returned by the previous page.
+          schema:
+            type: string
+          example: '["2026-09-04T12:00:00Z","770e8400-e29b-41d4-a716-446655440000"]'
+        - name: size
+          in: query
+          required: false
+          description: Number of Partnership summaries requested per page. The server clamps values to 1–100.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+            default: 21
+          example: 21
+      responses:
+        "200":
+          description: Partnership summaries returned successfully.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only read.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPartnershipCollectionData"
+              example:
+                items:
+                  - partnershipId: 770e8400-e29b-41d4-a716-446655440000
+                    party:
+                      partyId: 550e8400-e29b-41d4-a716-446655440000
+                      partySlugId: safe-party
+                      name: Safe Party
+                    memberCount: 2
+                    listingSourceGrantCount: 3
+                    created: "2026-09-04T12:00:00Z"
+                    updated: "2026-09-04T13:00:00Z"
+                size: 21
+                searchAfter:
+                  - "2026-09-04T12:00:00Z"
+                  - 770e8400-e29b-41d4-a716-446655440000
+        "400":
+          description: Bad request - invalid Partnership query parameter.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: BAD_QUERY_PARAMETER_VALUE
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "500":
+          description: Internal authentication or Partnership search failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: PARTNERSHIP_INTERNAL_ERROR
+        "503":
+          description: Authentication, admin authorization, or Partnership search is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
+  /api/v1/admin/partnerships/{partnershipId}:
+    get:
+      summary: Get a Partnership for administration
+      description: |
+        Returns one established Partnership for an authenticated administrator.
+
+        The response includes the Partnership identity, its Party reference, current member user
+        references, and current ListingSource grant references. Member and grant references are
+        ordered by UUID and each array is bounded to at most 100 entries. `memberCount` and
+        `listingSourceGrantCount` are complete counts, including references beyond the bounded arrays.
+
+        Missing Partnerships return `PARTNERSHIP_NOT_FOUND`. All success and error responses use
+        `Cache-Control: no-store` because member user identifiers are returned.
+      operationId: adminGetPartnership
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partnershipId
+          in: path
+          required: true
+          description: Stable Partnership UUID.
+          schema:
+            type: string
+            format: uuid
+          example: 770e8400-e29b-41d4-a716-446655440000
+      responses:
+        "200":
+          description: Partnership details returned successfully.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because member user identifiers are returned.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPartnershipDetailsData"
+              example:
+                partnershipId: 770e8400-e29b-41d4-a716-446655440000
+                party:
+                  partyId: 550e8400-e29b-41d4-a716-446655440000
+                  partySlugId: safe-party
+                  name: Safe Party
+                memberUserIds:
+                  - 660e8400-e29b-41d4-a716-446655440000
+                  - 660e8400-e29b-41d4-a716-446655440001
+                listingSourceIds:
+                  - 990e8400-e29b-41d4-a716-446655440000
+                  - 990e8400-e29b-41d4-a716-446655440001
+                memberCount: 2
+                listingSourceGrantCount: 2
+                created: "2026-09-04T12:00:00Z"
+                updated: "2026-09-04T13:00:00Z"
+        "400":
+          description: Bad request - invalid Partnership UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: partnershipId
+                  sourceType: path
+                detail: Path parameter 'partnershipId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+        "404":
+          description: Partnership not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: PARTNERSHIP_NOT_FOUND
+        "500":
+          description: Internal authentication or Partnership detail failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: PARTNERSHIP_INTERNAL_ERROR
+        "503":
+          description: Authentication, admin authorization, or Partnership detail is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
+  /api/v1/admin/partnerships/{partnershipId}/listing-source-grants/{listingSourceId}:
+    put:
+      summary: Grant a ListingSource to a Partnership
+      description: |
+        Idempotently grants an existing ListingSource to an existing Partnership for an
+        authenticated administrator. The Partnership and ListingSource must belong to the same
+        Party; a mismatched Party is rejected with `409 CONFLICT`. An existing grant is a
+        successful no-op. The operation is committed in one PostgreSQL transaction and returns no
+        response body. All success and error responses use `Cache-Control: no-store`.
+      operationId: adminGrantPartnershipListingSource
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partnershipId
+          in: path
+          required: true
+          description: Stable Partnership UUID.
+          schema:
+            type: string
+            format: uuid
+          example: 770e8400-e29b-41d4-a716-446655440000
+        - name: listingSourceId
+          in: path
+          required: true
+          description: Existing ListingSource UUID to grant to the Partnership.
+          schema:
+            type: string
+            format: uuid
+          example: 990e8400-e29b-41d4-a716-446655440000
+      responses:
+        "204":
+          description: ListingSource grant created, or ListingSource grant already existed.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only mutation.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Bad request - invalid Partnership or ListingSource UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalidPartnershipId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: partnershipId
+                      type: PATH
+                    detail: Path parameter 'partnershipId' must be a UUID.
+                invalidListingSourceId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: listingSourceId
+                      type: PATH
+                    detail: Path parameter 'listingSourceId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: Partnership or ListingSource not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                partnershipNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: PARTNERSHIP_NOT_FOUND
+                    detail: Partnership was not found.
+                listingSourceNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: LISTING_SOURCE_NOT_FOUND
+                    detail: Listing source was not found.
+        "409":
+          description: Partnership and ListingSource belong to different Parties.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 409
+                title: Conflict
+                error: CONFLICT
+                detail: Partnership and ListingSource belong to different Parties.
+        "500":
+          description: Internal Partnership ListingSource grant failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: PARTNERSHIP_INTERNAL_ERROR
+        "503":
+          description: Authentication, admin authorization, transaction, or Partnership ListingSource grant persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
+    delete:
+      summary: Revoke a ListingSource from a Partnership
+      description: |
+        Idempotently removes an existing ListingSource grant from an existing Partnership for an
+        authenticated administrator. Only the targeted Partnership/ListingSource join row is
+        removed; the Partnership, ListingSource, members, and historical PartnershipApplications
+        are preserved. An absent grant is a successful no-op. The operation is committed in one
+        PostgreSQL transaction and returns no response body. All success and error responses use
+        `Cache-Control: no-store`.
+      operationId: adminRevokePartnershipListingSource
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partnershipId
+          in: path
+          required: true
+          description: Stable Partnership UUID.
+          schema:
+            type: string
+            format: uuid
+          example: 770e8400-e29b-41d4-a716-446655440000
+        - name: listingSourceId
+          in: path
+          required: true
+          description: Existing ListingSource UUID whose Partnership grant should be revoked.
+          schema:
+            type: string
+            format: uuid
+          example: 990e8400-e29b-41d4-a716-446655440000
+      responses:
+        "204":
+          description: ListingSource grant removed, or ListingSource grant was already absent.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only mutation.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Bad request - invalid Partnership or ListingSource UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalidPartnershipId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: partnershipId
+                      type: PATH
+                    detail: Path parameter 'partnershipId' must be a UUID.
+                invalidListingSourceId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: listingSourceId
+                      type: PATH
+                    detail: Path parameter 'listingSourceId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: Partnership or ListingSource not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                partnershipNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: PARTNERSHIP_NOT_FOUND
+                    detail: Partnership was not found.
+                listingSourceNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: LISTING_SOURCE_NOT_FOUND
+                    detail: Listing source was not found.
+        "500":
+          description: Internal Partnership ListingSource grant revocation failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: PARTNERSHIP_INTERNAL_ERROR
+        "503":
+          description: Authentication, admin authorization, transaction, or Partnership ListingSource grant revocation persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
+  /api/v1/admin/partnerships/{partnershipId}/members/{userId}:
+    put:
+      summary: Grant a user membership in a Partnership
+      description: |
+        Idempotently grants the target user membership in the specified Partnership for an
+        authenticated administrator. The target user and Partnership must already exist. An
+        existing membership is a successful no-op. The operation is committed in one PostgreSQL
+        transaction and returns no response body. All success and error responses use
+        `Cache-Control: no-store`.
+      operationId: adminGrantPartnershipMembership
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partnershipId
+          in: path
+          required: true
+          description: Stable Partnership UUID.
+          schema:
+            type: string
+            format: uuid
+          example: 770e8400-e29b-41d4-a716-446655440000
+        - name: userId
+          in: path
+          required: true
+          description: Existing user UUID to add as a Partnership member.
+          schema:
+            type: string
+            format: uuid
+          example: 660e8400-e29b-41d4-a716-446655440000
+      responses:
+        "204":
+          description: Membership granted, or membership already existed.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only mutation.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Bad request - invalid Partnership or user UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalidPartnershipId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: partnershipId
+                      type: PATH
+                    detail: Path parameter 'partnershipId' must be a UUID.
+                invalidUserId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: userId
+                      type: PATH
+                    detail: Path parameter 'userId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: Partnership or target user not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                partnershipNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: PARTNERSHIP_NOT_FOUND
+                    detail: Partnership was not found.
+                userNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: USER_NOT_FOUND
+                    detail: User was not found.
+        "500":
+          description: Internal Partnership membership failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: PARTNERSHIP_INTERNAL_ERROR
+        "503":
+          description: Authentication, admin authorization, transaction, or Partnership membership persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
+    delete:
+      summary: Revoke a user membership in a Partnership
+      description: |
+        Idempotently removes the target user membership from the specified Partnership for an
+        authenticated administrator. The target user and Partnership must already exist. A missing
+        membership is a successful no-op. Only the membership row is removed; the user, Partnership,
+        ListingSource, and historical PartnershipApplication records are preserved. The operation is
+        committed in one PostgreSQL transaction and returns no response body. All success and error
+        responses use `Cache-Control: no-store`.
+      operationId: adminRevokePartnershipMembership
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partnershipId
+          in: path
+          required: true
+          description: Stable Partnership UUID.
+          schema:
+            type: string
+            format: uuid
+          example: 770e8400-e29b-41d4-a716-446655440000
+        - name: userId
+          in: path
+          required: true
+          description: Existing user UUID to remove from the Partnership.
+          schema:
+            type: string
+            format: uuid
+          example: 660e8400-e29b-41d4-a716-446655440000
+      responses:
+        "204":
+          description: Membership removed, or membership was already absent.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only mutation.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Bad request - invalid Partnership or user UUID.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalidPartnershipId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: partnershipId
+                      type: PATH
+                    detail: Path parameter 'partnershipId' must be a UUID.
+                invalidUserId:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: userId
+                      type: PATH
+                    detail: Path parameter 'userId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: Partnership or target user not found.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                partnershipNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: PARTNERSHIP_NOT_FOUND
+                    detail: Partnership was not found.
+                userNotFound:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: USER_NOT_FOUND
+                    detail: User was not found.
+        "500":
+          description: Internal Partnership membership failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: PARTNERSHIP_INTERNAL_ERROR
+        "503":
+          description: Authentication, admin authorization, transaction, or Partnership membership persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
   /api/v1/admin/partnership-applications:
     get:
       summary: Search PartnershipApplications for administration
@@ -10912,16 +12238,20 @@ components:
     AccessTokenScopeData:
       type: string
       enum:
-        - listing-sources:manage
         - product-listings:write
-      description: "Aura Historia access-token scope string.
+        - users:read
+        - users:write
+        - access-tokens:read
+        - access-tokens:write
+        - search-filters:write
+        - watchlist:read
+        - watchlist:write
+      description: "Aura Historia access-token and OAuth scope string.
 
-        - `listing-sources:manage`: reserved for listing source-management flows
-
-        - `product-listings:write`: required for partner batch product ingestion
+        The value is one of the capabilities supported by the canonical access-token and OAuth flows.
 
         "
-      example: product-listings:write
+      example: access-tokens:read
     AccessTokenTypeData:
       type: string
       enum:
@@ -11171,14 +12501,15 @@ components:
           items:
             $ref: "#/components/schemas/AccessTokenScopeData"
           example:
-            - listing-sources:manage
+            - access-tokens:read
     OAuthClientMetadataResponseData:
       type: object
-      description: "OAuth client metadata read model.
+      description: "OAuth client metadata create response.
 
         `client_secret` contains the plaintext secret only in the create response.
 
-        List/get/update responses return a masked secret display value instead.
+        Admin list, detail, and update responses use `OAuthClientAdminData` and omit
+        `client_secret` entirely.
 
         "
       required:
@@ -11200,12 +12531,13 @@ components:
           example: 01970f22-2bf0-7000-8000-000000000010
         client_secret:
           type: string
-          description: "OAuth client secret.
+          description:
+            "Plaintext OAuth client secret returned only once by the create response.
 
-            Create responses return the plaintext secret once; later reads return a masked value such as `aurahistoria_oauth_client_secret_abcdefghijk_****`.
+            Admin list, detail, and update responses omit this property entirely.
 
             "
-          example: aurahistoria_oauth_client_secret_abcdefghijk_****
+          example: aurahistoria_oauth_client_secret_abcdefghijk_abcdefghijklmnopqrstuvwxyz1234567
         client_name:
           type: string
           description: Display name of the OAuth client.
@@ -11247,6 +12579,124 @@ components:
             $ref: "#/components/schemas/AccessTokenScopeData"
           example:
             - product-listings:write
+        client_id_issued_at:
+          type: integer
+          format: int64
+          description: Unix timestamp (seconds) when the OAuth client was created and its client ID was issued.
+          example: 1748539200
+    OAuthClientAdminCollectionData:
+      type: object
+      description:
+        "Cursor-paginated OAuth client summaries for the administrator collection endpoint.
+
+        `searchAfter` is a `[created RFC3339 timestamp, client UUID]` cursor and is omitted
+
+        when the current page is terminal. The collection and its items never contain client
+
+        secret plaintext, secret hashes, or masked secret values.
+
+        "
+      required:
+        - items
+        - size
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OAuthClientAdminData"
+          description: OAuth client summaries returned in the current page.
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100
+          description: Requested page size after server-side clamping.
+          example: 21
+        searchAfter:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: string
+          description: "`[created RFC3339 timestamp, client UUID]` cursor for the next page, omitted when no more results are available."
+          nullable: true
+          example:
+            - "2026-09-04T12:00:00Z"
+            - 01970f22-2bf0-7000-8000-000000000010
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Total matching OAuth clients when provided by the reader; omitted otherwise.
+          nullable: true
+          example: 42
+    OAuthClientAdminData:
+      type: object
+      description:
+        "Secret-free OAuth client metadata returned by the admin OAuth client collection,
+
+        detail, and update endpoints under `/api/v1/admin/oauth-clients`.
+
+        This schema intentionally has no `client_secret` property.
+
+        "
+      required:
+        - client_id
+        - client_name
+        - tos_uri
+        - policy_uri
+        - client_uri
+        - logo_uri
+        - redirect_uris
+        - scope
+        - client_id_issued_at
+      properties:
+        client_id:
+          type: string
+          format: uuid
+          description: UUIDv7 identifier of the OAuth client.
+          example: 01970f22-2bf0-7000-8000-000000000010
+        client_name:
+          type: string
+          description: Display name of the OAuth client.
+          example: Dashboard integration
+        tos_uri:
+          type: string
+          format: uri
+          description: Terms-of-service document URL registered for the OAuth client.
+          example: https://client.example/tos
+        policy_uri:
+          type: string
+          format: uri
+          description: Privacy-policy document URL registered for the OAuth client.
+          example: https://client.example/policy
+        client_uri:
+          type: string
+          format: uri
+          description: Homepage or product-site URL registered for the OAuth client.
+          example: https://client.example
+        logo_uri:
+          type: string
+          format: uri
+          description: Logo image URL registered for the OAuth client.
+          example: https://client.example/logo.png
+        redirect_uris:
+          type: array
+          uniqueItems: true
+          description: Registered redirect URIs for the OAuth client.
+          items:
+            type: string
+            format: uri
+          example:
+            - https://client.example/callback
+        scope:
+          type: array
+          uniqueItems: true
+          description: Allowed scopes for tokens issued to this OAuth client.
+          items:
+            $ref: "#/components/schemas/AccessTokenScopeData"
+          example:
+            - access-tokens:read
         client_id_issued_at:
           type: integer
           format: int64
@@ -12586,6 +14036,299 @@ components:
           minimum: 0
           description: WooCommerce product identifier. It is converted to the internal `sourceListingId`.
           example: 17
+
+    AdminOverviewData:
+      type: object
+      description: Versioned bounded administrator operational summary sourced from authoritative PostgreSQL.
+      required:
+        - schemaVersion
+        - users
+        - partnershipApplications
+        - parties
+        - listingSources
+        - partnerships
+        - productListings
+      properties:
+        schemaVersion:
+          type: integer
+          minimum: 1
+          enum: [1]
+          description: Response contract version.
+        users:
+          $ref: "#/components/schemas/AdminOverviewUsersData"
+        partnershipApplications:
+          $ref: "#/components/schemas/AdminOverviewPartnershipApplicationsData"
+        parties:
+          $ref: "#/components/schemas/AdminOverviewCountData"
+        listingSources:
+          $ref: "#/components/schemas/AdminOverviewListingSourcesData"
+        partnerships:
+          $ref: "#/components/schemas/AdminOverviewCountData"
+        productListings:
+          $ref: "#/components/schemas/AdminOverviewProductListingsData"
+    AdminOverviewCountData:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminOverviewUsersData:
+      type: object
+      required: [total, byTier, byRole]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        byTier:
+          $ref: "#/components/schemas/AdminOverviewUserTierCountsData"
+        byRole:
+          $ref: "#/components/schemas/AdminOverviewUserRoleCountsData"
+    AdminOverviewUserTierCountsData:
+      type: object
+      required: [free, pro, ultimate]
+      properties:
+        free: { type: integer, format: int64, minimum: 0 }
+        pro: { type: integer, format: int64, minimum: 0 }
+        ultimate: { type: integer, format: int64, minimum: 0 }
+    AdminOverviewUserRoleCountsData:
+      type: object
+      required: [user, admin]
+      properties:
+        user: { type: integer, format: int64, minimum: 0 }
+        admin: { type: integer, format: int64, minimum: 0 }
+    AdminOverviewPartnershipApplicationsData:
+      type: object
+      required: [total, byState]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        byState:
+          $ref: "#/components/schemas/AdminOverviewPartnershipApplicationStateCountsData"
+    AdminOverviewPartnershipApplicationStateCountsData:
+      type: object
+      required: [submitted, inReview, approved, rejected, withdrawn]
+      properties:
+        submitted: { type: integer, format: int64, minimum: 0 }
+        inReview: { type: integer, format: int64, minimum: 0 }
+        approved: { type: integer, format: int64, minimum: 0 }
+        rejected: { type: integer, format: int64, minimum: 0 }
+        withdrawn: { type: integer, format: int64, minimum: 0 }
+    AdminOverviewListingSourcesData:
+      type: object
+      description: "methodAssignments counts source-method rows and need not sum to total."
+      required: [total, withoutIngestionMethod, methodAssignments]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        withoutIngestionMethod:
+          type: integer
+          format: int64
+          minimum: 0
+        methodAssignments:
+          $ref: "#/components/schemas/AdminOverviewListingSourceMethodAssignmentCountsData"
+    AdminOverviewListingSourceMethodAssignmentCountsData:
+      type: object
+      required: [webCrawl, shopify, woocommerce, partnerApi]
+      properties:
+        webCrawl: { type: integer, format: int64, minimum: 0 }
+        shopify: { type: integer, format: int64, minimum: 0 }
+        woocommerce: { type: integer, format: int64, minimum: 0 }
+        partnerApi: { type: integer, format: int64, minimum: 0 }
+    AdminOverviewProductListingsData:
+      type: object
+      description: Availability counts include ACTIVE listings only.
+      required:
+        [total, byLifecycle, activeAvailability, activeWithoutAvailability]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        byLifecycle:
+          $ref: "#/components/schemas/AdminOverviewProductListingLifecycleCountsData"
+        activeAvailability:
+          $ref: "#/components/schemas/AdminOverviewActiveListingAvailabilityCountsData"
+        activeWithoutAvailability:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminOverviewProductListingLifecycleCountsData:
+      type: object
+      required: [active, withdrawn]
+      properties:
+        active: { type: integer, format: int64, minimum: 0 }
+        withdrawn: { type: integer, format: int64, minimum: 0 }
+    AdminOverviewActiveListingAvailabilityCountsData:
+      type: object
+      required:
+        [
+          available,
+          inStock,
+          limitedAvailability,
+          backOrder,
+          madeToOrder,
+          preOrder,
+          preSale,
+          unavailable,
+          reserved,
+          outOfStock,
+          soldOut,
+        ]
+      properties:
+        available: { type: integer, format: int64, minimum: 0 }
+        inStock: { type: integer, format: int64, minimum: 0 }
+        limitedAvailability: { type: integer, format: int64, minimum: 0 }
+        backOrder: { type: integer, format: int64, minimum: 0 }
+        madeToOrder: { type: integer, format: int64, minimum: 0 }
+        preOrder: { type: integer, format: int64, minimum: 0 }
+        preSale: { type: integer, format: int64, minimum: 0 }
+        unavailable: { type: integer, format: int64, minimum: 0 }
+        reserved: { type: integer, format: int64, minimum: 0 }
+        outOfStock: { type: integer, format: int64, minimum: 0 }
+        soldOut: { type: integer, format: int64, minimum: 0 }
+    AdminPartnershipCollectionData:
+      type: object
+      description: "Cursor-paginated safe Partnership summaries for the admin collection. `searchAfter` is omitted on the terminal page; no total is returned."
+      required:
+        - items
+        - size
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminPartnershipSummaryData"
+          description: Partnership summaries returned in the current page.
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100
+          description: Requested page size after server-side clamping.
+          example: 21
+        searchAfter:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: string
+          description: Partnership cursor for the next page, omitted when no more results are available.
+          example:
+            - "2026-09-04T12:00:00Z"
+            - 770e8400-e29b-41d4-a716-446655440000
+    AdminPartnershipDetailsData:
+      type: object
+      description: "Administrator Partnership detail. Member and ListingSource reference arrays are ordered by UUID and capped at 100 entries; count fields are complete."
+      required:
+        - partnershipId
+        - party
+        - memberUserIds
+        - listingSourceIds
+        - memberCount
+        - listingSourceGrantCount
+        - created
+        - updated
+      properties:
+        partnershipId:
+          type: string
+          format: uuid
+          description: Stable Partnership identifier.
+        party:
+          $ref: "#/components/schemas/PartnershipPartySummaryData"
+        memberUserIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Current member user UUIDs in deterministic ascending UUID order. At most 100 references are returned.
+          items:
+            type: string
+            format: uuid
+        listingSourceIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Current ListingSource grant UUIDs in deterministic ascending UUID order. At most 100 references are returned.
+          items:
+            type: string
+            format: uuid
+        memberCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Complete number of current Partnership members.
+        listingSourceGrantCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Complete number of current ListingSource grants.
+        created:
+          type: string
+          format: date-time
+          description: When the Partnership was created.
+        updated:
+          type: string
+          format: date-time
+          description: When the Partnership was last updated.
+    AdminPartnershipSummaryData:
+      type: object
+      description: "Safe administrator Partnership summary. Member/grant identities, Party contact data, persistence versions, and credentials are excluded."
+      required:
+        - partnershipId
+        - party
+        - memberCount
+        - listingSourceGrantCount
+        - created
+        - updated
+      properties:
+        partnershipId:
+          type: string
+          format: uuid
+          description: Stable Partnership identifier.
+        party:
+          $ref: "#/components/schemas/PartnershipPartySummaryData"
+        memberCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of users in the Partnership.
+        listingSourceGrantCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of ListingSource grants in the Partnership.
+        created:
+          type: string
+          format: date-time
+          description: When the Partnership was created.
+        updated:
+          type: string
+          format: date-time
+          description: When the Partnership was last updated.
+    PartnershipPartySummaryData:
+      type: object
+      description: Party summary embedded in an administrator Partnership result.
+      required:
+        - partyId
+        - partySlugId
+        - name
+      properties:
+        partyId:
+          type: string
+          format: uuid
+          description: Stable Party identifier.
+        partySlugId:
+          type: string
+          description: Immutable Party slug identifier.
+        name:
+          type: string
+          maxLength: 255
+          description: Party name.
     PartnershipApplicationStateData:
       type: string
       enum:
@@ -13131,6 +14874,7 @@ x-tagGroups:
       - Newsletter
   - name: Partner & Platform Integrations
     tags:
+      - Partnerships
       - PartnershipApplications
       - OAuth
 
@@ -13155,6 +14899,8 @@ tags:
     description: Stripe checkout, billing-portal, and subscription-management session creation for authenticated users.
   - name: Newsletter
     description: Newsletter subscription upsert workflows for website or product-surface sign-up flows.
+  - name: Partnerships
+    description: Partnership administration, safe summary reads, and membership/ListingSource count workflows.
   - name: PartnershipApplications
     description: Partnership application submission, review tracking, administration, and decision workflows.
   - name: OAuth

@@ -1,6 +1,9 @@
+use application::pagination::Cursor;
 use application::transaction::{Transaction, UnitOfWork};
 use credential_core::{oauth_client_id::OAuthClientId, scope::Scope};
+use domain_primitives::query::text_query::TextQuery;
 use oauth_core::{
+    OAuthClientSearch,
     authorization_code::{
         AuthorizationCode, CodeChallengeMethod, OAuthAuthorizationCode, OAuthCodeChallenge,
         RehydratedAuthorizationCodeState,
@@ -13,14 +16,16 @@ use oauth_core::{
 };
 use oauth_postgres::{
     SqlxAuthorizationCodeRepositoryFactory, SqlxOAuthClientAuthenticationReader,
-    SqlxOAuthClientRepositoryFactory, SqlxThirdPartyExchangeCodeRepositoryFactory,
+    SqlxOAuthClientListReader, SqlxOAuthClientRepositoryFactory,
+    SqlxThirdPartyExchangeCodeRepositoryFactory,
 };
 use oauth_service::ports::{
     AuthorizationCodeRepository, AuthorizationCodeRepositoryFactory,
-    OAuthClientAuthenticationReader, OAuthClientRepository, OAuthClientRepositoryError,
-    OAuthClientRepositoryFactory, OAuthCodeRepositoryError, ThirdPartyExchangeCodeRepository,
-    ThirdPartyExchangeCodeRepositoryFactory,
+    OAuthClientAuthenticationReader, OAuthClientListReader, OAuthClientRepository,
+    OAuthClientRepositoryError, OAuthClientRepositoryFactory, OAuthCodeRepositoryError,
+    ThirdPartyExchangeCodeRepository, ThirdPartyExchangeCodeRepositoryFactory,
 };
+use oauth_service::use_cases::ListOAuthClientsRequest;
 use platform_postgres::SqlxUnitOfWork;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -93,7 +98,9 @@ async fn should_consume_authorization_code_once_and_allow_one_concurrent_consume
 async fn should_consume_third_party_exchange_code_once_and_allow_one_concurrent_consumer() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pool = get_postgres_client().await;
+        let user_id = seed_user(&pool).await?;
         let grant = third_party_exchange_code_grant();
+        seed_access_token_for_grant(&pool, &grant, user_id).await?;
         let code_value = grant.code();
         insert_third_party_exchange_code(pool.clone(), grant.clone()).await?;
 
@@ -110,6 +117,7 @@ async fn should_consume_third_party_exchange_code_once_and_allow_one_concurrent_
         );
 
         let concurrent_grant = third_party_exchange_code_grant();
+        seed_access_token_for_grant(&pool, &concurrent_grant, user_id).await?;
         let code_value = concurrent_grant.code();
         insert_third_party_exchange_code(pool.clone(), concurrent_grant).await?;
         let (first, second) = tokio::join!(
@@ -244,6 +252,7 @@ async fn should_classify_duplicate_oauth_writes_as_conflicts() {
         ));
 
         let grant = third_party_exchange_code_grant();
+        seed_access_token_for_grant(&pool, &grant, user_id).await?;
         insert_third_party_exchange_code(pool.clone(), grant.clone()).await?;
         let duplicate = insert_third_party_exchange_code(pool, grant).await;
         let duplicate_error = match duplicate {
@@ -299,6 +308,103 @@ async fn should_reject_invalid_persisted_redirect_uris() {
     assert!(
         result.is_ok(),
         "invalid persisted redirect URIs must be rejected: {result:?}"
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_search_oauth_clients_with_bounded_deterministic_cursor() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let first = oauth_client(OAuthClientId::new(), "List Reader Alpha")?;
+        let second = oauth_client(OAuthClientId::new(), "List Reader Beta")?;
+        let third = oauth_client(OAuthClientId::new(), "List Reader Gamma")?;
+        let first_inserted = insert_oauth_client(pool.clone(), &first).await?;
+        let second_inserted = insert_oauth_client(pool.clone(), &second).await?;
+        let third_inserted = insert_oauth_client(pool.clone(), &third).await?;
+
+        let mut expected = [
+            (first_inserted.created, first.client_id()),
+            (second_inserted.created, second.client_id()),
+            (third_inserted.created, third.client_id()),
+        ];
+        expected.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.to_string().cmp(&right.1.to_string()))
+        });
+        let search = OAuthClientSearch {
+            name_query: Some(TextQuery::try_from("list reader")?),
+            ..Default::default()
+        };
+        let reader = SqlxOAuthClientListReader::new(pool);
+        let first_page = reader
+            .search(&ListOAuthClientsRequest {
+                search: search.clone(),
+                cursor: Some(Cursor {
+                    size: 2,
+                    search_after: None,
+                }),
+            })
+            .await?;
+        let expected_ids = expected
+            .iter()
+            .map(|(_, client_id)| *client_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expected_ids[..2].to_vec(),
+            first_page
+                .items
+                .iter()
+                .map(|item| item.client_id)
+                .collect::<Vec<_>>()
+        );
+        assert!(first_page.cursor.search_after.is_some());
+
+        let second_page = reader
+            .search(&ListOAuthClientsRequest {
+                search,
+                cursor: Some(Cursor {
+                    size: 2,
+                    search_after: first_page.cursor.search_after,
+                }),
+            })
+            .await?;
+        assert_eq!(
+            vec![expected[2].1],
+            second_page
+                .items
+                .iter()
+                .map(|item| item.client_id)
+                .collect::<Vec<_>>()
+        );
+        assert!(second_page.cursor.search_after.is_none());
+
+        let exact = reader
+            .search(&ListOAuthClientsRequest {
+                search: OAuthClientSearch {
+                    client_id: Some(second.client_id()),
+                    ..Default::default()
+                },
+                cursor: None,
+            })
+            .await?;
+        assert_eq!(
+            vec![second.client_id()],
+            exact
+                .items
+                .iter()
+                .map(|item| item.client_id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(2, first_page.cursor.size);
+        assert_eq!(21, exact.cursor.size);
+        Ok(())
+    }
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "OAuth client list reader integration test failed: {result:?}"
     );
 }
 
@@ -363,10 +469,32 @@ fn authorization_code(
     ))
 }
 
+async fn seed_access_token_for_grant(
+    pool: &PgPool,
+    grant: &ThirdPartyExchangeCodeGrant,
+    user_id: UserId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let hashed = user_core::access_token::HashedRawAccessToken::from(grant.access_token().clone());
+    sqlx::query(
+        "INSERT INTO access_tokens (access_token_id, user_id, token_short, token_hash, name, scopes, origin) \
+         VALUES ($1, $2, $3, $4, $5, $6, 'USER')",
+    )
+    .bind(Uuid::parse_str(&grant.access_token_id().to_string())?)
+    .bind(Uuid::parse_str(&user_id.to_string())?)
+    .bind(hashed.short_token())
+    .bind(hashed.long_token_hash())
+    .bind("third-party exchange test token")
+    .bind(vec!["product-listings:write"])
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 fn third_party_exchange_code_grant() -> ThirdPartyExchangeCodeGrant {
     let now = OffsetDateTime::now_utc();
     ThirdPartyExchangeCodeGrant::create(RehydratedThirdPartyExchangeCodeGrantState {
         code: ThirdPartyExchangeCode::from(Uuid::now_v7()),
+        access_token_id: user_core::access_token::AccessTokenId::new(),
         access_token: RawAccessToken::new(),
         access_token_expires: Some(now + Duration::minutes(10)),
         scopes: HashSet::from([Scope::ProductListingsWrite]),

@@ -1,6 +1,6 @@
 use crate::error::OAuthServiceError;
 use crate::ports::{OAuthClientRepository, OAuthClientRepositoryFactory, OAuthClientView};
-use crate::use_cases::support::authorize_oauth_admin;
+use crate::use_cases::support::{authorize_oauth_admin, authorize_oauth_client_admin};
 use application::operation_context::OperationContext;
 use application::transaction::{Transaction, UnitOfWork};
 use credential_core::oauth_client_id::OAuthClientId;
@@ -10,6 +10,7 @@ use oauth_core::client::{
 use std::collections::HashSet;
 use url::Url;
 use user_core::access_token::{HashedRawOAuthClientSecret, RawOAuthClientSecret, Scope};
+use user_service::use_cases::queries::check_user_admin::CheckUserAdminUseCase;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateOAuthClientCommand {
@@ -37,31 +38,48 @@ pub trait CreateOAuthClientUseCase: Send + Sync {
     ) -> Result<CreateOAuthClientResult, OAuthServiceError>;
 }
 
-pub struct CreateOAuthClientHandler<U, C> {
+pub struct CreateOAuthClientHandler<U, C, A> {
     unit_of_work: U,
     clients: C,
+    check_user_admin: A,
 }
-impl<U, C> CreateOAuthClientHandler<U, C> {
-    pub fn new(unit_of_work: U, clients: C) -> Self {
+impl<U, C, A> CreateOAuthClientHandler<U, C, A> {
+    pub fn new(unit_of_work: U, clients: C, check_user_admin: A) -> Self {
         Self {
             unit_of_work,
             clients,
+            check_user_admin,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, C> CreateOAuthClientUseCase for CreateOAuthClientHandler<U, C>
+impl<U, C, A> CreateOAuthClientUseCase for CreateOAuthClientHandler<U, C, A>
 where
     U: UnitOfWork,
     C: OAuthClientRepositoryFactory<U::Tx>,
+    A: CheckUserAdminUseCase,
 {
+    #[tracing::instrument(
+        name = "create_oauth_client",
+        skip_all,
+        fields(
+            principal_type = context.principal.kind(),
+            actor_id = tracing::field::Empty,
+            request_id = %context.request_id,
+            correlation_id = %context.correlation_id,
+        )
+    )]
     async fn execute(
         &self,
         context: &OperationContext,
         command: CreateOAuthClientCommand,
     ) -> Result<CreateOAuthClientResult, OAuthServiceError> {
+        if let Some(actor_id) = context.principal.actor_id() {
+            tracing::Span::current().record("actor_id", tracing::field::display(actor_id));
+        }
         authorize_oauth_admin(context)?;
+        authorize_oauth_client_admin(context, &self.check_user_admin).await?;
         let redirect_uris = OAuthRedirectUris::try_from(command.redirect_uris)
             .map_err(|error| OAuthServiceError::InvalidClientMetadata(error.to_string()))?;
 

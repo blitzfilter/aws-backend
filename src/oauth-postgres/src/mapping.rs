@@ -16,7 +16,7 @@ use oauth_core::third_party_exchange_code::{
 };
 use oauth_service::ports::{OAuthClientStorageVersion, PersistedOAuthClient, VersionedOAuthClient};
 use std::collections::HashSet;
-use user_core::access_token::{HashedRawOAuthClientSecret, RawAccessToken};
+use user_core::access_token::{AccessTokenId, HashedRawOAuthClientSecret, RawAccessToken};
 use user_core::user_id::UserId;
 use uuid::Uuid;
 
@@ -31,7 +31,7 @@ pub(crate) const AUTHORIZATION_CODE_COLUMNS: &str = "\
     authorization_code AS code, client_id, user_id, redirect_uri, scopes, code_challenge, \
     code_challenge_method, expires_at AS expires";
 pub(crate) const THIRD_PARTY_EXCHANGE_CODE_COLUMNS: &str = "\
-    third_party_exchange_code AS code, access_token, \
+    third_party_exchange_code AS code, access_token_id, access_token, \
     access_token_expires_at AS access_token_expires, scopes, expires_at AS expires";
 
 #[allow(clippy::enum_variant_names)]
@@ -132,6 +132,7 @@ impl TryFrom<ThirdPartyExchangeCodeRow> for ThirdPartyExchangeCodeGrant {
         Ok(ThirdPartyExchangeCodeGrant::rehydrate(
             RehydratedThirdPartyExchangeCodeGrantState {
                 code: ThirdPartyExchangeCode::from(row.code),
+                access_token_id: AccessTokenId::from(row.access_token_id),
                 access_token: RawAccessToken::try_from(row.access_token)
                     .map_err(OAuthRowMappingError::InvalidAccessToken)?,
                 access_token_expires: row.access_token_expires,
@@ -156,6 +157,12 @@ pub(crate) fn third_party_exchange_code_uuid(
     code: &ThirdPartyExchangeCode,
 ) -> Result<Uuid, OAuthRowMappingError> {
     Uuid::parse_str(&code.to_string()).map_err(OAuthRowMappingError::InvalidIdentifier)
+}
+
+pub(crate) fn access_token_id_uuid(
+    access_token_id: AccessTokenId,
+) -> Result<Uuid, OAuthRowMappingError> {
+    Uuid::parse_str(&access_token_id.to_string()).map_err(OAuthRowMappingError::InvalidIdentifier)
 }
 
 pub(crate) fn scope_values(scopes: &HashSet<Scope>) -> Vec<String> {

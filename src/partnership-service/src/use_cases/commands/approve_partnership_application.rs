@@ -810,6 +810,23 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PartnershipRepository for FakePartnershipRepository {
+        async fn find_by_id(
+            &mut self,
+            partnership_id: PartnershipId,
+        ) -> Result<Option<VersionedPartnership>, PartnershipRepositoryError> {
+            let state = lock(&self.state);
+            let version = PartnershipStorageVersion::try_from(1_i64).map_err(|error| {
+                PartnershipRepositoryError::Internal {
+                    source: box_error(error),
+                }
+            })?;
+            Ok(state
+                .partnership
+                .clone()
+                .filter(|partnership| partnership.id() == partnership_id)
+                .map(|partnership| Versioned::new(partnership, version)))
+        }
+
         async fn find_or_create_for_party(
             &mut self,
             party_id: PartyId,
@@ -844,11 +861,26 @@ mod tests {
             &mut self,
             user_id: user_core::user_id::UserId,
             partnership_id: PartnershipId,
-        ) -> Result<(), PartnershipGrantError> {
+        ) -> Result<PartnershipMembershipAddOutcome, PartnershipGrantError> {
             lock(&self.state)
                 .memberships
                 .insert((user_id, partnership_id));
-            Ok(())
+            Ok(PartnershipMembershipAddOutcome::Added)
+        }
+
+        async fn remove_member(
+            &mut self,
+            user_id: user_core::user_id::UserId,
+            partnership_id: PartnershipId,
+        ) -> Result<PartnershipMembershipRemoveOutcome, PartnershipGrantError> {
+            let removed = lock(&self.state)
+                .memberships
+                .remove(&(user_id, partnership_id));
+            Ok(if removed {
+                PartnershipMembershipRemoveOutcome::Removed
+            } else {
+                PartnershipMembershipRemoveOutcome::AlreadyAbsent
+            })
         }
     }
 
@@ -858,11 +890,30 @@ mod tests {
             &mut self,
             partnership_id: PartnershipId,
             listing_source_id: ListingSourceId,
-        ) -> Result<(), PartnershipGrantError> {
-            lock(&self.state)
+        ) -> Result<ListingSourceGrantOutcome, PartnershipGrantError> {
+            let added = lock(&self.state)
                 .grants
                 .insert((partnership_id, listing_source_id));
-            Ok(())
+            Ok(if added {
+                ListingSourceGrantOutcome::Granted
+            } else {
+                ListingSourceGrantOutcome::AlreadyGranted
+            })
+        }
+
+        async fn remove_source_access(
+            &mut self,
+            partnership_id: PartnershipId,
+            listing_source_id: ListingSourceId,
+        ) -> Result<ListingSourceGrantRemoveOutcome, PartnershipGrantError> {
+            let removed = lock(&self.state)
+                .grants
+                .remove(&(partnership_id, listing_source_id));
+            Ok(if removed {
+                ListingSourceGrantRemoveOutcome::Removed
+            } else {
+                ListingSourceGrantRemoveOutcome::AlreadyAbsent
+            })
         }
     }
 

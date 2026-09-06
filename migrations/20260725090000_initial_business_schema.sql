@@ -207,6 +207,10 @@ CREATE TABLE partnerships (
     CONSTRAINT partnerships_version_positive CHECK (version >= 1)
 );
 
+CREATE INDEX partnerships_created_id_idx
+    ON partnerships (created DESC, partnership_id DESC);
+
+
 CREATE TABLE partnership_members (
     user_id uuid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     partnership_id uuid NOT NULL REFERENCES partnerships(partnership_id) ON DELETE CASCADE,
@@ -889,6 +893,13 @@ CREATE TABLE oauth_clients (
     )
 );
 
+ALTER TABLE access_tokens
+    ADD CONSTRAINT access_tokens_oauth_client_id_fkey
+    FOREIGN KEY (oauth_client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE;
+
+CREATE INDEX access_tokens_oauth_client_id_idx
+    ON access_tokens (oauth_client_id);
+
 CREATE TABLE oauth_authorization_codes (
     authorization_code uuid PRIMARY KEY,
     client_id uuid NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
@@ -922,6 +933,7 @@ CREATE TABLE oauth_authorization_codes (
 
 CREATE TABLE oauth_third_party_exchange_codes (
     third_party_exchange_code uuid PRIMARY KEY,
+    access_token_id uuid NOT NULL REFERENCES access_tokens(access_token_id) ON DELETE CASCADE,
     access_token text NOT NULL,
     access_token_expires_at timestamptz,
     scopes text[] NOT NULL DEFAULT '{}',
@@ -945,6 +957,9 @@ CREATE TABLE oauth_third_party_exchange_codes (
         ]::text[]
     )
 );
+
+CREATE INDEX oauth_third_party_exchange_codes_access_token_idx
+    ON oauth_third_party_exchange_codes (access_token_id);
 
 -- Absolute semantic expiry is stored in each table. pg-ttl cleanup is deliberately
 -- asynchronous; service authentication and redemption still validate expiration.

@@ -9,6 +9,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "admin-overview-postgres"
+version = "0.1.0"
+dependencies = [
+ "admin-overview-service",
+ "application",
+ "async-trait",
+ "platform-postgres",
+ "serde_json",
+ "serial_test",
+ "sqlx",
+ "test-api",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "admin-overview-service"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "user-core",
+ "user-service",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -188,6 +218,8 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 name = "aura-historia-api"
 version = "0.1.0"
 dependencies = [
+ "admin-overview-postgres",
+ "admin-overview-service",
  "application",
  "async-trait",
  "axum",

@@ -1,5 +1,6 @@
 use crate::auth::AuthError;
 use crate::webhooks::woocommerce_intake::WoocommerceWebhookIntakeError;
+use admin_overview_service::GetAdminOverviewError;
 use axum::Json;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -22,15 +23,21 @@ use partnership_service::use_cases::queries::list_administered_listing_sources::
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationError,
+        grant_partnership_listing_source::GrantPartnershipListingSourceError,
+        grant_partnership_membership::GrantPartnershipMembershipError,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewError,
         reject_partnership_application::RejectPartnershipApplicationError,
+        revoke_partnership_listing_source::RevokePartnershipListingSourceError,
+        revoke_partnership_membership::RevokePartnershipMembershipError,
         submit_partnership_application::SubmitPartnershipApplicationError,
         withdraw_partnership_application::WithdrawPartnershipApplicationError,
     },
     queries::{
+        get_admin_partnership::GetAdminPartnershipError,
         get_own_partnership_application::GetOwnPartnershipApplicationError,
         get_partnership_application::GetPartnershipApplicationError,
         list_admin_partnership_applications::ListAdminPartnershipApplicationsError,
+        list_admin_partnerships::ListAdminPartnershipsError,
         list_own_partnership_applications::ListOwnPartnershipApplicationsError,
     },
 };
@@ -88,6 +95,10 @@ pub(crate) struct ApiError {
 #[serde(transparent)]
 pub(crate) struct ApiErrorCode(&'static str);
 
+pub(crate) const ADMIN_OVERVIEW_INTERNAL_ERROR: ApiErrorCode =
+    ApiErrorCode("ADMIN_OVERVIEW_INTERNAL_ERROR");
+pub(crate) const ADMIN_OVERVIEW_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
+    ApiErrorCode("ADMIN_OVERVIEW_TEMPORARILY_UNAVAILABLE");
 pub(crate) const AUTH_INTERNAL_ERROR: ApiErrorCode = ApiErrorCode("AUTH_INTERNAL_ERROR");
 pub(crate) const AUTH_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
     ApiErrorCode("AUTH_TEMPORARILY_UNAVAILABLE");
@@ -173,6 +184,11 @@ pub(crate) const PARTNERSHIP_APPLICATION_INTERNAL_ERROR: ApiErrorCode =
     ApiErrorCode("PARTNERSHIP_APPLICATION_INTERNAL_ERROR");
 pub(crate) const PARTNERSHIP_APPLICATION_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
     ApiErrorCode("PARTNERSHIP_APPLICATION_TEMPORARILY_UNAVAILABLE");
+pub(crate) const PARTNERSHIP_INTERNAL_ERROR: ApiErrorCode =
+    ApiErrorCode("PARTNERSHIP_INTERNAL_ERROR");
+pub(crate) const PARTNERSHIP_NOT_FOUND: ApiErrorCode = ApiErrorCode("PARTNERSHIP_NOT_FOUND");
+pub(crate) const PARTNERSHIP_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
+    ApiErrorCode("PARTNERSHIP_TEMPORARILY_UNAVAILABLE");
 pub(crate) const OAUTH_AUTHORIZATION_CODE_EXPIRED: ApiErrorCode =
     ApiErrorCode("OAUTH_AUTHORIZATION_CODE_EXPIRED");
 pub(crate) const OAUTH_AUTHORIZATION_CODE_NOT_FOUND: ApiErrorCode =
@@ -345,6 +361,35 @@ impl From<AuthError> for ApiError {
             | AuthError::JwksFetch(_) => ApiError::unauthorized(INVALID_CREDENTIALS)
                 .with_header_field("Authorization")
                 .with_detail("Bearer token is invalid."),
+        }
+    }
+}
+
+impl From<GetAdminOverviewError> for ApiError {
+    fn from(error: GetAdminOverviewError) -> Self {
+        match error {
+            GetAdminOverviewError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            GetAdminOverviewError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            GetAdminOverviewError::AdminAuthorizationTemporarilyUnavailable { .. }
+            | GetAdminOverviewError::ReaderTemporarilyUnavailable { .. }
+            | GetAdminOverviewError::BeginTransaction { .. }
+            | GetAdminOverviewError::CommitTransaction { .. } => {
+                ApiError::service_unavailable(ADMIN_OVERVIEW_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Admin overview is temporarily unavailable.")
+            }
+            GetAdminOverviewError::AdminAuthorizationInvalidReadModel { .. }
+            | GetAdminOverviewError::AdminAuthorizationInternal { .. }
+            | GetAdminOverviewError::ReaderInvalidReadModel { .. }
+            | GetAdminOverviewError::ReaderInternal { .. } => {
+                ApiError::internal_server_error(ADMIN_OVERVIEW_INTERNAL_ERROR)
+                    .with_detail("Admin overview failed internally.")
+            }
         }
     }
 }
@@ -2020,6 +2065,165 @@ impl_partnership_application_admin_read_error!(
     ListAdminPartnershipApplicationsError,
     InvalidReadModel
 );
+
+impl From<GetAdminPartnershipError> for ApiError {
+    fn from(error: GetAdminPartnershipError) -> Self {
+        match error {
+            GetAdminPartnershipError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            GetAdminPartnershipError::NotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            GetAdminPartnershipError::TemporarilyUnavailable { .. }
+            | GetAdminPartnershipError::BeginTransactionFailed
+            | GetAdminPartnershipError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership details are temporarily unavailable.")
+            }
+            GetAdminPartnershipError::InvalidReadModel { .. }
+            | GetAdminPartnershipError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership details failed internally.")
+            }
+        }
+    }
+}
+
+impl From<GrantPartnershipListingSourceError> for ApiError {
+    fn from(error: GrantPartnershipListingSourceError) -> Self {
+        match error {
+            GrantPartnershipListingSourceError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            GrantPartnershipListingSourceError::PartnershipNotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            GrantPartnershipListingSourceError::ListingSourceNotFound => {
+                ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                    .with_detail("Listing source was not found.")
+            }
+            GrantPartnershipListingSourceError::PartnershipPartyMismatch => {
+                ApiError::conflict(CONFLICT)
+                    .with_detail("Partnership and ListingSource belong to different Parties.")
+            }
+            GrantPartnershipListingSourceError::TemporarilyUnavailable { .. }
+            | GrantPartnershipListingSourceError::BeginTransactionFailed
+            | GrantPartnershipListingSourceError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership ListingSource grant is temporarily unavailable.")
+            }
+            GrantPartnershipListingSourceError::InvalidPersistedState { .. }
+            | GrantPartnershipListingSourceError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership ListingSource grant failed internally.")
+            }
+        }
+    }
+}
+
+impl From<RevokePartnershipListingSourceError> for ApiError {
+    fn from(error: RevokePartnershipListingSourceError) -> Self {
+        match error {
+            RevokePartnershipListingSourceError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            RevokePartnershipListingSourceError::PartnershipNotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            RevokePartnershipListingSourceError::ListingSourceNotFound => {
+                ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                    .with_detail("Listing source was not found.")
+            }
+            RevokePartnershipListingSourceError::TemporarilyUnavailable { .. }
+            | RevokePartnershipListingSourceError::BeginTransactionFailed
+            | RevokePartnershipListingSourceError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership ListingSource grant is temporarily unavailable.")
+            }
+            RevokePartnershipListingSourceError::InvalidPersistedState { .. }
+            | RevokePartnershipListingSourceError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership ListingSource grant failed internally.")
+            }
+        }
+    }
+}
+
+impl From<GrantPartnershipMembershipError> for ApiError {
+    fn from(error: GrantPartnershipMembershipError) -> Self {
+        match error {
+            GrantPartnershipMembershipError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            GrantPartnershipMembershipError::PartnershipNotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            GrantPartnershipMembershipError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            GrantPartnershipMembershipError::TemporarilyUnavailable { .. }
+            | GrantPartnershipMembershipError::BeginTransactionFailed
+            | GrantPartnershipMembershipError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership membership is temporarily unavailable.")
+            }
+            GrantPartnershipMembershipError::InvalidPersistedState { .. }
+            | GrantPartnershipMembershipError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership membership failed internally.")
+            }
+        }
+    }
+}
+
+impl From<RevokePartnershipMembershipError> for ApiError {
+    fn from(error: RevokePartnershipMembershipError) -> Self {
+        match error {
+            RevokePartnershipMembershipError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            RevokePartnershipMembershipError::PartnershipNotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            RevokePartnershipMembershipError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            RevokePartnershipMembershipError::TemporarilyUnavailable { .. }
+            | RevokePartnershipMembershipError::BeginTransactionFailed
+            | RevokePartnershipMembershipError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership membership is temporarily unavailable.")
+            }
+            RevokePartnershipMembershipError::InvalidPersistedState { .. }
+            | RevokePartnershipMembershipError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership membership failed internally.")
+            }
+        }
+    }
+}
+
+impl From<ListAdminPartnershipsError> for ApiError {
+    fn from(error: ListAdminPartnershipsError) -> Self {
+        match error {
+            ListAdminPartnershipsError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            ListAdminPartnershipsError::TemporarilyUnavailable { .. }
+            | ListAdminPartnershipsError::BeginTransactionFailed
+            | ListAdminPartnershipsError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnerships are temporarily unavailable.")
+            }
+            ListAdminPartnershipsError::InvalidReadModel { .. }
+            | ListAdminPartnershipsError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership search failed internally.")
+            }
+        }
+    }
+}
 
 impl From<GetPartnershipApplicationError> for ApiError {
     fn from(error: GetPartnershipApplicationError) -> Self {

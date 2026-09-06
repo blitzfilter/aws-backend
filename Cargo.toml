@@ -12,6 +12,8 @@ members = [
     "src/aura-historia-api",
     "src/aura-historia-worker",
     "src/aura-historia-cron",
+    "src/admin-overview-service",
+    "src/admin-overview-postgres",
     "src/billing-service",
     "src/billing-stripe",
     "src/cloudwatch-log-retention-lambda",
@@ -106,6 +108,8 @@ google-cloud-auth = "1.12.0"
 derive_builder = "0.20.2"
 fake = { version = "5.1.0", features = ["derive", "time", "uuid", "url"] }
 application = { path = "src/application" }
+admin-overview-service = { path = "src/admin-overview-service" }
+admin-overview-postgres = { path = "src/admin-overview-postgres" }
 platform-observability = { path = "src/platform-observability" }
 platform-opensearch = { path = "src/platform-opensearch" }
 platform-postgres = { path = "src/platform-postgres" }

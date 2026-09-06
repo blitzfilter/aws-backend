@@ -1,11 +1,11 @@
 use super::{no_store, parse_scopes, scope_strings};
 use crate::auth::protected_context;
-use crate::error::ApiError;
+use crate::error::{ApiError, OAUTH_INTERNAL_ERROR};
 use crate::state::OAuthState;
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use oauth_service::use_cases::{CreateOAuthClientCommand, CreateOAuthClientResult};
@@ -89,28 +89,44 @@ pub async fn create_client(
 ) -> Response {
     let (context, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
         Ok(value) => value,
-        Err(response) => return *response,
+        Err(response) => return no_store(*response),
     };
     let data: CreateOAuthClientData = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(error) => {
-            return ApiError::bad_request(crate::error::BAD_BODY_VALUE)
-                .with_detail(error.to_string())
-                .into_response();
+            return no_store(
+                ApiError::bad_request(crate::error::BAD_BODY_VALUE)
+                    .with_detail(error.to_string())
+                    .into_response(),
+            );
         }
     };
     let command = match CreateOAuthClientCommand::try_from(data) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return no_store(response),
     };
     match state.create_client.execute(&context, command).await {
-        Ok(result) => no_store(
-            (
+        Ok(result) => {
+            let client_id = result.client.client_id;
+            let location = format!("/api/v1/admin/oauth-clients/{client_id}");
+            let location = match HeaderValue::from_str(&location) {
+                Ok(value) => value,
+                Err(_) => {
+                    return no_store(
+                        ApiError::internal_server_error(OAUTH_INTERNAL_ERROR)
+                            .with_detail("OAuth client location failed internally.")
+                            .into_response(),
+                    );
+                }
+            };
+            let mut response = (
                 StatusCode::CREATED,
                 Json(OAuthClientMetadataData::from(result)),
             )
-                .into_response(),
-        ),
-        Err(error) => ApiError::from(error).into_response(),
+                .into_response();
+            response.headers_mut().insert(header::LOCATION, location);
+            no_store(response)
+        }
+        Err(error) => no_store(ApiError::from(error).into_response()),
     }
 }
