@@ -111,7 +111,7 @@ impl PartnershipSearchReader for SqlxPartnershipSearchReader<'_> {
             })?;
 
         let mut builder = QueryBuilder::<Postgres>::new(
-            "WITH candidate_partnerships AS (SELECT p.partnership_id, p.party_id, p.created, p.updated FROM partnerships p WHERE TRUE",
+            "WITH candidate_partnerships AS (SELECT p.partnership_id, p.party_id, p.created, p.updated FROM partnerships p WHERE p.business_state = 'ACTIVE'",
         );
         push_filters(&mut builder, request);
         if let Some(search_after) = cursor.search_after {
@@ -233,14 +233,16 @@ mod tests {
     async fn seed_partnership(
         pool: &PgPool,
         party_id: PartyId,
+        business_state: &str,
         created: time::OffsetDateTime,
     ) -> PartnershipId {
         let partnership_id = PartnershipId::new();
         sqlx::query(
-            "INSERT INTO partnerships (partnership_id, party_id, created, updated) VALUES ($1, $2, $3, $3)",
+            "INSERT INTO partnerships (partnership_id, party_id, business_state, created, updated) VALUES ($1, $2, $3, $4, $4)",
         )
         .bind(uuid::Uuid::from(partnership_id))
         .bind(uuid::Uuid::from(party_id))
+        .bind(business_state)
         .bind(created)
         .execute(pool)
         .await
@@ -355,10 +357,20 @@ mod tests {
         let matching_user = seed_user(&pool).await;
         let second_matching_user = seed_user(&pool).await;
         let other_user = seed_user(&pool).await;
-        let matching_partnership =
-            seed_partnership(&pool, matching_party, datetime!(2026-01-02 00:00 UTC)).await;
-        let other_partnership =
-            seed_partnership(&pool, other_party, datetime!(2026-01-01 00:00 UTC)).await;
+        let matching_partnership = seed_partnership(
+            &pool,
+            matching_party,
+            "ACTIVE",
+            datetime!(2026-01-02 00:00 UTC),
+        )
+        .await;
+        let other_partnership = seed_partnership(
+            &pool,
+            other_party,
+            "ACTIVE",
+            datetime!(2026-01-01 00:00 UTC),
+        )
+        .await;
         let matching_source = seed_listing_source(&pool, matching_party).await;
         let second_matching_source = seed_listing_source(&pool, matching_party).await;
         let other_source = seed_listing_source(&pool, other_party).await;
@@ -422,7 +434,7 @@ mod tests {
         let mut ids = Vec::new();
         for index in 0..3 {
             let party = seed_party(&pool, &format!("Tied party {index}")).await;
-            ids.push(seed_partnership(&pool, party, created).await);
+            ids.push(seed_partnership(&pool, party, "ACTIVE", created).await);
         }
         let mut expected_ids = ids;
         expected_ids.sort_by(|left, right| right.cmp(left));
@@ -460,6 +472,45 @@ mod tests {
         assert_eq!(1, second.items.len());
         assert_eq!(expected_ids[2], second.items[0].partnership_id);
         assert!(second.cursor.search_after.is_none());
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_exclude_dissolved_partnerships_from_admin_search() {
+        let pool = get_postgres_client().await;
+        let active_party = seed_party(&pool, "Active partnership party").await;
+        let dissolved_party = seed_party(&pool, "Dissolved partnership party").await;
+        let active = seed_partnership(
+            &pool,
+            active_party,
+            "ACTIVE",
+            datetime!(2026-06-02 00:00 UTC),
+        )
+        .await;
+        seed_partnership(
+            &pool,
+            dissolved_party,
+            "DISSOLVED",
+            datetime!(2026-06-03 00:00 UTC),
+        )
+        .await;
+
+        let result = read_page(&ListAdminPartnershipsRequest {
+            cursor: Some(Cursor {
+                size: 10,
+                search_after: None,
+            }),
+            ..Default::default()
+        })
+        .await;
+
+        assert_eq!(
+            vec![active],
+            result
+                .items
+                .iter()
+                .map(|item| item.partnership_id)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[aura_integration_test(services = [BUSINESS_SCHEMA])]

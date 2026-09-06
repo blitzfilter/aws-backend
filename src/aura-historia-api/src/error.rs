@@ -22,6 +22,7 @@ use partnership_service::use_cases::queries::list_administered_listing_sources::
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationError,
+        dissolve_partnership::DissolvePartnershipError,
         grant_partnership_listing_source::GrantPartnershipListingSourceError,
         grant_partnership_membership::GrantPartnershipMembershipError,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewError,
@@ -2134,6 +2135,33 @@ impl From<GetAdminPartnershipError> for ApiError {
             | GetAdminPartnershipError::Internal { .. } => {
                 ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
                     .with_detail("Partnership details failed internally.")
+            }
+        }
+    }
+}
+
+impl From<DissolvePartnershipError> for ApiError {
+    fn from(error: DissolvePartnershipError) -> Self {
+        match error {
+            DissolvePartnershipError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            DissolvePartnershipError::PartnershipNotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            DissolvePartnershipError::ConcurrencyConflict => {
+                ApiError::conflict(CONFLICT).with_detail("Partnership was changed concurrently.")
+            }
+            DissolvePartnershipError::TemporarilyUnavailable { .. }
+            | DissolvePartnershipError::BeginTransactionFailed
+            | DissolvePartnershipError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership dissolution is temporarily unavailable.")
+            }
+            DissolvePartnershipError::InvalidPersistedState { .. }
+            | DissolvePartnershipError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership dissolution failed internally.")
             }
         }
     }

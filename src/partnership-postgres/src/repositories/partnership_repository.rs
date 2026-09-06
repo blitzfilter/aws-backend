@@ -3,6 +3,7 @@ use domain_primitives::versioned::Versioned;
 use partnership_core::{
     partnership::{Partnership, RehydratedPartnershipState},
     partnership_id::PartnershipId,
+    partnership_lifecycle::PartnershipLifecycle,
 };
 use partnership_service::ports::*;
 use party_core::party_id::PartyId;
@@ -42,18 +43,34 @@ impl PartnershipMembershipRepositoryFactory<SqlxTransaction> for SqlxPartnership
 struct Row {
     partnership_id: uuid::Uuid,
     party_id: uuid::Uuid,
+    business_state: String,
     version: i64,
 }
+
+#[derive(Debug, thiserror::Error)]
+enum RowMappingError {
+    #[error("invalid partnership lifecycle")]
+    Lifecycle,
+    #[error("invalid partnership version")]
+    Version(#[source] domain_primitives::version::InvalidVersionError),
+}
+
 fn map(row: Row) -> Result<VersionedPartnership, PartnershipRepositoryError> {
-    let version = PartnershipStorageVersion::try_from(row.version).map_err(|e| {
-        PartnershipRepositoryError::InvalidPersistedState {
-            source: box_error(e),
-        }
-    })?;
+    let lifecycle = PartnershipLifecycle::from_code(&row.business_state)
+        .ok_or(RowMappingError::Lifecycle)
+        .map_err(|source| PartnershipRepositoryError::InvalidPersistedState {
+            source: box_error(source),
+        })?;
+    let version = PartnershipStorageVersion::try_from(row.version)
+        .map_err(RowMappingError::Version)
+        .map_err(|source| PartnershipRepositoryError::InvalidPersistedState {
+            source: box_error(source),
+        })?;
     Ok(Versioned::new(
         Partnership::rehydrate(RehydratedPartnershipState {
             id: PartnershipId::from(row.partnership_id),
             party_id: PartyId::from(row.party_id),
+            lifecycle,
         }),
         version,
     ))
@@ -65,7 +82,7 @@ impl PartnershipRepository for Repository<'_> {
         partnership_id: PartnershipId,
     ) -> Result<Option<VersionedPartnership>, PartnershipRepositoryError> {
         let row = sqlx::query_as::<_, Row>(
-            "SELECT partnership_id,party_id,version FROM partnerships WHERE partnership_id=$1",
+            "SELECT partnership_id,party_id,business_state,version FROM partnerships WHERE partnership_id=$1",
         )
         .bind(uuid::Uuid::from(partnership_id))
         .fetch_optional(&mut *self.connection)
@@ -84,12 +101,16 @@ impl PartnershipRepository for Repository<'_> {
         new_partnership_id: PartnershipId,
     ) -> Result<VersionedPartnership, PartnershipRepositoryError> {
         let inserted = sqlx::query_as::<_, Row>(
-            "INSERT INTO partnerships(partnership_id,party_id) VALUES($1,$2) \
-             ON CONFLICT (party_id) DO NOTHING \
-             RETURNING partnership_id,party_id,version",
+            "INSERT INTO partnerships(partnership_id,party_id,business_state) VALUES($1,$2,$3) \
+             ON CONFLICT (party_id) DO UPDATE \
+             SET business_state=$3,version=partnerships.version+1,updated=now() \
+             WHERE partnerships.business_state=$4 \
+             RETURNING partnership_id,party_id,business_state,version",
         )
         .bind(uuid::Uuid::from(new_partnership_id))
         .bind(uuid::Uuid::from(party_id))
+        .bind(PartnershipLifecycle::Active.as_str())
+        .bind(PartnershipLifecycle::Dissolved.as_str())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(|error| PartnershipRepositoryError::Internal {
@@ -98,7 +119,7 @@ impl PartnershipRepository for Repository<'_> {
         let row = match inserted {
             Some(row) => row,
             None => sqlx::query_as::<_, Row>(
-                "SELECT partnership_id,party_id,version FROM partnerships WHERE party_id=$1",
+                "SELECT partnership_id,party_id,business_state,version FROM partnerships WHERE party_id=$1",
             )
             .bind(uuid::Uuid::from(party_id))
             .fetch_optional(&mut *self.connection)
@@ -114,7 +135,58 @@ impl PartnershipRepository for Repository<'_> {
         };
         map(row)
     }
+
+    async fn dissolve(
+        &mut self,
+        partnership: &Partnership,
+        expected: PartnershipStorageVersion,
+    ) -> Result<VersionedPartnership, PartnershipRepositoryError> {
+        let expected = i64::try_from(expected.into_inner()).map_err(|source| {
+            PartnershipRepositoryError::InvalidPersistedState {
+                source: box_error(source),
+            }
+        })?;
+        let row = sqlx::query_as::<_, Row>(
+            "WITH dissolved AS ( \
+                UPDATE partnerships \
+                SET business_state = $1, version = version + 1, updated = now() \
+                WHERE partnership_id = $2 \
+                  AND version = $3 \
+                  AND business_state = $4 \
+                RETURNING partnership_id, party_id, business_state, version \
+            ), deleted_members AS ( \
+                DELETE FROM partnership_members \
+                WHERE partnership_id IN (SELECT partnership_id FROM dissolved) \
+            ), deleted_grants AS ( \
+                DELETE FROM partnership_listing_source_grants \
+                WHERE partnership_id IN (SELECT partnership_id FROM dissolved) \
+            ) \
+            SELECT partnership_id, party_id, business_state, version FROM dissolved \
+            UNION ALL \
+            SELECT partnership_id, party_id, business_state, version \
+            FROM partnerships \
+            WHERE partnership_id = $2 \
+              AND version = $3 \
+              AND business_state = $1 \
+              AND NOT EXISTS (SELECT 1 FROM dissolved)",
+        )
+        .bind(PartnershipLifecycle::Dissolved.as_str())
+        .bind(uuid::Uuid::from(partnership.id()))
+        .bind(expected)
+        .bind(PartnershipLifecycle::Active.as_str())
+        .fetch_optional(&mut *self.connection)
+        .await
+        .map_err(
+            |source| PartnershipRepositoryError::TemporarilyUnavailable {
+                source: box_error(source),
+            },
+        )?
+        .ok_or_else(|| PartnershipRepositoryError::ConcurrencyConflict)?;
+
+        map(row)
+    }
 }
+
 #[async_trait::async_trait]
 impl PartnershipMembershipRepository for Repository<'_> {
     async fn add_member(
@@ -158,5 +230,25 @@ impl PartnershipMembershipRepository for Repository<'_> {
         } else {
             PartnershipMembershipRemoveOutcome::AlreadyAbsent
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_reject_noncanonical_persisted_lifecycle() {
+        let result = map(Row {
+            partnership_id: uuid::Uuid::new_v4(),
+            party_id: uuid::Uuid::new_v4(),
+            business_state: "dissolved".to_owned(),
+            version: 1,
+        });
+
+        assert!(matches!(
+            result,
+            Err(PartnershipRepositoryError::InvalidPersistedState { .. })
+        ));
     }
 }

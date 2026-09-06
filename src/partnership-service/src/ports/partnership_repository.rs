@@ -8,6 +8,8 @@ pub type VersionedPartnership = Versioned<Partnership, PartnershipStorageVersion
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartnershipRepositoryError {
+    #[error("concurrent partnership update")]
+    ConcurrencyConflict,
     #[error("temporary partnership persistence failure")]
     TemporarilyUnavailable {
         #[source]
@@ -36,6 +38,12 @@ pub trait PartnershipRepository: Send {
         &mut self,
         party_id: PartyId,
         new_partnership_id: PartnershipId,
+    ) -> Result<VersionedPartnership, PartnershipRepositoryError>;
+
+    async fn dissolve(
+        &mut self,
+        partnership: &Partnership,
+        expected_version: PartnershipStorageVersion,
     ) -> Result<VersionedPartnership, PartnershipRepositoryError>;
 }
 

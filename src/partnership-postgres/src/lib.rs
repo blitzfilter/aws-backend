@@ -520,6 +520,23 @@ mod tests {
         ));
         let administered = authorization.list_sources_user_administers(user_id).await;
         assert!(matches!(administered, Ok(sources) if sources.len() == 1));
+
+        let dissolved =
+            sqlx::query("UPDATE partnerships SET business_state = 'DISSOLVED' WHERE party_id = $1")
+                .bind(party_id)
+                .execute(&pool)
+                .await;
+        assert!(dissolved.is_ok());
+        assert!(matches!(
+            authorization.can_write_source(user_id, source_id).await,
+            Ok(false)
+        ));
+        let administered_after_dissolution =
+            authorization.list_sources_user_administers(user_id).await;
+        assert!(matches!(
+            administered_after_dissolution,
+            Ok(sources) if sources.is_empty()
+        ));
         assert_eq!(1, count(&pool, "parties").await);
         assert_eq!(1, count(&pool, "listing_sources").await);
     }
