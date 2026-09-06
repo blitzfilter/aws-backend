@@ -20,6 +20,8 @@ use product_listing_service::ports::{
     ProductListingEventAppenderFactory, ProductListingRawRevisionId, ProductListingRawStreamId,
     ProductListingRepositoryFactory,
 };
+use std::time::Instant;
+use time::OffsetDateTime;
 
 pub const NORMALIZER_VERSION: u16 = 1;
 
@@ -52,6 +54,10 @@ pub struct NormalizedRawRevisionResult {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NormalizeProductListingRawRevisionResult {
     pub revisions: Vec<NormalizedRawRevisionResult>,
+    /// Present for bounded reconciliation only; it is the scanned page, not an unbounded count.
+    pub pending_stream_page_count: Option<usize>,
+    /// Age of the oldest stream in the bounded reconciliation page.
+    pub oldest_pending_age_seconds: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -297,6 +303,68 @@ where
     }
 }
 
+impl<U, W, R, E, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, P>
+where
+    U: UnitOfWork,
+    W: ProductListingRawNormalizationWriterFactory<U::Tx>,
+    R: ProductListingRepositoryFactory<U::Tx>,
+    E: ProductListingEventAppenderFactory<U::Tx>,
+    P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader,
+{
+    async fn execute_inner(
+        &self,
+        command: NormalizeProductListingRawRevisionCommand,
+    ) -> Result<NormalizeProductListingRawRevisionResult, NormalizeProductListingRawRevisionError>
+    {
+        if command.max_revisions_per_stream == 0 || command.pending_stream_limit == 0 {
+            return Err(NormalizeProductListingRawRevisionError::InvalidLimit);
+        }
+        let (streams, pending_stream_page_count, oldest_pending_age_seconds) = match command.mode {
+            NormalizeProductListingRawRevisionMode::RawRevision {
+                product_listing_raw_stream_id,
+                product_listing_raw_revision_id: _,
+                revision: _,
+            } => (vec![product_listing_raw_stream_id], None, None),
+            NormalizeProductListingRawRevisionMode::Reconcile => {
+                let pending = self
+                    .pending_streams
+                    .list_pending_streams(command.pending_stream_limit)
+                    .await
+                    .map_err(|_| {
+                        NormalizeProductListingRawRevisionError::PendingStreamReadFailed
+                    })?;
+                let oldest_pending_age_seconds = pending
+                    .iter()
+                    .map(|stream| stream.oldest_pending_at)
+                    .min()
+                    .and_then(pending_age_seconds);
+                let pending_stream_page_count = Some(pending.len());
+                let streams = pending
+                    .into_iter()
+                    .map(|stream| stream.product_listing_raw_stream_id)
+                    .collect();
+                (
+                    streams,
+                    pending_stream_page_count,
+                    oldest_pending_age_seconds,
+                )
+            }
+        };
+        let mut result = NormalizeProductListingRawRevisionResult {
+            revisions: Vec::new(),
+            pending_stream_page_count,
+            oldest_pending_age_seconds,
+        };
+        for stream in streams {
+            result.revisions.extend(
+                self.drain_stream(stream, command.max_revisions_per_stream)
+                    .await?,
+            );
+        }
+        Ok(result)
+    }
+}
+
 #[async_trait::async_trait]
 impl<U, W, R, E, P> NormalizeProductListingRawRevisionUseCase
     for NormalizeProductListingRawRevisionHandler<U, W, R, E, P>
@@ -313,29 +381,71 @@ where
         command: NormalizeProductListingRawRevisionCommand,
     ) -> Result<NormalizeProductListingRawRevisionResult, NormalizeProductListingRawRevisionError>
     {
-        if command.max_revisions_per_stream == 0 || command.pending_stream_limit == 0 {
-            return Err(NormalizeProductListingRawRevisionError::InvalidLimit);
+        let started = Instant::now();
+        let result = self.execute_inner(command).await;
+
+        match &result {
+            Ok(result) => {
+                for revision in &result.revisions {
+                    tracing::info!(
+                        metric = "product_listing_raw_normalization",
+                        normalization_revisions = 1_u64,
+                        normalization_failures = 0_u64,
+                        normalization_batch_latency_ms = started.elapsed().as_millis() as u64,
+                        product_listing_raw_stream_id = %revision.product_listing_raw_stream_id.as_uuid(),
+                        revision = revision.revision,
+                        outcome = revision.outcome.as_str(),
+                        "raw product listing normalization metric"
+                    );
+                }
+                if let Some(pending_stream_page_count) = result.pending_stream_page_count {
+                    tracing::info!(
+                        metric = "product_listing_raw_normalization_backlog",
+                        pending_stream_page_count,
+                        oldest_pending_age_seconds = result.oldest_pending_age_seconds,
+                        reconciliation_runs = 1_u64,
+                        "raw product listing normalization backlog metric"
+                    );
+                }
+            }
+            Err(error) => tracing::warn!(
+                metric = "product_listing_raw_normalization",
+                normalization_revisions = 0_u64,
+                normalization_failures = 1_u64,
+                normalization_batch_latency_ms = started.elapsed().as_millis() as u64,
+                outcome = "failure",
+                error_code = normalization_failure_code(error),
+                "raw product listing normalization metric"
+            ),
         }
-        let streams = match command.mode {
-            NormalizeProductListingRawRevisionMode::RawRevision {
-                product_listing_raw_stream_id,
-                product_listing_raw_revision_id: _,
-                revision: _,
-            } => vec![product_listing_raw_stream_id],
-            NormalizeProductListingRawRevisionMode::Reconcile => self
-                .pending_streams
-                .list_pending_streams(command.pending_stream_limit)
-                .await
-                .map_err(|_| NormalizeProductListingRawRevisionError::PendingStreamReadFailed)?,
-        };
-        let mut result = NormalizeProductListingRawRevisionResult::default();
-        for stream in streams {
-            result.revisions.extend(
-                self.drain_stream(stream, command.max_revisions_per_stream)
-                    .await?,
-            );
+
+        result
+    }
+}
+
+fn pending_age_seconds(oldest_pending_at: OffsetDateTime) -> Option<u64> {
+    let age = OffsetDateTime::now_utc() - oldest_pending_at;
+    u64::try_from(age.whole_seconds()).ok()
+}
+
+fn normalization_failure_code(error: &NormalizeProductListingRawRevisionError) -> &'static str {
+    match error {
+        NormalizeProductListingRawRevisionError::InvalidLimit => "INVALID_LIMIT",
+        NormalizeProductListingRawRevisionError::PendingStreamReadFailed => {
+            "PENDING_STREAM_READ_FAILED"
         }
-        Ok(result)
+        NormalizeProductListingRawRevisionError::BeginTransactionFailed => {
+            "BEGIN_TRANSACTION_FAILED"
+        }
+        NormalizeProductListingRawRevisionError::PersistenceFailed => "PERSISTENCE_FAILED",
+        NormalizeProductListingRawRevisionError::InvalidPersistedState => "INVALID_PERSISTED_STATE",
+        NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion => {
+            "UNSUPPORTED_STORED_SCHEMA_VERSION"
+        }
+        NormalizeProductListingRawRevisionError::CanonicalWriteFailed => "CANONICAL_WRITE_FAILED",
+        NormalizeProductListingRawRevisionError::CommitTransactionFailed => {
+            "COMMIT_TRANSACTION_FAILED"
+        }
     }
 }
 
@@ -670,8 +780,10 @@ mod tests {
         async fn list_pending_streams(
             &self,
             _: u32,
-        ) -> Result<Vec<ProductListingRawStreamId>, ProductListingRawNormalizationPortError>
-        {
+        ) -> Result<
+            Vec<crate::ports::PendingProductListingRawStream>,
+            ProductListingRawNormalizationPortError,
+        > {
             Ok(vec![])
         }
     }
@@ -734,7 +846,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Ok(NormalizeProductListingRawRevisionResult { ref revisions })
+            Ok(NormalizeProductListingRawRevisionResult { ref revisions, .. })
                 if revisions.as_slice() == [NormalizedRawRevisionResult {
                     product_listing_raw_stream_id: stream_id,
                     revision: 1,
@@ -753,5 +865,32 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn should_return_pending_age_only_for_past_captures() {
+        let now = OffsetDateTime::now_utc();
+
+        assert_eq!(
+            Some(60),
+            pending_age_seconds(now - time::Duration::seconds(60))
+        );
+        assert_eq!(None, pending_age_seconds(now + time::Duration::days(1)));
+    }
+
+    #[test]
+    fn should_use_stable_failure_codes() {
+        assert_eq!(
+            "UNSUPPORTED_STORED_SCHEMA_VERSION",
+            normalization_failure_code(
+                &NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion
+            )
+        );
+        assert_eq!(
+            "CANONICAL_WRITE_FAILED",
+            normalization_failure_code(
+                &NormalizeProductListingRawRevisionError::CanonicalWriteFailed
+            )
+        );
     }
 }

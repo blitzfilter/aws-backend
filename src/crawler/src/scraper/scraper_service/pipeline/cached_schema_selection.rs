@@ -1,6 +1,6 @@
 use crate::scraper::css_selector::product_schema::{ProductCssSelectorSchema, RawExtractedProduct};
 use crate::scraper::normalization::error::{NormalizationError, NormalizationFailureScope};
-use crate::scraper::normalization::product::NormalizedProduct;
+
 use crate::scraper::normalization::product_normalization_service::{
     NormalizationFailure, NormalizationSuccess, prepare_product,
 };
@@ -26,7 +26,7 @@ pub(crate) enum FreshSchemaGenerationReason {
     /// No cached schema could be applied to the current page.
     NoCachedSchemaApplied,
     /// One or more cached schemas applied, but none produced a valid
-    /// normalized product.
+    /// prepared candidate.
     NoCachedSchemaNormalized,
 }
 
@@ -39,8 +39,9 @@ impl FreshSchemaGenerationReason {
     }
 }
 
-pub(crate) struct NormalizedSchemaSelection {
-    pub(crate) product: NormalizedProduct,
+pub(crate) struct PreparedSchemaSelection {
+    pub(crate) prepared:
+        crate::scraper::normalization::product_normalization_service::PreparedProduct,
     pub(crate) raw: RawExtractedProduct,
     pub(crate) default_currency: Option<Currency>,
     pub(crate) schema: ProductCssSelectorSchema,
@@ -48,7 +49,7 @@ pub(crate) struct NormalizedSchemaSelection {
 }
 
 pub(crate) enum ExistingSchemaSelection {
-    Normalized(Box<NormalizedSchemaSelection>),
+    Prepared(Box<PreparedSchemaSelection>),
     /// Cached selection cannot produce a valid product — generate a
     /// completely new schema for the current page. Never carries a cached
     /// schema as generation input.
@@ -67,7 +68,7 @@ impl ScraperServiceImpl {
     /// richest to least rich.
     ///
     /// The first candidate that normalizes successfully wins. When no cached
-    /// candidate succeeds — either because none applied or none normalized —
+    /// candidate succeeds — either because none applied or none prepared —
     /// returns [`ExistingSchemaSelection::GenerateNewSchema`] so the caller
     /// falls back to fresh schema generation. No cached schema is ever
     /// selected as generation input.
@@ -182,7 +183,7 @@ impl ScraperServiceImpl {
                         candidate_normalization_result = "success",
                         "Cached schema selected"
                     );
-                    return Ok(ExistingSchemaSelection::Normalized(Box::new(product)));
+                    return Ok(ExistingSchemaSelection::Prepared(Box::new(product)));
                 }
                 Err(ScraperError::NormalizationError(err))
                     if err.failure_scope() == NormalizationFailureScope::CandidateData =>
@@ -226,7 +227,7 @@ impl ScraperServiceImpl {
         url: &Url,
         selected_schema: &ProductCssSelectorSchema,
         raw: RawExtractedProduct,
-    ) -> Result<NormalizedSchemaSelection, ScraperError> {
+    ) -> Result<PreparedSchemaSelection, ScraperError> {
         let default_currency = selected_schema.default_currency.map(Currency::from);
         match self
             .normalization_service
@@ -234,13 +235,13 @@ impl ScraperServiceImpl {
             .await
         {
             Ok(NormalizationSuccess {
-                product,
+                prepared,
                 llm_calls_used,
             }) => {
                 self.consume_llm_budget_n_or_err(listing_source_id, url, llm_calls_used)
                     .await?;
-                Ok(NormalizedSchemaSelection {
-                    product,
+                Ok(PreparedSchemaSelection {
+                    prepared,
                     raw,
                     default_currency,
                     schema: selected_schema.clone(),

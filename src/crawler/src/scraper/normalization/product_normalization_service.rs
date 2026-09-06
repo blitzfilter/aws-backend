@@ -1,7 +1,6 @@
 pub use super::error::NormalizationError;
 
 use crate::scraper::css_selector::product_schema::RawExtractedProduct;
-use crate::scraper::normalization::product::NormalizedProduct;
 use money::Currency;
 use product_listing_normalization::{
     AvailabilityNormalizationError, DateTimeField, DateTimeNormalizationError,
@@ -25,9 +24,10 @@ pub trait ProductListingNormalizationService: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizationSuccess {
-    pub product: NormalizedProduct,
-    /// Kept during the temporary canonical path. Deterministic normalization
-    /// never consumes LLM budget.
+    /// Candidate-local prepared values. They support plausibility and ranking;
+    /// canonical writes use the separate raw-input handoff.
+    pub prepared: PreparedProduct,
+    /// Deterministic preparation never consumes LLM budget.
     pub llm_calls_used: u32,
 }
 
@@ -41,8 +41,10 @@ pub struct NormalizationFailure {
 pub type ProductListingNormalizationResult = Result<NormalizationSuccess, NormalizationFailure>;
 
 /// Deterministic candidate-local product data. Source mapping stays in crawler.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PreparedProduct {
+    /// Pure crawler outcome used only for local disposition.
+    pub availability: product_listing_normalization::ListingAvailabilityQuickCheck,
     pub source_listing_id: product_listing_core::source_listing_id::SourceListingId,
     pub title: localization::Localized<localization::Language, product_listing_core::title::Title>,
     pub description: Option<
@@ -94,8 +96,8 @@ pub fn prepare_product(
     let auction_end = normalize_date_time(raw.auction_end.as_deref())
         .map_err(|error| map_date_time_error(error, DateTimeField::AuctionEnd))?;
 
-    let _ = availability;
     Ok(PreparedProduct {
+        availability,
         source_listing_id,
         title,
         description,
@@ -133,25 +135,9 @@ impl ProductListingNormalizationService for ProductListingNormalizationServiceIm
         url: Url,
         default_currency: Option<Currency>,
     ) -> ProductListingNormalizationResult {
-        let availability = quick_check_availability(raw.state.as_str())
-            .map_err(map_availability_error)
-            .map_err(failure)?;
         let prepared = prepare_product(raw, url, default_currency).map_err(failure)?;
         Ok(NormalizationSuccess {
-            product: NormalizedProduct {
-                source_listing_id: prepared.source_listing_id,
-                title: prepared.title,
-                description: prepared.description,
-                price: prepared.price,
-                price_estimate_min: prepared.price_estimate_min,
-                price_estimate_max: prepared.price_estimate_max,
-                availability,
-                url: prepared.url,
-                images: prepared.images,
-                auction_start: prepared.auction_start,
-                auction_end: prepared.auction_end,
-                raw_attributes: prepared.raw_attributes,
-            },
+            prepared,
             llm_calls_used: 0,
         })
     }
@@ -231,7 +217,7 @@ mod tests {
 
         assert_eq!(result.llm_calls_used, 0);
         assert_eq!(
-            result.product.availability,
+            result.prepared.availability,
             ListingAvailabilityQuickCheck::Resolved(
                 product_listing_core::listing_availability::ListingAvailability::SoldOut
             )

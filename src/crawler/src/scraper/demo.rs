@@ -42,7 +42,6 @@
 //! ```
 
 use listing_source_core::ListingSourceId;
-use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufWriter;
 use std::sync::Arc;
@@ -54,23 +53,15 @@ use crawler::scraper::candidate_service::ScraperCandidateServiceImpl;
 use crawler::scraper::css_selector::product_schema_repository::ListingSourceProductSchemaRepositoryImpl;
 use crawler::scraper::css_selector::product_schema_service::ProductListingSchemaServiceImpl;
 use crawler::scraper::css_selector::removed_page_schema_repository::RemovedPageSchemaRepositoryImpl;
-use crawler::scraper::normalization::product::NormalizedProduct;
 use crawler::scraper::normalization::product_normalization_service::ProductListingNormalizationServiceImpl;
 use crawler::scraper::scraper_service::{
     DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE, ReqwestHtmlFetcher, ScraperService,
     ScraperServiceImpl,
 };
 use crawler::vertex_ai::{CrawlerVertexAiConfig, CrawlerVertexAiModels};
-use localization::{Language, Localized};
-use money::Price;
-use product_listing_core::{
-    listing_availability::ListingAvailability, product_listing_image::ProductListingImage,
-    source_listing_id::SourceListingId,
-};
 
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use time::OffsetDateTime;
 use tracing::{Instrument, error, info};
 use url::Url;
 
@@ -93,101 +84,6 @@ struct ScrapeTarget {
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalizedTextData {
-    pub text: String,
-    pub language: &'static str,
-}
-
-impl<T: Into<String>> From<Localized<Language, T>> for LocalizedTextData {
-    fn from(value: Localized<Language, T>) -> Self {
-        Self {
-            text: value.payload.into(),
-            language: value.localization.as_str(),
-        }
-    }
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PriceData {
-    pub currency: &'static str,
-    pub amount: u64,
-}
-
-impl From<Price> for PriceData {
-    fn from(value: Price) -> Self {
-        Self {
-            currency: value.currency.as_str(),
-            amount: value.monetary_amount.into(),
-        }
-    }
-}
-
-fn serialize_availability<S>(
-    value: &Option<ListingAvailability>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match value {
-        Some(availability) => serializer.serialize_str(availability.as_str()),
-        None => serializer.serialize_none(),
-    }
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProductListingImageData {
-    pub url: Url,
-}
-
-impl From<ProductListingImage> for ProductListingImageData {
-    fn from(value: ProductListingImage) -> Self {
-        Self {
-            url: value.url().clone(),
-        }
-    }
-}
-
-#[derive(serde::Serialize)]
-pub struct DemoProduct {
-    pub source_listing_id: SourceListingId,
-    pub title: LocalizedTextData,
-    pub description: Option<LocalizedTextData>,
-    pub price: Option<PriceData>,
-    pub price_estimate_min: Option<PriceData>,
-    pub price_estimate_max: Option<PriceData>,
-    #[serde(serialize_with = "serialize_availability")]
-    pub availability: Option<ListingAvailability>,
-    pub url: Url,
-    pub images: Vec<ProductListingImageData>,
-    pub auction_start: Option<OffsetDateTime>,
-    pub auction_end: Option<OffsetDateTime>,
-    pub raw_attributes: BTreeMap<String, Vec<String>>,
-}
-
-impl From<NormalizedProduct> for DemoProduct {
-    fn from(p: NormalizedProduct) -> Self {
-        Self {
-            source_listing_id: p.source_listing_id,
-            title: p.title.into(),
-            description: p.description.map(Into::into),
-            price: p.price.map(Into::into),
-            price_estimate_min: p.price_estimate_min.map(Into::into),
-            price_estimate_max: p.price_estimate_max.map(Into::into),
-            availability: p.availability.availability(),
-            url: p.url,
-            images: p.images.into_iter().map(Into::into).collect(),
-            auction_start: p.auction_start,
-            auction_end: p.auction_end,
-            raw_attributes: p.raw_attributes,
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() {

@@ -33,7 +33,7 @@ fn fetcher_with_sample_html() -> MockHtmlFetcher {
 }
 
 fn normalizer_with_success(url: Url) -> MockProductListingNormalizationService {
-    let expected = normalized_product(url);
+    let expected = prepared_product(url);
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()

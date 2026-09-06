@@ -8,7 +8,7 @@ use crate::scraper::normalization::product_normalization_service::{
 use crate::scraper::scraper_service::domain::errors::ScraperError;
 use crate::scraper::scraper_service::extraction::schema_review_gate::GeneratedSchemaReviewOutcome;
 use crate::scraper::scraper_service::image_validation::filter_valid_image_urls;
-use crate::scraper::scraper_service::pipeline::cached_schema_selection::NormalizedSchemaSelection;
+use crate::scraper::scraper_service::pipeline::cached_schema_selection::PreparedSchemaSelection;
 use crate::scraper::scraper_service::service::ScraperServiceImpl;
 use listing_source_core::ListingSourceId;
 use serde_json::json;
@@ -36,7 +36,7 @@ impl ScraperServiceImpl {
     pub(crate) async fn generate_fresh_schema_for_page(
         &self,
         ctx: FreshSchemaGenerationContext<'_>,
-    ) -> Result<NormalizedSchemaSelection, ScraperError> {
+    ) -> Result<PreparedSchemaSelection, ScraperError> {
         let (generated_schema, mut reapplied, evaluation) = self
             .generate_single_schema_for_page(ctx.listing_source_id, ctx.url, ctx.html)
             .await?;
@@ -72,7 +72,7 @@ impl ScraperServiceImpl {
             .await
         {
             Ok(NormalizationSuccess {
-                product,
+                prepared,
                 llm_calls_used,
             }) => {
                 self.consume_llm_budget_n_or_err(ctx.listing_source_id, ctx.url, llm_calls_used)
@@ -97,8 +97,8 @@ impl ScraperServiceImpl {
                 {
                     GeneratedSchemaReviewOutcome::Persisted(_) => {
                         debug!(domain = ctx.domain, url = %ctx.url, "Freshly generated schema produced valid product");
-                        Ok(NormalizedSchemaSelection {
-                            product,
+                        Ok(PreparedSchemaSelection {
+                            prepared,
                             raw: reapplied,
                             default_currency: generated_schema
                                 .default_currency

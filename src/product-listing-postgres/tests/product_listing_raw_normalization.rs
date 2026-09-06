@@ -16,7 +16,9 @@ use product_listing_service::ports::{
     ProductListingRawCaptureWriter, ProductListingRawCaptureWriterFactory,
     ProductListingRawIngestionMethod, SourceRecordKeySha256,
 };
-use product_service::ports::ProductListingRawNormalizationOutcome;
+use product_service::ports::{
+    PendingProductListingRawStreamReader, ProductListingRawNormalizationOutcome,
+};
 use product_service::use_cases::{
     NormalizeProductListingRawRevisionCommand, NormalizeProductListingRawRevisionError,
     NormalizeProductListingRawRevisionHandler, NormalizeProductListingRawRevisionMode,
@@ -392,6 +394,71 @@ async fn should_advance_rejection_and_record_no_change_for_later_revisions() {
     .await
     .unwrap_or_else(|error| panic!("load normalization head: {error}"));
     assert_eq!(3, last_processed_revision);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_list_pending_streams_oldest_first_with_oldest_pending_capture_time() {
+    let pool = get_postgres_client().await;
+    let first_source = seed_listing_source(&pool, "raw-normalization-pending-first").await;
+    let second_source = seed_listing_source(&pool, "raw-normalization-pending-second").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let capture_writer = SqlxProductListingRawCaptureWriterFactory::new();
+
+    let (first_stream, _, _) = changed_parts(
+        capture(
+            &unit_of_work,
+            &capture_writer,
+            raw_write(
+                first_source,
+                RawProductListingOperation::Upsert,
+                upsert_values("EUR 100"),
+                normalization_context(),
+                "first-pending",
+            ),
+        )
+        .await,
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let (second_stream, _, _) = changed_parts(
+        capture(
+            &unit_of_work,
+            &capture_writer,
+            raw_write(
+                second_source,
+                RawProductListingOperation::Upsert,
+                upsert_values("EUR 200"),
+                normalization_context(),
+                "second-pending",
+            ),
+        )
+        .await,
+    );
+
+    let reader = SqlxPendingProductListingRawStreamReader::new(pool);
+    let first_page = reader
+        .list_pending_streams(1)
+        .await
+        .unwrap_or_else(|error| panic!("list first pending page: {error}"));
+    let full_page = reader
+        .list_pending_streams(2)
+        .await
+        .unwrap_or_else(|error| panic!("list full pending page: {error}"));
+
+    assert_eq!(
+        vec![first_stream],
+        first_page
+            .iter()
+            .map(|stream| stream.product_listing_raw_stream_id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        vec![first_stream, second_stream],
+        full_page
+            .iter()
+            .map(|stream| stream.product_listing_raw_stream_id)
+            .collect::<Vec<_>>()
+    );
+    assert!(full_page[0].oldest_pending_at < full_page[1].oldest_pending_at);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]

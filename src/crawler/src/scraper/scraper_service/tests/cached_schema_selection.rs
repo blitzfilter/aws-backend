@@ -71,7 +71,7 @@ async fn should_validate_images_before_ranking_all_cached_candidates() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -139,7 +139,7 @@ async fn assert_tries_next_cached_schema_after(error: NormalizationError) {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let first_error = Arc::new(std::sync::Mutex::new(Some(error)));
     let expected_scope = first_error
         .lock()
@@ -181,11 +181,10 @@ async fn assert_tries_next_cached_schema_after(error: NormalizationError) {
     );
 
     let result = service.scrape(&id, &url, None, None, None).await;
-    let product = result.unwrap().unwrap();
+    let scraped = result.unwrap().unwrap();
     assert_eq!(
-        product.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
+        scraped.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
 
@@ -276,7 +275,7 @@ async fn should_try_all_cached_schemas_before_fresh_generation() {
             Box::pin(async move { Ok(saved) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let norm_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
@@ -313,9 +312,8 @@ async fn should_try_all_cached_schemas_before_fresh_generation() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
+        result.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
 
@@ -370,7 +368,7 @@ async fn should_generate_fresh_schema_when_cached_data_fails() {
             Box::pin(async move { Ok(saved) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let norm_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
@@ -407,9 +405,8 @@ async fn should_generate_fresh_schema_when_cached_data_fails() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
+        result.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
 
@@ -449,7 +446,7 @@ async fn should_normalize_with_empty_images_when_image_policy_rejects_all_candid
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -525,7 +522,7 @@ async fn should_keep_valid_image_fallback_after_malformed_candidate() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()

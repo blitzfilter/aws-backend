@@ -49,7 +49,7 @@ crawler = ["application", "domain-primitives", "fxrate-postgres", "google-cloud-
 notification-core = ["domain-primitives", "listing-source-core", "localization", "money", "partnership-core", "party-core", "product-listing-core", "search-filter-core", "user-core"]
 
 oauth-service = ["application", "credential-core", "domain-primitives", "oauth-core", "serde", "user-core", "user-service"]
-product-listing-service = ["application", "domain-primitives", "embedding", "fxrate-core", "fxrate-service", "html-to-markdown-rs", "listing-source-core", "listing-source-service", "localization", "money", "notification-core", "notification-service", "product-listing-core", "product-listing-normalization", "search-filter-core", "sha2", "strum", "strum_macros", "user-core"]
+product-listing-service = ["application", "domain-primitives", "embedding", "fxrate-core", "fxrate-service", "listing-source-core", "listing-source-service", "localization", "money", "notification-core", "notification-service", "product-listing-core", "product-listing-normalization", "search-filter-core", "sha2", "strum", "strum_macros", "user-core"]
 search-filter-core = ["domain-primitives", "fxrate-core", "product-listing-core", "user-core"]
 
 shopify-lambda = ["application", "platform-observability", "platform-postgres", "fxrate-postgres", "listing-source-core", "listing-source-postgres", "listing-source-service", "product-listing-normalization", "product-listing-postgres", "product-listing-service"]

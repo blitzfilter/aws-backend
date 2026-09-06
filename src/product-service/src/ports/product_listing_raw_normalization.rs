@@ -6,6 +6,7 @@ use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_normalization::ProductListingNormalizationInput;
 use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductListingRawRevision {
@@ -109,11 +110,18 @@ pub trait ProductListingRawRevisionReader: Send + Sync {
     ) -> Result<Option<ProductListingRawRevision>, ProductListingRawNormalizationPortError>;
 }
 
-/// Bounded recovery query. It returns stream IDs only, never source payloads.
+/// One bounded recovery candidate. It carries only scheduling metadata, never source payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingProductListingRawStream {
+    pub product_listing_raw_stream_id: ProductListingRawStreamId,
+    pub oldest_pending_at: OffsetDateTime,
+}
+
+/// Bounded recovery query. It returns stream IDs and oldest pending time only.
 #[async_trait]
 pub trait PendingProductListingRawStreamReader: Send + Sync {
     async fn list_pending_streams(
         &self,
         limit: u32,
-    ) -> Result<Vec<ProductListingRawStreamId>, ProductListingRawNormalizationPortError>;
+    ) -> Result<Vec<PendingProductListingRawStream>, ProductListingRawNormalizationPortError>;
 }

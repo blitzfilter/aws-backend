@@ -14,7 +14,7 @@ embedding = { workspace = true }
 fxrate-core = { workspace = true }
 fxrate-service = { workspace = true }
 indexmap = { workspace = true }
-html-to-markdown-rs = { workspace = true }
+
 localization = { workspace = true }
 money = { workspace = true }
 notification-core = { workspace = true }

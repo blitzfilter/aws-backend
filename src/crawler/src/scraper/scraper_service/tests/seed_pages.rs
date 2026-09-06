@@ -82,7 +82,7 @@ async fn should_seed_schema_generation_with_additional_sample_pages_on_cache_mis
             Box::pin(async move { Ok(s) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -111,9 +111,8 @@ async fn should_seed_schema_generation_with_additional_sample_pages_on_cache_mis
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
+        result.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
 
@@ -152,7 +151,7 @@ async fn should_fallback_to_primary_page_when_schema_seed_sampling_query_fails()
             Box::pin(async move { Ok(s) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -185,7 +184,7 @@ async fn should_fallback_to_primary_page_when_schema_seed_sampling_query_fails()
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.availability,
+        result.availability,
         ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
@@ -240,7 +239,7 @@ async fn should_keep_primary_only_when_extra_schema_seed_fetch_fails() {
             Box::pin(async move { Ok(s) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -277,7 +276,7 @@ async fn should_keep_primary_only_when_extra_schema_seed_fetch_fails() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.availability,
+        result.availability,
         ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
@@ -331,7 +330,7 @@ async fn should_skip_schema_seed_page_when_redirected_url_does_not_match_product
             Box::pin(async move { Ok(s) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -368,7 +367,7 @@ async fn should_skip_schema_seed_page_when_redirected_url_does_not_match_product
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.availability,
+        result.availability,
         ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
@@ -408,7 +407,7 @@ async fn should_not_query_seed_urls_when_schema_seed_pages_is_one() {
             Box::pin(async move { Ok(s) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()

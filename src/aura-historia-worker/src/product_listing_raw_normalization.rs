@@ -53,17 +53,21 @@ async fn normalize_job(
 
     match result {
         Ok(result) => info!(
+            metric = "product_listing_raw_normalization_job",
             job_type = "product_listing_raw_normalization",
             %idempotency_key,
             %ordering_key,
             processed_revisions = result.revisions.len(),
+            normalization_failures = 0_u64,
             "product listing raw normalization job completed"
         ),
-        Err(error) => error!(
+        Err(_) => error!(
+            metric = "product_listing_raw_normalization_job",
             job_type = "product_listing_raw_normalization",
             %idempotency_key,
             %ordering_key,
-            error = %error,
+            normalization_failures = 1_u64,
+            error_code = "RETRY_EXHAUSTED",
             outcome = "dead_lettered_in_memory",
             "product listing raw normalization job failed"
         ),
@@ -88,19 +92,38 @@ async fn reconcile_pending_streams(
         .await;
 
         match result {
-            Ok(result) if result.revisions.is_empty() => return,
+            Ok(result) if result.revisions.is_empty() => {
+                info!(
+                    metric = "product_listing_raw_normalization_reconciliation",
+                    job_type = "product_listing_raw_normalization_reconciliation",
+                    reconciliation_runs = 1_u64,
+                    processed_revisions = 0_u64,
+                    pending_stream_page_count = result.pending_stream_page_count,
+                    oldest_pending_age_seconds = result.oldest_pending_age_seconds,
+                    "raw normalization reconciliation found no pending work"
+                );
+                return;
+            }
             Ok(result) => {
                 let processed_revisions = result.revisions.len();
                 info!(
+                    metric = "product_listing_raw_normalization_reconciliation",
                     job_type = "product_listing_raw_normalization_reconciliation",
-                    processed_revisions, "raw normalization reconciliation processed pending work"
+                    reconciliation_runs = 1_u64,
+                    processed_revisions,
+                    pending_stream_page_count = result.pending_stream_page_count,
+                    oldest_pending_age_seconds = result.oldest_pending_age_seconds,
+                    "raw normalization reconciliation processed pending work"
                 );
                 tokio::task::yield_now().await;
             }
-            Err(error) => {
+            Err(_) => {
                 warn!(
+                    metric = "product_listing_raw_normalization_reconciliation",
                     job_type = "product_listing_raw_normalization_reconciliation",
-                    error = %error,
+                    reconciliation_runs = 1_u64,
+                    normalization_failures = 1_u64,
+                    error_code = "RETRY_EXHAUSTED",
                     outcome = "retry_exhausted",
                     "raw normalization reconciliation failed; a later interval will retry"
                 );

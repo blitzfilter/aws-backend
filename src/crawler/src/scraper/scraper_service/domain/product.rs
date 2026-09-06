@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::scraper::normalization::product::NormalizedProduct;
 use crate::scraper::scraper_service::domain::errors::ScraperError;
 use listing_source_core::ListingSourceId;
 use product_listing_normalization::{
@@ -11,9 +9,6 @@ use url::Url;
 /// metadata needed to mark the URL as scraped after durable raw capture.
 #[derive(Debug)]
 pub struct ScrapedProduct {
-    /// Legacy test-only preview. Production handoff carries only raw input.
-    #[cfg(test)]
-    pub product: NormalizedProduct,
     /// Complete source-neutral normalization input. The worker later performs canonical writes.
     pub raw_input: ProductListingNormalizationInput,
     /// Pure crawler quick-check used only for local disposition.

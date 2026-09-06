@@ -48,7 +48,7 @@ async fn should_select_richer_schema_even_when_it_is_later_in_order() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -108,7 +108,7 @@ async fn should_pick_earlier_schema_when_it_extracts_more_data() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -190,7 +190,7 @@ async fn should_generate_fresh_schema_when_no_cached_schema_applies() {
             })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -275,7 +275,7 @@ async fn should_generate_fresh_schema_when_richer_candidate_normalization_fails_
             })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let normalize_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc

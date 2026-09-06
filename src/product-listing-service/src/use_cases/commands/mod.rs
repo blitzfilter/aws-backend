@@ -3,8 +3,6 @@ pub mod capture_product_listing_raw_observation;
 pub mod create_product_listing;
 pub mod embed_product_listing_event;
 pub mod generate_watchlist_notifications;
-pub mod ingest_shopify_product_listing;
-pub mod ingest_woocommerce_product_listing;
 pub mod project_product_listing;
 pub mod record_product_listing_sale_observation;
 pub mod translate_product_listing_event;

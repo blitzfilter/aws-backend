@@ -10,6 +10,7 @@
 - Use generic pure values from `product-listing-normalization` only.
 - Own raw head/result ports and pending-stream read contract.
 - Use caller-owned PostgreSQL transaction with ProductListing service canonical writer.
+- Emit metadata-only normalization outcome and bounded reconciliation backlog metrics; raw JSON never enters logs.
 - No SQLx, provider DTO, HTTP, queue, LLM, graph, or runtime config dependency.
 
 ## Ownership

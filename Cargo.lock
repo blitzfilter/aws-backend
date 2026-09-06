@@ -5786,7 +5786,6 @@ dependencies = [
  "fake",
  "fxrate-core",
  "fxrate-service",
- "html-to-markdown-rs",
  "indexmap 2.14.1",
  "listing-source-core",
  "listing-source-service",

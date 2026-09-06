@@ -80,7 +80,7 @@ pub async fn assert_normalized(
         .normalize(raw, product_url, default_currency)
         .await
         .unwrap_or_else(|e| panic!("normalization failed: {e}"))
-        .product;
+        .prepared;
 
     assert_eq!(
         result.source_listing_id.to_string(),

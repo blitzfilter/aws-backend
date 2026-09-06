@@ -8,11 +8,11 @@ use product_listing_normalization::{
 };
 use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
 use product_service::ports::{
-    PendingProductListingRawStreamReader, ProductListingRawNormalizationCompletion,
-    ProductListingRawNormalizationHead, ProductListingRawNormalizationPortError,
-    ProductListingRawNormalizationWork, ProductListingRawNormalizationWriter,
-    ProductListingRawNormalizationWriterFactory, ProductListingRawRevision,
-    ProductListingRawRevisionReader,
+    PendingProductListingRawStream, PendingProductListingRawStreamReader,
+    ProductListingRawNormalizationCompletion, ProductListingRawNormalizationHead,
+    ProductListingRawNormalizationPortError, ProductListingRawNormalizationWork,
+    ProductListingRawNormalizationWriter, ProductListingRawNormalizationWriterFactory,
+    ProductListingRawRevision, ProductListingRawRevisionReader,
 };
 use sqlx::{PgConnection, PgPool};
 
@@ -35,6 +35,12 @@ struct RawNormalizationHeadRow {
     last_processed_revision: i64,
     product_listing_id: Option<uuid::Uuid>,
     source_listing_id: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PendingRawStreamRow {
+    product_listing_raw_stream_id: uuid::Uuid,
+    oldest_pending_at: time::OffsetDateTime,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -255,16 +261,22 @@ impl PendingProductListingRawStreamReader for SqlxPendingProductListingRawStream
     async fn list_pending_streams(
         &self,
         limit: u32,
-    ) -> Result<Vec<ProductListingRawStreamId>, ProductListingRawNormalizationPortError> {
+    ) -> Result<Vec<PendingProductListingRawStream>, ProductListingRawNormalizationPortError> {
         let limit = i64::from(limit);
-        let ids = sqlx::query_scalar::<_, uuid::Uuid>(
+        let rows = sqlx::query_as::<_, PendingRawStreamRow>(
             r#"
-            SELECT stream.product_listing_raw_stream_id
+            SELECT
+                stream.product_listing_raw_stream_id,
+                MIN(revision.captured_at) AS oldest_pending_at
             FROM product_listing_raw_streams AS stream
             LEFT JOIN product_listing_raw_normalization_heads AS head
               ON head.product_listing_raw_stream_id = stream.product_listing_raw_stream_id
+            JOIN product_listing_raw_revisions AS revision
+              ON revision.product_listing_raw_stream_id = stream.product_listing_raw_stream_id
+             AND revision.revision > COALESCE(head.last_processed_revision, 0)
             WHERE stream.latest_revision > COALESCE(head.last_processed_revision, 0)
-            ORDER BY stream.product_listing_raw_stream_id
+            GROUP BY stream.product_listing_raw_stream_id
+            ORDER BY oldest_pending_at, stream.product_listing_raw_stream_id
             LIMIT $1
             "#,
         )
@@ -272,9 +284,14 @@ impl PendingProductListingRawStreamReader for SqlxPendingProductListingRawStream
         .fetch_all(&self.pool)
         .await
         .map_err(persistence)?;
-        Ok(ids
+        Ok(rows
             .into_iter()
-            .map(ProductListingRawStreamId::from_uuid)
+            .map(|row| PendingProductListingRawStream {
+                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
+                    row.product_listing_raw_stream_id,
+                ),
+                oldest_pending_at: row.oldest_pending_at,
+            })
             .collect())
     }
 }

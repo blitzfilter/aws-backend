@@ -155,7 +155,18 @@ async fn flush_batch(
                     )
                     .await
                 {
-                    Ok(()) => mark_as_scraped_count += 1,
+                    Ok(()) => {
+                        mark_as_scraped_count += 1;
+                        if meta.disposition != CrawlerDisposition::Active {
+                            info!(
+                                metric = "crawler_disposition_transition",
+                                crawler_disposition_transitions = 1_u64,
+                                listing_source_id = %meta.listing_source_id,
+                                crawler_disposition = meta.disposition.as_str(),
+                                "crawler URL entered dormant disposition after durable raw capture"
+                            );
+                        }
+                    }
                     Err(error) => {
                         mark_as_scraped_failure_count += 1;
                         warn!(listing_source_id = %meta.listing_source_id, error = %error, url = %meta.url, "Failed to mark product as scraped after raw capture");
@@ -175,7 +186,13 @@ async fn flush_batch(
             {
                 Ok(()) => {
                     mark_as_scraped_count += 1;
-                    info!(listing_source_id = %listing_source_id, url = %url, "Verified crawler removal captured; URL is dormant");
+                    info!(
+                        metric = "crawler_disposition_transition",
+                        crawler_disposition_transitions = 1_u64,
+                        listing_source_id = %listing_source_id,
+                        crawler_disposition = CrawlerDisposition::DormantRemoved.as_str(),
+                        "verified crawler removal captured; URL entered dormant disposition"
+                    );
                 }
                 Err(error) => {
                     mark_as_scraped_failure_count += 1;
@@ -399,11 +416,22 @@ async fn scrape_candidate(
                     )
                     .await
                 {
-                    Ok(()) => ScrapeCandidateOutcome {
-                        capture: None,
-                        errored: false,
-                        skipped: false,
-                    },
+                    Ok(()) => {
+                        if meta.disposition != CrawlerDisposition::Active {
+                            info!(
+                                metric = "crawler_disposition_transition",
+                                crawler_disposition_transitions = 1_u64,
+                                listing_source_id = %meta.listing_source_id,
+                                crawler_disposition = meta.disposition.as_str(),
+                                "crawler URL entered dormant disposition after unchanged raw capture"
+                            );
+                        }
+                        ScrapeCandidateOutcome {
+                            capture: None,
+                            errored: false,
+                            skipped: false,
+                        }
+                    }
                     Err(error) => {
                         warn!(error = %error, url = %meta.url, "Failed to persist unchanged raw scrape metadata");
                         ScrapeCandidateOutcome {

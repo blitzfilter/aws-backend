@@ -47,6 +47,8 @@ These are separate concepts. Enrichment advances `current_event_id` and `project
 
 `product_listing_events` is the immutable ProductListing event journal and direct Sequin CDC source, not an outbox. Every row has immutable event ID/time, a positive persisted schema version, and an object JSON payload. Allowed groups are `DOMAIN` and `ENRICHMENT`, with the initial schema constraining domain events to `PRODUCT_LISTING_DISCOVERED`/`PRODUCT_LISTING_CHANGED` and enrichment events to `ENRICHMENT_EMBEDDED`/`ENRICHMENT_TRANSLATED_TITLES`. Application and router code fail closed on the concrete v1 type/group/version/payload contracts. Deferred same-listing foreign keys tie current and source marker IDs to journal rows.
 
+`product_listing_raw_streams` is a mutable, change-only capture head for `WEB_CRAWL`, `SHOPIFY`, and `WOOCOMMERCE`; `product_listing_raw_revisions` is immutable source evidence. `product_listing_raw_normalization_heads` serializes stream progress and binding, while `product_listing_raw_normalizations` retains immutable terminal outcomes and stable rejection codes. Raw JSON has no broad GIN index. Raw revisions CDC only to the `product-listing-normalization` worker scope; they never enter `product_listing_events` or downstream ProductListing consumers. Safe backlog, rejection, growth, and crawler-dormancy queries are in `docs/product-listing-raw-normalization-runbook.md`.
+
 Public history reads only `DOMAIN` `PRODUCT_LISTING_DISCOVERED` and `PRODUCT_LISTING_CHANGED` rows. It strictly decodes v1 payloads through direct DTO mapping without aggregate reconstruction, orders by `event_time ASC, event_id ASC`, and reports invalid persisted event data as an operation error instead of silently omitting it.
 
 ## Indexed read paths

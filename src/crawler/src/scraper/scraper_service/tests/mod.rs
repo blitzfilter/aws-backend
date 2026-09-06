@@ -27,9 +27,9 @@ use crate::scraper::css_selector::rule::{
     CssSelector, ExtractionCardinality, ExtractionKind, ExtractionRule,
 };
 use crate::scraper::normalization::error::NormalizationError;
-use crate::scraper::normalization::product::NormalizedProduct;
 use crate::scraper::normalization::product_normalization_service::{
     MockProductListingNormalizationService, NormalizationFailure, NormalizationSuccess,
+    PreparedProduct,
 };
 use crate::scraper::scraper_service::ScraperService;
 use crate::scraper::scraper_service::service::{
@@ -163,9 +163,11 @@ pub(super) fn generated_single_product(
     }
 }
 
-pub(super) fn normalized_product(url: Url) -> NormalizedProduct {
+pub(super) fn prepared_product(url: Url) -> PreparedProduct {
     let title: Title = "Biedermeier Chair".into();
-    NormalizedProduct {
+    PreparedProduct {
+        availability: ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available),
+        raw_state: "In Stock".to_string(),
         source_listing_id: SourceListingId::try_from("SKU-42")
             .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
         title: Localized::new(Language::De, title),
@@ -173,7 +175,6 @@ pub(super) fn normalized_product(url: Url) -> NormalizedProduct {
         price: None,
         price_estimate_min: None,
         price_estimate_max: None,
-        availability: ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available),
         url,
         images: vec![],
         auction_start: None,
@@ -183,11 +184,11 @@ pub(super) fn normalized_product(url: Url) -> NormalizedProduct {
 }
 
 pub(super) fn normalization_success(
-    product: NormalizedProduct,
+    prepared: PreparedProduct,
     llm_calls_used: u32,
 ) -> NormalizationSuccess {
     NormalizationSuccess {
-        product,
+        prepared,
         llm_calls_used,
     }
 }

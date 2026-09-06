@@ -25,16 +25,7 @@ pub use commands::generate_watchlist_notifications::{
     GenerateWatchlistNotificationsHandler, GenerateWatchlistNotificationsResult,
     GenerateWatchlistNotificationsUseCase,
 };
-pub use commands::ingest_shopify_product_listing::{
-    IngestShopifyProductListingCommand, IngestShopifyProductListingError,
-    IngestShopifyProductListingHandler, IngestShopifyProductListingResult,
-    IngestShopifyProductListingUseCase,
-};
-pub use commands::ingest_woocommerce_product_listing::{
-    IngestWoocommerceProductListingCommand, IngestWoocommerceProductListingError,
-    IngestWoocommerceProductListingHandler, IngestWoocommerceProductListingResult,
-    IngestWoocommerceProductListingUseCase, WoocommerceProductEventKind,
-};
+
 pub use commands::project_product_listing::{
     ProjectProductListingCommand, ProjectProductListingError, ProjectProductListingHandler,
     ProjectProductListingOutcome, ProjectProductListingResult, ProjectProductListingUseCase,

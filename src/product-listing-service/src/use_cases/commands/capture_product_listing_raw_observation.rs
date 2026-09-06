@@ -15,6 +15,7 @@ use product_listing_normalization::{
     NormalizationInputError, ProductListingNormalizationInput, RawProductListingProvenance,
 };
 use sha2::{Digest, Sha256};
+use std::time::Instant;
 use time::OffsetDateTime;
 use user_core::user_id::UserId;
 
@@ -220,26 +221,80 @@ where
             .credential_capability(CredentialCapability::ProductListingsWrite)
             .authorize::<CaptureProductListingRawObservationError>()?;
         let listing_source_id = command.listing_source_id;
-        let result = self.capture(context, command).await?;
-        let (outcome, product_listing_raw_stream_id, revision) = match &result {
-            CaptureProductListingRawObservationResult::Changed {
+        let ingestion_method = command.ingestion_method.as_str();
+        let source_payload_bytes = command.input.source_payload().value().to_string().len();
+        let raw_values_bytes = command.input.raw_values().value().to_string().len();
+        let normalization_context_bytes = command
+            .input
+            .normalization_context()
+            .value()
+            .to_string()
+            .len();
+        let provenance_bytes = command.provenance.value().to_string().len();
+        let started = Instant::now();
+        let result = self.capture(context, command).await;
+
+        match &result {
+            Ok(CaptureProductListingRawObservationResult::Changed {
                 product_listing_raw_stream_id,
                 revision,
                 ..
-            } => ("changed", product_listing_raw_stream_id, *revision),
-            CaptureProductListingRawObservationResult::Unchanged {
+            }) => tracing::info!(
+                metric = "product_listing_raw_capture",
+                raw_capture_attempts = 1_u64,
+                raw_revision_inserts = 1_u64,
+                unchanged_captures = 0_u64,
+                capture_latency_ms = started.elapsed().as_millis() as u64,
+                source_payload_bytes,
+                raw_values_bytes,
+                normalization_context_bytes,
+                provenance_bytes,
+                listing_source_id = %listing_source_id,
+                ingestion_method,
+                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                revision,
+                outcome = "changed",
+                "raw product listing capture metric"
+            ),
+            Ok(CaptureProductListingRawObservationResult::Unchanged {
                 product_listing_raw_stream_id,
                 latest_revision,
-            } => ("unchanged", product_listing_raw_stream_id, *latest_revision),
-        };
-        tracing::debug!(
-            listing_source_id = %listing_source_id,
-            product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
-            revision,
-            outcome,
-            "raw product listing observation captured"
-        );
-        Ok(result)
+            }) => tracing::info!(
+                metric = "product_listing_raw_capture",
+                raw_capture_attempts = 1_u64,
+                raw_revision_inserts = 0_u64,
+                unchanged_captures = 1_u64,
+                capture_latency_ms = started.elapsed().as_millis() as u64,
+                source_payload_bytes,
+                raw_values_bytes,
+                normalization_context_bytes,
+                provenance_bytes,
+                listing_source_id = %listing_source_id,
+                ingestion_method,
+                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                revision = latest_revision,
+                outcome = "unchanged",
+                "raw product listing capture metric"
+            ),
+            Err(error) => tracing::warn!(
+                metric = "product_listing_raw_capture",
+                raw_capture_attempts = 1_u64,
+                raw_revision_inserts = 0_u64,
+                unchanged_captures = 0_u64,
+                capture_latency_ms = started.elapsed().as_millis() as u64,
+                source_payload_bytes,
+                raw_values_bytes,
+                normalization_context_bytes,
+                provenance_bytes,
+                listing_source_id = %listing_source_id,
+                ingestion_method,
+                outcome = "failure",
+                error_code = capture_error_code(error),
+                "raw product listing capture metric"
+            ),
+        }
+
+        result
     }
 }
 
@@ -258,6 +313,41 @@ fn validate_source_record_key(
         return Err(CaptureProductListingRawObservationError::SourceRecordKeyEmbeddedNul);
     }
     Ok(())
+}
+
+fn capture_error_code(error: &CaptureProductListingRawObservationError) -> &'static str {
+    match error {
+        CaptureProductListingRawObservationError::AuthenticatedActorRequired => {
+            "AUTHENTICATED_ACTOR_REQUIRED"
+        }
+        CaptureProductListingRawObservationError::Forbidden => "FORBIDDEN",
+        CaptureProductListingRawObservationError::SourceRecordKeyTooLong { .. } => {
+            "SOURCE_RECORD_KEY_TOO_LONG"
+        }
+        CaptureProductListingRawObservationError::SourceRecordKeyEmbeddedNul => {
+            "SOURCE_RECORD_KEY_EMBEDDED_NUL"
+        }
+        CaptureProductListingRawObservationError::InvalidInput { .. } => "INVALID_INPUT",
+        CaptureProductListingRawObservationError::ListingSourceNotFound => {
+            "LISTING_SOURCE_NOT_FOUND"
+        }
+        CaptureProductListingRawObservationError::PartnerAuthorizationTemporarilyUnavailable {
+            ..
+        } => "PARTNER_AUTHORIZATION_TEMPORARILY_UNAVAILABLE",
+        CaptureProductListingRawObservationError::PartnerAuthorizationInternal { .. } => {
+            "PARTNER_AUTHORIZATION_INTERNAL"
+        }
+        CaptureProductListingRawObservationError::SourceRecordKeyHashCollision => {
+            "SOURCE_RECORD_KEY_HASH_COLLISION"
+        }
+        CaptureProductListingRawObservationError::BeginTransactionFailed => {
+            "BEGIN_TRANSACTION_FAILED"
+        }
+        CaptureProductListingRawObservationError::CaptureFailed { .. } => "CAPTURE_FAILED",
+        CaptureProductListingRawObservationError::CommitTransactionFailed => {
+            "COMMIT_TRANSACTION_FAILED"
+        }
+    }
 }
 
 fn partner_actor(principal: &Principal) -> Option<UserId> {

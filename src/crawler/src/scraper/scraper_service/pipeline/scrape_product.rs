@@ -221,7 +221,7 @@ impl ScraperService for ScraperServiceImpl {
             )
             .await?
         {
-            ExistingSchemaSelection::Normalized(selection) => *selection,
+            ExistingSchemaSelection::Prepared(selection) => *selection,
             ExistingSchemaSelection::GenerateNewSchema { reason } => {
                 debug!(
                     domain,
@@ -253,13 +253,11 @@ impl ScraperService for ScraperServiceImpl {
             .map_err(ScraperError::RawNormalizationInput)?
             .as_bytes()
             .to_vec();
-        let availability = selection.product.availability;
+        let availability = selection.prepared.availability;
 
         // `mark_as_scraped` is intentionally deferred until raw capture succeeds.
         debug!(domain, "Scraping complete");
         Ok(Some(ScrapedProduct {
-            #[cfg(test)]
-            product: selection.product,
             raw_input,
             availability,
             hash: current_hash,

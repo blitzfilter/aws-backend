@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn should_return_normalized_product_when_schema_exists_and_applies_cleanly() {
+async fn should_return_raw_capture_and_availability_when_schema_exists_and_applies_cleanly() {
     let id = listing_source_id();
     let url = product_url();
 
@@ -34,7 +34,7 @@ async fn should_return_normalized_product_when_schema_exists_and_applies_cleanly
             Box::pin(async move { Ok(s) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -64,19 +64,28 @@ async fn should_return_normalized_product_when_schema_exists_and_applies_cleanly
         .unwrap();
 
     assert_eq!(
-        result.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
-    );
-    assert_eq!(
-        result.product.availability,
+        result.availability,
         ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
-    assert_eq!(result.product.url, url);
+    assert_eq!(
+        result
+            .raw_input
+            .source_payload()
+            .value()
+            .get("source_listing_id"),
+        Some(&serde_json::json!("SKU-42"))
+    );
+    assert_eq!(
+        result.raw_input.raw_values().value().get("url"),
+        Some(&serde_json::json!({
+            "action": "SET",
+            "value": url.to_string(),
+        }))
+    );
 }
 
 #[tokio::test]
-async fn should_return_normalized_product_with_all_fields_when_normalization_produces_full_data() {
+async fn should_retain_selected_raw_fields_without_canonical_product_preview() {
     let id = listing_source_id();
     let url = product_url();
 
@@ -108,7 +117,7 @@ async fn should_return_normalized_product_with_all_fields_when_normalization_pro
             Box::pin(async move { Ok(s) })
         });
 
-    let norm = normalized_product(url.clone());
+    let norm = prepared_product(url.clone());
     let norm_clone = norm.clone();
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc.expect_normalize().returning(move |_, _, _| {
@@ -135,7 +144,17 @@ async fn should_return_normalized_product_with_all_fields_when_normalization_pro
         .unwrap()
         .unwrap();
 
-    assert_eq!(result.product, norm);
+    assert_eq!(
+        result.raw_input.source_payload().value().get("title"),
+        Some(&serde_json::json!("Biedermeier Chair"))
+    );
+    assert_eq!(
+        result.raw_input.raw_values().value().get("title"),
+        Some(&serde_json::json!({
+            "action": "SET",
+            "value": "Biedermeier Chair",
+        }))
+    );
 }
 
 #[tokio::test]
@@ -172,7 +191,7 @@ async fn should_filter_invalid_thumbnail_images_before_normalization() {
             Box::pin(async move { Ok(Some(schema)) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -204,5 +223,10 @@ async fn should_filter_invalid_thumbnail_images_before_normalization() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(result.product.url, url);
+    assert_eq!(
+        result.raw_input.source_payload().value().get("images"),
+        Some(&serde_json::json!([
+            "https://example.com/image-800x600.jpg"
+        ]))
+    );
 }
