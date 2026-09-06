@@ -310,24 +310,33 @@ mod tests {
         ListingSource, ListingSourceName, ListingSourcePresentation, NewListingSource,
     };
     use listing_source_service::ports::{
-        ListingSourceIngestionConfigurations, ListingSourceRepository, ListingSourceStorageVersion,
-        StoredListingSource,
+        ListingSourceIngestionConfigurations, ListingSourceRepository,
+        ListingSourceRepositoryError, ListingSourceStorageVersion, StoredListingSource,
     };
     use partnership_core::partnership::{NewPartnership, Partnership};
     use party_core::party_id::PartyId;
     use std::sync::{Arc, Mutex, MutexGuard};
     use user_core::{role::UserRole, user_id::UserId};
-    use user_service::ports::{UserAdminActorView, UserAdminReader};
+    use user_service::ports::{UserAdminActorView, UserAdminReadError, UserAdminReader};
 
     #[derive(Default)]
     struct State {
         partnership: Option<Partnership>,
         source: Option<StoredListingSource>,
         admin: Option<UserAdminActorView>,
+        partnership_error: Option<PartnershipRepositoryError>,
+        source_error: Option<ListingSourceRepositoryError>,
+        admin_error: Option<UserAdminReadError>,
         grant_outcome: Option<ListingSourceGrantOutcome>,
         grant_error: Option<PartnershipGrantError>,
         begin_fails: bool,
         commit_fails: bool,
+        next_transaction_id: usize,
+        admin_transaction_ids: Vec<usize>,
+        partnership_transaction_ids: Vec<usize>,
+        source_transaction_ids: Vec<usize>,
+        grant_transaction_ids: Vec<usize>,
+        admin_reads: usize,
         partnership_reads: usize,
         source_reads: usize,
         grant_calls: usize,
@@ -340,6 +349,7 @@ mod tests {
     }
 
     struct FakeTransaction {
+        id: usize,
         state: Arc<Mutex<State>>,
     }
 
@@ -361,10 +371,15 @@ mod tests {
         type Tx = FakeTransaction;
 
         async fn begin(&self) -> Result<Self::Tx, TransactionError> {
-            if lock(&self.state).begin_fails {
+            let mut state = lock(&self.state);
+            if state.begin_fails {
                 return Err(TransactionError::BeginFailed);
             }
+            state.next_transaction_id += 1;
+            let id = state.next_transaction_id;
+            drop(state);
             Ok(FakeTransaction {
+                id,
                 state: Arc::clone(&self.state),
             })
         }
@@ -394,8 +409,9 @@ mod tests {
     impl PartnershipRepositoryFactory<FakeTransaction> for FakeFactories {
         fn in_transaction<'tx>(
             &'tx self,
-            _tx: &'tx mut FakeTransaction,
+            tx: &'tx mut FakeTransaction,
         ) -> impl PartnershipRepository + 'tx {
+            lock(&self.state).partnership_transaction_ids.push(tx.id);
             FakePartnershipRepository {
                 state: Arc::clone(&self.state),
             }
@@ -405,8 +421,9 @@ mod tests {
     impl ListingSourceRepositoryFactory<FakeTransaction> for FakeFactories {
         fn in_transaction<'tx>(
             &'tx self,
-            _tx: &'tx mut FakeTransaction,
+            tx: &'tx mut FakeTransaction,
         ) -> impl ListingSourceRepository + 'tx {
+            lock(&self.state).source_transaction_ids.push(tx.id);
             FakeSourceRepository {
                 state: Arc::clone(&self.state),
             }
@@ -416,8 +433,9 @@ mod tests {
     impl ListingSourceGrantRepositoryFactory<FakeTransaction> for FakeFactories {
         fn in_transaction<'tx>(
             &'tx self,
-            _tx: &'tx mut FakeTransaction,
+            tx: &'tx mut FakeTransaction,
         ) -> impl ListingSourceGrantRepository + 'tx {
+            lock(&self.state).grant_transaction_ids.push(tx.id);
             FakeGrantRepository {
                 state: Arc::clone(&self.state),
             }
@@ -427,8 +445,9 @@ mod tests {
     impl UserAdminReaderFactory<FakeTransaction> for FakeFactories {
         fn in_transaction<'tx>(
             &'tx self,
-            _tx: &'tx mut FakeTransaction,
+            tx: &'tx mut FakeTransaction,
         ) -> impl UserAdminReader + 'tx {
+            lock(&self.state).admin_transaction_ids.push(tx.id);
             FakeAdminReader {
                 state: Arc::clone(&self.state),
             }
@@ -443,6 +462,9 @@ mod tests {
         ) -> Result<Option<VersionedPartnership>, PartnershipRepositoryError> {
             let mut state = lock(&self.state);
             state.partnership_reads += 1;
+            if let Some(error) = state.partnership_error.take() {
+                return Err(error);
+            }
             Ok(state
                 .partnership
                 .clone()
@@ -469,6 +491,9 @@ mod tests {
         ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
             let mut state = lock(&self.state);
             state.source_reads += 1;
+            if let Some(error) = state.source_error.take() {
+                return Err(error);
+            }
             Ok(state
                 .source
                 .clone()
@@ -542,7 +567,12 @@ mod tests {
             &mut self,
             _user_id: UserId,
         ) -> Result<Option<UserAdminActorView>, user_service::ports::UserAdminReadError> {
-            Ok(lock(&self.state).admin.clone())
+            let mut state = lock(&self.state);
+            state.admin_reads += 1;
+            if let Some(error) = state.admin_error.take() {
+                return Err(error);
+            }
+            Ok(state.admin.clone())
         }
     }
 
@@ -650,6 +680,10 @@ mod tests {
         assert_eq!(1, state.partnership_reads);
         assert_eq!(1, state.source_reads);
         assert_eq!(1, state.grant_calls);
+        assert_eq!(vec![1], state.admin_transaction_ids);
+        assert_eq!(vec![1], state.partnership_transaction_ids);
+        assert_eq!(vec![1], state.source_transaction_ids);
+        assert_eq!(vec![1], state.grant_transaction_ids);
         assert_eq!(1, state.commit_attempts);
         assert_eq!(1, state.commits);
     }
@@ -776,11 +810,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_not_commit_when_grant_persistence_fails() {
+    async fn should_report_begin_transaction_failure_before_authorization() {
         let (mut state, partnership_id, listing_source_id) = valid_state();
-        state.grant_error = Some(PartnershipGrantError::Internal {
-            source: static_error("grant insert failed"),
-        });
+        state.begin_fails = true;
         let state = Arc::new(Mutex::new(state));
 
         let result = handler(Arc::clone(&state))
@@ -795,11 +827,211 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(GrantPartnershipListingSourceError::Internal { .. })
+            Err(GrantPartnershipListingSourceError::BeginTransactionFailed)
+        ));
+        let state = lock(&state);
+        assert_eq!(0, state.admin_reads);
+        assert_eq!(0, state.partnership_reads);
+        assert_eq!(0, state.source_reads);
+        assert_eq!(0, state.grant_calls);
+        assert_eq!(0, state.commit_attempts);
+    }
+
+    #[tokio::test]
+    async fn should_report_commit_transaction_failure_after_grant() {
+        let (mut state, partnership_id, listing_source_id) = valid_state();
+        state.commit_fails = true;
+        let state = Arc::new(Mutex::new(state));
+
+        let result = handler(Arc::clone(&state))
+            .execute(
+                &context(),
+                GrantPartnershipListingSourceCommand {
+                    partnership_id,
+                    listing_source_id,
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(GrantPartnershipListingSourceError::CommitTransactionFailed)
         ));
         let state = lock(&state);
         assert_eq!(1, state.grant_calls);
-        assert_eq!(0, state.commit_attempts);
+        assert_eq!(1, state.commit_attempts);
         assert_eq!(0, state.commits);
+    }
+
+    #[tokio::test]
+    async fn should_map_admin_reader_failures_without_loading_targets() {
+        let errors = [
+            UserAdminReadError::TemporarilyUnavailable {
+                source: static_error("temporary admin read"),
+            },
+            UserAdminReadError::InvalidReadModel {
+                source: static_error("invalid admin read"),
+            },
+            UserAdminReadError::Internal {
+                source: static_error("internal admin read"),
+            },
+        ];
+
+        for error in errors {
+            let (mut state, partnership_id, listing_source_id) = valid_state();
+            state.admin_error = Some(error);
+            let state = Arc::new(Mutex::new(state));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &context(),
+                    GrantPartnershipListingSourceCommand {
+                        partnership_id,
+                        listing_source_id,
+                    },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(
+                    GrantPartnershipListingSourceError::TemporarilyUnavailable { .. }
+                        | GrantPartnershipListingSourceError::InvalidPersistedState { .. }
+                        | GrantPartnershipListingSourceError::Internal { .. }
+                )
+            ));
+            let state = lock(&state);
+            assert_eq!(1, state.admin_reads);
+            assert_eq!(0, state.partnership_reads);
+            assert_eq!(0, state.source_reads);
+            assert_eq!(0, state.grant_calls);
+            assert_eq!(0, state.commit_attempts);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_map_partnership_repository_failures_without_loading_listing_source() {
+        let errors = [
+            PartnershipRepositoryError::TemporarilyUnavailable {
+                source: static_error("temporary partnership read"),
+            },
+            PartnershipRepositoryError::InvalidPersistedState {
+                source: static_error("invalid partnership read"),
+            },
+            PartnershipRepositoryError::Internal {
+                source: static_error("internal partnership read"),
+            },
+        ];
+
+        for error in errors {
+            let (mut state, partnership_id, listing_source_id) = valid_state();
+            state.partnership_error = Some(error);
+            let state = Arc::new(Mutex::new(state));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &context(),
+                    GrantPartnershipListingSourceCommand {
+                        partnership_id,
+                        listing_source_id,
+                    },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(
+                    GrantPartnershipListingSourceError::TemporarilyUnavailable { .. }
+                        | GrantPartnershipListingSourceError::InvalidPersistedState { .. }
+                        | GrantPartnershipListingSourceError::Internal { .. }
+                )
+            ));
+            let state = lock(&state);
+            assert_eq!(1, state.partnership_reads);
+            assert_eq!(0, state.source_reads);
+            assert_eq!(0, state.grant_calls);
+            assert_eq!(0, state.commit_attempts);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_map_listing_source_repository_failures_without_granting() {
+        let errors = [
+            ListingSourceRepositoryError::TemporarilyUnavailable {
+                source: static_error("temporary listing source read"),
+            },
+            ListingSourceRepositoryError::InvalidPersistedState {
+                source: static_error("invalid listing source read"),
+            },
+            ListingSourceRepositoryError::Internal {
+                source: static_error("internal listing source read"),
+            },
+        ];
+
+        for error in errors {
+            let (mut state, partnership_id, listing_source_id) = valid_state();
+            state.source_error = Some(error);
+            let state = Arc::new(Mutex::new(state));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &context(),
+                    GrantPartnershipListingSourceCommand {
+                        partnership_id,
+                        listing_source_id,
+                    },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(
+                    GrantPartnershipListingSourceError::TemporarilyUnavailable { .. }
+                        | GrantPartnershipListingSourceError::InvalidPersistedState { .. }
+                        | GrantPartnershipListingSourceError::Internal { .. }
+                )
+            ));
+            let state = lock(&state);
+            assert_eq!(1, state.partnership_reads);
+            assert_eq!(1, state.source_reads);
+            assert_eq!(0, state.grant_calls);
+            assert_eq!(0, state.commit_attempts);
+        }
+    }
+
+    #[tokio::test]
+    async fn should_map_grant_repository_failures_without_commit() {
+        let errors = [
+            PartnershipGrantError::TemporarilyUnavailable {
+                source: static_error("temporary grant failure"),
+            },
+            PartnershipGrantError::Internal {
+                source: static_error("internal grant failure"),
+            },
+        ];
+
+        for error in errors {
+            let (mut state, partnership_id, listing_source_id) = valid_state();
+            state.grant_error = Some(error);
+            let state = Arc::new(Mutex::new(state));
+            let result = handler(Arc::clone(&state))
+                .execute(
+                    &context(),
+                    GrantPartnershipListingSourceCommand {
+                        partnership_id,
+                        listing_source_id,
+                    },
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(
+                    GrantPartnershipListingSourceError::TemporarilyUnavailable { .. }
+                        | GrantPartnershipListingSourceError::Internal { .. }
+                )
+            ));
+            let state = lock(&state);
+            assert_eq!(1, state.grant_calls);
+            assert_eq!(0, state.commit_attempts);
+            assert_eq!(0, state.commits);
+        }
     }
 }
