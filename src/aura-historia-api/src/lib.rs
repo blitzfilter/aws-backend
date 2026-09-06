@@ -529,6 +529,10 @@ pub fn app(state: AppState) -> Router {
                         .patch(users::admin_users::patch_admin_user)
                         .delete(users::admin_users::delete_admin_user),
                 )
+                .route(
+                    "/api/v1/admin/users/{user_id}/access-tokens/{access_token_id}",
+                    delete(users::access_tokens::delete_admin_access_token),
+                )
                 .with_state(users),
         );
     }
@@ -1025,6 +1029,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         delete_access_token: Arc::new(DeleteAccessTokenHandler::new(
             unit_of_work.clone(),
             SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        admin_delete_access_token: Arc::new(DeleteAccessTokenHandler::new_admin_only(
+            unit_of_work.clone(),
+            SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
         )),
         authenticator: Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     };

@@ -4995,6 +4995,126 @@ paths:
                 title: Internal Server Error
                 error: USER_INTERNAL_ERROR
 
+  /api/v1/admin/users/{userId}/access-tokens/{accessTokenId}:
+    delete:
+      summary: Revoke a user's Aura Historia access token as admin
+      description: |
+        Revokes one Aura Historia access token for the target user.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:write`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        Both `userId` and `accessTokenId` must be UUIDs. The database deletion is scoped by both
+        identifiers, so an access-token ID belonging to another user cannot revoke that user's
+        credential. The operation is idempotent: it returns `204 No Content` when the token was
+        deleted, was already absent, or belongs to another user. It never reveals raw token values
+        or hashes.
+      operationId: adminDeleteUserAccessToken
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user whose token is revoked.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        - name: accessTokenId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the access token to revoke.
+          schema:
+            type: string
+            format: uuid
+          example: 01970f22-2bf0-7000-8000-000000000001
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "204":
+          description: Access token revoked, or already absent for the target user.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only credential mutation.
+              schema:
+                type: string
+              example: no-store
+            Access-Control-Allow-Origin:
+              description: CORS header
+              schema:
+                type: string
+              example: "*"
+        "400":
+          description: Bad request - the user ID or access-token ID is not a UUID.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalid_user_id:
+                  summary: Invalid target user identifier
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: userId
+                      sourceType: path
+                    detail: Path parameter 'userId' must be a UUID.
+                invalid_access_token_id:
+                  summary: Invalid access-token identifier
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: accessTokenId
+                      sourceType: path
+                    detail: Path parameter 'accessTokenId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - the caller is not an administrator or a delegated credential lacks access-tokens:write.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "503":
+          description: Access-token authorization or persistence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal access-token operation failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: ACCESS_TOKEN_INTERNAL_ERROR
   /api/v1/me:
     delete:
       summary: Delete authenticated user
@@ -5691,7 +5811,9 @@ paths:
 
         The token to delete is identified by the required `{accessTokenId}` path parameter.
 
-        Requires valid Cognito JWT authentication.
+        Cognito JWTs and Aura Historia access tokens are accepted; delegated access tokens require `access-tokens:write`.
+
+        The operation is idempotent: an already-revoked or missing token is a successful no-op and returns `204 No Content`.
 
         "
       operationId: deleteMyAccessToken
@@ -5699,6 +5821,7 @@ paths:
         - User Account
       security:
         - BearerAuth: []
+        - AccessTokenAuth: []
       parameters:
         - name: accessTokenId
           in: path
@@ -5710,7 +5833,7 @@ paths:
             example: 01970f22-2bf0-7000-8000-000000000001
       responses:
         "204":
-          description: Access token deleted successfully
+          description: Access token deleted successfully, or already absent for the authenticated user
           headers:
             Access-Control-Allow-Origin:
               description: CORS header
@@ -5754,16 +5877,6 @@ paths:
                 status: 401
                 title: Unauthorized
                 error: UNAUTHORIZED
-        "404":
-          description: Access token not found
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 404
-                title: Not Found
-                error: ACCESS_TOKEN_NOT_FOUND
         "500":
           description: Internal server error
           content:

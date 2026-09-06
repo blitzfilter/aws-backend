@@ -1,4 +1,4 @@
-use super::util::{no_store, parse_json};
+use super::util::{no_store, parse_json, parse_user_id};
 use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
@@ -219,6 +219,48 @@ pub async fn delete_access_token(
         Err(e) => ApiError::from(e).into_response(),
     }
 }
+
+pub async fn delete_admin_access_token(
+    State(state): State<UsersState>,
+    headers: HeaderMap,
+    Path((raw_user_id, raw_access_token_id)): Path<(String, String)>,
+) -> Response {
+    let (ctx, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
+        Ok(v) => v,
+        Err(r) => return no_store(*r),
+    };
+    let user_id = match parse_user_id(&raw_user_id, "userId") {
+        Ok(v) => v,
+        Err(r) => return no_store(r),
+    };
+    let access_token_id = match AccessTokenId::try_from(raw_access_token_id.as_str()) {
+        Ok(v) => v,
+        Err(_) => {
+            return no_store(
+                ApiError::bad_request(INVALID_UUID)
+                    .with_path_field("accessTokenId")
+                    .with_detail("Path parameter 'accessTokenId' must be a UUID.")
+                    .into_response(),
+            );
+        }
+    };
+
+    match state
+        .admin_delete_access_token
+        .execute(
+            &ctx,
+            DeleteAccessTokenCommand {
+                user_id,
+                access_token_id,
+            },
+        )
+        .await
+    {
+        Ok(_) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => no_store(ApiError::from(error).into_response()),
+    }
+}
+
 impl PatchTokenData {
     fn into_command(self, user_id: UserId) -> Result<UpdateAccessTokenCommand, ApiError> {
         Ok(UpdateAccessTokenCommand {

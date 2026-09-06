@@ -1169,6 +1169,12 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(DeleteAccessTokenHandler::new(
             unit_of_work.clone(),
             user_postgres::SqlxAccessTokenRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(DeleteAccessTokenHandler::new_admin_only(
+            unit_of_work.clone(),
+            user_postgres::SqlxAccessTokenRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
         )),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );

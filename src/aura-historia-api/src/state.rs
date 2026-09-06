@@ -556,6 +556,7 @@ pub struct UsersState {
     pub(crate) get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub(crate) update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub(crate) delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+    pub(crate) admin_delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
@@ -576,6 +577,7 @@ impl UsersState {
         get_access_token: Arc<dyn GetAccessTokenUseCase>,
         update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
         delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+        admin_delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
         authenticator: Arc<dyn TokenAuthenticator>,
     ) -> Self {
         Self {
@@ -593,6 +595,7 @@ impl UsersState {
             get_access_token,
             update_access_token,
             delete_access_token,
+            admin_delete_access_token,
             authenticator,
         }
     }
