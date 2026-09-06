@@ -72,6 +72,7 @@ use user_service::use_cases::queries::admin_get_user::AdminGetUserUseCase;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenUseCase;
 use user_service::use_cases::queries::get_own_user::GetOwnUserUseCase;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensUseCase;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensUseCase;
 use user_service::use_cases::queries::search_users::SearchUsersUseCase;
 use watchlist_service::use_cases::{
     ListWatchlistUseCase, UnwatchProductListingUseCase, UpdateWatchlistProductListingUseCase,
@@ -554,6 +555,7 @@ pub struct UsersState {
     pub(crate) admin_delete_user: Arc<dyn DeleteUserUseCase>,
     pub(crate) create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub(crate) list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
+    pub(crate) admin_list_access_tokens: Arc<dyn ListAdminAccessTokensUseCase>,
     pub(crate) get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub(crate) update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub(crate) delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
@@ -576,6 +578,7 @@ impl UsersState {
         admin_delete_user: Arc<dyn DeleteUserUseCase>,
         create_access_token: Arc<dyn CreateAccessTokenUseCase>,
         list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
+        admin_list_access_tokens: Arc<dyn ListAdminAccessTokensUseCase>,
         get_access_token: Arc<dyn GetAccessTokenUseCase>,
         update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
         delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
@@ -595,6 +598,7 @@ impl UsersState {
             admin_delete_user,
             create_access_token,
             list_access_tokens,
+            admin_list_access_tokens,
             get_access_token,
             update_access_token,
             delete_access_token,

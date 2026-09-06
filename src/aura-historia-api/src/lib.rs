@@ -153,9 +153,9 @@ use tokio::net::TcpListener;
 use tracing::info;
 use user_postgres::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
-    SqlxAccessTokenRepositoryFactory, SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory,
-    SqlxUserAdminReaderFactory, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
-    SqlxUserTierEntitlementsFactory,
+    SqlxAccessTokenRepositoryFactory, SqlxAdminAccessTokenListReaderFactory,
+    SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory,
+    SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory, SqlxUserTierEntitlementsFactory,
 };
 use user_service::use_cases::AuthenticateAccessTokenHandler;
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
@@ -173,6 +173,7 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminHandler;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenHandler;
 use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
@@ -532,7 +533,8 @@ pub fn app(state: AppState) -> Router {
                 )
                 .route(
                     "/api/v1/admin/users/{user_id}/access-tokens",
-                    delete(users::access_tokens::delete_admin_access_tokens),
+                    get(users::access_tokens::list_admin_access_tokens)
+                        .delete(users::access_tokens::delete_admin_access_tokens),
                 )
                 .route(
                     "/api/v1/admin/users/{user_id}/access-tokens/{access_token_id}",
@@ -1023,6 +1025,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         )),
         list_access_tokens: Arc::new(ListAccessTokensHandler::new(
             SqlxAccessTokenListReader::new(pool.clone()),
+        )),
+        admin_list_access_tokens: Arc::new(ListAdminAccessTokensHandler::new(
+            unit_of_work.clone(),
+            SqlxAdminAccessTokenListReaderFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
         )),
         get_access_token: Arc::new(GetAccessTokenHandler::new(
             SqlxAccessTokenDetailsReader::new(pool.clone()),

@@ -1,6 +1,7 @@
 mod access_token_authentication_reader;
 mod access_token_details_reader;
 mod access_token_list_reader;
+mod admin_access_token_list_reader;
 mod newsletter_profile_reader;
 mod user_account_reader;
 mod user_admin_reader;
@@ -12,6 +13,7 @@ mod user_tier_entitlements;
 pub use access_token_authentication_reader::SqlxAccessTokenAuthenticationReader;
 pub use access_token_details_reader::SqlxAccessTokenDetailsReader;
 pub use access_token_list_reader::SqlxAccessTokenListReader;
+pub use admin_access_token_list_reader::SqlxAdminAccessTokenListReaderFactory;
 pub use newsletter_profile_reader::SqlxNewsletterProfileReader;
 pub use user_account_reader::SqlxUserAccountReaderFactory;
 pub use user_admin_reader::SqlxUserAdminReaderFactory;

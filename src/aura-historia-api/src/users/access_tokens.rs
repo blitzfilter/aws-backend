@@ -1,15 +1,20 @@
 use super::util::{no_store, parse_json, parse_user_id};
 use crate::auth::protected_context;
-use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
+use crate::error::{
+    ACCESS_TOKEN_INTERNAL_ERROR, ApiError, BAD_BODY_VALUE, BAD_QUERY_PARAMETER_VALUE, INVALID_UUID,
+};
+use crate::pagination_data::JsonCursoredData;
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
 use crate::state::UsersState;
+use application::pagination::{Cursor, CursoredResult};
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::HashSet;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use user_core::access_token::{AccessTokenId, AccessTokenName, AccessTokenOrigin, Scope};
 use user_core::user_id::UserId;
 use user_service::use_cases::commands::create_access_token::{
@@ -20,6 +25,9 @@ use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensC
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenCommand;
 use user_service::use_cases::queries::get_access_token::{AccessTokenView, GetAccessTokenRequest};
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensRequest;
+use user_service::use_cases::queries::list_admin_access_tokens::{
+    AccessTokenSearchCursor, ListAdminAccessTokensRequest, ListAdminAccessTokensResult,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +62,19 @@ struct TokenData {
     )]
     expires: Option<OffsetDateTime>,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListAdminAccessTokensQuery {
+    #[serde(default)]
+    size: Option<String>,
+    #[serde(default)]
+    search_after: Option<String>,
+}
+
+const DEFAULT_PAGE_SIZE: u64 = 21;
+const MAX_PAGE_SIZE: u64 = 100;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreatedTokenData {
@@ -132,6 +153,137 @@ pub async fn list_access_tokens(State(state): State<UsersState>, headers: Header
         Err(e) => ApiError::from(e).into_response(),
     }
 }
+pub async fn list_admin_access_tokens(
+    State(state): State<UsersState>,
+    headers: HeaderMap,
+    Path(raw_user_id): Path<String>,
+    RawQuery(raw_query): RawQuery,
+) -> Response {
+    let (ctx, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
+        Ok(value) => value,
+        Err(response) => return no_store(*response),
+    };
+    let user_id = match parse_user_id(&raw_user_id, "userId") {
+        Ok(value) => value,
+        Err(response) => return no_store(response),
+    };
+    let request = match parse_list_admin_access_tokens_query(user_id, raw_query.as_deref()) {
+        Ok(value) => value,
+        Err(error) => return no_store(error.into_response()),
+    };
+
+    match state.admin_list_access_tokens.execute(&ctx, request).await {
+        Ok(result) => match response_from_admin_result(result) {
+            Ok(data) => no_store(Json(data).into_response()),
+            Err(error) => no_store(error.into_response()),
+        },
+        Err(error) => no_store(ApiError::from(error).into_response()),
+    }
+}
+
+fn parse_list_admin_access_tokens_query(
+    user_id: UserId,
+    raw_query: Option<&str>,
+) -> Result<ListAdminAccessTokensRequest, ApiError> {
+    let query: ListAdminAccessTokensQuery = serde_qs::Config::new()
+        .use_form_encoding(true)
+        .deserialize_str(raw_query.unwrap_or_default())
+        .map_err(|error| bad_query("query", error))?;
+    let size = query
+        .size
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map(|size| size.clamp(1, MAX_PAGE_SIZE))
+                .map_err(|error| bad_query("size", error))
+        })
+        .transpose()?;
+    let search_after = query
+        .search_after
+        .as_deref()
+        .map(parse_access_token_search_after)
+        .transpose()?;
+
+    Ok(ListAdminAccessTokensRequest {
+        user_id,
+        cursor: if size.is_some() || search_after.is_some() {
+            Some(Cursor {
+                size: size.unwrap_or(DEFAULT_PAGE_SIZE),
+                search_after,
+            })
+        } else {
+            None
+        },
+    })
+}
+
+fn parse_access_token_search_after(value: &str) -> Result<AccessTokenSearchCursor, ApiError> {
+    let value: Value = serde_json::from_str(value).map_err(|error| {
+        bad_query(
+            "searchAfter",
+            format!(
+                "searchAfter must be a JSON array containing timestamp and access-token UUID: {error}"
+            ),
+        )
+    })?;
+    let Value::Array(values) = value else {
+        return Err(bad_query(
+            "searchAfter",
+            "searchAfter must contain an RFC3339 timestamp and access-token UUID.",
+        ));
+    };
+    let [Value::String(position), Value::String(access_token_id)] = values.as_slice() else {
+        return Err(bad_query(
+            "searchAfter",
+            "searchAfter must contain an RFC3339 timestamp and access-token UUID.",
+        ));
+    };
+    let position = OffsetDateTime::parse(position, &Rfc3339)
+        .map_err(|error| bad_query("searchAfter", error))?;
+    let access_token_id = AccessTokenId::try_from(access_token_id.as_str())
+        .map_err(|error| bad_query("searchAfter", error))?;
+
+    Ok(AccessTokenSearchCursor {
+        position,
+        access_token_id,
+    })
+}
+
+fn response_from_admin_result(
+    result: ListAdminAccessTokensResult,
+) -> Result<JsonCursoredData<TokenData>, ApiError> {
+    let CursoredResult {
+        items,
+        cursor,
+        total,
+    } = result;
+    let search_after = cursor
+        .search_after
+        .map(serialize_access_token_search_after)
+        .transpose()?;
+
+    Ok(JsonCursoredData {
+        items: items.into_iter().map(TokenData::from).collect(),
+        size: cursor.size,
+        search_after,
+        total,
+    })
+}
+
+fn serialize_access_token_search_after(cursor: AccessTokenSearchCursor) -> Result<Value, ApiError> {
+    let position = cursor
+        .position
+        .format(&Rfc3339)
+        .map_err(|_| ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR))?;
+    Ok(json!([position, cursor.access_token_id.to_string()]))
+}
+
+fn bad_query(field: &'static str, detail: impl std::fmt::Display) -> ApiError {
+    ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
+        .with_query_field(field)
+        .with_detail(detail.to_string())
+}
+
 pub async fn get_access_token(
     State(state): State<UsersState>,
     headers: HeaderMap,
@@ -332,6 +484,69 @@ fn parse_scopes(values: HashSet<String>) -> Result<HashSet<Scope>, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_parse_admin_access_token_query_with_clamped_cursor() -> Result<(), ApiError> {
+        let user_id = UserId::new();
+        let access_token_id = AccessTokenId::new();
+        let request = parse_list_admin_access_tokens_query(
+            user_id,
+            Some(&format!(
+                "size=200&searchAfter=[\"2026-09-04T12:00:00Z\",\"{access_token_id}\"]"
+            )),
+        )?;
+
+        assert_eq!(user_id, request.user_id);
+        assert_eq!(
+            Some(Cursor {
+                size: 100,
+                search_after: Some(AccessTokenSearchCursor {
+                    position: OffsetDateTime::parse("2026-09-04T12:00:00Z", &Rfc3339,).map_err(
+                        |error| ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
+                            .with_detail(error.to_string())
+                    )?,
+                    access_token_id,
+                }),
+            }),
+            request.cursor
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_invalid_admin_access_token_query_values() {
+        for query in [
+            "size=not-a-number",
+            "searchAfter=not-json",
+            "searchAfter=%5B%22not-a-timestamp%22%2C%22not-a-uuid%22%5D",
+        ] {
+            assert!(
+                parse_list_admin_access_tokens_query(UserId::new(), Some(query)).is_err(),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_serialize_admin_access_token_metadata_without_secrets() {
+        let value = serde_json::to_value(TokenData::from(AccessTokenView {
+            user_id: UserId::new(),
+            access_token_id: AccessTokenId::new(),
+            name: AccessTokenName::from("admin inspection"),
+            scopes: HashSet::from([Scope::UsersRead]),
+            origin: AccessTokenOrigin::User,
+            expires: None,
+        }))
+        .unwrap_or_else(|error| panic!("admin access-token metadata serializes: {error}"));
+
+        assert!(value.get("accessToken").is_none());
+        assert!(value.get("token").is_none());
+        assert!(value.get("tokenShort").is_none());
+        assert!(value.get("tokenHash").is_none());
+        assert!(value.get("hash").is_none());
+        assert!(value.get("accessTokenId").is_some());
+        assert!(value.get("scopes").is_some());
+    }
 
     #[test]
     fn should_accept_canonical_product_listings_write_scope() {

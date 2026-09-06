@@ -160,6 +160,7 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminHandler;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenHandler;
 use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
 use watchlist_service::use_cases::{
@@ -1159,6 +1160,12 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         )),
         Arc::new(ListAccessTokensHandler::new(
             user_postgres::SqlxAccessTokenListReader::new(pool.clone()),
+        )),
+        Arc::new(ListAdminAccessTokensHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxAdminAccessTokenListReaderFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+            user_postgres::SqlxUserAccountReaderFactory::new(),
         )),
         Arc::new(GetAccessTokenHandler::new(
             user_postgres::SqlxAccessTokenDetailsReader::new(pool.clone()),

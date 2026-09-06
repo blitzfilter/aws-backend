@@ -73,6 +73,7 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminError;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenError;
 use user_service::use_cases::queries::get_own_user::GetOwnUserError;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensError;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensError;
 use user_service::use_cases::queries::search_users::SearchUsersError;
 use watchlist_service::use_cases::{
     ListWatchlistError, UnwatchProductListingError, UpdateWatchlistProductListingError,
@@ -1683,6 +1684,34 @@ impl From<ListAccessTokensError> for ApiError {
             }
             ListAccessTokensError::InvalidPersistedState { .. }
             | ListAccessTokensError::Internal { .. } => {
+                ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
+                    .with_detail("Access token operation failed internally.")
+            }
+        }
+    }
+}
+impl From<ListAdminAccessTokensError> for ApiError {
+    fn from(error: ListAdminAccessTokensError) -> Self {
+        match error {
+            ListAdminAccessTokensError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            ListAdminAccessTokensError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            ListAdminAccessTokensError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            ListAdminAccessTokensError::TemporarilyUnavailable { .. }
+            | ListAdminAccessTokensError::BeginTransactionFailed
+            | ListAdminAccessTokensError::CommitTransactionFailed => {
+                ApiError::service_unavailable(ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Access token store is temporarily unavailable.")
+            }
+            ListAdminAccessTokensError::InvalidPersistedState { .. }
+            | ListAdminAccessTokensError::Internal { .. } => {
                 ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
                     .with_detail("Access token operation failed internally.")
             }

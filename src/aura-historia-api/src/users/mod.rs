@@ -5,8 +5,8 @@ pub(crate) mod types;
 pub(crate) mod util;
 
 pub use access_tokens::{
-    delete_access_token, get_access_token, list_access_tokens, patch_access_token,
-    post_access_token,
+    delete_access_token, get_access_token, list_access_tokens, list_admin_access_tokens,
+    patch_access_token, post_access_token,
 };
 pub use account::{delete_me, get_me, patch_me};
 pub use admin_users::{delete_admin_user, get_user, patch_admin_user, search_users};

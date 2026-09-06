@@ -2,6 +2,7 @@ pub mod access_token_authentication_reader;
 pub mod access_token_details_reader;
 pub mod access_token_list_reader;
 pub mod access_token_repository;
+pub mod admin_access_token_list_reader;
 pub mod newsletter_profile_reader;
 pub mod newsletter_subscription_writer;
 pub mod user_account_reader;
@@ -21,6 +22,9 @@ pub use access_token_list_reader::{AccessTokenListReadError, AccessTokenListRead
 pub use access_token_repository::{
     AccessTokenRepository, AccessTokenRepositoryError, AccessTokenRepositoryFactory,
     AccessTokenStorageVersion, VersionedAccessToken,
+};
+pub use admin_access_token_list_reader::{
+    AdminAccessTokenListReadError, AdminAccessTokenListReader, AdminAccessTokenListReaderFactory,
 };
 
 pub use newsletter_profile_reader::{

@@ -5,4 +5,5 @@ pub mod find_user_by_stripe_customer_id;
 pub mod get_access_token;
 pub mod get_own_user;
 pub mod list_access_tokens;
+pub mod list_admin_access_tokens;
 pub mod search_users;
