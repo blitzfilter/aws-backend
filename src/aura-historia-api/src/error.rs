@@ -60,6 +60,7 @@ use serde::Serialize;
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use user_service::use_cases::SuspendUserError;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleError;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierError;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenError;
@@ -1632,6 +1633,43 @@ impl From<DeleteUserError> for ApiError {
             DeleteUserError::InvalidPersistedState { .. } | DeleteUserError::Internal { .. } => {
                 ApiError::internal_server_error(USER_INTERNAL_ERROR)
                     .with_detail("User delete failed internally.")
+            }
+        }
+    }
+}
+
+impl From<SuspendUserError> for ApiError {
+    fn from(error: SuspendUserError) -> Self {
+        match error {
+            SuspendUserError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            SuspendUserError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            SuspendUserError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            SuspendUserError::LastAdminProtected => ApiError::conflict(CONFLICT)
+                .with_detail("At least one active administrator must remain."),
+            SuspendUserError::ConcurrencyConflict
+            | SuspendUserError::EmailConflict { .. }
+            | SuspendUserError::StripeCustomerConflict { .. } => ApiError::conflict(CONFLICT)
+                .with_detail("User suspension conflicts with current state."),
+            SuspendUserError::InvalidReason => {
+                ApiError::bad_request(BAD_BODY_VALUE).with_detail("Suspension reason is invalid.")
+            }
+            SuspendUserError::TemporarilyUnavailable { .. }
+            | SuspendUserError::BeginTransactionFailed
+            | SuspendUserError::CommitTransactionFailed => {
+                ApiError::service_unavailable(USER_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("User could not be suspended right now.")
+            }
+            SuspendUserError::InvalidPersistedState { .. } | SuspendUserError::Internal { .. } => {
+                ApiError::internal_server_error(USER_INTERNAL_ERROR)
+                    .with_detail("User suspension failed internally.")
             }
         }
     }

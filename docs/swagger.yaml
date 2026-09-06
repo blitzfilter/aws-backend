@@ -4995,6 +4995,202 @@ paths:
                 title: Internal Server Error
                 error: USER_INTERNAL_ERROR
 
+  /api/v1/admin/users/{userId}/suspension:
+    put:
+      summary: Suspend a user as admin
+      description: |
+        Suspends the explicit target user with an administrator-supplied reason.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `users:write`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        `userId` must be a UUID. `reason` is required, must not be empty or whitespace-only, and
+        is limited to 1,000 bytes. It is emitted to structured operational logs, so it must not
+        contain tokens, passwords, credentials, or other secrets. Common credential markers are
+        rejected.
+        Suspension is idempotent: a repeated request returns the target's suspended state. The final
+        active administrator cannot be suspended. Once committed, a suspended user is rejected as
+        `401 INVALID_CREDENTIALS` by all later Cognito JWT and Aura access-token authentication.
+        Every response sends `Cache-Control: no-store`.
+      operationId: adminSuspendUser
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user to suspend.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuspendUserData"
+            example:
+              reason: Repeated policy violations
+      responses:
+        "200":
+          description: User is suspended, including after an idempotent repeat.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only user mutation.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuspendUserResponseData"
+              example:
+                userId: 550e8400-e29b-41d4-a716-446655440000
+                suspended: true
+        "400":
+          description: Invalid target UUID or missing, empty, oversized, or secret-bearing suspension reason.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalid_user_id:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: userId
+                      sourceType: path
+                missing_reason:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: BAD_BODY_VALUE
+                    detail: Suspension reason is required.
+                invalid_reason:
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: BAD_BODY_VALUE
+                    detail: Suspension reason is invalid.
+        "401":
+          description: Invalid or missing bearer credentials, including a credential for a suspended user.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: The caller is not an administrator or a delegated credential lacks users:write.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: Target user was not found.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: USER_NOT_FOUND
+        "409":
+          description: The target is the final active administrator.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 409
+                title: Conflict
+                error: CONFLICT
+                detail: At least one active administrator must remain.
+        "503":
+          description: Authentication, authorization, or user persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                authentication:
+                  value:
+                    status: 503
+                    title: Service Unavailable
+                    error: AUTH_TEMPORARILY_UNAVAILABLE
+                suspension:
+                  value:
+                    status: 503
+                    title: Service Unavailable
+                    error: USER_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal authentication or user persistence failure.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                authentication:
+                  value:
+                    status: 500
+                    title: Internal Server Error
+                    error: AUTH_INTERNAL_ERROR
+                suspension:
+                  value:
+                    status: 500
+                    title: Internal Server Error
+                    error: USER_INTERNAL_ERROR
+
   /api/v1/admin/users/{userId}/access-tokens:
     get:
       summary: List a user's Aura Historia access-token metadata as admin
@@ -13799,6 +13995,32 @@ components:
         - $ref: "#/components/schemas/OwnUserAccountData"
         - type: object
           description: Admin user account view. Same read fields as own account; write permissions differ by endpoint.
+    SuspendUserData:
+      type: object
+      description: Required administrator-supplied explanation for suspending a user.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Non-empty, non-whitespace explanation for the suspension. This value is emitted to structured operational logs; do not include tokens, passwords, credentials, or other secrets. Common credential markers are rejected.
+          example: Repeated policy violations
+    SuspendUserResponseData:
+      type: object
+      required:
+        - userId
+        - suspended
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Identifier of the target user.
+        suspended:
+          type: boolean
+          description: Current suspension state; true after this operation, including an idempotent repeat.
+          example: true
     PatchAdminUserData:
       type: object
       description: "Partial admin-only user update payload.

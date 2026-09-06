@@ -1,10 +1,10 @@
 use crate::use_cases::{
-    AdminGetUserUseCase, AuthenticateAccessTokenUseCase, ChangeUserRoleUseCase,
-    ChangeUserTierUseCase, CheckUserAdminUseCase, CreateAccessTokenUseCase, CreateUserUseCase,
-    DeleteAccessTokenUseCase, DeleteAccessTokensUseCase, DeleteUserUseCase,
+    AdminGetUserUseCase, AuthenticateAccessTokenUseCase, AuthenticateUserUseCase,
+    ChangeUserRoleUseCase, ChangeUserTierUseCase, CheckUserAdminUseCase, CreateAccessTokenUseCase,
+    CreateUserUseCase, DeleteAccessTokenUseCase, DeleteAccessTokensUseCase, DeleteUserUseCase,
     FindUserByStripeCustomerIdUseCase, GetAccessTokenUseCase, GetOwnUserUseCase,
     ListAccessTokensUseCase, SearchUsersUseCase, SetUserStripeCustomerIdUseCase,
-    UpdateAccessTokenUseCase, UpdateUserProfileUseCase,
+    SuspendUserUseCase, UpdateAccessTokenUseCase, UpdateUserProfileUseCase,
 };
 use std::sync::Arc;
 
@@ -13,6 +13,7 @@ pub struct UserUseCases {
     pub update_profile: Arc<dyn UpdateUserProfileUseCase>,
     pub change_role: Arc<dyn ChangeUserRoleUseCase>,
     pub change_tier: Arc<dyn ChangeUserTierUseCase>,
+    pub suspend: Arc<dyn SuspendUserUseCase>,
     pub set_stripe_customer_id: Arc<dyn SetUserStripeCustomerIdUseCase>,
     pub get_own: Arc<dyn GetOwnUserUseCase>,
     pub admin_get: Arc<dyn AdminGetUserUseCase>,
@@ -27,6 +28,7 @@ pub struct UserUseCases {
     pub get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
     pub authenticate_access_token: Arc<dyn AuthenticateAccessTokenUseCase>,
+    pub authenticate_user: Arc<dyn AuthenticateUserUseCase>,
 }
 
 pub struct UserUseCasesInput {
@@ -34,6 +36,7 @@ pub struct UserUseCasesInput {
     pub update_profile: Arc<dyn UpdateUserProfileUseCase>,
     pub change_role: Arc<dyn ChangeUserRoleUseCase>,
     pub change_tier: Arc<dyn ChangeUserTierUseCase>,
+    pub suspend: Arc<dyn SuspendUserUseCase>,
     pub set_stripe_customer_id: Arc<dyn SetUserStripeCustomerIdUseCase>,
     pub get_own: Arc<dyn GetOwnUserUseCase>,
     pub admin_get: Arc<dyn AdminGetUserUseCase>,
@@ -48,6 +51,7 @@ pub struct UserUseCasesInput {
     pub get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
     pub authenticate_access_token: Arc<dyn AuthenticateAccessTokenUseCase>,
+    pub authenticate_user: Arc<dyn AuthenticateUserUseCase>,
 }
 
 impl UserUseCases {
@@ -57,6 +61,7 @@ impl UserUseCases {
             update_profile: input.update_profile,
             change_role: input.change_role,
             change_tier: input.change_tier,
+            suspend: input.suspend,
             set_stripe_customer_id: input.set_stripe_customer_id,
             get_own: input.get_own,
             admin_get: input.admin_get,
@@ -71,6 +76,7 @@ impl UserUseCases {
             get_access_token: input.get_access_token,
             list_access_tokens: input.list_access_tokens,
             authenticate_access_token: input.authenticate_access_token,
+            authenticate_user: input.authenticate_user,
         }
     }
 }

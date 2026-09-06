@@ -11,7 +11,9 @@ use user_core::last_name::LastName;
 use user_core::measurement_unit::MeasurementUnit;
 use user_core::role::UserRole;
 use user_core::tier::UserTier;
-use user_core::user::{NewUser, User, UserAccount, UserPreferences, UserProfile};
+use user_core::user::{
+    NewUser, RehydratedUserState, User, UserAccount, UserPreferences, UserProfile,
+};
 use user_postgres::SqlxUserRepositoryFactory;
 use user_service::ports::{
     UserInsertOutcome, UserRepository, UserRepositoryError, UserRepositoryFactory,
@@ -86,6 +88,53 @@ async fn should_insert_find_update_user_in_postgres() {
     assert_eq!(UserTier::Ultimate, updated.value.account().tier);
     assert_eq!(None, updated.value.account().stripe_customer_id);
     assert!(updated.version.into_inner() > loaded_by_id.version.into_inner());
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_durably_update_and_rehydrate_user_suspension() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool);
+    let users = SqlxUserRepositoryFactory::new();
+    let user = sample_user("postgres-suspension", UserRole::User, None);
+
+    let mut tx = begin(&unit_of_work).await;
+    let inserted = match users.in_transaction(&mut tx).insert(&user).await {
+        Ok(user) => user,
+        Err(error) => panic!("failed to insert user: {error:?}"),
+    };
+    assert!(!inserted.value.is_suspended());
+
+    let suspended_user = match User::rehydrate(RehydratedUserState {
+        id: user.id(),
+        email: user.email().clone(),
+        profile: user.profile().clone(),
+        preferences: user.preferences().clone(),
+        account: user.account().clone(),
+        suspended: true,
+    }) {
+        Ok(user) => user,
+        Err(error) => panic!("failed to rehydrate suspended user: {error}"),
+    };
+    let updated = match users
+        .in_transaction(&mut tx)
+        .update(&suspended_user, inserted.version)
+        .await
+    {
+        Ok(user) => user,
+        Err(error) => panic!("failed to update suspended user: {error:?}"),
+    };
+    commit(tx).await;
+
+    let mut tx = begin(&unit_of_work).await;
+    let rehydrated = match users.in_transaction(&mut tx).find_by_id(user.id()).await {
+        Ok(Some(user)) => user,
+        Ok(None) => panic!("missing suspended user"),
+        Err(error) => panic!("failed to rehydrate suspended user: {error:?}"),
+    };
+    commit(tx).await;
+
+    assert!(updated.value.is_suspended());
+    assert!(rehydrated.value.is_suspended());
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]

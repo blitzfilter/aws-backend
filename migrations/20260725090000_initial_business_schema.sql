@@ -7,6 +7,7 @@ CREATE TABLE users (
     currency text,
     measurement_unit text,
     show_unassessed_or_sensitive_content boolean NOT NULL DEFAULT false,
+    suspended boolean NOT NULL DEFAULT false,
     tier text NOT NULL,
     role text NOT NULL,
     stripe_customer_id text UNIQUE,

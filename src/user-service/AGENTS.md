@@ -17,9 +17,9 @@
 - Repository writes return persisted user state; handlers must not read after write for responses.
 - Ports are public because adapter crates implement them.
 - `UserTierEntitlements` locks one authoritative user row and reconciles tier-restricted search filters and watchlist entries inside the caller transaction; it avoids a User-service dependency on either resource service.
-- Admin role-removal and user-deletion commands use a transaction-bound `UserAdminMutationGuard` so PostgreSQL can protect the last active administrator.
+- Admin role-removal, user-deletion, and user-suspension commands use a transaction-bound `UserAdminMutationGuard` so PostgreSQL can protect the last active administrator. Admin actor reads return only persisted active (not suspended) admins. Suspension reasons are trimmed, capped at 1,000 bytes, reject common credential markers, and are logged only after a committed result.
 - Access-token writes use an `AccessTokenRepositoryFactory` inside a service-owned `UnitOfWork`; details/list use presentation readers, while bounded admin metadata listing uses a transaction-bound purpose-specific reader and validates the explicit target user in the same transaction. `AccessTokenAuthenticationReader::find_authentication_by_hashed_token` returns only an authentication model. Self deletion checks ownership; admin-targeted single and bulk deletion check the persisted admin role in the same transaction. Bulk deletion validates the explicit target user in that transaction, deletes only that user's rows, and returns the affected count for operational logging. The repository's same-key lookup is only for transactional aggregate mutation.
-- `AuthenticateAccessTokenUseCase` only validates token existence/expiry and returns token scopes; protected use cases enforce credential capability via `OperationContext`.
+- `AuthenticateAccessTokenUseCase` only validates token existence/expiry and returns token scopes; protected use cases enforce credential capability via `OperationContext`. `AuthenticateUserUseCase` uses `UserAuthenticationReader::find_suspension` to reject missing or suspended identities before authentication succeeds.
 - Port errors carry boxed sources for adapter/read-model failures; do not swallow underlying causes.
 - No SQLx, OpenSearch, or transport dependency.
 

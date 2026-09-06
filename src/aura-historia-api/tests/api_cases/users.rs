@@ -1863,6 +1863,199 @@ async fn should_require_auth_for_access_tokens() {
     );
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_suspend_user_and_repeat_idempotently_when_actor_is_admin() {
+    let target_user_id = seed_user("USER").await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+    let endpoint = format!(
+        "{}/api/v1/admin/users/{target_user_id}/suspension",
+        AURA_API.base_url()
+    );
+    let client = reqwest::Client::new();
+
+    for attempt in 0..2 {
+        let response = client
+            .put(&endpoint)
+            .bearer_auth(String::from(admin_token.clone()))
+            .json(&serde_json::json!({"reason": "Repeated policy violations"}))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to suspend user: {error}"));
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        assert_eq!(reqwest::StatusCode::OK, status, "attempt {attempt}: {body}");
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+        assert_eq!(
+            serde_json::json!(target_user_id.to_string()),
+            body["userId"]
+        );
+        assert_eq!(serde_json::json!(true), body["suspended"]);
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_secret_bearing_user_suspension_reason() {
+    let target_user_id = seed_user("USER").await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .put(format!(
+            "{}/api/v1/admin/users/{target_user_id}/suspension",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .json(&serde_json::json!({"reason": "BEARER credential supplied by mistake"}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject secret-bearing reason: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "BAD_BODY_VALUE",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_user_suspension_when_actor_is_not_admin() {
+    let target_user_id = seed_user("USER").await;
+    let actor_id = seed_user("USER").await;
+    let actor_token = seed_access_token_for(
+        actor_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .put(format!(
+            "{}/api/v1/admin/users/{target_user_id}/suspension",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(actor_token))
+        .json(&serde_json::json!({"reason": "Repeated policy violations"}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject non-admin suspension: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_not_found_when_admin_suspends_missing_user() {
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .put(format!(
+            "{}/api/v1/admin/users/{}/suspension",
+            AURA_API.base_url(),
+            UserId::new()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .json(&serde_json::json!({"reason": "Repeated policy violations"}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to suspend missing user: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::NOT_FOUND,
+        "USER_NOT_FOUND",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_protect_last_active_admin_from_suspension() {
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .put(format!(
+            "{}/api/v1/admin/users/{admin_id}/suspension",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .json(&serde_json::json!({"reason": "Repeated policy violations"}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to protect final admin: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(status, &body, reqwest::StatusCode::CONFLICT, "CONFLICT");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_suspended_user_aura_token_on_later_request() {
+    let target_user_id = seed_user("USER").await;
+    let target_token = seed_access_token_for(
+        target_user_id,
+        std::collections::HashSet::from([Scope::UsersRead]),
+    )
+    .await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .put(format!(
+            "{}/api/v1/admin/users/{target_user_id}/suspension",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .json(&serde_json::json!({"reason": "Repeated policy violations"}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to suspend user before auth check: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, response.status());
+
+    let response = client
+        .get(format!("{}/api/v1/me/account", AURA_API.base_url()))
+        .bearer_auth(String::from(target_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject suspended token: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "INVALID_CREDENTIALS",
+    );
+}
+
 async fn create_access_token(token: &user_core::access_token::RawAccessToken) -> String {
     create_access_token_with_raw(token, &["product-listings:write"])
         .await

@@ -42,6 +42,9 @@ pub use commands::set_user_stripe_customer_id::{
     SetUserStripeCustomerIdCommand, SetUserStripeCustomerIdError, SetUserStripeCustomerIdHandler,
     SetUserStripeCustomerIdResult, SetUserStripeCustomerIdUseCase,
 };
+pub use commands::suspend_user::{
+    SuspendUserCommand, SuspendUserError, SuspendUserHandler, SuspendUserResult, SuspendUserUseCase,
+};
 pub use commands::update_access_token::{
     UpdateAccessTokenCommand, UpdateAccessTokenError, UpdateAccessTokenHandler,
     UpdateAccessTokenResult, UpdateAccessTokenUseCase,
@@ -60,6 +63,10 @@ pub use queries::admin_get_user::{
 pub use queries::authenticate_access_token::{
     AuthenticateAccessTokenError, AuthenticateAccessTokenHandler, AuthenticateAccessTokenRequest,
     AuthenticateAccessTokenResult, AuthenticateAccessTokenUseCase,
+};
+pub use queries::authenticate_user::{
+    AuthenticateUserError, AuthenticateUserHandler, AuthenticateUserRequest,
+    AuthenticateUserResult, AuthenticateUserUseCase,
 };
 pub use queries::check_user_admin::{
     CheckUserAdminError, CheckUserAdminHandler, CheckUserAdminRequest, CheckUserAdminResult,

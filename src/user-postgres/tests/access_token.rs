@@ -370,6 +370,45 @@ async fn should_read_access_token_details_list_and_authentication_deterministica
     assert!(matches!(missing_authentication, Ok(None)));
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_not_authenticate_access_token_for_suspended_user() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let users = SqlxUserRepositoryFactory::new();
+    let tokens = SqlxAccessTokenRepositoryFactory::new();
+    let authentication = SqlxAccessTokenAuthenticationReader::new(pool.clone());
+    let user = sample_user("access-token-suspended-user");
+    let token = sample_access_token(
+        user.id(),
+        RawAccessToken::new(),
+        "suspended user token",
+        HashSet::from([Scope::UsersRead]),
+        None,
+    );
+
+    let mut tx = begin(&unit_of_work).await;
+    insert_user(&users, &mut tx, &user).await;
+    insert_token(&tokens, &mut tx, &token).await;
+    commit(tx).await;
+
+    let active = authentication
+        .find_authentication_by_hashed_token(token.hashed_token())
+        .await;
+    if let Err(error) = sqlx::query("UPDATE users SET suspended = true WHERE user_id = $1")
+        .bind(uuid::Uuid::from(user.id()))
+        .execute(&pool)
+        .await
+    {
+        panic!("failed to suspend token user: {error}");
+    }
+    let suspended = authentication
+        .find_authentication_by_hashed_token(token.hashed_token())
+        .await;
+
+    assert!(matches!(active, Ok(Some(_))));
+    assert!(matches!(suspended, Ok(None)));
+}
+
 fn sample_access_token(
     user_id: UserId,
     raw: RawAccessToken,

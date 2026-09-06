@@ -24,8 +24,13 @@ impl AccessTokenAuthenticationReader for SqlxAccessTokenAuthenticationReader {
         hashed_token: &HashedRawAccessToken,
     ) -> Result<Option<AccessTokenAuthentication>, AccessTokenAuthenticationReadError> {
         let row = sqlx::query_as::<_, AccessTokenAuthenticationRow>(
-            "SELECT access_token_id, user_id, scopes, origin, oauth_client_id, expires_at \
-                         FROM access_tokens WHERE token_short = $1 AND token_hash = $2",
+            "SELECT access_tokens.access_token_id, access_tokens.user_id, access_tokens.scopes, \
+                    access_tokens.origin, access_tokens.oauth_client_id, access_tokens.expires_at \
+             FROM access_tokens \
+             JOIN users ON users.user_id = access_tokens.user_id \
+             WHERE access_tokens.token_short = $1 \
+               AND access_tokens.token_hash = $2 \
+               AND users.suspended = false",
         )
         .bind(hashed_token.short_token())
         .bind(hashed_token.long_token_hash())

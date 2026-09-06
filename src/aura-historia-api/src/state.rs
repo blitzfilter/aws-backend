@@ -60,6 +60,7 @@ use search_filter_service::use_cases::{
 };
 
 use std::sync::Arc;
+use user_service::use_cases::SuspendUserUseCase;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleUseCase;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierUseCase;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenUseCase;
@@ -554,6 +555,7 @@ pub struct UsersState {
     pub(crate) change_user_tier: Arc<dyn ChangeUserTierUseCase>,
     pub(crate) delete_user: Arc<dyn DeleteUserUseCase>,
     pub(crate) admin_delete_user: Arc<dyn DeleteUserUseCase>,
+    pub(crate) suspend_user: Arc<dyn SuspendUserUseCase>,
     pub(crate) create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub(crate) list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
     pub(crate) admin_list_access_tokens: Arc<dyn ListAdminAccessTokensUseCase>,
@@ -577,6 +579,7 @@ impl UsersState {
         change_user_tier: Arc<dyn ChangeUserTierUseCase>,
         delete_user: Arc<dyn DeleteUserUseCase>,
         admin_delete_user: Arc<dyn DeleteUserUseCase>,
+        suspend_user: Arc<dyn SuspendUserUseCase>,
         create_access_token: Arc<dyn CreateAccessTokenUseCase>,
         list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
         admin_list_access_tokens: Arc<dyn ListAdminAccessTokensUseCase>,
@@ -597,6 +600,7 @@ impl UsersState {
             change_user_tier,
             delete_user,
             admin_delete_user,
+            suspend_user,
             create_access_token,
             list_access_tokens,
             admin_list_access_tokens,

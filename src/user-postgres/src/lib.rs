@@ -6,7 +6,8 @@ mod repositories;
 pub use readers::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
     SqlxAdminAccessTokenListReaderFactory, SqlxNewsletterProfileReader,
-    SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory, SqlxUserSearchReaderFactory,
-    SqlxUserStripeCustomerReaderFactory, SqlxUserTierEntitlementsFactory,
+    SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory, SqlxUserAuthenticationReader,
+    SqlxUserSearchReaderFactory, SqlxUserStripeCustomerReaderFactory,
+    SqlxUserTierEntitlementsFactory,
 };
 pub use repositories::{SqlxAccessTokenRepositoryFactory, SqlxUserRepositoryFactory};

@@ -46,6 +46,64 @@ async fn should_return_last_admin_when_target_is_sole_admin() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_protect_last_active_admin_when_suspended_admin_remains() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let users = SqlxUserRepositoryFactory::new();
+    let admins = SqlxUserAdminReaderFactory::new();
+    let active = sample_user("postgres-active-admin", UserRole::Admin);
+    let suspended = sample_user("postgres-suspended-admin", UserRole::Admin);
+
+    let mut tx = begin(&unit_of_work).await;
+    insert_user(&users, &mut tx, &active).await;
+    insert_user(&users, &mut tx, &suspended).await;
+    commit(tx).await;
+    set_suspension(&pool, suspended.id(), true).await;
+
+    let mut tx = begin(&unit_of_work).await;
+    let decision = match UserAdminMutationGuardFactory::in_transaction(&admins, &mut tx)
+        .check_removal(active.id())
+        .await
+    {
+        Ok(decision) => decision,
+        Err(error) => panic!("failed to check final active admin removal: {error:?}"),
+    };
+    commit(tx).await;
+
+    assert_eq!(UserAdminRemovalDecision::LastAdmin, decision);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_make_suspended_admin_unavailable_for_authorization_and_removal() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let users = SqlxUserRepositoryFactory::new();
+    let admins = SqlxUserAdminReaderFactory::new();
+    let user = sample_user("postgres-suspended-admin-target", UserRole::Admin);
+
+    let mut tx = begin(&unit_of_work).await;
+    insert_user(&users, &mut tx, &user).await;
+    commit(tx).await;
+    set_suspension(&pool, user.id(), true).await;
+
+    let mut tx = begin(&unit_of_work).await;
+    let actor = UserAdminReaderFactory::in_transaction(&admins, &mut tx)
+        .find_admin_actor(user.id())
+        .await;
+    let decision = match UserAdminMutationGuardFactory::in_transaction(&admins, &mut tx)
+        .check_removal(user.id())
+        .await
+    {
+        Ok(decision) => decision,
+        Err(error) => panic!("failed to check suspended admin removal: {error:?}"),
+    };
+    commit(tx).await;
+
+    assert!(matches!(actor, Ok(None)));
+    assert_eq!(UserAdminRemovalDecision::TargetNotAdmin, decision);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_allow_admin_removal_when_multiple_admins_exist() {
     let pool = get_postgres_client().await;
     let unit_of_work = SqlxUnitOfWork::new(pool);
@@ -212,6 +270,17 @@ async fn should_read_user_admin_view_from_postgres() {
     commit(tx).await;
 
     assert_eq!(UserRole::Admin, admin_view.role);
+}
+
+async fn set_suspension(pool: &sqlx::PgPool, user_id: UserId, suspended: bool) {
+    if let Err(error) = sqlx::query("UPDATE users SET suspended = $1 WHERE user_id = $2")
+        .bind(suspended)
+        .bind(uuid::Uuid::from(user_id))
+        .execute(pool)
+        .await
+    {
+        panic!("failed to set user suspension: {error}");
+    }
 }
 
 async fn insert_user(

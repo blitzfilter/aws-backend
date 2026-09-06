@@ -7,6 +7,7 @@ pub mod newsletter_profile_reader;
 pub mod newsletter_subscription_writer;
 pub mod user_account_reader;
 pub mod user_admin_reader;
+pub mod user_authentication_reader;
 pub mod user_repository;
 pub mod user_search_reader;
 pub mod user_stripe_customer_reader;
@@ -40,6 +41,7 @@ pub use user_admin_reader::{
     UserAdminActorView, UserAdminMutationGuard, UserAdminMutationGuardFactory, UserAdminReadError,
     UserAdminReader, UserAdminReaderFactory, UserAdminRemovalDecision,
 };
+pub use user_authentication_reader::{UserAuthenticationReadError, UserAuthenticationReader};
 pub use user_repository::{
     UserInsertOutcome, UserRepository, UserRepositoryError, UserRepositoryFactory,
     UserStorageVersion, VersionedUser,

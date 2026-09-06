@@ -23,6 +23,12 @@ struct UserAdminActorRow {
     role: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct UserAdminTargetRow {
+    role: String,
+    suspended: bool,
+}
+
 impl SqlxUserAdminReaderFactory {
     pub fn new() -> Self {
         Self
@@ -55,7 +61,7 @@ impl UserAdminReader for SqlxUserAdminReader<'_> {
         user_id: UserId,
     ) -> Result<Option<UserAdminActorView>, UserAdminReadError> {
         let row = sqlx::query_as::<_, UserAdminActorRow>(
-            "SELECT user_id, role FROM users WHERE user_id = $1",
+            "SELECT user_id, role FROM users WHERE user_id = $1 AND suspended = false",
         )
         .bind(uuid::Uuid::from(user_id))
         .fetch_optional(&mut *self.connection)
@@ -82,33 +88,39 @@ impl UserAdminMutationGuard for SqlxUserAdminReader<'_> {
                 source: box_error(source),
             })?;
 
-        let role =
-            sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE user_id = $1 FOR UPDATE")
-                .bind(uuid::Uuid::from(user_id))
-                .fetch_optional(&mut *self.connection)
-                .await
-                .map_err(|source| UserAdminReadError::TemporarilyUnavailable {
-                    source: box_error(source),
-                })?;
+        let target = sqlx::query_as::<_, UserAdminTargetRow>(
+            "SELECT role, suspended FROM users WHERE user_id = $1 FOR UPDATE",
+        )
+        .bind(uuid::Uuid::from(user_id))
+        .fetch_optional(&mut *self.connection)
+        .await
+        .map_err(|source| UserAdminReadError::TemporarilyUnavailable {
+            source: box_error(source),
+        })?;
 
-        let Some(role) = role else {
+        let Some(target) = target else {
             return Ok(UserAdminRemovalDecision::TargetNotFound);
         };
-        let role =
-            UserRole::from_code(&role).ok_or_else(|| UserAdminReadError::InvalidReadModel {
+        let role = UserRole::from_code(&target.role).ok_or_else(|| {
+            UserAdminReadError::InvalidReadModel {
                 source: box_error(InvalidAdminRole),
-            })?;
+            }
+        })?;
         if role != UserRole::Admin {
             return Ok(UserAdminRemovalDecision::TargetNotAdmin);
         }
+        if target.suspended {
+            return Ok(UserAdminRemovalDecision::TargetNotAdmin);
+        }
 
-        let admin_count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*)::bigint FROM users WHERE role = 'ADMIN'")
-                .fetch_one(&mut *self.connection)
-                .await
-                .map_err(|source| UserAdminReadError::TemporarilyUnavailable {
-                    source: box_error(source),
-                })?;
+        let admin_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)::bigint FROM users WHERE role = 'ADMIN' AND suspended = false",
+        )
+        .fetch_one(&mut *self.connection)
+        .await
+        .map_err(|source| UserAdminReadError::TemporarilyUnavailable {
+            source: box_error(source),
+        })?;
 
         if admin_count <= 1 {
             Ok(UserAdminRemovalDecision::LastAdmin)

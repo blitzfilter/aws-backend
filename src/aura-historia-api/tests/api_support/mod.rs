@@ -5,7 +5,7 @@ use admin_overview_service::GetAdminOverviewHandler;
 use application::transaction::{Transaction, UnitOfWork};
 use aura_historia_api::auth::{
     ApiAuthService, AuraAccessTokenAuthenticator, AuthError, RequestMetadata, TokenAuthenticator,
-    TransportPrincipal,
+    TransportPrincipal, UserAuthenticationAuthenticator,
 };
 use aura_historia_api::state::{
     AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
@@ -163,6 +163,7 @@ use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
+use user_service::use_cases::{AuthenticateUserHandler, SuspendUserHandler};
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
 use watchlist_service::use_cases::{
     ListWatchlistHandler, UnwatchProductListingHandler, UpdateWatchlistProductListingHandler,
@@ -853,9 +854,15 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
     let access_token_use_case = user_service::use_cases::AuthenticateAccessTokenHandler::new(
         user_postgres::SqlxAccessTokenAuthenticationReader::new(pool.clone()),
     );
-    let authenticator = Arc::new(ApiAuthService::new(
-        RejectJwtAuthenticator,
-        AuraAccessTokenAuthenticator::new(access_token_use_case),
+    let authenticate_user = AuthenticateUserHandler::new(
+        user_postgres::SqlxUserAuthenticationReader::new(pool.clone()),
+    );
+    let authenticator = Arc::new(UserAuthenticationAuthenticator::new(
+        ApiAuthService::new(
+            RejectJwtAuthenticator,
+            AuraAccessTokenAuthenticator::new(access_token_use_case),
+        ),
+        authenticate_user,
     ));
     let opensearch_client = get_opensearch_client().await;
     let create_listing_source = CreateListingSourceHandler::new(
@@ -1156,6 +1163,11 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             user_postgres::SqlxUserAdminReaderFactory::new(),
         )),
         Arc::new(DeleteUserHandler::new_admin_only(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(SuspendUserHandler::new(
             unit_of_work.clone(),
             user_postgres::SqlxUserRepositoryFactory::new(),
             user_postgres::SqlxUserAdminReaderFactory::new(),

@@ -25,6 +25,7 @@ pub(crate) mod wire;
 use crate::auth::{
     ApiAuthService, AuraAccessTokenAuthenticator, AuthError, CognitoJwtAuthenticator,
     CognitoJwtConfig, JwksProvider, ReqwestJwksProvider, TokenAuthenticator,
+    UserAuthenticationAuthenticator,
 };
 use crate::state::{
     AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
@@ -156,9 +157,9 @@ use user_postgres::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
     SqlxAccessTokenRepositoryFactory, SqlxAdminAccessTokenListReaderFactory,
     SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory,
-    SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory, SqlxUserTierEntitlementsFactory,
+    SqlxUserAuthenticationReader, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
+    SqlxUserTierEntitlementsFactory,
 };
-use user_service::use_cases::AuthenticateAccessTokenHandler;
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierHandler;
@@ -176,6 +177,9 @@ use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
+use user_service::use_cases::{
+    AuthenticateAccessTokenHandler, AuthenticateUserHandler, SuspendUserHandler,
+};
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
 use watchlist_service::use_cases::{
@@ -531,6 +535,10 @@ pub fn app(state: AppState) -> Router {
                     get(users::admin_users::get_user)
                         .patch(users::admin_users::patch_admin_user)
                         .delete(users::admin_users::delete_admin_user),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/suspension",
+                    axum::routing::put(users::suspend_user::suspend_user),
                 )
                 .route(
                     "/api/v1/admin/users/{user_id}/access-tokens",
@@ -933,6 +941,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
 
     let access_token_use_case =
         AuthenticateAccessTokenHandler::new(SqlxAccessTokenAuthenticationReader::new(pool.clone()));
+    let authenticate_user =
+        AuthenticateUserHandler::new(SqlxUserAuthenticationReader::new(pool.clone()));
     let jwks_client = reqwest::Client::builder()
         .connect_timeout(JWKS_CONNECT_TIMEOUT)
         .timeout(JWKS_REQUEST_TIMEOUT)
@@ -942,6 +952,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         config,
         ReqwestJwksProvider::new(jwks_client),
         AuraAccessTokenAuthenticator::new(access_token_use_case),
+        authenticate_user,
     )
     .map_err(ApiStateError::CognitoJwt)?;
     let notifications_state = NotificationsState::new(
@@ -1025,6 +1036,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         change_user_tier: Arc::new(change_user_tier),
         delete_user: Arc::new(delete_user),
         admin_delete_user: Arc::new(admin_delete_user),
+        suspend_user: Arc::new(SuspendUserHandler::new(
+            unit_of_work.clone(),
+            SqlxUserRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
         create_access_token: Arc::new(CreateAccessTokenHandler::new(
             unit_of_work.clone(),
             SqlxAccessTokenRepositoryFactory::new(),
@@ -1301,19 +1317,21 @@ fn google_application_default_credentials()
         })
 }
 
-fn compose_authenticator<P, A>(
+fn compose_authenticator<P, A, U>(
     config: &ApiConfig,
     jwks_provider: P,
     access_token_authenticator: A,
+    authenticate_user: U,
 ) -> Result<Arc<dyn TokenAuthenticator>, AuthError>
 where
     P: JwksProvider + 'static,
     A: TokenAuthenticator + 'static,
+    U: user_service::use_cases::AuthenticateUserUseCase + 'static,
 {
     let cognito_jwt = CognitoJwtAuthenticator::new(config.cognito_jwt().clone(), jwks_provider)?;
-    Ok(Arc::new(ApiAuthService::new(
-        cognito_jwt,
-        access_token_authenticator,
+    Ok(Arc::new(UserAuthenticationAuthenticator::new(
+        ApiAuthService::new(cognito_jwt, access_token_authenticator),
+        authenticate_user,
     )))
 }
 

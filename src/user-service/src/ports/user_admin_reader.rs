@@ -31,6 +31,7 @@ pub enum UserAdminReadError {
 
 #[async_trait::async_trait]
 pub trait UserAdminReader: Send {
+    /// Finds a persisted administrator that is active (not suspended).
     async fn find_admin_actor(
         &mut self,
         user_id: UserId,
