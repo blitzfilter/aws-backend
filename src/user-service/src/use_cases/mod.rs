@@ -45,6 +45,10 @@ pub use commands::set_user_stripe_customer_id::{
 pub use commands::suspend_user::{
     SuspendUserCommand, SuspendUserError, SuspendUserHandler, SuspendUserResult, SuspendUserUseCase,
 };
+pub use commands::unsuspend_user::{
+    UnsuspendUserCommand, UnsuspendUserError, UnsuspendUserHandler, UnsuspendUserResult,
+    UnsuspendUserUseCase,
+};
 pub use commands::update_access_token::{
     UpdateAccessTokenCommand, UpdateAccessTokenError, UpdateAccessTokenHandler,
     UpdateAccessTokenResult, UpdateAccessTokenUseCase,

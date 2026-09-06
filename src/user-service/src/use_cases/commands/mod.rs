@@ -9,6 +9,7 @@ pub mod delete_access_tokens;
 pub mod delete_user;
 pub mod set_user_stripe_customer_id;
 pub mod suspend_user;
+pub mod unsuspend_user;
 pub mod update_access_token;
 pub mod update_user_profile;
 pub mod upsert_newsletter_subscription;

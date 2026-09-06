@@ -5191,6 +5191,161 @@ paths:
                     title: Internal Server Error
                     error: USER_INTERNAL_ERROR
 
+    delete:
+      summary: Reactivate a user as admin
+      description: |
+        Removes the durable suspension state for the explicit target user. No request body is accepted.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `users:write`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        `userId` must be a UUID and the target user must exist. Reactivation is idempotent: a
+        repeated request for an active user returns its active state without another write. The
+        operation changes only suspension state; it preserves the user's profile, tier, role,
+        credentials, and partnership relationships. Once committed, valid existing credentials can
+        authenticate normally again. Every response sends `Cache-Control: no-store`.
+      operationId: adminUnsuspendUser
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user to reactivate.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "200":
+          description: User is active, including after an idempotent repeat.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only user mutation.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnsuspendUserResponseData"
+              example:
+                userId: 550e8400-e29b-41d4-a716-446655440000
+                suspended: false
+        "400":
+          description: Invalid target UUID or a nonempty request body.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: userId
+                  sourceType: path
+        "401":
+          description: Invalid or missing bearer credentials, including a credential for a suspended user.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: The caller is not an administrator or a delegated credential lacks users:write.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: Target user was not found.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: USER_NOT_FOUND
+        "409":
+          description: User reactivation conflicts with concurrent state.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 409
+                title: Conflict
+                error: CONFLICT
+        "503":
+          description: Authentication, authorization, or user persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: USER_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal authentication or user persistence failure.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: USER_INTERNAL_ERROR
+
   /api/v1/admin/users/{userId}/access-tokens:
     get:
       summary: List a user's Aura Historia access-token metadata as admin
@@ -14021,6 +14176,20 @@ components:
           type: boolean
           description: Current suspension state; true after this operation, including an idempotent repeat.
           example: true
+    UnsuspendUserResponseData:
+      type: object
+      required:
+        - userId
+        - suspended
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Identifier of the target user.
+        suspended:
+          type: boolean
+          description: Current suspension state; false after this operation, including an idempotent repeat.
+          example: false
     PatchAdminUserData:
       type: object
       description: "Partial admin-only user update payload.

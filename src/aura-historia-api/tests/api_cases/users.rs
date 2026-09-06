@@ -1904,6 +1904,155 @@ async fn should_suspend_user_and_repeat_idempotently_when_actor_is_admin() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_unsuspend_user_idempotently_and_restore_existing_token() {
+    let target_user_id = seed_user_with_tier("USER", UserTier::Pro).await;
+    let target_token = seed_access_token_for(
+        target_user_id,
+        std::collections::HashSet::from([Scope::UsersRead]),
+    )
+    .await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+    let endpoint = format!(
+        "{}/api/v1/admin/users/{target_user_id}/suspension",
+        AURA_API.base_url()
+    );
+    let client = reqwest::Client::new();
+
+    let response = client
+        .put(&endpoint)
+        .bearer_auth(String::from(admin_token.clone()))
+        .json(&serde_json::json!({"reason": "Incident resolved"}))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to suspend user before restoration: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, response.status());
+
+    for attempt in 0..2 {
+        let response = client
+            .delete(&endpoint)
+            .bearer_auth(String::from(admin_token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to reactivate user: {error}"));
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        assert_eq!(reqwest::StatusCode::OK, status, "attempt {attempt}: {body}");
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+        assert_eq!(
+            serde_json::json!(target_user_id.to_string()),
+            body["userId"]
+        );
+        assert_eq!(serde_json::json!(false), body["suspended"]);
+    }
+
+    let response = client
+        .get(format!("{}/api/v1/me/account", AURA_API.base_url()))
+        .bearer_auth(String::from(target_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to authenticate restored user: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(
+        serde_json::json!(target_user_id.to_string()),
+        body["userId"]
+    );
+    assert_eq!(serde_json::json!("USER"), body["role"]);
+    assert_eq!(serde_json::json!("PRO"), body["tier"]);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_user_reactivation_when_actor_is_not_admin() {
+    let target_user_id = seed_user("USER").await;
+    let actor_id = seed_user("USER").await;
+    let actor_token = seed_access_token_for(
+        actor_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/users/{target_user_id}/suspension",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(actor_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject non-admin reactivation: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_not_found_for_missing_user_reactivation() {
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/suspension",
+            AURA_API.base_url(),
+            UserId::new()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reactivate missing user: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::NOT_FOUND,
+        "USER_NOT_FOUND",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_invalid_user_id_for_reactivation() {
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/users/not-a-uuid/suspension",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject invalid reactivation target: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "INVALID_UUID",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_reject_secret_bearing_user_suspension_reason() {
     let target_user_id = seed_user("USER").await;
     let admin_id = seed_user("ADMIN").await;

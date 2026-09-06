@@ -9,7 +9,7 @@
 
 - Domain-only crate.
 - Root modules: `access_token`, `first_name`, `last_name`, `measurement_unit`, `name`, `newsletter_subscription`, `role`, `sort_user_field`, `tier`, `user`, `user_search`.
-- `user::User` is canonical aggregate. Fields private. Rehydrate boundary public for adapter crates. It owns durable orthogonal `suspended` state: new users start active; rehydration supplies stored state; `suspend()` is idempotent and never changes role or tier.
+- `user::User` is canonical aggregate. Fields private. Rehydrate boundary public for adapter crates. It owns durable orthogonal `suspended` state: new users start active; rehydration supplies stored state; `suspend()` and `unsuspend()` are idempotent and never change role or tier.
 - Access-token aggregate lives here; credential-core owns the canonical scope vocabulary and OAuth client ID.
 - Access-token aggregate has no storage metadata; repositories/read models own timestamps.
 - `newsletter_subscription::NewsletterSubscription` owns newsletter recipient values and optional linked user identity.

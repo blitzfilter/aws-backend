@@ -179,6 +179,7 @@ use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessT
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
 use user_service::use_cases::{
     AuthenticateAccessTokenHandler, AuthenticateUserHandler, SuspendUserHandler,
+    UnsuspendUserHandler,
 };
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
@@ -538,7 +539,8 @@ pub fn app(state: AppState) -> Router {
                 )
                 .route(
                     "/api/v1/admin/users/{user_id}/suspension",
-                    axum::routing::put(users::suspend_user::suspend_user),
+                    axum::routing::put(users::suspend_user::suspend_user)
+                        .delete(users::unsuspend_user::unsuspend_user),
                 )
                 .route(
                     "/api/v1/admin/users/{user_id}/access-tokens",
@@ -1037,6 +1039,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         delete_user: Arc::new(delete_user),
         admin_delete_user: Arc::new(admin_delete_user),
         suspend_user: Arc::new(SuspendUserHandler::new(
+            unit_of_work.clone(),
+            SqlxUserRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        unsuspend_user: Arc::new(UnsuspendUserHandler::new(
             unit_of_work.clone(),
             SqlxUserRepositoryFactory::new(),
             SqlxUserAdminReaderFactory::new(),

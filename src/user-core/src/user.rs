@@ -130,6 +130,10 @@ impl User {
         replace_if_changed(&mut self.suspended, true)
     }
 
+    pub fn unsuspend(&mut self) -> ChangeOutcome {
+        replace_if_changed(&mut self.suspended, false)
+    }
+
     pub fn change_stripe_customer_id(
         &mut self,
         stripe_customer_id: Option<StripeCustomerId>,
@@ -415,6 +419,33 @@ mod tests {
 
         assert_eq!(ChangeOutcome::Unchanged, outcome);
         assert!(user.is_suspended());
+    }
+
+    #[test]
+    fn should_unsuspend_user_without_changing_role_or_tier() {
+        let mut user =
+            User::create(new_user()).unwrap_or_else(|error| panic!("user create failed: {error}"));
+        let role = user.account().role;
+        let tier = user.account().tier;
+        let _ = user.suspend();
+
+        let outcome = user.unsuspend();
+
+        assert_eq!(ChangeOutcome::Changed, outcome);
+        assert!(!user.is_suspended());
+        assert_eq!(role, user.account().role);
+        assert_eq!(tier, user.account().tier);
+    }
+
+    #[test]
+    fn should_report_unchanged_when_user_already_active() {
+        let mut user =
+            User::create(new_user()).unwrap_or_else(|error| panic!("user create failed: {error}"));
+
+        let outcome = user.unsuspend();
+
+        assert_eq!(ChangeOutcome::Unchanged, outcome);
+        assert!(!user.is_suspended());
     }
 
     #[test]

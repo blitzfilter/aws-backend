@@ -60,7 +60,6 @@ use serde::Serialize;
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use user_service::use_cases::SuspendUserError;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleError;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierError;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenError;
@@ -77,6 +76,7 @@ use user_service::use_cases::queries::get_own_user::GetOwnUserError;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensError;
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensError;
 use user_service::use_cases::queries::search_users::SearchUsersError;
+use user_service::use_cases::{SuspendUserError, UnsuspendUserError};
 use watchlist_service::use_cases::{
     ListWatchlistError, UnwatchProductListingError, UpdateWatchlistProductListingError,
     WatchProductListingError,
@@ -1670,6 +1670,39 @@ impl From<SuspendUserError> for ApiError {
             SuspendUserError::InvalidPersistedState { .. } | SuspendUserError::Internal { .. } => {
                 ApiError::internal_server_error(USER_INTERNAL_ERROR)
                     .with_detail("User suspension failed internally.")
+            }
+        }
+    }
+}
+
+impl From<UnsuspendUserError> for ApiError {
+    fn from(error: UnsuspendUserError) -> Self {
+        match error {
+            UnsuspendUserError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            UnsuspendUserError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            UnsuspendUserError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            UnsuspendUserError::ConcurrencyConflict
+            | UnsuspendUserError::EmailConflict { .. }
+            | UnsuspendUserError::StripeCustomerConflict { .. } => ApiError::conflict(CONFLICT)
+                .with_detail("User reactivation conflicts with current state."),
+            UnsuspendUserError::TemporarilyUnavailable { .. }
+            | UnsuspendUserError::BeginTransactionFailed
+            | UnsuspendUserError::CommitTransactionFailed => {
+                ApiError::service_unavailable(USER_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("User could not be reactivated right now.")
+            }
+            UnsuspendUserError::InvalidPersistedState { .. }
+            | UnsuspendUserError::Internal { .. } => {
+                ApiError::internal_server_error(USER_INTERNAL_ERROR)
+                    .with_detail("User reactivation failed internally.")
             }
         }
     }

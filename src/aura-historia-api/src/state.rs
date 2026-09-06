@@ -60,7 +60,6 @@ use search_filter_service::use_cases::{
 };
 
 use std::sync::Arc;
-use user_service::use_cases::SuspendUserUseCase;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleUseCase;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierUseCase;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenUseCase;
@@ -76,6 +75,7 @@ use user_service::use_cases::queries::get_own_user::GetOwnUserUseCase;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensUseCase;
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensUseCase;
 use user_service::use_cases::queries::search_users::SearchUsersUseCase;
+use user_service::use_cases::{SuspendUserUseCase, UnsuspendUserUseCase};
 use watchlist_service::use_cases::{
     ListWatchlistUseCase, UnwatchProductListingUseCase, UpdateWatchlistProductListingUseCase,
     WatchProductListingUseCase,
@@ -556,6 +556,7 @@ pub struct UsersState {
     pub(crate) delete_user: Arc<dyn DeleteUserUseCase>,
     pub(crate) admin_delete_user: Arc<dyn DeleteUserUseCase>,
     pub(crate) suspend_user: Arc<dyn SuspendUserUseCase>,
+    pub(crate) unsuspend_user: Arc<dyn UnsuspendUserUseCase>,
     pub(crate) create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub(crate) list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
     pub(crate) admin_list_access_tokens: Arc<dyn ListAdminAccessTokensUseCase>,
@@ -580,6 +581,7 @@ impl UsersState {
         delete_user: Arc<dyn DeleteUserUseCase>,
         admin_delete_user: Arc<dyn DeleteUserUseCase>,
         suspend_user: Arc<dyn SuspendUserUseCase>,
+        unsuspend_user: Arc<dyn UnsuspendUserUseCase>,
         create_access_token: Arc<dyn CreateAccessTokenUseCase>,
         list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
         admin_list_access_tokens: Arc<dyn ListAdminAccessTokensUseCase>,
@@ -601,6 +603,7 @@ impl UsersState {
             delete_user,
             admin_delete_user,
             suspend_user,
+            unsuspend_user,
             create_access_token,
             list_access_tokens,
             admin_list_access_tokens,

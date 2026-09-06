@@ -163,7 +163,7 @@ use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
-use user_service::use_cases::{AuthenticateUserHandler, SuspendUserHandler};
+use user_service::use_cases::{AuthenticateUserHandler, SuspendUserHandler, UnsuspendUserHandler};
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
 use watchlist_service::use_cases::{
     ListWatchlistHandler, UnwatchProductListingHandler, UpdateWatchlistProductListingHandler,
@@ -1168,6 +1168,11 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             user_postgres::SqlxUserAdminReaderFactory::new(),
         )),
         Arc::new(SuspendUserHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(UnsuspendUserHandler::new(
             unit_of_work.clone(),
             user_postgres::SqlxUserRepositoryFactory::new(),
             user_postgres::SqlxUserAdminReaderFactory::new(),
