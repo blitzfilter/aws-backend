@@ -373,6 +373,9 @@ impl From<PartnershipApplicationRepositoryError> for ApprovePartnershipApplicati
 impl From<PartnershipRepositoryError> for ApprovePartnershipApplicationError {
     fn from(value: PartnershipRepositoryError) -> Self {
         match value {
+            PartnershipRepositoryError::ConcurrencyConflict => Self::Internal {
+                source: static_error("unexpected partnership concurrency"),
+            },
             PartnershipRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
             }
@@ -925,6 +928,16 @@ mod tests {
                 }
             })?;
             Ok(Versioned::new(partnership, version))
+        }
+
+        async fn dissolve(
+            &mut self,
+            _partnership: &Partnership,
+            _expected_version: PartnershipStorageVersion,
+        ) -> Result<VersionedPartnership, PartnershipRepositoryError> {
+            Err(PartnershipRepositoryError::Internal {
+                source: static_error("unexpected partnership dissolution"),
+            })
         }
     }
 

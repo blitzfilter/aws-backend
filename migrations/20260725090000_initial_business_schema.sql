@@ -91,9 +91,11 @@ CREATE INDEX listing_source_ingestion_methods_method_idx ON listing_source_inges
 CREATE TABLE partnerships (
     partnership_id uuid PRIMARY KEY,
     party_id uuid NOT NULL UNIQUE REFERENCES parties(party_id) ON DELETE CASCADE,
+    business_state text NOT NULL DEFAULT 'ACTIVE',
     version bigint NOT NULL DEFAULT 1,
     created timestamptz NOT NULL DEFAULT now(),
     updated timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT partnerships_business_state_check CHECK (business_state IN ('ACTIVE', 'DISSOLVED')),
     CONSTRAINT partnerships_version_positive CHECK (version >= 1)
 );
 

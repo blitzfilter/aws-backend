@@ -26,6 +26,7 @@ use partnership_service::use_cases::queries::list_administered_listing_sources::
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationUseCase,
+        dissolve_partnership::DissolvePartnershipUseCase,
         grant_partnership_listing_source::GrantPartnershipListingSourceUseCase,
         grant_partnership_membership::GrantPartnershipMembershipUseCase,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewUseCase,
@@ -687,6 +688,7 @@ pub struct PartnershipsState {
     pub(crate) revoke_member: Arc<dyn RevokePartnershipMembershipUseCase>,
     pub(crate) grant_listing_source: Arc<dyn GrantPartnershipListingSourceUseCase>,
     pub(crate) revoke_listing_source: Arc<dyn RevokePartnershipListingSourceUseCase>,
+    pub(crate) dissolve: Option<Arc<dyn DissolvePartnershipUseCase>>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
@@ -707,7 +709,13 @@ impl PartnershipsState {
             revoke_member,
             grant_listing_source,
             revoke_listing_source,
+            dissolve: None,
             authenticator,
         }
+    }
+
+    pub fn with_dissolve(mut self, dissolve: Arc<dyn DissolvePartnershipUseCase>) -> Self {
+        self.dissolve = Some(dissolve);
+        self
     }
 }

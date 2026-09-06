@@ -37,7 +37,7 @@ Provider configuration belongs to ListingSource service/PostgreSQL adapters. The
 
 ## Partnership
 
-A Partnership is the active business relationship for one Party. Each Party has at most one Partnership. Membership and ListingSource access are relational state:
+A Partnership is the active business relationship for one Party. Each Party has at most one Partnership and lifecycle `ACTIVE` or `DISSOLVED`. Dissolution is semantic deletion: the row remains so approved PartnershipApplications retain their historical Partnership reference. A later approved application for the same Party reactivates that Partnership and grants only the new application access. Membership and ListingSource access are relational state:
 
 ```text
 partnership_members(user_id, partnership_id)
@@ -48,7 +48,9 @@ A ProductListing partner write requires both membership and a ListingSource gran
 
 Admins can list Partnerships at `GET /api/v1/admin/partnerships`. The admin-only read is always `no-store` and uses bounded cursor pages: default size 21, maximum 100, fixed `created DESC, partnership UUID DESC` order, and exact `partyId`, `memberUserId`, and `listingSourceId` filters. Each safe summary contains only the Partnership ID, Party ID/immutable slug/name, member count, ListingSource-grant count, and timestamps. It omits member or grant identities, Party contact data, persistence versions, and all provider, webhook, crawler, or other secrets. The JSON `searchAfter` cursor is `[created RFC3339 timestamp, partnership UUID]` and is omitted on the terminal page.
 
-Admins can get one Partnership at `GET /api/v1/admin/partnerships/{partnershipId}`. The detail contains the Partnership ID, Party reference, current `memberUserIds`, current `listingSourceIds`, complete `memberCount` and `listingSourceGrantCount`, and timestamps. Both reference arrays are UUID-ascending and capped at 100 entries; counts include any additional current associations. The route is `no-store` and returns `PARTNERSHIP_NOT_FOUND` when the Partnership is missing.
+Admins can get one Partnership at `GET /api/v1/admin/partnerships/{partnershipId}`. The detail contains the Partnership ID, Party reference, current `memberUserIds`, current `listingSourceIds`, complete `memberCount` and `listingSourceGrantCount`, and timestamps. Both reference arrays are UUID-ascending and capped at 100 entries; counts include any additional current associations. The route is `no-store` and returns `PARTNERSHIP_NOT_FOUND` when the Partnership is missing. The collection lists active Partnerships only; administrators can still retrieve a dissolved Partnership detail for history.
+
+Admins can semantically delete a Partnership at `DELETE /api/v1/admin/partnerships/{partnershipId}`. It requires an administrator and returns `204` with `no-store`. In one PostgreSQL transaction it marks the Partnership `DISSOLVED`, removes all member and ListingSource-grant rows, and increments its version once. Parties, ListingSources, users, ProductListings, and PartnershipApplications remain. Repeating a successful request is a committed `204` no-op; a missing ID returns `PARTNERSHIP_NOT_FOUND`, and a stale concurrent write returns `409 CONFLICT`.
 
 Admins can grant a ListingSource to a Partnership at `PUT /api/v1/admin/partnerships/{partnershipId}/listing-source-grants/{listingSourceId}`. The idempotent `no-store` mutation returns `204`; it requires an administrator, existing targets, and matching Partnership/ListingSource Party IDs. A mismatched Party returns `409 CONFLICT`.
 
@@ -71,7 +73,8 @@ Admin Partnership routes:
 
 ```text
 GET   /api/v1/admin/partnerships
-GET   /api/v1/admin/partnerships/{partnershipId}
+GET    /api/v1/admin/partnerships/{partnershipId}
+DELETE /api/v1/admin/partnerships/{partnershipId}
 PUT    /api/v1/admin/partnerships/{partnershipId}/listing-source-grants/{listingSourceId}
 DELETE /api/v1/admin/partnerships/{partnershipId}/listing-source-grants/{listingSourceId}
 ```

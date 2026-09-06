@@ -9747,6 +9747,77 @@ paths:
                 status: 503
                 title: Service Unavailable
                 error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
+    delete:
+      summary: Dissolve a Partnership
+      description: |
+        Semantically deletes a Partnership for an authenticated administrator. The Partnership row
+        remains as a `DISSOLVED` historical reference for approved PartnershipApplications, while
+        all current membership and ListingSource-grant rows are removed in the same PostgreSQL
+        transaction. ListingSources, Parties, users, ProductListings, and applications are not
+        deleted. Repeating a successful dissolution is an idempotent `204` no-op. No user can
+        retain Partnership authorization after the transaction commits. All responses use
+        `Cache-Control: no-store`.
+      operationId: adminDissolvePartnership
+      tags:
+        - Partnerships
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partnershipId
+          in: path
+          required: true
+          description: Stable Partnership UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Partnership dissolved, or already dissolved.
+          headers:
+            Cache-Control:
+              description: Responses are never stored.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Bad request - invalid Partnership UUID (`INVALID_UUID`).
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials (`INVALID_CREDENTIALS`).
+        "403":
+          description: Forbidden - this endpoint requires the `ADMIN` role (`FORBIDDEN`).
+        "404":
+          description: Partnership not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: PARTNERSHIP_NOT_FOUND
+        "409":
+          description: Partnership was changed concurrently.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 409
+                title: Conflict
+                error: CONFLICT
+        "500":
+          description: Internal Partnership dissolution failure (`PARTNERSHIP_INTERNAL_ERROR`).
+        "503":
+          description: Authentication, admin authorization, or Partnership dissolution is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: PARTNERSHIP_TEMPORARILY_UNAVAILABLE
   /api/v1/admin/partnerships/{partnershipId}/listing-source-grants/{listingSourceId}:
     put:
       summary: Grant a ListingSource to a Partnership

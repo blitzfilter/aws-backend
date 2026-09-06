@@ -118,6 +118,18 @@ async fn delete_partnership_member(
         .unwrap_or_else(|error| panic!("failed to revoke Partnership membership: {error}"))
 }
 
+async fn delete_partnership(token: &str, partnership_id: &str) -> reqwest::Response {
+    reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/partnerships/{partnership_id}",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to dissolve Partnership: {error}"))
+}
+
 fn assert_no_store(cache_control: Option<String>) {
     assert_eq!(Some("no-store".to_owned()), cache_control);
 }
@@ -1325,5 +1337,173 @@ async fn should_reject_non_admin_partnership_membership_revoke() {
     let (status, body) = json_response(response).await;
 
     assert_no_store(cache_control);
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_dissolve_partnership_idempotently_revoke_access_and_preserve_history() {
+    let pool = get_postgres_client().await;
+    seed_current_fx_snapshot(&pool).await;
+    let partner_id = seed_user("USER").await;
+    let (application_id, partnership_id, listing_source_id) =
+        seed_approved_partnership_application(
+            partner_id,
+            datetime!(2026-09-05 12:00 UTC),
+            datetime!(2026-09-05 12:00 UTC),
+        )
+        .await;
+    seed_partnership_membership(partner_id, listing_source_id).await;
+    seed_operator_partnership_listing_source_grant(listing_source_id).await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token =
+        String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
+    let partner_token = String::from(
+        seed_access_token_for(
+            partner_id,
+            std::collections::HashSet::from([Scope::ProductListingsWrite]),
+        )
+        .await,
+    );
+
+    let before_dissolve = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/listing-sources/{listing_source_id}/product-listings",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(&partner_token)
+        .json(&json!([{
+            "sourceListingId": "before-dissolve",
+            "title": {"text": "Before dissolve", "language": "en"},
+            "description": {"text": "Before dissolve", "language": "en"},
+            "availability": "AVAILABLE",
+            "url": "https://partner.example/before-dissolve",
+            "images": []
+        }]))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to verify partner authorization: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, before_dissolve.status());
+
+    for _ in 0..2 {
+        let response = delete_partnership(&admin_token, &partnership_id.to_string()).await;
+        assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+        assert_no_store(
+            response
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        );
+        assert!(response.bytes().await.is_ok_and(|body| body.is_empty()));
+    }
+
+    let after_dissolve = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/listing-sources/{listing_source_id}/product-listings",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(&partner_token)
+        .json(&json!([{
+            "sourceListingId": "after-dissolve",
+            "title": {"text": "After dissolve", "language": "en"},
+            "description": {"text": "After dissolve", "language": "en"},
+            "availability": "AVAILABLE",
+            "url": "https://partner.example/after-dissolve",
+            "images": []
+        }]))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to verify revoked partner authorization: {error}"));
+    let (status, body) = json_response(after_dissolve).await;
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+
+    let (status, detail, cache_control) =
+        get_partnership_detail(&admin_token, &partnership_id.to_string()).await;
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_no_store(cache_control);
+    assert_eq!(json!([]), detail["memberUserIds"]);
+    assert_eq!(json!([]), detail["listingSourceIds"]);
+    assert_eq!(json!(0), detail["memberCount"]);
+    assert_eq!(json!(0), detail["listingSourceGrantCount"]);
+
+    assert_eq!(
+        "DISSOLVED",
+        sqlx::query_scalar::<_, String>(
+            "SELECT business_state FROM partnerships WHERE partnership_id = $1",
+        )
+        .bind(partnership_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to read dissolved Partnership: {error}"))
+    );
+    assert_eq!(
+        0,
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM partnership_members WHERE partnership_id = $1",
+        )
+        .bind(partnership_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to count dissolved members: {error}"))
+    );
+    assert_eq!(
+        0,
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE partnership_id = $1",
+        )
+        .bind(partnership_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to count dissolved grants: {error}"))
+    );
+    assert_eq!(
+        Some(partnership_id),
+        sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT approved_partnership_id FROM partnership_applications WHERE partnership_application_id = $1",
+        )
+        .bind(Uuid::from(application_id))
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to read historical PartnershipApplication: {error}"))
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_invalid_missing_and_non_admin_partnership_dissolution() {
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token =
+        String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
+    let user_id = seed_user("USER").await;
+    let user_token =
+        String::from(seed_access_token_for(user_id, std::collections::HashSet::new()).await);
+
+    let response = delete_partnership(&admin_token, "not-a-uuid").await;
+    let (status, body) = json_response(response).await;
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "INVALID_UUID",
+    );
+
+    let response = delete_partnership(&admin_token, &Uuid::new_v4().to_string()).await;
+    let (status, body) = json_response(response).await;
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::NOT_FOUND,
+        "PARTNERSHIP_NOT_FOUND",
+    );
+
+    let (partnership_id, _) = seed_partnership_for_search(
+        "Non Admin Partnership Dissolve",
+        datetime!(2026-09-05 12:00 UTC),
+        datetime!(2026-09-05 12:00 UTC),
+        &[],
+        &[],
+    )
+    .await;
+    let response = delete_partnership(&user_token, &partnership_id.to_string()).await;
+    let (status, body) = json_response(response).await;
     assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
 }

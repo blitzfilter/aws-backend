@@ -93,6 +93,7 @@ use partnership_postgres::{
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationHandler,
+        dissolve_partnership::DissolvePartnershipHandler,
         grant_partnership_listing_source::GrantPartnershipListingSourceHandler,
         grant_partnership_membership::GrantPartnershipMembershipHandler,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewHandler,
@@ -798,6 +799,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxPartnershipDetailsReaderFactory::new(),
         SqlxUserAdminReaderFactory::new(),
     );
+    let dissolve_partnership = DissolvePartnershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
     let grant_partnership_membership = GrantPartnershipMembershipHandler::new(
         unit_of_work.clone(),
         SqlxPartnershipRepositoryFactory::new(),
@@ -1175,7 +1181,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         Arc::new(grant_partnership_listing_source),
         Arc::new(revoke_partnership_listing_source),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
-    );
+    )
+    .with_dissolve(Arc::new(dissolve_partnership));
 
     let readiness = Arc::new(RuntimeReadiness {
         postgres: pool,

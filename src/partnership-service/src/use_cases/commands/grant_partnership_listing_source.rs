@@ -253,6 +253,9 @@ impl From<AdminAuthorizationError> for GrantPartnershipListingSourceError {
 impl From<PartnershipRepositoryError> for GrantPartnershipListingSourceError {
     fn from(value: PartnershipRepositoryError) -> Self {
         match value {
+            PartnershipRepositoryError::ConcurrencyConflict => Self::Internal {
+                source: static_error("unexpected partnership concurrency"),
+            },
             PartnershipRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
             }
@@ -479,6 +482,16 @@ mod tests {
         ) -> Result<VersionedPartnership, PartnershipRepositoryError> {
             Err(PartnershipRepositoryError::Internal {
                 source: static_error("unexpected partnership creation"),
+            })
+        }
+
+        async fn dissolve(
+            &mut self,
+            _partnership: &Partnership,
+            _expected_version: PartnershipStorageVersion,
+        ) -> Result<VersionedPartnership, PartnershipRepositoryError> {
+            Err(PartnershipRepositoryError::Internal {
+                source: static_error("unexpected partnership dissolution"),
             })
         }
     }
