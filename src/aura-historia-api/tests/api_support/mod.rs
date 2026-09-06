@@ -150,6 +150,7 @@ use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierHandler;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenHandler;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenHandler;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensHandler;
 use user_service::use_cases::commands::delete_user::DeleteUserHandler;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenHandler;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileHandler;
@@ -1175,6 +1176,12 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             unit_of_work.clone(),
             user_postgres::SqlxAccessTokenRepositoryFactory::new(),
             user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(DeleteAccessTokensHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxAccessTokenRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+            user_postgres::SqlxUserAccountReaderFactory::new(),
         )),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );

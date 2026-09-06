@@ -63,6 +63,7 @@ use user_service::use_cases::commands::change_user_role::ChangeUserRoleUseCase;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierUseCase;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenUseCase;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenUseCase;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensUseCase;
 use user_service::use_cases::commands::delete_user::DeleteUserUseCase;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenUseCase;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileUseCase;
@@ -557,6 +558,7 @@ pub struct UsersState {
     pub(crate) update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub(crate) delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
     pub(crate) admin_delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+    pub(crate) admin_delete_access_tokens: Arc<dyn DeleteAccessTokensUseCase>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
@@ -578,6 +580,7 @@ impl UsersState {
         update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
         delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
         admin_delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+        admin_delete_access_tokens: Arc<dyn DeleteAccessTokensUseCase>,
         authenticator: Arc<dyn TokenAuthenticator>,
     ) -> Self {
         Self {
@@ -596,6 +599,7 @@ impl UsersState {
             update_access_token,
             delete_access_token,
             admin_delete_access_token,
+            admin_delete_access_tokens,
             authenticator,
         }
     }

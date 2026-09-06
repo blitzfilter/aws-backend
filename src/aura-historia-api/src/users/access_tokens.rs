@@ -16,6 +16,7 @@ use user_service::use_cases::commands::create_access_token::{
     CreateAccessTokenCommand, CreateAccessTokenResult,
 };
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenCommand;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensCommand;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenCommand;
 use user_service::use_cases::queries::get_access_token::{AccessTokenView, GetAccessTokenRequest};
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensRequest;
@@ -217,6 +218,30 @@ pub async fn delete_access_token(
     {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => ApiError::from(e).into_response(),
+    }
+}
+
+pub async fn delete_admin_access_tokens(
+    State(state): State<UsersState>,
+    headers: HeaderMap,
+    Path(raw_user_id): Path<String>,
+) -> Response {
+    let (ctx, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
+        Ok(v) => v,
+        Err(r) => return no_store(*r),
+    };
+    let user_id = match parse_user_id(&raw_user_id, "userId") {
+        Ok(v) => v,
+        Err(r) => return no_store(r),
+    };
+
+    match state
+        .admin_delete_access_tokens
+        .execute(&ctx, DeleteAccessTokensCommand { user_id })
+        .await
+    {
+        Ok(_) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => no_store(ApiError::from(error).into_response()),
     }
 }
 

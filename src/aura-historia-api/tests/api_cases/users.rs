@@ -1078,6 +1078,267 @@ async fn should_delete_access_token_for_current_user() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_revoke_all_admin_user_access_tokens_and_preserve_other_users() {
+    let target_user_id = seed_user("USER").await;
+    let target_token_one = seed_access_token_for(
+        target_user_id,
+        std::collections::HashSet::from([Scope::UsersRead]),
+    )
+    .await;
+    let target_token_two = seed_access_token_for(
+        target_user_id,
+        std::collections::HashSet::from([Scope::UsersRead]),
+    )
+    .await;
+    let unrelated_user_id = seed_user("USER").await;
+    let unrelated_token = seed_access_token_for(
+        unrelated_user_id,
+        std::collections::HashSet::from([Scope::UsersRead]),
+    )
+    .await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::AccessTokensWrite]),
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/access-tokens",
+            AURA_API.base_url(),
+            target_user_id
+        ))
+        .bearer_auth(String::from(admin_token.clone()))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to bulk revoke admin access tokens: {error}"));
+
+    assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+    assert_eq!(
+        Some("no-store"),
+        response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    );
+
+    for revoked_token in [target_token_one, target_token_two] {
+        let response = client
+            .get(format!("{}/api/v1/me/account", AURA_API.base_url()))
+            .bearer_auth(String::from(revoked_token))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to check revoked access token: {error}"));
+        let (status, body) = json_response(response).await;
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::UNAUTHORIZED,
+            "INVALID_CREDENTIALS",
+        );
+    }
+
+    let response = client
+        .get(format!("{}/api/v1/me/account", AURA_API.base_url()))
+        .bearer_auth(String::from(unrelated_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to check unrelated access token: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(
+        serde_json::json!(unrelated_user_id.to_string()),
+        body["userId"]
+    );
+
+    let response = client
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/access-tokens",
+            AURA_API.base_url(),
+            target_user_id
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to retry bulk revoke: {error}"));
+    assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_bulk_revoke_existing_admin_user_with_no_tokens_idempotently() {
+    let target_user_id = seed_user("USER").await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::AccessTokensWrite]),
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    for _ in 0..2 {
+        let response = client
+            .delete(format!(
+                "{}/api/v1/admin/users/{}/access-tokens",
+                AURA_API.base_url(),
+                target_user_id
+            ))
+            .bearer_auth(String::from(admin_token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to bulk revoke empty token set: {error}"));
+
+        assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+        assert_eq!(
+            Some("no-store"),
+            response
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok())
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_not_found_when_bulk_revoke_target_user_is_missing() {
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::AccessTokensWrite]),
+    )
+    .await;
+    let missing_user_id = UserId::new();
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/access-tokens",
+            AURA_API.base_url(),
+            missing_user_id
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to bulk revoke missing user tokens: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::NOT_FOUND,
+        "USER_NOT_FOUND",
+    );
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_bulk_revoke_for_non_admin_actor() {
+    let target_user_id = seed_user("USER").await;
+    let actor_id = seed_user("USER").await;
+    let actor_token = seed_access_token_for(
+        actor_id,
+        std::collections::HashSet::from([Scope::AccessTokensWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/access-tokens",
+            AURA_API.base_url(),
+            target_user_id
+        ))
+        .bearer_auth(String::from(actor_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject non-admin bulk revoke: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_bulk_revoke_without_valid_auth_or_user_id() {
+    let target_user_id = seed_user("USER").await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::AccessTokensWrite]),
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/access-tokens",
+            AURA_API.base_url(),
+            target_user_id
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject missing bulk-revoke auth: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "INVALID_CREDENTIALS",
+    );
+
+    let response = client
+        .delete(format!(
+            "{}/api/v1/admin/users/{}/access-tokens",
+            AURA_API.base_url(),
+            target_user_id
+        ))
+        .bearer_auth("not-a-valid-token")
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject invalid bulk-revoke auth: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "INVALID_CREDENTIALS",
+    );
+
+    let response = client
+        .delete(format!(
+            "{}/api/v1/admin/users/not-a-uuid/access-tokens",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject invalid bulk-revoke user ID: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "INVALID_UUID",
+    );
+    assert_eq!(serde_json::json!("userId"), body["source"]["field"]);
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_allow_admin_to_revoke_access_token_and_make_it_unusable() {
     let target_user_id = seed_user("USER").await;
     let target_authentication_token = seed_access_token_for(

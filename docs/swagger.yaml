@@ -4995,6 +4995,116 @@ paths:
                 title: Internal Server Error
                 error: USER_INTERNAL_ERROR
 
+  /api/v1/admin/users/{userId}/access-tokens:
+    delete:
+      summary: Revoke all of a user's Aura Historia access tokens as admin
+      description: |
+        Revokes all Aura Historia access tokens owned by the target user in one atomic PostgreSQL transaction.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:write`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        `userId` must be a UUID and the target user must exist. An existing user with no tokens and
+        a repeated request both return `204 No Content`; a missing target user returns `404 USER_NOT_FOUND`.
+        Deletion is scoped to the target user, leaves unrelated users' tokens untouched, and committed
+        deletion makes the revoked credentials fail authentication. It never reveals raw token values or hashes.
+      operationId: adminDeleteUserAccessTokens
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user whose tokens are revoked.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "204":
+          description: All access tokens revoked, or no tokens were present for the existing target user.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only credential mutation.
+              schema:
+                type: string
+              example: no-store
+            Access-Control-Allow-Origin:
+              description: CORS header
+              schema:
+                type: string
+              example: "*"
+        "400":
+          description: Bad request - the user ID is not a UUID.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: userId
+                  sourceType: path
+                detail: Path parameter 'userId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - the caller is not an administrator or a delegated credential lacks access-tokens:write.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: The target user does not exist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: USER_NOT_FOUND
+                detail: User was not found.
+        "503":
+          description: Access-token authorization or persistence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal access-token operation failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: ACCESS_TOKEN_INTERNAL_ERROR
+
   /api/v1/admin/users/{userId}/access-tokens/{accessTokenId}:
     delete:
       summary: Revoke a user's Aura Historia access token as admin

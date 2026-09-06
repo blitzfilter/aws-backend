@@ -15,7 +15,7 @@
 - `SqlxUserAdminReaderFactory` implements the transaction-bound admin mutation guard; it takes an advisory transaction lock, locks the target user, and checks the authoritative admin count before demotion or deletion.
 - User repository writes use `RETURNING` and expose only storage-neutral persisted user state; delete returns row-existence only.
 - `insert_if_absent` uses `ON CONFLICT (user_id) DO NOTHING` and returns the existing aggregate for idempotent `CreateUser` replay; email conflicts still fail.
-- PostgreSQL owns access tokens. Repositories rehydrate hashed-token aggregates inside caller transactions; focused pool-backed readers return details/list/authentication models without exposing token hashes. Authentication readers include token identity and origin only for service-side credential flows.
+- PostgreSQL owns access tokens. Repositories rehydrate hashed-token aggregates inside caller transactions; focused pool-backed readers return details/list/authentication models without exposing token hashes. Authentication readers include token identity and origin only for service-side credential flows. The access-token repository also performs target-user-scoped bulk deletion and reports affected rows; unrelated users remain untouched.
 - User search sort maps `Name` to `first_name`, then `last_name`; no score sort.
 
 ## Ownership

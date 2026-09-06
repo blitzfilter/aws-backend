@@ -63,6 +63,7 @@ use user_service::use_cases::commands::change_user_role::ChangeUserRoleError;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierError;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenError;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenError;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensError;
 use user_service::use_cases::commands::delete_user::DeleteUserError;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenError;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileError;
@@ -1746,6 +1747,34 @@ impl From<UpdateAccessTokenError> for ApiError {
             }
             UpdateAccessTokenError::InvalidPersistedState { .. }
             | UpdateAccessTokenError::Internal { .. } => {
+                ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
+                    .with_detail("Access token operation failed internally.")
+            }
+        }
+    }
+}
+impl From<DeleteAccessTokensError> for ApiError {
+    fn from(error: DeleteAccessTokensError) -> Self {
+        match error {
+            DeleteAccessTokensError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            DeleteAccessTokensError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            DeleteAccessTokensError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            DeleteAccessTokensError::TemporarilyUnavailable { .. }
+            | DeleteAccessTokensError::BeginTransactionFailed
+            | DeleteAccessTokensError::CommitTransactionFailed => {
+                ApiError::service_unavailable(ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Access token store is temporarily unavailable.")
+            }
+            DeleteAccessTokensError::InvalidPersistedState { .. }
+            | DeleteAccessTokensError::Internal { .. } => {
                 ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
                     .with_detail("Access token operation failed internally.")
             }

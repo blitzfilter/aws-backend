@@ -1,9 +1,10 @@
 use crate::use_cases::{
     AdminGetUserUseCase, AuthenticateAccessTokenUseCase, ChangeUserRoleUseCase,
     ChangeUserTierUseCase, CheckUserAdminUseCase, CreateAccessTokenUseCase, CreateUserUseCase,
-    DeleteAccessTokenUseCase, DeleteUserUseCase, FindUserByStripeCustomerIdUseCase,
-    GetAccessTokenUseCase, GetOwnUserUseCase, ListAccessTokensUseCase, SearchUsersUseCase,
-    SetUserStripeCustomerIdUseCase, UpdateAccessTokenUseCase, UpdateUserProfileUseCase,
+    DeleteAccessTokenUseCase, DeleteAccessTokensUseCase, DeleteUserUseCase,
+    FindUserByStripeCustomerIdUseCase, GetAccessTokenUseCase, GetOwnUserUseCase,
+    ListAccessTokensUseCase, SearchUsersUseCase, SetUserStripeCustomerIdUseCase,
+    UpdateAccessTokenUseCase, UpdateUserProfileUseCase,
 };
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ pub struct UserUseCases {
     pub create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+    pub delete_access_tokens: Arc<dyn DeleteAccessTokensUseCase>,
     pub delete: Arc<dyn DeleteUserUseCase>,
     pub get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
@@ -41,6 +43,7 @@ pub struct UserUseCasesInput {
     pub create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+    pub delete_access_tokens: Arc<dyn DeleteAccessTokensUseCase>,
     pub delete: Arc<dyn DeleteUserUseCase>,
     pub get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
@@ -63,6 +66,7 @@ impl UserUseCases {
             create_access_token: input.create_access_token,
             update_access_token: input.update_access_token,
             delete_access_token: input.delete_access_token,
+            delete_access_tokens: input.delete_access_tokens,
             delete: input.delete,
             get_access_token: input.get_access_token,
             list_access_tokens: input.list_access_tokens,

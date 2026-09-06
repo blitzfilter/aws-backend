@@ -163,6 +163,7 @@ use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierHandler;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenHandler;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenHandler;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensHandler;
 use user_service::use_cases::commands::delete_user::DeleteUserHandler;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenHandler;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileHandler;
@@ -528,6 +529,10 @@ pub fn app(state: AppState) -> Router {
                     get(users::admin_users::get_user)
                         .patch(users::admin_users::patch_admin_user)
                         .delete(users::admin_users::delete_admin_user),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/access-tokens",
+                    delete(users::access_tokens::delete_admin_access_tokens),
                 )
                 .route(
                     "/api/v1/admin/users/{user_id}/access-tokens/{access_token_id}",
@@ -1035,6 +1040,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             unit_of_work.clone(),
             SqlxAccessTokenRepositoryFactory::new(),
             SqlxUserAdminReaderFactory::new(),
+        )),
+        admin_delete_access_tokens: Arc::new(DeleteAccessTokensHandler::new(
+            unit_of_work.clone(),
+            SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
         )),
         authenticator: Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     };
