@@ -5,6 +5,7 @@ pub mod change_user_tier;
 pub mod create_access_token;
 pub mod create_user;
 pub mod delete_access_token;
+pub mod delete_access_tokens;
 pub mod delete_user;
 pub mod set_user_stripe_customer_id;
 pub mod update_access_token;

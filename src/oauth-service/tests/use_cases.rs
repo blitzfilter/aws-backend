@@ -596,6 +596,24 @@ impl AccessTokenRepository for TransactionalFakePorts<'_> {
         }
         Ok(deleted)
     }
+
+    async fn delete_by_user_id(
+        &mut self,
+        user_id: UserId,
+    ) -> Result<u64, AccessTokenRepositoryError> {
+        let state = self.state();
+        let deleted = state
+            .issued
+            .as_ref()
+            .is_some_and(|token| token.user_id() == user_id);
+        if deleted {
+            state.issued = None;
+            state.deleted_raw += 1;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
 }
 
 #[tokio::test]

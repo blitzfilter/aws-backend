@@ -4995,6 +4995,428 @@ paths:
                 title: Internal Server Error
                 error: USER_INTERNAL_ERROR
 
+  /api/v1/admin/users/{userId}/access-tokens:
+    get:
+      summary: List a user's Aura Historia access-token metadata as admin
+      description: |
+        Lists non-secret Aura Historia access-token metadata for the explicit target user.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:read`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        `userId` must be a UUID and the target user must exist. Expired and current tokens are included.
+        Results use bounded keyset pagination in fixed `created ASC, access-token UUID ASC` order.
+        Page sizes are clamped to 1–100, with a default of 21. `searchAfter` is a JSON-encoded
+        `[created RFC3339 timestamp, access-token UUID]` cursor and is omitted on the terminal page.
+        The cursor's creation timestamp is used only for continuation and is not returned as item metadata.
+        Raw token values, token hashes, and masked token values are never returned.
+      operationId: adminListUserAccessTokens
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user whose token metadata is listed.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        - name: size
+          in: query
+          required: false
+          description: Requested page size. The server clamps it to 1–100; the default is 21.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 100
+          example: 21
+        - name: searchAfter
+          in: query
+          required: false
+          description: JSON-encoded `[created RFC3339 timestamp, access-token UUID]` cursor from the previous page.
+          schema:
+            type: string
+          example: '["2026-09-04T12:00:00Z","01970f22-2bf0-7000-8000-000000000001"]'
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "200":
+          description: Secret-free access-token metadata for the target user.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only credential read.
+              schema:
+                type: string
+              example: no-store
+            Access-Control-Allow-Origin:
+              description: CORS header
+              schema:
+                type: string
+              example: "*"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAccessTokenCollectionData"
+              example:
+                items:
+                  - userId: 550e8400-e29b-41d4-a716-446655440000
+                    accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+                    name: Incident review token
+                    scopes:
+                      - users:read
+                    origin: User
+                    expires: "2026-09-30T00:00:00Z"
+                size: 21
+                searchAfter:
+                  - "2026-09-04T12:00:00Z"
+                  - 01970f22-2bf0-7000-8000-000000000001
+        "400":
+          description: Bad request - invalid target user UUID, page size, or search-after cursor.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalid_user_id:
+                  summary: Invalid target user identifier
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: userId
+                      sourceType: path
+                    detail: Path parameter 'userId' must be a UUID.
+                invalid_query:
+                  summary: Invalid page query
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: BAD_QUERY_PARAMETER_VALUE
+                    source:
+                      field: searchAfter
+                      sourceType: query
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - the caller is not an administrator or a delegated credential lacks access-tokens:read.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: The target user does not exist.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: USER_NOT_FOUND
+                detail: User was not found.
+        "503":
+          description: Access-token authorization or persistence is temporarily unavailable.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal access-token operation failure.
+          headers:
+            Cache-Control:
+              description: Error responses are never stored.
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: ACCESS_TOKEN_INTERNAL_ERROR
+    delete:
+      summary: Revoke all of a user's Aura Historia access tokens as admin
+      description: |
+        Revokes all Aura Historia access tokens owned by the target user in one atomic PostgreSQL transaction.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:write`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        `userId` must be a UUID and the target user must exist. An existing user with no tokens and
+        a repeated request both return `204 No Content`; a missing target user returns `404 USER_NOT_FOUND`.
+        Deletion is scoped to the target user, leaves unrelated users' tokens untouched, and committed
+        deletion makes the revoked credentials fail authentication. It never reveals raw token values or hashes.
+      operationId: adminDeleteUserAccessTokens
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user whose tokens are revoked.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "204":
+          description: All access tokens revoked, or no tokens were present for the existing target user.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only credential mutation.
+              schema:
+                type: string
+              example: no-store
+            Access-Control-Allow-Origin:
+              description: CORS header
+              schema:
+                type: string
+              example: "*"
+        "400":
+          description: Bad request - the user ID is not a UUID.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: userId
+                  sourceType: path
+                detail: Path parameter 'userId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - the caller is not an administrator or a delegated credential lacks access-tokens:write.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "404":
+          description: The target user does not exist.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: USER_NOT_FOUND
+                detail: User was not found.
+        "503":
+          description: Access-token authorization or persistence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal access-token operation failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: ACCESS_TOKEN_INTERNAL_ERROR
+
+  /api/v1/admin/users/{userId}/access-tokens/{accessTokenId}:
+    delete:
+      summary: Revoke a user's Aura Historia access token as admin
+      description: |
+        Revokes one Aura Historia access token for the target user.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:write`.
+        Authorization is enforced in the User service, not only at the HTTP route.
+
+        Both `userId` and `accessTokenId` must be UUIDs. The database deletion is scoped by both
+        identifiers, so an access-token ID belonging to another user cannot revoke that user's
+        credential. The operation is idempotent: it returns `204 No Content` when the token was
+        deleted, was already absent, or belongs to another user. It never reveals raw token values
+        or hashes.
+      operationId: adminDeleteUserAccessToken
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user whose token is revoked.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        - name: accessTokenId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the access token to revoke.
+          schema:
+            type: string
+            format: uuid
+          example: 01970f22-2bf0-7000-8000-000000000001
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "204":
+          description: Access token revoked, or already absent for the target user.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only credential mutation.
+              schema:
+                type: string
+              example: no-store
+            Access-Control-Allow-Origin:
+              description: CORS header
+              schema:
+                type: string
+              example: "*"
+        "400":
+          description: Bad request - the user ID or access-token ID is not a UUID.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalid_user_id:
+                  summary: Invalid target user identifier
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: userId
+                      sourceType: path
+                    detail: Path parameter 'userId' must be a UUID.
+                invalid_access_token_id:
+                  summary: Invalid access-token identifier
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_UUID
+                    source:
+                      field: accessTokenId
+                      sourceType: path
+                    detail: Path parameter 'accessTokenId' must be a UUID.
+        "401":
+          description: Unauthorized - invalid or missing bearer credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: Forbidden - the caller is not an administrator or a delegated credential lacks access-tokens:write.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+                detail: Operation is not permitted.
+        "503":
+          description: Access-token authorization or persistence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal access-token operation failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: ACCESS_TOKEN_INTERNAL_ERROR
   /api/v1/me:
     delete:
       summary: Delete authenticated user
@@ -5691,7 +6113,9 @@ paths:
 
         The token to delete is identified by the required `{accessTokenId}` path parameter.
 
-        Requires valid Cognito JWT authentication.
+        Cognito JWTs and Aura Historia access tokens are accepted; delegated access tokens require `access-tokens:write`.
+
+        The operation is idempotent: an already-revoked or missing token is a successful no-op and returns `204 No Content`.
 
         "
       operationId: deleteMyAccessToken
@@ -5699,6 +6123,7 @@ paths:
         - User Account
       security:
         - BearerAuth: []
+        - AccessTokenAuth: []
       parameters:
         - name: accessTokenId
           in: path
@@ -5710,7 +6135,7 @@ paths:
             example: 01970f22-2bf0-7000-8000-000000000001
       responses:
         "204":
-          description: Access token deleted successfully
+          description: Access token deleted successfully, or already absent for the authenticated user
           headers:
             Access-Control-Allow-Origin:
               description: CORS header
@@ -5754,16 +6179,6 @@ paths:
                 status: 401
                 title: Unauthorized
                 error: UNAUTHORIZED
-        "404":
-          description: Access token not found
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 404
-                title: Not Found
-                error: ACCESS_TOKEN_NOT_FOUND
         "500":
           description: Internal server error
           content:
@@ -12260,6 +12675,95 @@ components:
         - BEARER
       description: Token type returned for Aura Historia access tokens.
       example: BEARER
+    AdminAccessTokenCollectionData:
+      type: object
+      description:
+        "Cursor-paginated, secret-free access-token metadata for an administrator's explicit target user.
+
+        `searchAfter` is a `[created RFC3339 timestamp, access-token UUID]` cursor and is omitted
+
+        when the current page is terminal. The cursor timestamp is not returned as item metadata.
+
+        This schema intentionally has no raw token, masked token, short-token, or token-hash property.
+
+        "
+      required:
+        - items
+        - size
+      properties:
+        items:
+          type: array
+          description: Access-token metadata returned for the target user, including expired and current tokens.
+          items:
+            $ref: "#/components/schemas/AdminAccessTokenData"
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100
+          description: Requested page size after server-side clamping.
+          example: 21
+        searchAfter:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: string
+          description: "`[created RFC3339 timestamp, access-token UUID]` cursor for the next page, omitted when no more results are available."
+          nullable: true
+          example:
+            - "2026-09-04T12:00:00Z"
+            - 01970f22-2bf0-7000-8000-000000000001
+    AdminAccessTokenData:
+      type: object
+      description:
+        "Secret-free Aura Historia access-token metadata returned by the admin target-user listing.
+
+        The representation contains no raw token, masked token, short-token, or token-hash value.
+
+        `expires` is omitted when the token has no expiration and is returned for both expired and current tokens.
+
+        "
+      required:
+        - userId
+        - accessTokenId
+        - name
+        - scopes
+        - origin
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Explicit target user who owns the access token.
+          example: 550e8400-e29b-41d4-a716-446655440000
+        accessTokenId:
+          type: string
+          format: uuid
+          description: Unique identifier of the access token.
+          example: 01970f22-2bf0-7000-8000-000000000001
+        name:
+          type: string
+          maxLength: 128
+          description: User-defined display name of the access token.
+          example: Incident review token
+        scopes:
+          type: array
+          uniqueItems: true
+          description: Granted access-token scopes.
+          items:
+            $ref: "#/components/schemas/AccessTokenScopeData"
+          example:
+            - users:read
+        origin:
+          type: string
+          description: Origin recorded by the canonical access-token model.
+          example: User
+        expires:
+          type: string
+          format: date-time
+          description: Optional RFC3339 expiration timestamp; expired and current tokens are both listed.
+          nullable: true
+          example: "2026-09-30T00:00:00Z"
     GetAccessTokenData:
       type: object
       description: "Access-token read model.

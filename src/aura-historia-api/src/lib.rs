@@ -153,9 +153,9 @@ use tokio::net::TcpListener;
 use tracing::info;
 use user_postgres::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
-    SqlxAccessTokenRepositoryFactory, SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory,
-    SqlxUserAdminReaderFactory, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
-    SqlxUserTierEntitlementsFactory,
+    SqlxAccessTokenRepositoryFactory, SqlxAdminAccessTokenListReaderFactory,
+    SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory,
+    SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory, SqlxUserTierEntitlementsFactory,
 };
 use user_service::use_cases::AuthenticateAccessTokenHandler;
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
@@ -163,6 +163,7 @@ use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierHandler;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenHandler;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenHandler;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensHandler;
 use user_service::use_cases::commands::delete_user::DeleteUserHandler;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenHandler;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileHandler;
@@ -172,6 +173,7 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminHandler;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenHandler;
 use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
@@ -528,6 +530,15 @@ pub fn app(state: AppState) -> Router {
                     get(users::admin_users::get_user)
                         .patch(users::admin_users::patch_admin_user)
                         .delete(users::admin_users::delete_admin_user),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/access-tokens",
+                    get(users::access_tokens::list_admin_access_tokens)
+                        .delete(users::access_tokens::delete_admin_access_tokens),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/access-tokens/{access_token_id}",
+                    delete(users::access_tokens::delete_admin_access_token),
                 )
                 .with_state(users),
         );
@@ -1015,6 +1026,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         list_access_tokens: Arc::new(ListAccessTokensHandler::new(
             SqlxAccessTokenListReader::new(pool.clone()),
         )),
+        admin_list_access_tokens: Arc::new(ListAdminAccessTokensHandler::new(
+            unit_of_work.clone(),
+            SqlxAdminAccessTokenListReaderFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
+        )),
         get_access_token: Arc::new(GetAccessTokenHandler::new(
             SqlxAccessTokenDetailsReader::new(pool.clone()),
         )),
@@ -1025,6 +1042,18 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         delete_access_token: Arc::new(DeleteAccessTokenHandler::new(
             unit_of_work.clone(),
             SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        admin_delete_access_token: Arc::new(DeleteAccessTokenHandler::new_admin_only(
+            unit_of_work.clone(),
+            SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        admin_delete_access_tokens: Arc::new(DeleteAccessTokensHandler::new(
+            unit_of_work.clone(),
+            SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
         )),
         authenticator: Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     };
