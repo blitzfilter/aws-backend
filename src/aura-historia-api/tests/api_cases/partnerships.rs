@@ -1457,7 +1457,7 @@ async fn should_dissolve_partnership_idempotently_revoke_access_and_preserve_his
         .unwrap_or_else(|error| panic!("failed to count dissolved grants: {error}"))
     );
     assert_eq!(
-        Some(Uuid::from(partnership_id)),
+        Some(partnership_id),
         sqlx::query_scalar::<_, Option<Uuid>>(
             "SELECT approved_partnership_id FROM partnership_applications WHERE partnership_application_id = $1",
         )
