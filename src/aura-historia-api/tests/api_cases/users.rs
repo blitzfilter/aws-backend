@@ -1,8 +1,8 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
-    assert_problem, json_response, seed_access_token_for, seed_user, seed_user_with_tier,
-    set_user_search_fields, set_user_stripe_customer_id,
+    assert_problem, fail_session_revocation_for, json_response, seed_access_token_for, seed_user,
+    seed_user_with_tier, set_user_search_fields, set_user_stripe_customer_id,
 };
 
 use test_api::{IntegrationTestService, aura_integration_test};
@@ -1452,6 +1452,115 @@ async fn should_return_not_found_when_bulk_revoke_target_user_is_missing() {
         "USER_NOT_FOUND",
     );
     assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_revoke_admin_target_cognito_sessions_idempotently() {
+    let target_user_id = seed_user("USER").await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    for _ in 0..2 {
+        let response = client
+            .post(format!(
+                "{}/api/v1/admin/users/{target_user_id}/sessions/revoke",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(admin_token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to revoke Cognito sessions: {error}"));
+
+        assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+        assert_eq!(
+            Some("no-store"),
+            response
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok())
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_map_temporary_cognito_session_revocation_failure() {
+    let target_user_id = seed_user("USER").await;
+    fail_session_revocation_for(target_user_id);
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/admin/users/{target_user_id}/sessions/revoke",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to call unavailable Cognito revocation: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "USER_TEMPORARILY_UNAVAILABLE",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_session_revocation_for_non_admin_or_missing_target() {
+    let target_user_id = seed_user("USER").await;
+    let actor_id = seed_user("USER").await;
+    let actor_token = seed_access_token_for(
+        actor_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/admin/users/{target_user_id}/sessions/revoke",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(actor_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject non-admin session revocation: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersWrite]),
+    )
+    .await;
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/admin/users/{}/sessions/revoke",
+            AURA_API.base_url(),
+            UserId::new()
+        ))
+        .bearer_auth(String::from(admin_token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to reject missing session target: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::NOT_FOUND,
+        "USER_NOT_FOUND",
+    );
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]

@@ -153,6 +153,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::info;
+use user_cognito::CognitoUserSessionRevoker;
 use user_postgres::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
     SqlxAccessTokenRepositoryFactory, SqlxAdminAccessTokenListReaderFactory,
@@ -178,8 +179,8 @@ use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandle
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
 use user_service::use_cases::{
-    AuthenticateAccessTokenHandler, AuthenticateUserHandler, SuspendUserHandler,
-    UnsuspendUserHandler,
+    AuthenticateAccessTokenHandler, AuthenticateUserHandler, RevokeUserSessionsHandler,
+    SuspendUserHandler, UnsuspendUserHandler,
 };
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
@@ -194,6 +195,7 @@ pub const VERTEX_AI_LOCATION_ENV: &str = "VERTEX_AI_LOCATION";
 pub const COGNITO_ISSUER_ENV: &str = "AURA_HISTORIA_COGNITO_ISSUER";
 pub const COGNITO_JWKS_URL_ENV: &str = "AURA_HISTORIA_COGNITO_JWKS_URL";
 pub const COGNITO_APP_CLIENT_IDS_ENV: &str = "AURA_HISTORIA_COGNITO_APP_CLIENT_IDS";
+pub const COGNITO_USER_POOL_ID_ENV: &str = "AURA_HISTORIA_COGNITO_USER_POOL_ID";
 pub const STRIPE_API_KEY_ENV: &str = "STRIPE_API_KEY";
 pub const STRIPE_CHECKOUT_SUCCESS_URL_ENV: &str = "STRIPE_CHECKOUT_SUCCESS_URL";
 pub const STRIPE_CHECKOUT_CANCEL_URL_ENV: &str = "STRIPE_CHECKOUT_CANCEL_URL";
@@ -227,6 +229,7 @@ const GOOGLE_CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud
 pub struct ApiConfig {
     bind_addr: SocketAddr,
     cognito_jwt: CognitoJwtConfig,
+    cognito_user_pool_id: String,
     vertex_ai_embedding: VertexAiEmbeddingConfig,
     stripe_billing: StripeBillingConfig,
     billing_prices: BillingPriceIds,
@@ -263,6 +266,7 @@ impl ApiConfig {
         if app_client_ids.is_empty() {
             return Err(ApiConfigError::EmptyCognitoAppClientIds);
         }
+        let cognito_user_pool_id = required_config(&mut get, COGNITO_USER_POOL_ID_ENV)?;
         let vertex_ai_embedding = VertexAiEmbeddingConfig::new(
             get(VERTEX_AI_PROJECT_ID_ENV)
                 .unwrap_or_else(|| DEFAULT_VERTEX_AI_PROJECT_ID.to_owned()),
@@ -293,6 +297,7 @@ impl ApiConfig {
         Ok(Self {
             bind_addr,
             cognito_jwt: CognitoJwtConfig::new(issuer, jwks_url, app_client_ids),
+            cognito_user_pool_id,
             vertex_ai_embedding,
             stripe_billing,
             billing_prices,
@@ -306,6 +311,10 @@ impl ApiConfig {
 
     pub fn cognito_jwt(&self) -> &CognitoJwtConfig {
         &self.cognito_jwt
+    }
+
+    pub fn cognito_user_pool_id(&self) -> &str {
+        &self.cognito_user_pool_id
     }
 
     pub fn vertex_ai_embedding(&self) -> &VertexAiEmbeddingConfig {
@@ -543,6 +552,10 @@ pub fn app(state: AppState) -> Router {
                         .delete(users::unsuspend_user::unsuspend_user),
                 )
                 .route(
+                    "/api/v1/admin/users/{user_id}/sessions/revoke",
+                    post(users::revoke_user_sessions::revoke_user_sessions),
+                )
+                .route(
                     "/api/v1/admin/users/{user_id}/access-tokens",
                     get(users::access_tokens::list_admin_access_tokens)
                         .delete(users::access_tokens::delete_admin_access_tokens),
@@ -629,7 +642,10 @@ struct RuntimeReadiness {
     opensearch: OpenSearch,
 }
 
-#[async_trait::async_trait]
+use async_trait::async_trait;
+use aws_config::BehaviorVersion;
+
+#[async_trait]
 impl ReadinessCheck for RuntimeReadiness {
     async fn check(&self) -> Result<(), ()> {
         self.postgres.acquire().await.map_err(|_| ())?;
@@ -644,6 +660,11 @@ pub async fn app_state_from_env() -> Result<AppState, ApiStateError> {
 }
 
 async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateError> {
+    let cognito_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+    let cognito_session_revoker = CognitoUserSessionRevoker::new(
+        aws_sdk_cognitoidentityprovider::Client::new(&cognito_config),
+        config.cognito_user_pool_id(),
+    );
     let pool = postgres_pool_from_env().await?;
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let get_product_listing_history = GetProductListingHistoryHandler::new(
@@ -1047,6 +1068,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             unit_of_work.clone(),
             SqlxUserRepositoryFactory::new(),
             SqlxUserAdminReaderFactory::new(),
+        )),
+        revoke_user_sessions: Arc::new(RevokeUserSessionsHandler::new(
+            unit_of_work.clone(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
+            cognito_session_revoker,
         )),
         create_access_token: Arc::new(CreateAccessTokenHandler::new(
             unit_of_work.clone(),

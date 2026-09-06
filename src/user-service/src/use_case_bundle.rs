@@ -3,8 +3,9 @@ use crate::use_cases::{
     ChangeUserRoleUseCase, ChangeUserTierUseCase, CheckUserAdminUseCase, CreateAccessTokenUseCase,
     CreateUserUseCase, DeleteAccessTokenUseCase, DeleteAccessTokensUseCase, DeleteUserUseCase,
     FindUserByStripeCustomerIdUseCase, GetAccessTokenUseCase, GetOwnUserUseCase,
-    ListAccessTokensUseCase, SearchUsersUseCase, SetUserStripeCustomerIdUseCase,
-    SuspendUserUseCase, UpdateAccessTokenUseCase, UpdateUserProfileUseCase,
+    ListAccessTokensUseCase, RevokeUserSessionsUseCase, SearchUsersUseCase,
+    SetUserStripeCustomerIdUseCase, SuspendUserUseCase, UpdateAccessTokenUseCase,
+    UpdateUserProfileUseCase,
 };
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ pub struct UserUseCases {
     pub change_role: Arc<dyn ChangeUserRoleUseCase>,
     pub change_tier: Arc<dyn ChangeUserTierUseCase>,
     pub suspend: Arc<dyn SuspendUserUseCase>,
+    pub revoke_sessions: Arc<dyn RevokeUserSessionsUseCase>,
     pub set_stripe_customer_id: Arc<dyn SetUserStripeCustomerIdUseCase>,
     pub get_own: Arc<dyn GetOwnUserUseCase>,
     pub admin_get: Arc<dyn AdminGetUserUseCase>,
@@ -37,6 +39,7 @@ pub struct UserUseCasesInput {
     pub change_role: Arc<dyn ChangeUserRoleUseCase>,
     pub change_tier: Arc<dyn ChangeUserTierUseCase>,
     pub suspend: Arc<dyn SuspendUserUseCase>,
+    pub revoke_sessions: Arc<dyn RevokeUserSessionsUseCase>,
     pub set_stripe_customer_id: Arc<dyn SetUserStripeCustomerIdUseCase>,
     pub get_own: Arc<dyn GetOwnUserUseCase>,
     pub admin_get: Arc<dyn AdminGetUserUseCase>,
@@ -62,6 +65,7 @@ impl UserUseCases {
             change_role: input.change_role,
             change_tier: input.change_tier,
             suspend: input.suspend,
+            revoke_sessions: input.revoke_sessions,
             set_stripe_customer_id: input.set_stripe_customer_id,
             get_own: input.get_own,
             admin_get: input.admin_get,

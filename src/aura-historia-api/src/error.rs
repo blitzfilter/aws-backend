@@ -66,6 +66,7 @@ use user_service::use_cases::commands::create_access_token::CreateAccessTokenErr
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenError;
 use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensError;
 use user_service::use_cases::commands::delete_user::DeleteUserError;
+use user_service::use_cases::commands::revoke_user_sessions::RevokeUserSessionsError;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenError;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileError;
 use user_service::use_cases::commands::upsert_newsletter_subscription::UpsertNewsletterSubscriptionError;
@@ -1670,6 +1671,35 @@ impl From<SuspendUserError> for ApiError {
             SuspendUserError::InvalidPersistedState { .. } | SuspendUserError::Internal { .. } => {
                 ApiError::internal_server_error(USER_INTERNAL_ERROR)
                     .with_detail("User suspension failed internally.")
+            }
+        }
+    }
+}
+
+impl From<RevokeUserSessionsError> for ApiError {
+    fn from(error: RevokeUserSessionsError) -> Self {
+        match error {
+            RevokeUserSessionsError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            RevokeUserSessionsError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            RevokeUserSessionsError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            RevokeUserSessionsError::TemporarilyUnavailable { .. }
+            | RevokeUserSessionsError::BeginTransactionFailed
+            | RevokeUserSessionsError::CommitTransactionFailed => {
+                ApiError::service_unavailable(USER_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("User sessions could not be revoked right now.")
+            }
+            RevokeUserSessionsError::InvalidPersistedState { .. }
+            | RevokeUserSessionsError::Internal { .. } => {
+                ApiError::internal_server_error(USER_INTERNAL_ERROR)
+                    .with_detail("User session revocation failed internally.")
             }
         }
     }

@@ -133,7 +133,7 @@ use search_filter_service::use_cases::{
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use test_api::{get_opensearch_client, get_postgres_client};
 use time::OffsetDateTime;
 use url::Url;
@@ -144,7 +144,7 @@ use user_core::access_token::{
 use user_core::tier::UserTier;
 use user_service::ports::{
     AccessTokenRepository, AccessTokenRepositoryFactory, NewsletterSubscriptionWriteError,
-    NewsletterSubscriptionWriter,
+    NewsletterSubscriptionWriter, UserSessionRevocationError, UserSessionRevoker,
 };
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
@@ -153,6 +153,7 @@ use user_service::use_cases::commands::create_access_token::CreateAccessTokenHan
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenHandler;
 use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensHandler;
 use user_service::use_cases::commands::delete_user::DeleteUserHandler;
+use user_service::use_cases::commands::revoke_user_sessions::RevokeUserSessionsHandler;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenHandler;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileHandler;
 use user_service::use_cases::commands::upsert_newsletter_subscription::UpsertNewsletterSubscriptionHandler;
@@ -254,6 +255,40 @@ impl NewsletterSubscriptionWriter for SuccessfulNewsletterWriter {
         &self,
         _subscription: &user_core::newsletter_subscription::NewsletterSubscription,
     ) -> Result<(), NewsletterSubscriptionWriteError> {
+        Ok(())
+    }
+}
+
+static SESSION_REVOCATION_FAILURES: OnceLock<Mutex<HashSet<UserId>>> = OnceLock::new();
+
+pub fn fail_session_revocation_for(user_id: UserId) {
+    let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
+    match failures.lock() {
+        Ok(mut failures) => {
+            failures.insert(user_id);
+        }
+        Err(poisoned) => {
+            poisoned.into_inner().insert(user_id);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SuccessfulUserSessionRevoker;
+
+#[async_trait::async_trait]
+impl UserSessionRevoker for SuccessfulUserSessionRevoker {
+    async fn revoke_sessions(&self, user_id: UserId) -> Result<(), UserSessionRevocationError> {
+        let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
+        let should_fail = match failures.lock() {
+            Ok(mut failures) => failures.remove(&user_id),
+            Err(poisoned) => poisoned.into_inner().remove(&user_id),
+        };
+        if should_fail {
+            return Err(UserSessionRevocationError::TemporarilyUnavailable {
+                source: application::error::box_error(std::io::Error::other("Cognito unavailable")),
+            });
+        }
         Ok(())
     }
 }
@@ -1176,6 +1211,12 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             unit_of_work.clone(),
             user_postgres::SqlxUserRepositoryFactory::new(),
             user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(RevokeUserSessionsHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+            user_postgres::SqlxUserAccountReaderFactory::new(),
+            SuccessfulUserSessionRevoker,
         )),
         Arc::new(CreateAccessTokenHandler::new(
             unit_of_work.clone(),

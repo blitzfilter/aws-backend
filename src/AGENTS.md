@@ -155,5 +155,6 @@
 
 - `src/user-core/AGENTS.md` — canonical User domain crate.
 - `src/user-service/AGENTS.md` — canonical User service crate.
-- `src/user-postgres/AGENTS.md` — canonical User Postgres adapter crate.
+- `src/user-cognito/AGENTS.md` — Cognito User session-revocation adapter crate.
+- `src/user-postgres/AGENTS.md — canonical User Postgres adapter crate.
 - `src/user-zoho/AGENTS.md` — canonical User Zoho newsletter adapter crate.

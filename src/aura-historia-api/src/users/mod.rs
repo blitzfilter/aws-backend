@@ -1,6 +1,7 @@
 pub mod access_tokens;
 pub mod account;
 pub mod admin_users;
+pub mod revoke_user_sessions;
 pub mod suspend_user;
 pub(crate) mod types;
 pub mod unsuspend_user;
@@ -12,5 +13,6 @@ pub use access_tokens::{
 };
 pub use account::{delete_me, get_me, patch_me};
 pub use admin_users::{delete_admin_user, get_user, patch_admin_user, search_users};
+pub use revoke_user_sessions::revoke_user_sessions;
 pub use suspend_user::suspend_user;
 pub use unsuspend_user::unsuspend_user;
