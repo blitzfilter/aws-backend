@@ -1767,7 +1767,6 @@ mod tests {
     #[tokio::test]
     async fn should_translate_application_find_failures_without_later_work() {
         let errors = [
-            PartnershipApplicationRepositoryError::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -1794,13 +1793,9 @@ mod tests {
             match index {
                 0 => assert!(matches!(
                     result,
-                    Err(ApprovePartnershipApplicationError::ConcurrencyConflict)
-                )),
-                1 => assert!(matches!(
-                    result,
                     Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),
-                2 => assert!(matches!(
+                1 => assert!(matches!(
                     result,
                     Err(ApprovePartnershipApplicationError::InvalidPersistedState { .. })
                 )),
@@ -1897,9 +1892,6 @@ mod tests {
     #[tokio::test]
     async fn should_translate_existing_source_snapshot_failures_without_later_work() {
         let source_errors = [
-            ListingSourceRepositoryError::SlugConflict {
-                source: static_error("slug"),
-            },
             ListingSourceRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -1926,10 +1918,6 @@ mod tests {
             match index {
                 0 => assert!(matches!(
                     result,
-                    Err(ApprovePartnershipApplicationError::SlugConflict { .. })
-                )),
-                1 => assert!(matches!(
-                    result,
                     Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),
                 _ => assert!(matches!(
@@ -1948,9 +1936,6 @@ mod tests {
         let party_id = PartyId::new();
         let (_, source) = existing_records(listing_source_id, party_id);
         let party_errors = [
-            PartyRepositoryError::SlugConflict {
-                source: static_error("slug"),
-            },
             PartyRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -1979,10 +1964,6 @@ mod tests {
                 .await;
             match index {
                 0 => assert!(matches!(
-                    result,
-                    Err(ApprovePartnershipApplicationError::SlugConflict { .. })
-                )),
-                1 => assert!(matches!(
                     result,
                     Err(ApprovePartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),

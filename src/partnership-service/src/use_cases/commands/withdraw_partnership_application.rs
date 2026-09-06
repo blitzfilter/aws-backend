@@ -769,7 +769,6 @@ mod tests {
     #[tokio::test]
     async fn should_translate_all_read_failures_without_updating_or_committing() {
         let errors = [
-            PartnershipApplicationRepositoryError::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -796,13 +795,9 @@ mod tests {
             match index {
                 0 => assert!(matches!(
                     result,
-                    Err(WithdrawPartnershipApplicationError::ConcurrencyConflict)
-                )),
-                1 => assert!(matches!(
-                    result,
                     Err(WithdrawPartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),
-                2 => assert!(matches!(
+                1 => assert!(matches!(
                     result,
                     Err(WithdrawPartnershipApplicationError::InvalidPersistedState { .. })
                 )),

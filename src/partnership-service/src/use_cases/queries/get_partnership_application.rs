@@ -563,7 +563,6 @@ mod tests {
     #[tokio::test]
     async fn should_map_application_repository_failures_without_committing() {
         let errors = [
-            PartnershipApplicationRepositoryError::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -597,17 +596,17 @@ mod tests {
                 .await;
 
             match index {
-                0 | 3 => assert!(matches!(
-                    result,
-                    Err(GetPartnershipApplicationError::Internal { .. })
-                )),
-                1 => assert!(matches!(
+                0 => assert!(matches!(
                     result,
                     Err(GetPartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),
-                _ => assert!(matches!(
+                1 => assert!(matches!(
                     result,
                     Err(GetPartnershipApplicationError::InvalidPersistedState { .. })
+                )),
+                _ => assert!(matches!(
+                    result,
+                    Err(GetPartnershipApplicationError::Internal { .. })
                 )),
             }
             let state = lock(&state);

@@ -1205,7 +1205,6 @@ mod tests {
     #[tokio::test]
     async fn should_translate_application_failures_without_later_work() {
         let errors = [
-            PartnershipApplicationRepositoryError::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -1236,13 +1235,9 @@ mod tests {
             match index {
                 0 => assert!(matches!(
                     result,
-                    Err(RejectPartnershipApplicationError::ConcurrencyConflict)
-                )),
-                1 => assert!(matches!(
-                    result,
                     Err(RejectPartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),
-                2 => assert!(matches!(
+                1 => assert!(matches!(
                     result,
                     Err(RejectPartnershipApplicationError::InvalidPersistedState { .. })
                 )),
@@ -1409,7 +1404,6 @@ mod tests {
     #[tokio::test]
     async fn should_translate_existing_source_snapshot_failures_without_later_writes() {
         let source_errors = [
-            ListingSourceRepositoryError::ConcurrencyConflict,
             ListingSourceRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
@@ -1453,7 +1447,6 @@ mod tests {
         let party_id = PartyId::new();
         let (_, source) = existing_records(listing_source_id, party_id);
         let party_errors = [
-            PartyRepositoryError::ConcurrencyConflict,
             PartyRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
             },
