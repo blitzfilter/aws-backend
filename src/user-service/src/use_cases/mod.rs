@@ -38,6 +38,10 @@ pub use commands::delete_access_tokens::{
 pub use commands::delete_user::{
     DeleteUserCommand, DeleteUserError, DeleteUserHandler, DeleteUserResult, DeleteUserUseCase,
 };
+pub use commands::revoke_user_sessions::{
+    RevokeUserSessionsCommand, RevokeUserSessionsError, RevokeUserSessionsHandler,
+    RevokeUserSessionsResult, RevokeUserSessionsUseCase,
+};
 pub use commands::set_user_stripe_customer_id::{
     SetUserStripeCustomerIdCommand, SetUserStripeCustomerIdError, SetUserStripeCustomerIdHandler,
     SetUserStripeCustomerIdResult, SetUserStripeCustomerIdUseCase,

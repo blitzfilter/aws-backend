@@ -7,6 +7,7 @@ pub mod create_user;
 pub mod delete_access_token;
 pub mod delete_access_tokens;
 pub mod delete_user;
+pub mod revoke_user_sessions;
 pub mod set_user_stripe_customer_id;
 pub mod suspend_user;
 pub mod unsuspend_user;

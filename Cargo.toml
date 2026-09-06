@@ -60,6 +60,7 @@ members = [
     "src/stripe-lambda",
     "src/user-core",
     "src/user-service",
+    "src/user-cognito",
     "src/user-postgres",
     "src/user-zoho",
     "src/notification-core",
@@ -198,6 +199,7 @@ futures-util = "0.3.32"
 proc-macro2 = "1.0.106"
 user-core = { path = "src/user-core" }
 user-service = { path = "src/user-service" }
+user-cognito = { path = "src/user-cognito" }
 user-postgres = { path = "src/user-postgres" }
 user-zoho = { path = "src/user-zoho" }
 serde-email = "4.0.0"

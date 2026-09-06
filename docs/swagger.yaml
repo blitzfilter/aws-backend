@@ -5346,6 +5346,139 @@ paths:
                 title: Internal Server Error
                 error: USER_INTERNAL_ERROR
 
+  /api/v1/admin/users/{userId}/sessions/revoke:
+    post:
+      summary: Revoke a user's Cognito sessions as admin
+      description: |
+        Invalidates the explicit target user's Cognito sessions with Cognito global sign-out. No request body is accepted.
+
+        Cognito JWTs and Aura Historia access tokens are accepted. The caller's persisted user role
+        must be `ADMIN`; delegated Aura Historia access tokens must also have `users:write`.
+        Authorization and the target-user check are enforced in the User service, not only at the
+        HTTP route. The PostgreSQL authorization check completes before the external Cognito call.
+
+        `userId` must be a UUID and the target user must exist. Cognito global sign-out is safe to
+        retry: it succeeds when there are no active sessions. The operation does not change the
+        Aura user's profile, tier, role, suspension state, Aura access tokens, or partnerships.
+        Every response sends `Cache-Control: no-store`.
+      operationId: adminRevokeUserSessions
+      tags:
+        - User Account
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Unique identifier (UUID) of the user whose Cognito sessions are revoked.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      responses:
+        "204":
+          description: Cognito sessions were invalidated, including after a retry with no active sessions.
+          headers:
+            Cache-Control:
+              description: Responses are never stored because this is an administrator-only security operation.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Invalid target UUID.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 400
+                title: Bad Request
+                error: INVALID_UUID
+                source:
+                  field: userId
+                  sourceType: path
+        "401":
+          description: Invalid or missing bearer credentials.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 401
+                title: Unauthorized
+                error: INVALID_CREDENTIALS
+        "403":
+          description: The caller is not an administrator or a delegated credential lacks users:write.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 403
+                title: Forbidden
+                error: FORBIDDEN
+        "404":
+          description: The target user or corresponding Cognito identity was not found.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 404
+                title: Not Found
+                error: USER_NOT_FOUND
+        "503":
+          description: User authorization, persistence, or Cognito is temporarily unavailable.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 503
+                title: Service Unavailable
+                error: USER_TEMPORARILY_UNAVAILABLE
+        "500":
+          description: Internal user-session revocation failure.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                status: 500
+                title: Internal Server Error
+                error: USER_INTERNAL_ERROR
+
   /api/v1/admin/users/{userId}/access-tokens:
     get:
       summary: List a user's Aura Historia access-token metadata as admin
