@@ -48,7 +48,7 @@ async fn should_select_richer_schema_even_when_it_is_later_in_order() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -60,7 +60,7 @@ async fn should_select_richer_schema_even_when_it_is_later_in_order() {
         });
 
     let mut cand_svc = MockScraperCandidateService::new();
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -71,7 +71,10 @@ async fn should_select_richer_schema_even_when_it_is_later_in_order() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some(), "richer later schema should win");
 }
 
@@ -108,7 +111,7 @@ async fn should_pick_earlier_schema_when_it_extracts_more_data() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -120,7 +123,7 @@ async fn should_pick_earlier_schema_when_it_extracts_more_data() {
         });
 
     let mut cand_svc = MockScraperCandidateService::new();
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -131,7 +134,10 @@ async fn should_pick_earlier_schema_when_it_extracts_more_data() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some(), "earlier richer schema should still win");
 }
 
@@ -190,7 +196,7 @@ async fn should_generate_fresh_schema_when_no_cached_schema_applies() {
             })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -202,7 +208,7 @@ async fn should_generate_fresh_schema_when_no_cached_schema_applies() {
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -213,7 +219,10 @@ async fn should_generate_fresh_schema_when_no_cached_schema_applies() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(
         result.is_some(),
         "fresh schema should rescue when none applies"
@@ -275,7 +284,7 @@ async fn should_generate_fresh_schema_when_richer_candidate_normalization_fails_
             })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let normalize_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
@@ -296,7 +305,7 @@ async fn should_generate_fresh_schema_when_richer_candidate_normalization_fails_
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -307,7 +316,10 @@ async fn should_generate_fresh_schema_when_richer_candidate_normalization_fails_
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some());
 }
 
@@ -370,7 +382,10 @@ async fn should_not_persist_generated_schema_when_normalization_keeps_failing_fi
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(
         matches!(
             err,

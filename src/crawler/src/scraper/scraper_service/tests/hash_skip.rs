@@ -1,5 +1,7 @@
 use super::*;
-use crate::scraper::scraper_service::util::hash::{hash_html, hash_main_fragment};
+use crate::scraper::scraper_service::util::hash::{
+    fingerprint_schema_set, hash_html, hash_main_fragment,
+};
 use sha2::{Digest, Sha256};
 
 #[tokio::test]
@@ -15,13 +17,29 @@ async fn should_skip_fetching_and_return_none_when_hashes_match() {
         Box::pin(async move { Ok(fetch_result(html)) })
     });
 
-    let schema_svc = MockProductListingSchemaService::new();
+    let schema = listing_source_product_schemas(id);
+    let schema_fingerprint = fingerprint_schema_set(&schema.product_schemas)
+        .unwrap_or_else(|error| panic!("test schema must serialize: {error}"));
+    let mut schema_svc = MockProductListingSchemaService::new();
+    schema_svc
+        .expect_find_product_schema()
+        .once()
+        .returning(move |_| {
+            let schema = schema.clone();
+            Box::pin(async move { Ok(Some(schema)) })
+        });
     let norm_svc = MockProductListingNormalizationService::new();
+    let expected_raw_input_sha256 = vec![5; 32];
+    let expected_raw_input_sha256_for_mock = expected_raw_input_sha256.clone();
     let mut cand_svc = MockScraperCandidateService::new();
     cand_svc
         .expect_touch_scraped()
         .once()
-        .returning(|_, _, _| Box::pin(async { Ok(()) }));
+        .withf(move |_, _, _, _, actual_raw_input_sha256| {
+            actual_raw_input_sha256.as_deref()
+                == Some(expected_raw_input_sha256_for_mock.as_slice())
+        })
+        .returning(|_, _, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -33,7 +51,14 @@ async fn should_skip_fetching_and_return_none_when_hashes_match() {
     );
 
     let result = service
-        .scrape(&id, &url, None, Some(&matching_hash))
+        .scrape(
+            &id,
+            &url,
+            None,
+            Some(&matching_hash),
+            Some(&schema_fingerprint),
+            Some(expected_raw_input_sha256.as_slice()),
+        )
         .await
         .unwrap();
 

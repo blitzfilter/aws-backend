@@ -5,6 +5,7 @@ mod cached_schema_selection;
 mod fresh_schema_generation;
 mod happy_path;
 mod hash_skip;
+mod image_evidence;
 mod redirect_guard;
 mod removed_page;
 mod richest_schema_selection;
@@ -27,21 +28,21 @@ use crate::scraper::css_selector::rule::{
     CssSelector, ExtractionCardinality, ExtractionKind, ExtractionRule,
 };
 use crate::scraper::normalization::error::NormalizationError;
-use crate::scraper::normalization::listing_availability_mapping::ListingAvailabilityMapping;
-use crate::scraper::normalization::product::NormalizedProduct;
 use crate::scraper::normalization::product_normalization_service::{
     MockProductListingNormalizationService, NormalizationFailure, NormalizationSuccess,
+    PreparedProduct,
 };
 use crate::scraper::scraper_service::ScraperService;
 use crate::scraper::scraper_service::service::{
     DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE, FetchedHtml, MockHtmlFetcher, ScraperServiceImpl,
 };
-use crate::spider::classification::url_metadata::UrlPresence;
+use crate::spider::classification::url_metadata::{CrawlerDisposition, CrawlerUrlWriteOutcome};
 use localization::Language;
 use localization::Localized;
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_core::title::Title;
+use product_listing_normalization::ListingAvailabilityQuickCheck;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use url::Url;
@@ -163,9 +164,11 @@ pub(super) fn generated_single_product(
     }
 }
 
-pub(super) fn normalized_product(url: Url) -> NormalizedProduct {
+pub(super) fn prepared_product(url: Url) -> PreparedProduct {
     let title: Title = "Biedermeier Chair".into();
-    NormalizedProduct {
+    PreparedProduct {
+        availability: ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available),
+        raw_state: "In Stock".to_string(),
         source_listing_id: SourceListingId::try_from("SKU-42")
             .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
         title: Localized::new(Language::De, title),
@@ -173,7 +176,6 @@ pub(super) fn normalized_product(url: Url) -> NormalizedProduct {
         price: None,
         price_estimate_min: None,
         price_estimate_max: None,
-        availability: ListingAvailabilityMapping::Availability(ListingAvailability::Available),
         url,
         images: vec![],
         auction_start: None,
@@ -183,11 +185,11 @@ pub(super) fn normalized_product(url: Url) -> NormalizedProduct {
 }
 
 pub(super) fn normalization_success(
-    product: NormalizedProduct,
+    prepared: PreparedProduct,
     llm_calls_used: u32,
 ) -> NormalizationSuccess {
     NormalizationSuccess {
-        product,
+        prepared,
         llm_calls_used,
     }
 }
@@ -202,24 +204,13 @@ pub(super) fn normalization_failure(
     }
 }
 
+/// Crawler disposition changes only after the cron-owned canonical handoff, not inside scraping.
 pub(super) fn expect_successful_bookkeeping(
-    cand_svc: &mut MockScraperCandidateService,
-    listing_source_id: ListingSourceId,
-    url: Url,
-    state: UrlPresence,
+    _: &mut MockScraperCandidateService,
+    _: ListingSourceId,
+    _: Url,
+    _: CrawlerDisposition,
 ) {
-    let url_for_set_presence = url.clone();
-    cand_svc
-        .expect_set_presence()
-        .once()
-        .withf(
-            move |received_listing_source_id, received_url, received_state| {
-                *received_listing_source_id == listing_source_id
-                    && received_url == &url_for_set_presence
-                    && *received_state == state
-            },
-        )
-        .returning(|_, _, _| Box::pin(async { Ok(()) }));
 }
 
 pub(super) fn expect_budget_increment(cand_svc: &mut MockScraperCandidateService, times: usize) {

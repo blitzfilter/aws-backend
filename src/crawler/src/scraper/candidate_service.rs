@@ -1,10 +1,8 @@
 //! Service for fetching scraper candidates — product URLs that are due for re-scraping.
 //!
-//! A scraper candidate is a URL stored in `listing_source_urls` that is due for scraping by recency and
-//! retry, presence, and availability rules. Hash comparison is performed in-memory by the scraper after fetching HTML.
-//! Each candidate carries the ListingSource identity needed to build
-//! an [`UpsertProductListingCommand`] without an additional lookup, as well as snapshots of the last
-//! successfully scraped field values used for change detection.
+//! A scraper candidate is a URL stored in `listing_source_urls` that is due for scraping by recency,
+//! retry, and crawler disposition. Page and schema hashes avoid needless extraction; the shared raw
+//! normalization-input hash avoids needless operational raw captures.
 
 use async_trait::async_trait;
 use listing_source_core::ListingSourceId;
@@ -12,43 +10,24 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use url::Url;
 
-use crate::scraper::normalization::product::NormalizedProduct;
 use crate::scraper::scraper_service::DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE;
-
-use crate::spider::classification::url_metadata::{UrlClass, UrlPresence};
+use crate::spider::classification::url_metadata::{
+    CrawlerDisposition, CrawlerUrlWriteOutcome, UrlClass,
+};
 
 // ---------------------------------------------------------------------------
 // ScraperCandidate
 // ---------------------------------------------------------------------------
 
-/// A product URL that is eligible for scraping, together with the ListingSource context and the
-/// last-scraped field snapshots used to detect whether the product has actually changed.
+/// A product URL eligible for scraping with only crawler-operational state.
 pub struct ScraperCandidate {
     pub listing_source_id: ListingSourceId,
     pub listing_source_name: String,
     pub url_pattern: Option<String>,
     pub url: Url,
-    /// SHA-256 hash of the HTML `<main>` fragment (or full HTML) from the last successful scrape.
-    /// Used for quick whole-page change detection before field-level comparison.
     pub last_scraped_hash: Option<String>,
-
-    // --- field-level snapshots -----------------------------------------------
-    /// Serialized last known price (e.g. `"EUR 1200.00"`).
-    pub last_scraped_price: Option<String>,
-    pub last_scraped_price_estimate_min: Option<String>,
-    pub last_scraped_price_estimate_max: Option<String>,
-    /// Canonical product URL as persisted from the last scrape.
-    pub last_scraped_url: Option<String>,
-    /// SHA-256 of the sorted image URL list from the last scrape.
-    pub last_scraped_images_hash: Option<String>,
-    /// ISO 8601 auction start timestamp.
-    pub last_scraped_auction_start: Option<String>,
-    /// ISO 8601 auction end timestamp.
-    pub last_scraped_auction_end: Option<String>,
-    /// Verified presence from the last scrape (`PRESENT` or `REMOVED`).
-    pub last_scraped_presence: String,
-    /// Nullable availability assertion from the last scrape.
-    pub last_scraped_availability: Option<String>,
+    pub last_scraped_schema_fingerprint: Option<String>,
+    pub last_captured_raw_input_sha256: Option<Vec<u8>>,
 }
 
 /// Per-ListingSource LLM usage snapshot for operational logging.
@@ -56,117 +35,6 @@ pub struct ListingSourceLlmUsage {
     pub listing_source_id: ListingSourceId,
     pub listing_source_name: String,
     pub llm_calls_count: i64,
-}
-
-// ---------------------------------------------------------------------------
-// Change detection
-// ---------------------------------------------------------------------------
-
-/// Snapshot of a [`NormalizedProduct`] serialized to the same TEXT representation used in the
-/// database so it can be compared directly with `last_scraped_*` columns.
-#[derive(Debug)]
-pub struct ProductListingSnapshot {
-    pub price: Option<String>,
-    pub price_estimate_min: Option<String>,
-    pub price_estimate_max: Option<String>,
-    pub url: String,
-    pub images_hash: String,
-    pub auction_start: Option<String>,
-    pub auction_end: Option<String>,
-    pub availability: Option<String>,
-}
-
-impl ProductListingSnapshot {
-    /// Build a snapshot from a normalized product. The representations produced here must match
-    /// exactly what [`ScraperCandidateServiceImpl::mark_as_scraped`] persists.
-    pub fn from_normalized(product: &NormalizedProduct) -> Self {
-        use sha2::{Digest, Sha256};
-
-        fn serialize_price(p: &money::Price) -> String {
-            format!("{:?} {:?}", p.currency, p.monetary_amount)
-        }
-
-        let mut sorted_images: Vec<String> =
-            product.images.iter().map(|i| i.url().to_string()).collect();
-        sorted_images.sort();
-        let images_hash = {
-            let mut h = Sha256::new();
-            for img in &sorted_images {
-                h.update(img.as_bytes());
-                h.update(b"\n");
-            }
-            let digest = h.finalize();
-            digest
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-        };
-
-        Self {
-            price: product.price.as_ref().map(serialize_price),
-            price_estimate_min: product.price_estimate_min.as_ref().map(serialize_price),
-            price_estimate_max: product.price_estimate_max.as_ref().map(serialize_price),
-            url: product.url.to_string(),
-            images_hash,
-            auction_start: product.auction_start.map(|dt| {
-                dt.format(&time::format_description::well_known::Rfc3339)
-                    .unwrap()
-            }),
-            auction_end: product.auction_end.map(|dt| {
-                dt.format(&time::format_description::well_known::Rfc3339)
-                    .unwrap()
-            }),
-            availability: product
-                .availability
-                .availability()
-                .map(|availability| availability.as_str().to_owned()),
-        }
-    }
-}
-
-impl ProductListingSnapshot {
-    /// Reconstruct a snapshot from the persisted `last_scraped_*` columns in a
-    /// [`ScraperCandidate`].  Used when the HTML hash matches and the field
-    /// snapshot must be re-persisted unchanged (so that `last_scraped` is
-    /// refreshed without touching the snapshot columns).
-    pub fn from_candidate(candidate: &ScraperCandidate) -> Self {
-        Self {
-            price: candidate.last_scraped_price.clone(),
-            price_estimate_min: candidate.last_scraped_price_estimate_min.clone(),
-            price_estimate_max: candidate.last_scraped_price_estimate_max.clone(),
-            url: candidate
-                .last_scraped_url
-                .clone()
-                .unwrap_or_else(|| candidate.url.to_string()),
-            images_hash: candidate
-                .last_scraped_images_hash
-                .clone()
-                .unwrap_or_default(),
-            auction_start: candidate.last_scraped_auction_start.clone(),
-            auction_end: candidate.last_scraped_auction_end.clone(),
-            availability: candidate.last_scraped_availability.clone(),
-        }
-    }
-}
-
-/// Returns `true` if any tracked field in `product` differs from the persisted snapshot in
-/// `candidate`.  Returns `true` (i.e. "changed") when no previous snapshot exists at all.
-pub fn has_product_changed(candidate: &ScraperCandidate, product: &NormalizedProduct) -> bool {
-    // If we have never successfully scraped this URL before, treat it as changed.
-    if candidate.last_scraped_hash.is_none() {
-        return true;
-    }
-
-    let snap = ProductListingSnapshot::from_normalized(product);
-
-    snap.price != candidate.last_scraped_price
-        || snap.price_estimate_min != candidate.last_scraped_price_estimate_min
-        || snap.price_estimate_max != candidate.last_scraped_price_estimate_max
-        || Some(snap.url.as_str()) != candidate.last_scraped_url.as_deref()
-        || Some(snap.images_hash.as_str()) != candidate.last_scraped_images_hash.as_deref()
-        || snap.auction_start != candidate.last_scraped_auction_start
-        || snap.auction_end != candidate.last_scraped_auction_end
-        || snap.availability != candidate.last_scraped_availability
 }
 
 // ---------------------------------------------------------------------------
@@ -194,34 +62,41 @@ pub trait ScraperCandidateService: Send + Sync {
         exclude_url: &Url,
         limit: i64,
     ) -> Result<Vec<Url>, sqlx::Error>;
+    #[allow(clippy::too_many_arguments)]
     async fn mark_as_scraped(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
         hash: &str,
-        snapshot: &ProductListingSnapshot,
-    ) -> Result<(), sqlx::Error>;
-    /// Touch `last_scraped` and reset failure counters without updating snapshot
-    /// fields.  Called when the HTML hash matches the previous scrape — the
-    /// product has not changed so only the timestamp needs refreshing.
+        schema_fingerprint: &str,
+        raw_input_sha256: &[u8],
+        disposition: CrawlerDisposition,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
+    /// Touch a page/schema fast-path scrape without changing the raw input or disposition.
     async fn touch_scraped(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
         hash: &str,
-    ) -> Result<(), sqlx::Error>;
-    async fn set_presence(
+        schema_fingerprint: &str,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
+    async fn set_disposition(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
-        state: UrlPresence,
-    ) -> Result<(), sqlx::Error>;
+        disposition: CrawlerDisposition,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
     async fn set_class(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
         url_class: UrlClass,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
+    #[allow(clippy::too_many_arguments)]
     async fn mark_fetch_failure(
         &self,
         listing_source_id: &ListingSourceId,
@@ -230,7 +105,8 @@ pub trait ScraperCandidateService: Send + Sync {
         error_message: &str,
         status_code: Option<i32>,
         next_retry_at: OffsetDateTime,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
 
     /// Record a non-HTTP scraper failure (schema error, normalization error, etc.).
     ///
@@ -243,7 +119,8 @@ pub trait ScraperCandidateService: Send + Sync {
         url: &Url,
         error_kind: &str,
         error_message: &str,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
 
     /// Increment per-ListingSource LLM call counter used by schema generation flows.
     async fn increment_listing_source_llm_calls(
@@ -312,15 +189,8 @@ struct ScraperCandidateRow {
     url_pattern: Option<String>,
     url: String,
     last_scraped_hash: Option<String>,
-    last_scraped_price: Option<String>,
-    last_scraped_price_estimate_min: Option<String>,
-    last_scraped_price_estimate_max: Option<String>,
-    last_scraped_url: Option<String>,
-    last_scraped_images_hash: Option<String>,
-    last_scraped_auction_start: Option<String>,
-    last_scraped_auction_end: Option<String>,
-    last_scraped_presence: String,
-    last_scraped_availability: Option<String>,
+    last_scraped_schema_fingerprint: Option<String>,
+    last_captured_raw_input_sha256: Option<Vec<u8>>,
 }
 
 const SCRAPER_CANDIDATE_QUERY: &str = r#"
@@ -330,15 +200,8 @@ const SCRAPER_CANDIDATE_QUERY: &str = r#"
             lower(substring(su.url from '^[a-z][a-z0-9+.-]*://([^/:?#]+)')) AS normalized_host,
             su.last_scraped,
             su.last_scraped_hash,
-            su.last_scraped_price,
-            su.last_scraped_price_estimate_min,
-            su.last_scraped_price_estimate_max,
-            su.last_scraped_url,
-            su.last_scraped_images_hash,
-            su.last_scraped_auction_start,
-            su.last_scraped_auction_end,
-            su.last_scraped_presence,
-            su.last_scraped_availability
+            su.last_scraped_schema_fingerprint,
+            su.last_captured_raw_input_sha256
         FROM listing_source_urls su
         JOIN listing_sources s ON s.listing_source_id = su.listing_source_id
         JOIN listing_source_domains sd
@@ -346,7 +209,7 @@ const SCRAPER_CANDIDATE_QUERY: &str = r#"
         WHERE s.crawl_enabled = TRUE
           AND s.llm_calls_count < $3
           AND su.url_class = 'product'
-          AND su.last_scraped_presence = 'PRESENT'
+          AND su.crawler_disposition = 'ACTIVE'
           AND (su.next_retry_at IS NULL OR su.next_retry_at <= NOW())
           AND (su.last_scraped IS NULL OR su.last_scraped < NOW() - INTERVAL '1 day')
           AND NOT EXISTS (
@@ -381,15 +244,8 @@ const SCRAPER_CANDIDATE_QUERY: &str = r#"
     SELECT
         listing_source_id, listing_source_name, url_pattern, url,
         last_scraped_hash,
-        last_scraped_price,
-        last_scraped_price_estimate_min,
-        last_scraped_price_estimate_max,
-        last_scraped_url,
-        last_scraped_images_hash,
-        last_scraped_auction_start,
-        last_scraped_auction_end,
-        last_scraped_presence,
-        last_scraped_availability
+        last_scraped_schema_fingerprint,
+        last_captured_raw_input_sha256
     FROM ranked_urls
     WHERE domain_url_rank <= $2
     ORDER BY normalized_host, domain_url_rank, url
@@ -422,15 +278,8 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                 url_pattern: row.url_pattern,
                 url,
                 last_scraped_hash: row.last_scraped_hash,
-                last_scraped_price: row.last_scraped_price,
-                last_scraped_price_estimate_min: row.last_scraped_price_estimate_min,
-                last_scraped_price_estimate_max: row.last_scraped_price_estimate_max,
-                last_scraped_url: row.last_scraped_url,
-                last_scraped_images_hash: row.last_scraped_images_hash,
-                last_scraped_auction_start: row.last_scraped_auction_start,
-                last_scraped_auction_end: row.last_scraped_auction_end,
-                last_scraped_presence: row.last_scraped_presence,
-                last_scraped_availability: row.last_scraped_availability,
+                last_scraped_schema_fingerprint: row.last_scraped_schema_fingerprint,
+                last_captured_raw_input_sha256: row.last_captured_raw_input_sha256,
             });
         }
 
@@ -452,7 +301,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
             WHERE s.crawl_enabled = TRUE
               AND su.listing_source_id = $1
               AND su.url_class = 'product'
-              AND su.last_scraped_presence = 'PRESENT'
+              AND su.crawler_disposition = 'ACTIVE'
               AND su.url <> $2
             -- Intentional: schema seeding runs on a rare path (typically once per
             -- ListingSource), so ORDER BY RANDOM() keeps this simple. If rows per ListingSource grow
@@ -478,47 +327,48 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         hash: &str,
-        snapshot: &ProductListingSnapshot,
-    ) -> Result<(), sqlx::Error> {
+        schema_fingerprint: &str,
+        raw_input_sha256: &[u8],
+        disposition: CrawlerDisposition,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET last_scraped = NOW(),
                  last_scraped_hash = $3,
-                 last_scraped_price = $4,
-                 last_scraped_price_estimate_min = $5,
-                 last_scraped_price_estimate_max = $6,
-                 last_scraped_url = $7,
-                 last_scraped_images_hash = $8,
-                  last_scraped_auction_start = $9,
-                  last_scraped_auction_end = $10,
-                  last_scraped_presence = 'PRESENT',
-                  last_scraped_availability = $11,
+                 last_scraped_schema_fingerprint = $4,
+                 last_captured_raw_input_sha256 = $5,
+                 crawler_disposition = $6,
                  failure_count = 0,
                  last_error_kind = NULL,
                  last_error_message = NULL,
                  last_status_code = NULL,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $7::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(hash)
-        .bind(&snapshot.price)
-        .bind(&snapshot.price_estimate_min)
-        .bind(&snapshot.price_estimate_max)
-        .bind(&snapshot.url)
-        .bind(&snapshot.images_hash)
-        .bind(&snapshot.auction_start)
-        .bind(&snapshot.auction_end)
-        .bind(&snapshot.availability)
+        .bind(schema_fingerprint)
+        .bind(raw_input_sha256)
+        .bind(disposition.as_str())
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn touch_scraped(
@@ -526,55 +376,76 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         hash: &str,
-    ) -> Result<(), sqlx::Error> {
+        schema_fingerprint: &str,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET last_scraped = NOW(),
                  last_scraped_hash = $3,
+                 last_scraped_schema_fingerprint = $4,
                  failure_count = 0,
                  last_error_kind = NULL,
                  last_error_message = NULL,
                  last_status_code = NULL,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $5::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(hash)
+        .bind(schema_fingerprint)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
-    async fn set_presence(
+    async fn set_disposition(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
-        presence: UrlPresence,
-    ) -> Result<(), sqlx::Error> {
+        disposition: CrawlerDisposition,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
-        let presence_str = presence.to_string();
-
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
-             SET last_scraped_presence = $3,
+             SET crawler_disposition = $3,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
-        .bind(presence_str)
+        .bind(disposition.as_str())
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn set_class(
@@ -582,25 +453,34 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         url_class: UrlClass,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
         let url_class_str = url_class.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET url_class = $3,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(url_class_str)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn mark_fetch_failure(
@@ -611,11 +491,12 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         error_message: &str,
         status_code: Option<i32>,
         next_retry_at: OffsetDateTime,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET failure_count = failure_count + 1,
                  last_error_kind = $3,
@@ -623,7 +504,11 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                  last_status_code = $5,
                  next_retry_at = $6,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $7::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
@@ -631,10 +516,15 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         .bind(error_message)
         .bind(status_code)
         .bind(next_retry_at)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn mark_scraper_failure(
@@ -643,25 +533,35 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         url: &Url,
         error_kind: &str,
         error_message: &str,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET last_error_kind = $3,
                  last_error_message = $4,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $5::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(error_kind)
         .bind(error_message)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn increment_listing_source_llm_calls(
@@ -757,120 +657,11 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::scraper::normalization::listing_availability_mapping::ListingAvailabilityMapping;
-    use localization::{Language, Localized};
-    use product_listing_core::{
-        listing_availability::ListingAvailability, source_listing_id::SourceListingId, title::Title,
-    };
-
-    fn base_url() -> Url {
-        Url::parse("https://example.com/product/1").unwrap()
-    }
-
-    fn product(availability: ListingAvailabilityMapping) -> NormalizedProduct {
-        NormalizedProduct {
-            source_listing_id: SourceListingId::try_from("SKU-1")
-                .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
-            title: Localized::new(Language::En, Title::from("Test listing")),
-            description: None,
-            price: None,
-            price_estimate_min: None,
-            price_estimate_max: None,
-            availability,
-            url: base_url(),
-            images: vec![],
-            auction_start: None,
-            auction_end: None,
-            raw_attributes: Default::default(),
-        }
-    }
-
-    fn candidate(snapshot: &ProductListingSnapshot) -> ScraperCandidate {
-        ScraperCandidate {
-            listing_source_id: ListingSourceId::new(),
-            listing_source_name: "Test".to_owned(),
-            url_pattern: None,
-            url: base_url(),
-            last_scraped_hash: Some("hash".to_owned()),
-            last_scraped_price: snapshot.price.clone(),
-            last_scraped_price_estimate_min: snapshot.price_estimate_min.clone(),
-            last_scraped_price_estimate_max: snapshot.price_estimate_max.clone(),
-            last_scraped_url: Some(snapshot.url.clone()),
-            last_scraped_images_hash: Some(snapshot.images_hash.clone()),
-            last_scraped_auction_start: snapshot.auction_start.clone(),
-            last_scraped_auction_end: snapshot.auction_end.clone(),
-            last_scraped_presence: "PRESENT".to_owned(),
-            last_scraped_availability: snapshot.availability.clone(),
-        }
-    }
+mod candidate_query_tests {
+    use super::SCRAPER_CANDIDATE_QUERY;
 
     #[test]
-    fn should_treat_first_successful_scrape_as_changed() {
-        let product = product(ListingAvailabilityMapping::NoAssertion);
-        let snapshot = ProductListingSnapshot::from_normalized(&product);
-        let mut candidate = candidate(&snapshot);
-        candidate.last_scraped_hash = None;
-
-        assert!(has_product_changed(&candidate, &product));
-    }
-
-    #[test]
-    fn should_not_report_change_when_persisted_availability_matches() {
-        let product = product(ListingAvailabilityMapping::Availability(
-            ListingAvailability::InStock,
-        ));
-        let snapshot = ProductListingSnapshot::from_normalized(&product);
-
-        assert!(!has_product_changed(&candidate(&snapshot), &product));
-    }
-
-    #[test]
-    fn should_report_change_when_availability_changes() {
-        let product = product(ListingAvailabilityMapping::Availability(
-            ListingAvailability::InStock,
-        ));
-        let snapshot = ProductListingSnapshot::from_normalized(&product);
-        let mut candidate = candidate(&snapshot);
-        candidate.last_scraped_availability = Some(ListingAvailability::OutOfStock.as_str().into());
-
-        assert!(has_product_changed(&candidate, &product));
-    }
-
-    #[test]
-    fn should_preserve_no_assertion_as_null_snapshot_value() {
-        let product = product(ListingAvailabilityMapping::NoAssertion);
-
-        assert_eq!(
-            ProductListingSnapshot::from_normalized(&product).availability,
-            None
-        );
-    }
-
-    #[test]
-    fn should_treat_ignore_as_no_availability_snapshot_value() {
-        let product = product(ListingAvailabilityMapping::Ignore);
-
-        assert_eq!(
-            ProductListingSnapshot::from_normalized(&product).availability,
-            None
-        );
-    }
-
-    #[test]
-    fn should_hash_images_independently_of_their_order() {
-        let first = product(ListingAvailabilityMapping::NoAssertion);
-        let second = product(ListingAvailabilityMapping::NoAssertion);
-
-        assert_eq!(
-            ProductListingSnapshot::from_normalized(&first).images_hash,
-            ProductListingSnapshot::from_normalized(&second).images_hash
-        );
-    }
-
-    #[test]
-    fn should_select_only_present_urls_for_scraping() {
-        assert!(SCRAPER_CANDIDATE_QUERY.contains("last_scraped_presence = 'PRESENT'"));
+    fn should_select_only_active_urls_for_scraping() {
+        assert!(SCRAPER_CANDIDATE_QUERY.contains("crawler_disposition = 'ACTIVE'"));
     }
 }

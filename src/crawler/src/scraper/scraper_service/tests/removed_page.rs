@@ -48,16 +48,16 @@ async fn should_mark_product_removed_when_stored_removed_page_schema_matches() {
     let mut cand_svc = MockScraperCandidateService::new();
     let url_for_state = url.clone();
     cand_svc
-        .expect_set_presence()
-        .once()
+        .expect_set_disposition()
+        .never()
         .withf(
-            move |received_listing_source_id, received_url, received_state| {
+            move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_state
-                    && *received_state == UrlPresence::Withdrawn
+                    && *received_state == CrawlerDisposition::DormantRemoved
             },
         )
-        .returning(|_, _, _| Box::pin(async { Ok(()) }));
+        .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -69,7 +69,10 @@ async fn should_mark_product_removed_when_stored_removed_page_schema_matches() {
     )
     .with_removed_page_schema_repository(Box::new(removed_repo));
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
 
     assert!(matches!(err, ScraperError::ProductListingRemoved { .. }));
 }

@@ -109,17 +109,19 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRepositoryFactory,
-    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRawCaptureWriterFactory,
+    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
+    SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use user_core::stripe_customer_id::StripeCustomerId;
 use user_core::user_id::UserId;
+use woocommerce_service::WoocommerceWebhookIntake;
 
 use product_listing_service::use_cases::{
+    AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
-    GetSimilarProductListingsHandler, IngestWoocommerceProductListingHandler,
-    SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
-    WithdrawProductListingHandler,
+    GetSimilarProductListingsHandler, SearchProductListingsHandler, UpdateProductListingHandler,
+    UpsertProductListingHandler, WithdrawProductListingHandler,
 };
 use search_filter_postgres::{
     SqlxSearchFilterMatchRepositoryFactory, SqlxSearchFilterQuotaReaderFactory,
@@ -1129,13 +1131,18 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
     );
 
     let webhooks_state = WebhooksState::new(
-        Arc::new(IngestWoocommerceProductListingHandler::new(
-            unit_of_work.clone(),
-            SqlxProductListingRepositoryFactory::new(),
-            SqlxProductListingEventAppenderFactory::new(),
-            SqlxPartnerProductListingAuthorizerFactory::new(),
+        Arc::new(WoocommerceWebhookIntake::new(
             SqlxListingSourceReaders::new(pool.clone()),
             SqlxListingSourceReaders::new(pool.clone()),
+            CaptureProductListingRawObservationHandler::new(
+                unit_of_work.clone(),
+                SqlxProductListingRawCaptureWriterFactory::new(),
+                SqlxPartnerProductListingAuthorizerFactory::new(),
+            ),
+            AuthorizeProductListingRawCaptureHandler::new(
+                unit_of_work.clone(),
+                SqlxPartnerProductListingAuthorizerFactory::new(),
+            ),
         )),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );

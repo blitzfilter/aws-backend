@@ -1,0 +1,23 @@
+[package]
+name = "product-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+application = { workspace = true }
+async-trait = { workspace = true }
+domain-primitives = { workspace = true }
+indexmap = { workspace = true }
+listing-source-core = { workspace = true }
+product-listing-core = { workspace = true }
+product-listing-normalization = { workspace = true }
+product-listing-service = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+url = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

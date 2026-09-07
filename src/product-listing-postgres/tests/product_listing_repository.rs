@@ -158,6 +158,58 @@ async fn should_insert_append_find_and_update_product_by_id_in_postgres() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_persist_valid_long_incompressible_url_through_canonical_repository() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let product_listings = SqlxProductListingRepositoryFactory::new();
+    let events = SqlxProductListingEventAppenderFactory::new();
+    let listing_source_id =
+        seed_listing_source(&pool, "product-listing-postgres-long-url-source").await;
+    let long_url = long_incompressible_url();
+    assert!(long_url.as_str().len() > 2_704);
+    let product = sample_product_with_url(
+        "postgres-product-long-url",
+        listing_source_id,
+        long_url.clone(),
+    );
+
+    insert_product_with_event(&unit_of_work, &product_listings, &events, &product).await;
+
+    let persisted_url: String =
+        sqlx::query_scalar("SELECT url FROM product_listings WHERE product_listing_id = $1")
+            .bind(uuid::Uuid::from(product.id()))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("load long canonical URL: {error}"));
+    assert_eq!(long_url.as_str(), persisted_url);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_install_required_indexes_without_wide_or_duplicate_btrees() {
+    let pool = get_postgres_client().await;
+    let (source_url_index, duplicate_raw_revision_index): (Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT to_regclass('product_listings_listing_source_url_idx')::text, to_regclass('product_listing_raw_revisions_stream_revision_idx')::text",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("inspect removed indexes: {error}"));
+    assert_eq!(None, source_url_index);
+    assert_eq!(None, duplicate_raw_revision_index);
+
+    let raw_revision_constraint: Option<String> = sqlx::query_scalar(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'product_listing_raw_revisions'::regclass AND conname = 'product_listing_raw_revisions_stream_revision_unique' AND contype = 'u'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("inspect raw revision unique constraint: {error}"));
+    assert_eq!(
+        Some("UNIQUE (product_listing_raw_stream_id, revision)".to_owned()),
+        raw_revision_constraint
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_preserve_embedding_for_price_and_clear_it_when_images_change() {
     let pool = get_postgres_client().await;
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
@@ -801,6 +853,23 @@ fn sample_product_with_source_listing_id(
     )
 }
 
+fn sample_product_with_url(
+    slug: &str,
+    listing_source_id: ListingSourceId,
+    listing_url: Url,
+) -> ProductListing {
+    let source_listing_id = SourceListingId::try_from(slug)
+        .unwrap_or_else(|error| panic!("valid source listing ID: {error}"));
+    let mut input = sample_new_product_listing(
+        slug,
+        listing_source_id,
+        source_listing_id,
+        ProductListingId::new(),
+    );
+    input.url = listing_url;
+    ProductListing::create(input).unwrap_or_else(|error| panic!("create product: {error}"))
+}
+
 fn sample_product_with_id_and_source_listing_id(
     slug: &str,
     listing_source_id: ListingSourceId,
@@ -928,6 +997,24 @@ fn url(value: &str) -> Url {
         Ok(url) => url,
         Err(error) => panic!("invalid test URL: {error}"),
     }
+}
+
+fn long_incompressible_url() -> Url {
+    const PATH_LENGTH: usize = 4_096;
+    const URL_SAFE_ASCII: &[u8] =
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut path = String::with_capacity(PATH_LENGTH);
+    for _ in 0..PATH_LENGTH {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let index = ((state >> 32) as usize) % URL_SAFE_ASCII.len();
+        path.push(URL_SAFE_ASCII[index] as char);
+    }
+
+    url(&format!("https://example.test/{path}"))
 }
 
 async fn begin(unit_of_work: &SqlxUnitOfWork) -> platform_postgres::SqlxTransaction {

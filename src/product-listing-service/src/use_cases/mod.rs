@@ -6,6 +6,11 @@ pub use commands::assess_product_listing_content_event::{
     AssessProductListingContentEventHandler, AssessProductListingContentEventOutcome,
     AssessProductListingContentEventResult, AssessProductListingContentEventUseCase,
 };
+pub use commands::capture_product_listing_raw_observation::{
+    CaptureProductListingRawObservationCommand, CaptureProductListingRawObservationError,
+    CaptureProductListingRawObservationHandler, CaptureProductListingRawObservationResult,
+    CaptureProductListingRawObservationUseCase,
+};
 pub use commands::create_product_listing::{
     CreateProductListingCommand, CreateProductListingError, CreateProductListingHandler,
     CreateProductListingResult, CreateProductListingUseCase,
@@ -20,16 +25,7 @@ pub use commands::generate_watchlist_notifications::{
     GenerateWatchlistNotificationsHandler, GenerateWatchlistNotificationsResult,
     GenerateWatchlistNotificationsUseCase,
 };
-pub use commands::ingest_shopify_product_listing::{
-    IngestShopifyProductListingCommand, IngestShopifyProductListingError,
-    IngestShopifyProductListingHandler, IngestShopifyProductListingResult,
-    IngestShopifyProductListingUseCase,
-};
-pub use commands::ingest_woocommerce_product_listing::{
-    IngestWoocommerceProductListingCommand, IngestWoocommerceProductListingError,
-    IngestWoocommerceProductListingHandler, IngestWoocommerceProductListingResult,
-    IngestWoocommerceProductListingUseCase, WoocommerceProductEventKind,
-};
+
 pub use commands::project_product_listing::{
     ProjectProductListingCommand, ProjectProductListingError, ProjectProductListingHandler,
     ProjectProductListingOutcome, ProjectProductListingResult, ProjectProductListingUseCase,
@@ -55,6 +51,11 @@ pub use commands::upsert_product_listing::{
 pub use commands::withdraw_product_listing::{
     WithdrawProductListingError, WithdrawProductListingHandler, WithdrawProductListingResult,
     WithdrawProductListingUseCase,
+};
+pub use queries::authorize_product_listing_raw_capture::{
+    AuthorizeProductListingRawCaptureError, AuthorizeProductListingRawCaptureHandler,
+    AuthorizeProductListingRawCaptureRequest, AuthorizeProductListingRawCaptureResult,
+    AuthorizeProductListingRawCaptureUseCase,
 };
 pub use queries::get_product_listing::{
     DisplayProductListingPricing, GetProductListingError, GetProductListingHandler,

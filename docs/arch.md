@@ -1817,9 +1817,9 @@ A redelivery may therefore create duplicate jobs. All handlers MUST be idempoten
 
 The MVP has no durable worker inbox, job queue, dead-letter table, or processed-job table.
 
-After Sequin acknowledgment, jobs exist only in memory until processing completes.
+After Sequin acknowledgment, jobs exist only in memory until processing completes unless a scope has a documented authoritative-source reconciliation path.
 
-If the worker process dies after acknowledgment, queued jobs may be lost.
+If the worker process dies after acknowledgment, queued jobs may be lost unless that scope reconciles its authoritative source.
 
 The current guarantee is therefore:
 
@@ -1833,7 +1833,7 @@ after acknowledgment:
 
 The system MUST NOT claim exactly-once or durable at-least-once processing.
 
-This is an explicit MVP trade-off, tracked by #1558, and MUST remain documented until durable worker delivery is introduced.
+This is an explicit MVP trade-off, tracked by #1558, and MUST remain documented until durable worker delivery is introduced. A scope-specific reconciliation loop may repair its own missed wake-ups from authoritative PostgreSQL state, but it does not make the shared in-memory queue durable or change the guarantee for other scopes.
 
 ### 12.5 Idempotency and ordering
 
@@ -1998,7 +1998,7 @@ The accepted crash-after-ack loss window MUST remain covered by documentation or
 7. Projections are rebuildable from authoritative truth.
 8. Poison changes are never silently discarded.
 9. CDC lag, queue pressure, failures, and freshness are observable.
-10. The current post-ack in-memory loss risk is an explicit MVP limitation.
+10. The current post-ack in-memory loss risk is an explicit MVP limitation unless a scope documents an authoritative-source reconciliation path.
 
 
 ## 13. Error boundaries

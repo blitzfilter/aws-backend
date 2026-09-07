@@ -3,6 +3,7 @@ use crate::scraper::css_selector::product_schema::ApplySchemaError;
 use crate::scraper::css_selector::product_schema_service::ProductListingSchemaServiceError;
 use crate::scraper::normalization::error::NormalizationError;
 use listing_source_core::ListingSourceId;
+use product_listing_normalization::NormalizationInputError;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +54,12 @@ pub enum ScraperError {
 
     #[error("Normalization error: {0}")]
     NormalizationError(#[from] NormalizationError),
+
+    #[error("crawler raw normalization input could not be built")]
+    RawNormalizationInput(#[source] NormalizationInputError),
+
+    #[error("crawler effective schema fingerprint could not be built")]
+    SchemaFingerprint(#[source] serde_json::Error),
 
     #[error(
         "LLM call budget exceeded for ListingSource '{listing_source_id}' while scraping '{url}' (limit={max_calls})"

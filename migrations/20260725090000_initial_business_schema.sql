@@ -88,6 +88,169 @@ CREATE TABLE listing_source_woocommerce_ingestion_configurations (
 CREATE INDEX listing_sources_operator_party_id_idx ON listing_sources (operator_party_id);
 CREATE INDEX listing_source_ingestion_methods_method_idx ON listing_source_ingestion_methods (ingestion_method, listing_source_id);
 
+CREATE TABLE product_listing_raw_streams (
+    product_listing_raw_stream_id uuid PRIMARY KEY,
+    listing_source_id uuid NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
+    ingestion_method text NOT NULL,
+    source_record_key text NOT NULL,
+    source_record_key_sha256 bytea NOT NULL,
+    latest_revision bigint NOT NULL,
+    latest_input_sha256 bytea,
+    latest_provider_source_epoch_seconds bigint,
+    latest_provider_source_nanoseconds integer,
+    latest_provider_source_operation text,
+    latest_provider_source_ordering_state text NOT NULL DEFAULT 'NO_ORDERING',
+    latest_provider_source_observation_sha256 bytea,
+    created timestamptz NOT NULL DEFAULT now(),
+    updated timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT product_listing_raw_streams_ingestion_method_check
+        CHECK (ingestion_method IN ('WEB_CRAWL', 'SHOPIFY', 'WOOCOMMERCE')),
+    CONSTRAINT product_listing_raw_streams_source_record_key_max_bytes_check
+        CHECK (octet_length(source_record_key) <= 4096),
+    CONSTRAINT product_listing_raw_streams_source_record_key_sha256_length_check
+        CHECK (octet_length(source_record_key_sha256) = 32),
+    CONSTRAINT product_listing_raw_streams_latest_revision_nonnegative_check
+        CHECK (latest_revision >= 0),
+    CONSTRAINT product_listing_raw_streams_latest_input_sha256_length_check
+        CHECK (latest_input_sha256 IS NULL OR octet_length(latest_input_sha256) = 32),
+    CONSTRAINT product_listing_raw_streams_provider_source_ordering_shape_check
+        CHECK (
+            (
+                latest_provider_source_ordering_state = 'NO_ORDERING'
+                AND latest_provider_source_epoch_seconds IS NULL
+                AND latest_provider_source_nanoseconds IS NULL
+                AND latest_provider_source_operation IS NULL
+                AND latest_provider_source_observation_sha256 IS NULL
+            )
+            OR (
+                latest_provider_source_ordering_state = 'KNOWN'
+                AND latest_provider_source_epoch_seconds IS NOT NULL
+                AND latest_provider_source_nanoseconds IS NOT NULL
+                AND latest_provider_source_nanoseconds BETWEEN 0 AND 999999999
+                AND latest_provider_source_operation IS NOT NULL
+                AND latest_provider_source_operation IN ('UPSERT', 'DELETE')
+                AND latest_provider_source_observation_sha256 IS NOT NULL
+                AND octet_length(latest_provider_source_observation_sha256) = 32
+            )
+            OR (
+                latest_provider_source_ordering_state = 'UNKNOWN_DELETE'
+                AND latest_provider_source_epoch_seconds IS NULL
+                AND latest_provider_source_nanoseconds IS NULL
+                AND latest_provider_source_operation IS NULL
+                AND latest_provider_source_observation_sha256 IS NOT NULL
+                AND octet_length(latest_provider_source_observation_sha256) = 32
+            )
+        ),
+    CONSTRAINT product_listing_raw_streams_identity_unique
+        UNIQUE (listing_source_id, ingestion_method, source_record_key_sha256)
+);
+
+-- Operational provider-delivery idempotency state. It is deliberately separate
+-- from product_listing_raw_revisions, the sole raw-normalization CDC source.
+CREATE TABLE product_listing_raw_provider_observation_receipts (
+    product_listing_raw_stream_id uuid NOT NULL
+        REFERENCES product_listing_raw_streams(product_listing_raw_stream_id) ON DELETE CASCADE,
+    provider_scope text NOT NULL,
+    provider_delivery_id text NOT NULL,
+    observation_sha256 bytea NOT NULL,
+    expires_at timestamptz NOT NULL DEFAULT now() + interval '90 days',
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (
+        product_listing_raw_stream_id,
+        provider_scope,
+        provider_delivery_id
+    ),
+    CONSTRAINT product_listing_raw_provider_observation_receipts_provider_scope_check
+        CHECK (octet_length(provider_scope) BETWEEN 1 AND 128),
+    CONSTRAINT product_listing_raw_provider_observation_receipts_provider_delivery_id_check
+        CHECK (octet_length(provider_delivery_id) BETWEEN 1 AND 512),
+    CONSTRAINT product_listing_raw_provider_observation_receipts_observation_sha256_length_check
+        CHECK (octet_length(observation_sha256) = 32)
+);
+
+CREATE TABLE product_listing_raw_revisions (
+    product_listing_raw_revision_id uuid PRIMARY KEY,
+    generation bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+    product_listing_raw_stream_id uuid NOT NULL
+        REFERENCES product_listing_raw_streams(product_listing_raw_stream_id) ON DELETE CASCADE,
+    revision bigint NOT NULL,
+    operation text NOT NULL,
+    payload_format text NOT NULL,
+    payload_schema_version smallint NOT NULL,
+    raw_values_schema_version smallint NOT NULL,
+    source_payload jsonb NOT NULL,
+    raw_values jsonb NOT NULL,
+    normalization_context jsonb NOT NULL,
+    provenance jsonb NOT NULL,
+    input_sha256 bytea NOT NULL,
+    source_event_id text,
+    source_occurred_at timestamptz,
+    captured_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT product_listing_raw_revisions_stream_revision_unique
+        UNIQUE (product_listing_raw_stream_id, revision),
+    CONSTRAINT product_listing_raw_revisions_operation_check
+        CHECK (operation IN ('UPSERT', 'DELETE')),
+    CONSTRAINT product_listing_raw_revisions_payload_format_check
+        CHECK (payload_format IN ('CRAWLER_EXTRACTED_PRODUCT', 'SHOPIFY_PRODUCT', 'WOOCOMMERCE_PRODUCT')),
+    CONSTRAINT product_listing_raw_revisions_payload_schema_version_positive_check
+        CHECK (payload_schema_version >= 1),
+    CONSTRAINT product_listing_raw_revisions_raw_values_schema_version_positive_check
+        CHECK (raw_values_schema_version >= 1),
+    CONSTRAINT product_listing_raw_revisions_source_payload_object_check
+        CHECK (jsonb_typeof(source_payload) = 'object'),
+    CONSTRAINT product_listing_raw_revisions_raw_values_object_check
+        CHECK (jsonb_typeof(raw_values) = 'object'),
+    CONSTRAINT product_listing_raw_revisions_normalization_context_object_check
+        CHECK (jsonb_typeof(normalization_context) = 'object'),
+    CONSTRAINT product_listing_raw_revisions_provenance_object_check
+        CHECK (jsonb_typeof(provenance) = 'object'),
+    CONSTRAINT product_listing_raw_revisions_input_sha256_length_check
+        CHECK (octet_length(input_sha256) = 32),
+    CONSTRAINT product_listing_raw_revisions_revision_positive_check
+        CHECK (revision >= 1)
+);
+
+CREATE TABLE product_listing_raw_normalization_heads (
+    product_listing_raw_stream_id uuid PRIMARY KEY
+        REFERENCES product_listing_raw_streams(product_listing_raw_stream_id) ON DELETE CASCADE,
+    last_processed_revision bigint NOT NULL DEFAULT 0,
+    product_listing_id uuid,
+    source_listing_id text,
+    created timestamptz NOT NULL DEFAULT now(),
+    updated timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT product_listing_raw_normalization_heads_last_processed_revision_nonnegative_check
+        CHECK (last_processed_revision >= 0),
+    CONSTRAINT product_listing_raw_normalization_heads_binding_check
+        CHECK (
+            (product_listing_id IS NULL AND source_listing_id IS NULL)
+            OR (product_listing_id IS NOT NULL AND source_listing_id IS NOT NULL)
+        )
+);
+
+CREATE TABLE product_listing_raw_normalizations (
+    product_listing_raw_revision_id uuid NOT NULL
+        REFERENCES product_listing_raw_revisions(product_listing_raw_revision_id) ON DELETE CASCADE,
+    product_listing_raw_stream_id uuid NOT NULL
+        REFERENCES product_listing_raw_streams(product_listing_raw_stream_id) ON DELETE CASCADE,
+    revision bigint NOT NULL,
+    normalizer_version smallint NOT NULL,
+    outcome text NOT NULL,
+    product_listing_id uuid,
+    product_listing_event_id uuid,
+    error_code text,
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (product_listing_raw_revision_id, normalizer_version),
+    CONSTRAINT product_listing_raw_normalizations_revision_positive_check CHECK (revision >= 1),
+    CONSTRAINT product_listing_raw_normalizations_normalizer_version_positive_check
+        CHECK (normalizer_version >= 1),
+    CONSTRAINT product_listing_raw_normalizations_outcome_check
+        CHECK (outcome IN ('APPLIED', 'NO_CHANGE', 'IGNORED', 'REJECTED')),
+    CONSTRAINT product_listing_raw_normalizations_error_code_check
+        CHECK (error_code IS NULL OR octet_length(error_code) <= 128)
+);
+
+CREATE INDEX product_listing_raw_normalizations_stream_revision_idx
+    ON product_listing_raw_normalizations (product_listing_raw_stream_id, revision ASC);
 
 CREATE TABLE partnerships (
     partnership_id uuid PRIMARY KEY,
@@ -858,3 +1021,8 @@ CREATE INDEX oauth_third_party_exchange_codes_access_token_idx
 SELECT ttl_create_index('public.access_tokens', 'expires_at', 0);
 SELECT ttl_create_index('public.oauth_authorization_codes', 'expires_at', 0);
 SELECT ttl_create_index('public.oauth_third_party_exchange_codes', 'expires_at', 0);
+SELECT ttl_create_index(
+    'public.product_listing_raw_provider_observation_receipts',
+    'expires_at',
+    0
+);

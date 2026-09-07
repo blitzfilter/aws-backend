@@ -34,8 +34,8 @@ async fn should_persist_scraped_state_before_marking_url_as_scraped() {
             Box::pin(async move { Ok(s) })
         });
 
-    let mut expected = normalized_product(url.clone());
-    expected.availability = ListingAvailabilityMapping::Availability(ListingAvailability::SoldOut);
+    let mut expected = prepared_product(url.clone());
+    expected.availability = ListingAvailabilityQuickCheck::Resolved(ListingAvailability::SoldOut);
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -49,16 +49,16 @@ async fn should_persist_scraped_state_before_marking_url_as_scraped() {
     expect_budget_increment(&mut cand_svc, 1);
     let url_for_set_presence = url.clone();
     cand_svc
-        .expect_set_presence()
-        .once()
+        .expect_set_disposition()
+        .never()
         .withf(
-            move |received_listing_source_id, received_url, received_state| {
+            move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_set_presence
-                    && *received_state == UrlPresence::Present
+                    && *received_state == CrawlerDisposition::Active
             },
         )
-        .returning(|_, _, _| Box::pin(async { Ok(()) }));
+        .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -70,17 +70,13 @@ async fn should_persist_scraped_state_before_marking_url_as_scraped() {
     );
 
     let result = service
-        .scrape(&id, &url, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap()
         .unwrap();
 
     assert_eq!(
-        result.product.availability,
-        ListingAvailabilityMapping::Availability(ListingAvailability::SoldOut)
-    );
-    assert_eq!(
-        result.snapshot.availability.as_deref(),
-        Some(ListingAvailability::SoldOut.as_str())
+        result.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::SoldOut)
     );
 }

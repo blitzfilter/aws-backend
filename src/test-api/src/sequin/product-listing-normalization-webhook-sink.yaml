@@ -1,0 +1,11 @@
+- name: "product-listing-normalization-changes"
+  database: "aura-historia-business-__SUFFIX__"
+  source:
+    include_tables: ["public.product_listing_raw_revisions"]
+  actions:
+    - insert
+  batch_size: 1
+  destination:
+    type: "webhook"
+    http_endpoint: "worker"
+    batch: false

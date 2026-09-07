@@ -1,13 +1,11 @@
 use super::job::CrawlerCronJob;
 use crate::network::policy::{NetworkErrorKind, durable_retry_cooldown_for};
-use crate::scraper::candidate_service::{
-    ProductListingSnapshot, ScraperCandidate, ScraperCandidateService,
-};
+use crate::scraper::candidate_service::{ScraperCandidate, ScraperCandidateService};
+use crate::scraper::raw_input::{crawler_provenance, crawler_verified_removal_input};
 use crate::scraper::scraper_service::{ScraperError, ScraperService};
-use crate::service::product_push::{
-    ProductListingPushItem, ProductListingPushService, normalize_to_upsert,
-};
+use crate::service::raw_capture::{ProductListingRawCaptureItem, ProductListingRawCaptureService};
 use crate::spider::advisory_lock::{ListingSourceLock, LocalLockManager, UrlLock};
+use crate::spider::classification::url_metadata::{CrawlerDisposition, CrawlerUrlWriteOutcome};
 use listing_source_core::ListingSourceId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -22,29 +20,63 @@ struct ScrapeDomainContext {
     scraper: Arc<dyn ScraperService>,
     scraper_candidates: Arc<dyn ScraperCandidateService>,
     lock_manager: Arc<LocalLockManager>,
-    command_tx: mpsc::Sender<QueuedProductListingPush>,
+    command_tx: mpsc::Sender<QueuedRawCapture>,
     budget_exhausted_listing_sources: Arc<Mutex<HashSet<ListingSourceId>>>,
     schema_pending_listing_sources: Arc<Mutex<HashSet<ListingSourceId>>>,
 }
 
-/// Metadata carried alongside a [`UpsertProductListingCommand`] so the push-collector
-/// can call [`ScraperCandidateService::mark_as_scraped`] only after the push
-/// has been confirmed.
+/// Metadata applied only after durable raw capture succeeds.
 struct CandidateMeta {
     listing_source_id: listing_source_core::ListingSourceId,
     url: url::Url,
     hash: String,
-    snapshot: ProductListingSnapshot,
+    schema_fingerprint: String,
+    raw_input_sha256: Vec<u8>,
+    disposition: CrawlerDisposition,
+    expected_last_captured_raw_input_sha256: Option<Vec<u8>>,
 }
 
-struct QueuedProductListingPush {
-    item: ProductListingPushItem,
-    meta: CandidateMeta,
+struct RawCaptureRequest {
+    item: ProductListingRawCaptureItem,
+    on_success: RawCaptureSuccessAction,
+    on_failure: RawCaptureFailureAction,
+}
+
+enum RawCaptureSuccessAction {
+    MarkScraped(CandidateMeta),
+    MarkDormantRemoved {
+        listing_source_id: ListingSourceId,
+        url: url::Url,
+        expected_last_captured_raw_input_sha256: Option<Vec<u8>>,
+    },
+}
+
+enum RawCaptureFailureAction {
+    None,
+    MarkScraperFailure {
+        listing_source_id: ListingSourceId,
+        url: url::Url,
+        expected_last_captured_raw_input_sha256: Option<Vec<u8>>,
+    },
+}
+
+impl From<(ProductListingRawCaptureItem, CandidateMeta)> for RawCaptureRequest {
+    fn from((item, meta): (ProductListingRawCaptureItem, CandidateMeta)) -> Self {
+        Self {
+            item,
+            on_success: RawCaptureSuccessAction::MarkScraped(meta),
+            on_failure: RawCaptureFailureAction::None,
+        }
+    }
+}
+
+struct QueuedRawCapture {
+    request: RawCaptureRequest,
     enqueued_at: tokio::time::Instant,
 }
 
 struct ScrapeCandidateOutcome {
-    command: Option<(ProductListingPushItem, CandidateMeta)>,
+    capture: Option<RawCaptureRequest>,
     errored: bool,
     skipped: bool,
 }
@@ -60,21 +92,17 @@ struct ScheduledScrapeDomainOutcome {
     outcome: ScrapeDomainOutcome,
 }
 
-/// Pushes a batch of `(command, meta)` pairs to the product backend and then
-/// calls [`ScraperCandidateService::mark_as_scraped`] for each command that
-/// was successfully persisted.
-///
-/// The push result has one boolean per input position, so only the corresponding
-/// crawler URL is marked scraped after its product command succeeds.
+/// Captures a batch of raw observations, then updates crawler-local metadata only for durable
+/// capture outcomes. Worker normalization owns canonical ProductListing mutation.
 #[tracing::instrument(
-    name = "crawler_flush_push_batch",
-    skip(push_service, scraper_candidates, batch),
+    name = "crawler_flush_raw_capture_batch",
+    skip(raw_capture, scraper_candidates, batch),
     fields(batch_size = batch.len())
 )]
 async fn flush_batch(
-    push_service: &Arc<dyn ProductListingPushService>,
+    raw_capture: &Arc<dyn ProductListingRawCaptureService>,
     scraper_candidates: &Arc<dyn ScraperCandidateService>,
-    batch: Vec<QueuedProductListingPush>,
+    batch: Vec<QueuedRawCapture>,
     queue_depth: usize,
 ) {
     let batch_size = batch.len();
@@ -83,22 +111,22 @@ async fn flush_batch(
         .map(|queued| queued.enqueued_at.elapsed().as_millis())
         .max()
         .unwrap_or(0);
-    let (products, metas): (Vec<_>, Vec<_>) = batch
-        .into_iter()
-        .map(|queued| (queued.item, queued.meta))
-        .unzip();
+    let observations = batch
+        .iter()
+        .map(|queued| queued.request.item.clone())
+        .collect();
 
-    let push_started_at = tokio::time::Instant::now();
-    let mut succeeded = push_service.push(products).await;
-    let upsert_latency_ms = push_started_at.elapsed().as_millis();
-    let expected = metas.len();
+    let capture_started_at = tokio::time::Instant::now();
+    let mut succeeded = raw_capture.capture(observations).await;
+    let capture_latency_ms = capture_started_at.elapsed().as_millis();
+    let expected = batch.len();
     let actual = succeeded.len();
 
     if actual != expected {
         warn!(
             expected,
             actual,
-            "ProductListing push returned an incomplete result; unmatched URLs will be retried"
+            "Raw ProductListing capture returned an incomplete result; unmatched URLs will be retried"
         );
     }
 
@@ -110,51 +138,158 @@ async fn flush_batch(
     let persisted_count = succeeded.iter().filter(|succeeded| **succeeded).count();
     let persistence_failure_count = expected.saturating_sub(persisted_count);
     let mut mark_as_scraped_count = 0;
+    let mut stale_completion_count = 0;
     let mut mark_as_scraped_failure_count = 0;
 
-    for (meta, succeeded) in metas.into_iter().zip(succeeded) {
-        if succeeded {
-            match scraper_candidates
-                .mark_as_scraped(
-                    &meta.listing_source_id,
-                    &meta.url,
-                    &meta.hash,
-                    &meta.snapshot,
+    for (queued, succeeded) in batch.into_iter().zip(succeeded) {
+        match (
+            succeeded,
+            queued.request.on_success,
+            queued.request.on_failure,
+        ) {
+            (true, RawCaptureSuccessAction::MarkScraped(meta), _) => {
+                match scraper_candidates
+                    .mark_as_scraped(
+                        &meta.listing_source_id,
+                        &meta.url,
+                        &meta.hash,
+                        &meta.schema_fingerprint,
+                        &meta.raw_input_sha256,
+                        meta.disposition,
+                        meta.expected_last_captured_raw_input_sha256.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(CrawlerUrlWriteOutcome::Applied) => {
+                        mark_as_scraped_count += 1;
+                        if meta.disposition != CrawlerDisposition::Active {
+                            info!(
+                                metric = "crawler_disposition_transition",
+                                crawler_disposition_transitions = 1_u64,
+                                listing_source_id = %meta.listing_source_id,
+                                crawler_disposition = meta.disposition.as_str(),
+                                "crawler URL entered dormant disposition after durable raw capture"
+                            );
+                        }
+                    }
+                    Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                        stale_completion_count += 1;
+                        debug!(
+                            listing_source_id = %meta.listing_source_id,
+                            url = %meta.url,
+                            crawler_url_write_outcome = "stale_noop",
+                            "Skipped stale crawler scrape completion after durable raw capture"
+                        );
+                    }
+                    Err(error) => {
+                        mark_as_scraped_failure_count += 1;
+                        warn!(listing_source_id = %meta.listing_source_id, error = %error, url = %meta.url, "Failed to mark product as scraped after raw capture");
+                    }
+                }
+            }
+            (
+                true,
+                RawCaptureSuccessAction::MarkDormantRemoved {
+                    listing_source_id,
+                    url,
+                    expected_last_captured_raw_input_sha256,
+                },
+                _,
+            ) => match scraper_candidates
+                .set_disposition(
+                    &listing_source_id,
+                    &url,
+                    CrawlerDisposition::DormantRemoved,
+                    expected_last_captured_raw_input_sha256.as_deref(),
                 )
                 .await
             {
-                Ok(()) => mark_as_scraped_count += 1,
+                Ok(CrawlerUrlWriteOutcome::Applied) => {
+                    mark_as_scraped_count += 1;
+                    info!(
+                        metric = "crawler_disposition_transition",
+                        crawler_disposition_transitions = 1_u64,
+                        listing_source_id = %listing_source_id,
+                        crawler_disposition = CrawlerDisposition::DormantRemoved.as_str(),
+                        "verified crawler removal captured; URL entered dormant disposition"
+                    );
+                }
+                Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                    stale_completion_count += 1;
+                    debug!(
+                        listing_source_id = %listing_source_id,
+                        url = %url,
+                        crawler_url_write_outcome = "stale_noop",
+                        "Skipped stale crawler removal completion after durable raw capture"
+                    );
+                }
                 Err(error) => {
                     mark_as_scraped_failure_count += 1;
-                    warn!(listing_source_id = %meta.listing_source_id, error = %error, url = %meta.url, "Failed to mark product as scraped after push");
+                    warn!(error = %error, listing_source_id = %listing_source_id, url = %url, "Raw removal capture committed but crawler disposition update failed");
                 }
-            }
+            },
+            (
+                false,
+                _,
+                RawCaptureFailureAction::MarkScraperFailure {
+                    listing_source_id,
+                    url,
+                    expected_last_captured_raw_input_sha256,
+                },
+            ) => match scraper_candidates
+                .mark_scraper_failure(
+                    &listing_source_id,
+                    &url,
+                    "RawCaptureFailed",
+                    "verified removal raw capture did not commit",
+                    expected_last_captured_raw_input_sha256.as_deref(),
+                )
+                .await
+            {
+                Ok(CrawlerUrlWriteOutcome::Applied) => {}
+                Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                    debug!(
+                        listing_source_id = %listing_source_id,
+                        url = %url,
+                        crawler_url_write_outcome = "stale_noop",
+                        "Skipped stale crawler raw-capture failure metadata"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        listing_source_id = %listing_source_id,
+                        url = %url,
+                        "Failed to persist raw-capture failure metadata"
+                    );
+                }
+            },
+            (false, _, RawCaptureFailureAction::None) => {}
         }
     }
 
     info!(
-        event = "crawler.product_push.batch",
+        event = "crawler.raw_capture.batch",
         batch_size,
         queue_depth,
         oldest_item_age_ms,
-        upsert_latency_ms,
+        capture_latency_ms,
         persisted_count,
         persistence_failure_count,
         mark_as_scraped_count,
+        stale_completion_count,
         mark_as_scraped_failure_count,
-        "Crawler product push batch complete"
+        "Crawler raw capture batch complete"
     );
 }
 
 #[allow(clippy::result_large_err)]
-async fn enqueue_product_push(
-    command_tx: &mpsc::Sender<QueuedProductListingPush>,
-    pair: (ProductListingPushItem, CandidateMeta),
-) -> Result<Duration, mpsc::error::SendError<QueuedProductListingPush>> {
-    let (item, meta) = pair;
-    let queued = QueuedProductListingPush {
-        item,
-        meta,
+async fn enqueue_raw_capture(
+    command_tx: &mpsc::Sender<QueuedRawCapture>,
+    request: impl Into<RawCaptureRequest>,
+) -> Result<Duration, mpsc::error::SendError<QueuedRawCapture>> {
+    let queued = QueuedRawCapture {
+        request: request.into(),
         enqueued_at: tokio::time::Instant::now(),
     };
     let wait_started_at = tokio::time::Instant::now();
@@ -166,12 +301,64 @@ async fn enqueue_product_push(
 
 #[tracing::instrument(
     name = "crawler_scrape_candidate",
-    skip(candidate, ctx),
+    skip(candidate),
     fields(
         listing_source_id = %candidate.listing_source_id,
         url = %candidate.url
     )
 )]
+fn handle_verified_removal(candidate: &ScraperCandidate) -> ScrapeCandidateOutcome {
+    let input = match crawler_verified_removal_input(&candidate.url) {
+        Ok(input) => input,
+        Err(error) => {
+            warn!(error = %error, listing_source_id = %candidate.listing_source_id, "Failed to build verified-removal raw input");
+            return ScrapeCandidateOutcome {
+                capture: None,
+                errored: true,
+                skipped: false,
+            };
+        }
+    };
+    let provenance = match crawler_provenance(None, None) {
+        Ok(provenance) => provenance,
+        Err(error) => {
+            warn!(error = %error, listing_source_id = %candidate.listing_source_id, "Failed to build verified-removal provenance");
+            return ScrapeCandidateOutcome {
+                capture: None,
+                errored: true,
+                skipped: false,
+            };
+        }
+    };
+
+    ScrapeCandidateOutcome {
+        capture: Some(RawCaptureRequest {
+            item: ProductListingRawCaptureItem::crawler(
+                candidate.listing_source_id,
+                &candidate.url,
+                input,
+                provenance,
+            ),
+            on_success: RawCaptureSuccessAction::MarkDormantRemoved {
+                listing_source_id: candidate.listing_source_id,
+                url: candidate.url.clone(),
+                expected_last_captured_raw_input_sha256: candidate
+                    .last_captured_raw_input_sha256
+                    .clone(),
+            },
+            on_failure: RawCaptureFailureAction::MarkScraperFailure {
+                listing_source_id: candidate.listing_source_id,
+                url: candidate.url.clone(),
+                expected_last_captured_raw_input_sha256: candidate
+                    .last_captured_raw_input_sha256
+                    .clone(),
+            },
+        }),
+        errored: false,
+        skipped: false,
+    }
+}
+
 async fn scrape_candidate(
     candidate: ScraperCandidate,
     ctx: &ScrapeDomainContext,
@@ -182,7 +369,7 @@ async fn scrape_candidate(
         if exhausted.contains(&candidate.listing_source_id) {
             debug!("Skipping URL — ListingSource LLM budget already exhausted in this batch");
             return ScrapeCandidateOutcome {
-                command: None,
+                capture: None,
                 errored: false,
                 skipped: true,
             };
@@ -194,7 +381,7 @@ async fn scrape_candidate(
         if pending.contains(&candidate.listing_source_id) {
             debug!("Skipping URL because ListingSource has pending schema review in this batch");
             return ScrapeCandidateOutcome {
-                command: None,
+                capture: None,
                 errored: false,
                 skipped: true,
             };
@@ -204,7 +391,7 @@ async fn scrape_candidate(
     let Some(_lock) = UrlLock::try_acquire(&ctx.lock_manager, &candidate.url) else {
         warn!("Skipping URL — lock held by another worker");
         return ScrapeCandidateOutcome {
-            command: None,
+            capture: None,
             errored: false,
             skipped: true,
         };
@@ -215,7 +402,7 @@ async fn scrape_candidate(
     else {
         debug!("Skipping URL because another worker is scraping this ListingSource");
         return ScrapeCandidateOutcome {
-            command: None,
+            capture: None,
             errored: false,
             skipped: true,
         };
@@ -228,36 +415,115 @@ async fn scrape_candidate(
             &candidate.url,
             candidate.url_pattern.as_deref(),
             candidate.last_scraped_hash.as_deref(),
+            candidate.last_scraped_schema_fingerprint.as_deref(),
+            candidate.last_captured_raw_input_sha256.as_deref(),
         )
         .await
     {
         Ok(Some(scraped)) => {
-            let raw_attributes = scraped.product.raw_attributes.clone();
+            let disposition = match &scraped.availability {
+                product_listing_normalization::ListingAvailabilityQuickCheck::Resolved(
+                    product_listing_core::listing_availability::ListingAvailability::SoldOut,
+                ) => CrawlerDisposition::DormantSold,
+                product_listing_normalization::ListingAvailabilityQuickCheck::Resolved(_)
+                | product_listing_normalization::ListingAvailabilityQuickCheck::NoAssertion
+                | product_listing_normalization::ListingAvailabilityQuickCheck::Unsupported => {
+                    CrawlerDisposition::Active
+                }
+            };
+            let provenance = match crawler_provenance(
+                Some(scraped.hash.as_str()),
+                Some(scraped.schema_fingerprint.as_str()),
+            ) {
+                Ok(provenance) => provenance,
+                Err(error) => {
+                    warn!(error = %error, listing_source_id = %candidate.listing_source_id, "Failed to build crawler raw-capture provenance");
+                    return ScrapeCandidateOutcome {
+                        capture: None,
+                        errored: true,
+                        skipped: false,
+                    };
+                }
+            };
             let meta = CandidateMeta {
                 listing_source_id: candidate.listing_source_id,
                 url: candidate.url.clone(),
                 hash: scraped.hash,
-                snapshot: scraped.snapshot,
+                schema_fingerprint: scraped.schema_fingerprint,
+                raw_input_sha256: scraped.raw_input_sha256,
+                disposition,
+                expected_last_captured_raw_input_sha256: candidate
+                    .last_captured_raw_input_sha256
+                    .clone(),
             };
-            ScrapeCandidateOutcome {
-                command: normalize_to_upsert(scraped.product, &candidate).map(|command| {
-                    (
-                        ProductListingPushItem {
-                            command,
-                            raw_attributes,
-                        },
-                        meta,
+
+            if candidate.last_captured_raw_input_sha256.as_deref()
+                == Some(meta.raw_input_sha256.as_slice())
+                && disposition == CrawlerDisposition::Active
+            {
+                match ctx
+                    .scraper_candidates
+                    .mark_as_scraped(
+                        &meta.listing_source_id,
+                        &meta.url,
+                        &meta.hash,
+                        &meta.schema_fingerprint,
+                        &meta.raw_input_sha256,
+                        meta.disposition,
+                        meta.expected_last_captured_raw_input_sha256.as_deref(),
                     )
-                }),
-                errored: false,
-                skipped: false,
+                    .await
+                {
+                    Ok(CrawlerUrlWriteOutcome::Applied) => ScrapeCandidateOutcome {
+                        capture: None,
+                        errored: false,
+                        skipped: false,
+                    },
+                    Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                        debug!(
+                            listing_source_id = %meta.listing_source_id,
+                            url = %meta.url,
+                            crawler_url_write_outcome = "stale_noop",
+                            "Skipped stale active crawler scrape completion"
+                        );
+                        ScrapeCandidateOutcome {
+                            capture: None,
+                            errored: false,
+                            skipped: true,
+                        }
+                    }
+                    Err(error) => {
+                        warn!(error = %error, url = %meta.url, "Failed to persist unchanged raw scrape metadata");
+                        ScrapeCandidateOutcome {
+                            capture: None,
+                            errored: true,
+                            skipped: false,
+                        }
+                    }
+                }
+            } else {
+                ScrapeCandidateOutcome {
+                    capture: Some(RawCaptureRequest {
+                        item: ProductListingRawCaptureItem::crawler(
+                            candidate.listing_source_id,
+                            &candidate.url,
+                            scraped.raw_input,
+                            provenance,
+                        ),
+                        on_success: RawCaptureSuccessAction::MarkScraped(meta),
+                        on_failure: RawCaptureFailureAction::None,
+                    }),
+                    errored: false,
+                    skipped: false,
+                }
             }
         }
         Ok(None) => ScrapeCandidateOutcome {
-            command: None,
+            capture: None,
             errored: false,
             skipped: true,
         },
+        Err(ScraperError::ProductListingRemoved { .. }) => handle_verified_removal(&candidate),
         Err(e) => {
             let error_message = e.to_string();
             let is_llm_budget_exceeded = matches!(&e, ScraperError::LlmBudgetExceeded { .. });
@@ -271,7 +537,7 @@ async fn scrape_candidate(
                     NetworkErrorKind::HttpStatus(code) => Some(*code as i32),
                     _ => None,
                 };
-                if let Err(mark_err) = ctx
+                match ctx
                     .scraper_candidates
                     .mark_fetch_failure(
                         &candidate.listing_source_id,
@@ -280,13 +546,25 @@ async fn scrape_candidate(
                         &error_message,
                         status_code,
                         next_retry_at,
+                        candidate.last_captured_raw_input_sha256.as_deref(),
                     )
                     .await
                 {
-                    warn!(
-                        error = %mark_err,
-                        "Failed to persist scraper fetch failure metadata"
-                    );
+                    Ok(CrawlerUrlWriteOutcome::Applied) => {}
+                    Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                        debug!(
+                            listing_source_id = %candidate.listing_source_id,
+                            url = %candidate.url,
+                            crawler_url_write_outcome = "stale_noop",
+                            "Skipped stale crawler fetch failure metadata"
+                        );
+                    }
+                    Err(mark_err) => {
+                        warn!(
+                            error = %mark_err,
+                            "Failed to persist scraper fetch failure metadata"
+                        );
+                    }
                 }
             } else {
                 // Non-HTTP errors: schema failures, normalization errors, etc.
@@ -301,7 +579,7 @@ async fn scrape_candidate(
                         let cooldown = std::time::Duration::from_secs(30 * 60);
                         let next_retry_at = time::OffsetDateTime::now_utc()
                             + time::Duration::seconds(cooldown.as_secs() as i64);
-                        if let Err(mark_err) = ctx
+                        match ctx
                             .scraper_candidates
                             .mark_fetch_failure(
                                 &candidate.listing_source_id,
@@ -310,30 +588,54 @@ async fn scrape_candidate(
                                 &error_message,
                                 None,
                                 next_retry_at,
+                                candidate.last_captured_raw_input_sha256.as_deref(),
                             )
                             .await
                         {
-                            warn!(
-                                error = %mark_err,
-                                "Failed to persist schema/classification cooldown metadata"
-                            );
+                            Ok(CrawlerUrlWriteOutcome::Applied) => {}
+                            Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                                debug!(
+                                    listing_source_id = %candidate.listing_source_id,
+                                    url = %candidate.url,
+                                    crawler_url_write_outcome = "stale_noop",
+                                    "Skipped stale crawler schema/classification cooldown metadata"
+                                );
+                            }
+                            Err(mark_err) => {
+                                warn!(
+                                    error = %mark_err,
+                                    "Failed to persist schema/classification cooldown metadata"
+                                );
+                            }
                         }
                     }
                     _ => {
-                        if let Err(mark_err) = ctx
+                        match ctx
                             .scraper_candidates
                             .mark_scraper_failure(
                                 &candidate.listing_source_id,
                                 &candidate.url,
                                 error_kind,
                                 &error_message,
+                                candidate.last_captured_raw_input_sha256.as_deref(),
                             )
                             .await
                         {
-                            warn!(
-                                error = %mark_err,
-                                "Failed to persist scraper failure metadata"
-                            );
+                            Ok(CrawlerUrlWriteOutcome::Applied) => {}
+                            Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                                debug!(
+                                    listing_source_id = %candidate.listing_source_id,
+                                    url = %candidate.url,
+                                    crawler_url_write_outcome = "stale_noop",
+                                    "Skipped stale crawler failure metadata"
+                                );
+                            }
+                            Err(mark_err) => {
+                                warn!(
+                                    error = %mark_err,
+                                    "Failed to persist scraper failure metadata"
+                                );
+                            }
                         }
                     }
                 }
@@ -375,7 +677,7 @@ async fn scrape_candidate(
             }
 
             ScrapeCandidateOutcome {
-                command: None,
+                capture: None,
                 errored: true,
                 skipped: false,
             }
@@ -402,6 +704,8 @@ fn scraper_error_kind(e: &ScraperError) -> &'static str {
         ScraperError::FreshSchemaNormalizationFailed { .. } => "FreshSchemaNormalizationFailed",
         ScraperError::LlmBudgetExceeded { .. } => "LlmBudgetExceeded",
         ScraperError::NormalizationError(_) => "NormalizationError",
+        ScraperError::RawNormalizationInput(_) => "RawNormalizationInput",
+        ScraperError::SchemaFingerprint(_) => "SchemaFingerprint",
         ScraperError::PendingSchemaReview { .. } => "PendingSchemaReview",
     }
 }
@@ -426,16 +730,16 @@ async fn scrape_domain_candidates(
 
         if candidate_outcome.errored {
             outcome.failed += 1;
-        } else if let Some(pair) = candidate_outcome.command {
-            match enqueue_product_push(&ctx.command_tx, pair).await {
+        } else if let Some(pair) = candidate_outcome.capture {
+            match enqueue_raw_capture(&ctx.command_tx, pair).await {
                 Ok(queue_wait) => {
                     outcome.succeeded += 1;
 
                     if queue_wait >= Duration::from_millis(10) {
                         warn!(
-                            event = "crawler.product_push.enqueue_wait",
+                            event = "crawler.raw_capture.enqueue_wait",
                             queue_wait_ms = queue_wait.as_millis(),
-                            "ProductListing push queue applied backpressure"
+                            "Raw ProductListing capture queue applied backpressure"
                         );
                     }
                 }
@@ -454,16 +758,16 @@ async fn scrape_domain_candidates(
     outcome
 }
 
-async fn run_push_collector(
-    mut command_rx: mpsc::Receiver<QueuedProductListingPush>,
-    push_service: Arc<dyn ProductListingPushService>,
+async fn run_raw_capture_collector(
+    mut command_rx: mpsc::Receiver<QueuedRawCapture>,
+    raw_capture: Arc<dyn ProductListingRawCaptureService>,
     scraper_candidates: Arc<dyn ScraperCandidateService>,
-    push_batch_size: usize,
-    push_max_batch_age: Duration,
+    capture_batch_size: usize,
+    capture_max_batch_age: Duration,
 ) {
-    let push_batch_size = push_batch_size.max(1);
-    let push_max_batch_age = push_max_batch_age.max(Duration::from_millis(1));
-    let mut pending = Vec::<QueuedProductListingPush>::with_capacity(push_batch_size);
+    let capture_batch_size = capture_batch_size.max(1);
+    let capture_max_batch_age = capture_max_batch_age.max(Duration::from_millis(1));
+    let mut pending = Vec::<QueuedRawCapture>::with_capacity(capture_batch_size);
 
     loop {
         if pending.is_empty() {
@@ -477,7 +781,7 @@ async fn run_push_collector(
                 .map(|item| item.enqueued_at)
                 .min()
                 .expect("pending batch is non-empty");
-            let flush_deadline = oldest_enqueued_at + push_max_batch_age;
+            let flush_deadline = oldest_enqueued_at + capture_max_batch_age;
 
             tokio::select! {
                 received = command_rx.recv() => {
@@ -486,7 +790,7 @@ async fn run_push_collector(
                         None => {
                             let batch = std::mem::take(&mut pending);
                             flush_batch(
-                                &push_service,
+                                &raw_capture,
                                 &scraper_candidates,
                                 batch,
                                 command_rx.len(),
@@ -499,7 +803,7 @@ async fn run_push_collector(
                 _ = tokio::time::sleep_until(flush_deadline) => {
                     let batch = std::mem::take(&mut pending);
                     flush_batch(
-                        &push_service,
+                        &raw_capture,
                         &scraper_candidates,
                         batch,
                         command_rx.len(),
@@ -509,20 +813,14 @@ async fn run_push_collector(
             }
         }
 
-        if pending.len() >= push_batch_size {
+        if pending.len() >= capture_batch_size {
             let batch = std::mem::take(&mut pending);
-            flush_batch(&push_service, &scraper_candidates, batch, command_rx.len()).await;
+            flush_batch(&raw_capture, &scraper_candidates, batch, command_rx.len()).await;
         }
     }
 
     if !pending.is_empty() {
-        flush_batch(
-            &push_service,
-            &scraper_candidates,
-            pending,
-            command_rx.len(),
-        )
-        .await;
+        flush_batch(&raw_capture, &scraper_candidates, pending, command_rx.len()).await;
     }
 }
 
@@ -552,7 +850,7 @@ impl CrawlerCronJob {
         let mut pending_domains: VecDeque<(String, Vec<ScraperCandidate>)> = VecDeque::new();
         let mut join_set: JoinSet<ScheduledScrapeDomainOutcome> = JoinSet::new();
         let (command_tx, command_rx) =
-            mpsc::channel::<QueuedProductListingPush>(self.config.effective_push_queue_capacity());
+            mpsc::channel::<QueuedRawCapture>(self.config.effective_push_queue_capacity());
 
         let budget_exhausted_listing_sources = Arc::new(Mutex::new(HashSet::new()));
         let schema_pending_listing_sources = Arc::new(Mutex::new(HashSet::new()));
@@ -565,9 +863,9 @@ impl CrawlerCronJob {
         let mut started = false;
         let mut no_more_candidates = false;
 
-        let push_collector = tokio::spawn(run_push_collector(
+        let raw_capture_collector = tokio::spawn(run_raw_capture_collector(
             command_rx,
-            Arc::clone(&self.product_push),
+            Arc::clone(&self.raw_capture),
             Arc::clone(&self.scraper_candidates),
             self.config.effective_push_batch_size(),
             self.config.effective_push_max_batch_age(),
@@ -646,7 +944,7 @@ impl CrawlerCronJob {
                     if !started && join_set.is_empty() && pending_domains.is_empty() {
                         debug!("No scraper candidates, skipping scheduler pass");
                         drop(command_tx);
-                        if let Err(e) = push_collector.await {
+                        if let Err(e) = raw_capture_collector.await {
                             error!(error = %e, "Scraper push collector task failed to join");
                         }
                         return;
@@ -697,7 +995,7 @@ impl CrawlerCronJob {
 
         drop(command_tx);
 
-        if let Err(e) = push_collector.await {
+        if let Err(e) = raw_capture_collector.await {
             error!(error = %e, "Scraper push collector task failed to join");
             failed += 1;
         }
@@ -740,16 +1038,15 @@ impl CrawlerCronJob {
 mod tests {
     use super::*;
     use crate::scraper::candidate_service::MockScraperCandidateService;
-    use crate::scraper::scraper_service::MockScraperService;
+    use crate::scraper::scraper_service::{MockScraperService, ScrapedProduct};
     use crate::service::cron::config::CrawlerCronConfig;
     use crate::service::cron::test_support::{noop_listing_source_registration, scraper_candidate};
-    use crate::service::product_push::MockProductListingPushService;
+    use crate::service::raw_capture::MockProductListingRawCaptureService;
     use crate::spider::advisory_lock::LocalLockManager;
     use crate::spider::candidate_service::MockSpiderCandidateService;
     use crate::spider::service::MockSpiderService;
     use listing_source_core::ListingSourceId;
-    use product_listing_core::source_listing_id::SourceListingId;
-    use product_listing_service::use_cases::commands::upsert_product_listing::UpsertProductListingCommand;
+
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -767,31 +1064,20 @@ mod tests {
         (spider_candidates, MockSpiderService::new())
     }
 
-    fn no_push_service() -> Box<MockProductListingPushService> {
-        let mut push_service = MockProductListingPushService::new();
-        push_service.expect_push().times(0);
-        Box::new(push_service)
+    fn no_raw_capture_service() -> Box<MockProductListingRawCaptureService> {
+        let mut raw_capture = MockProductListingRawCaptureService::new();
+        raw_capture.expect_capture().times(0);
+        Box::new(raw_capture)
     }
 
-    fn item(listing_source_id: ListingSourceId, product_id: &str) -> ProductListingPushItem {
-        ProductListingPushItem {
-            command: UpsertProductListingCommand {
-                listing_source_id: ListingSourceId::from(uuid::Uuid::from(listing_source_id)),
-                source_listing_id: SourceListingId::try_from(product_id)
-                    .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
-                title: None,
-                description: None,
-                price: application::patch_field::PatchField::Unchanged,
-                price_estimate_min: application::patch_field::PatchField::Unchanged,
-                price_estimate_max: application::patch_field::PatchField::Unchanged,
-                availability: application::patch_field::PatchField::Unchanged,
-                url: None,
-                images: application::patch_field::PatchField::Unchanged,
-                auction_start: application::patch_field::PatchField::Unchanged,
-                auction_end: application::patch_field::PatchField::Unchanged,
-            },
-            raw_attributes: Default::default(),
-        }
+    fn item(listing_source_id: ListingSourceId, product_id: &str) -> ProductListingRawCaptureItem {
+        let url = url::Url::parse(&format!("https://example.test/products/{product_id}"))
+            .unwrap_or_else(|error| panic!("test URL: {error}"));
+        let input = crawler_verified_removal_input(&url)
+            .unwrap_or_else(|error| panic!("test removal input: {error}"));
+        let provenance = crawler_provenance(None, None)
+            .unwrap_or_else(|error| panic!("test provenance: {error}"));
+        ProductListingRawCaptureItem::crawler(listing_source_id, &url, input, provenance)
     }
 
     fn meta(listing_source_id: ListingSourceId, url: &str, hash: &str) -> CandidateMeta {
@@ -799,16 +1085,17 @@ mod tests {
             listing_source_id,
             url: url::Url::parse(url).unwrap(),
             hash: hash.to_owned(),
-            snapshot: ProductListingSnapshot {
-                price: None,
-                price_estimate_min: None,
-                price_estimate_max: None,
-                url: url.to_owned(),
-                images_hash: String::new(),
-                auction_start: None,
-                auction_end: None,
-                availability: Some("AVAILABLE".to_owned()),
-            },
+            schema_fingerprint: "schema-fingerprint".to_owned(),
+            raw_input_sha256: vec![3; 32],
+            disposition: CrawlerDisposition::Active,
+            expected_last_captured_raw_input_sha256: None,
+        }
+    }
+
+    fn queued(item: ProductListingRawCaptureItem, meta: CandidateMeta) -> QueuedRawCapture {
+        QueuedRawCapture {
+            request: (item, meta).into(),
+            enqueued_at: tokio::time::Instant::now(),
         }
     }
 
@@ -817,8 +1104,10 @@ mod tests {
         let first_listing_source_id = ListingSourceId::new();
         let second_listing_source_id = ListingSourceId::new();
         let first_url = url::Url::parse("https://first.example/product").unwrap();
-        let mut push_service = MockProductListingPushService::new();
-        push_service.expect_push().once().returning(|products| {
+        let observed_raw_input_sha256 = vec![9; 32];
+        let observed_raw_input_sha256_for_mark = observed_raw_input_sha256.clone();
+        let mut push_service = MockProductListingRawCaptureService::new();
+        push_service.expect_capture().once().returning(|products| {
             assert_eq!(products.len(), 2);
             Box::pin(async { vec![true, false] })
         });
@@ -827,38 +1116,47 @@ mod tests {
         scraper_candidates
             .expect_mark_as_scraped()
             .once()
-            .withf(move |listing_source_id, url, hash, _| {
-                *listing_source_id == first_listing_source_id
-                    && url == &first_url
-                    && hash == "first"
-            })
-            .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
+            .withf(
+                move |listing_source_id,
+                      url,
+                      hash,
+                      _,
+                      _,
+                      _,
+                      expected_last_captured_raw_input_sha256| {
+                    *listing_source_id == first_listing_source_id
+                        && url == &first_url
+                        && hash == "first"
+                        && expected_last_captured_raw_input_sha256.as_deref()
+                            == Some(observed_raw_input_sha256_for_mark.as_slice())
+                },
+            )
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
-        let push_service: Arc<dyn ProductListingPushService> = Arc::new(push_service);
+        let push_service: Arc<dyn ProductListingRawCaptureService> = Arc::new(push_service);
         let scraper_candidates: Arc<dyn ScraperCandidateService> = Arc::new(scraper_candidates);
+        let mut first_meta = meta(
+            first_listing_source_id,
+            "https://first.example/product",
+            "first",
+        );
+        first_meta.expected_last_captured_raw_input_sha256 = Some(observed_raw_input_sha256);
 
         flush_batch(
             &push_service,
             &scraper_candidates,
             vec![
-                QueuedProductListingPush {
-                    item: item(first_listing_source_id, "same-product-id"),
-                    meta: meta(
-                        first_listing_source_id,
-                        "https://first.example/product",
-                        "first",
-                    ),
-                    enqueued_at: tokio::time::Instant::now(),
-                },
-                QueuedProductListingPush {
-                    item: item(second_listing_source_id, "same-product-id"),
-                    meta: meta(
+                queued(item(first_listing_source_id, "same-product-id"), first_meta),
+                queued(
+                    item(second_listing_source_id, "same-product-id"),
+                    meta(
                         second_listing_source_id,
                         "https://second.example/product",
                         "second",
                     ),
-                    enqueued_at: tokio::time::Instant::now(),
-                },
+                ),
             ],
             0,
         )
@@ -866,12 +1164,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_default_missing_product_push_results_to_failure() {
+    async fn should_default_missing_raw_capture_results_to_failure() {
         let first_listing_source_id = ListingSourceId::new();
         let second_listing_source_id = ListingSourceId::new();
         let first_url = url::Url::parse("https://first.example/product").unwrap();
-        let mut push_service = MockProductListingPushService::new();
-        push_service.expect_push().once().returning(|products| {
+        let mut push_service = MockProductListingRawCaptureService::new();
+        push_service.expect_capture().once().returning(|products| {
             assert_eq!(products.len(), 2);
             Box::pin(async { vec![true] })
         });
@@ -880,38 +1178,47 @@ mod tests {
         scraper_candidates
             .expect_mark_as_scraped()
             .once()
-            .withf(move |listing_source_id, url, hash, _| {
-                *listing_source_id == first_listing_source_id
-                    && url == &first_url
-                    && hash == "first"
-            })
-            .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
+            .withf(
+                move |listing_source_id,
+                      url,
+                      hash,
+                      _,
+                      _,
+                      _,
+                      expected_last_captured_raw_input_sha256| {
+                    *listing_source_id == first_listing_source_id
+                        && url == &first_url
+                        && hash == "first"
+                        && expected_last_captured_raw_input_sha256.is_none()
+                },
+            )
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
-        let push_service: Arc<dyn ProductListingPushService> = Arc::new(push_service);
+        let push_service: Arc<dyn ProductListingRawCaptureService> = Arc::new(push_service);
         let scraper_candidates: Arc<dyn ScraperCandidateService> = Arc::new(scraper_candidates);
 
         flush_batch(
             &push_service,
             &scraper_candidates,
             vec![
-                QueuedProductListingPush {
-                    item: item(first_listing_source_id, "first"),
-                    meta: meta(
+                queued(
+                    item(first_listing_source_id, "first"),
+                    meta(
                         first_listing_source_id,
                         "https://first.example/product",
                         "first",
                     ),
-                    enqueued_at: tokio::time::Instant::now(),
-                },
-                QueuedProductListingPush {
-                    item: item(second_listing_source_id, "second"),
-                    meta: meta(
+                ),
+                queued(
+                    item(second_listing_source_id, "second"),
+                    meta(
                         second_listing_source_id,
                         "https://second.example/product",
                         "second",
                     ),
-                    enqueued_at: tokio::time::Instant::now(),
-                },
+                ),
             ],
             0,
         )
@@ -919,11 +1226,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_apply_backpressure_when_product_push_queue_is_full() {
-        let (command_tx, mut command_rx) = mpsc::channel::<QueuedProductListingPush>(1);
+    async fn should_apply_backpressure_when_raw_capture_queue_is_full() {
+        let (command_tx, mut command_rx) = mpsc::channel::<QueuedRawCapture>(1);
         let listing_source_id = ListingSourceId::new();
 
-        enqueue_product_push(
+        enqueue_raw_capture(
             &command_tx,
             (
                 item(listing_source_id, "first"),
@@ -939,7 +1246,7 @@ mod tests {
 
         let second_tx = command_tx.clone();
         let second = tokio::spawn(async move {
-            enqueue_product_push(
+            enqueue_raw_capture(
                 &second_tx,
                 (
                     item(listing_source_id, "second"),
@@ -974,9 +1281,9 @@ mod tests {
         let push_calls = Arc::new(AtomicUsize::new(0));
         let push_calls_for_mock = Arc::clone(&push_calls);
 
-        let mut push_service = MockProductListingPushService::new();
+        let mut push_service = MockProductListingRawCaptureService::new();
         push_service
-            .expect_push()
+            .expect_capture()
             .once()
             .returning(move |products| {
                 push_calls_for_mock.fetch_add(1, Ordering::SeqCst);
@@ -988,10 +1295,12 @@ mod tests {
         scraper_candidates
             .expect_mark_as_scraped()
             .once()
-            .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let (tx, rx) = mpsc::channel(2);
-        let collector = tokio::spawn(run_push_collector(
+        let collector = tokio::spawn(run_raw_capture_collector(
             rx,
             Arc::new(push_service),
             Arc::new(scraper_candidates),
@@ -1000,7 +1309,7 @@ mod tests {
         ));
 
         let listing_source_id = ListingSourceId::new();
-        enqueue_product_push(
+        enqueue_raw_capture(
             &tx,
             (
                 item(listing_source_id, "one"),
@@ -1022,13 +1331,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_flush_final_partial_batch_when_product_push_channel_closes() {
+    async fn should_flush_final_partial_batch_when_raw_capture_channel_closes() {
         let push_calls = Arc::new(AtomicUsize::new(0));
         let push_calls_for_mock = Arc::clone(&push_calls);
 
-        let mut push_service = MockProductListingPushService::new();
+        let mut push_service = MockProductListingRawCaptureService::new();
         push_service
-            .expect_push()
+            .expect_capture()
             .once()
             .returning(move |products| {
                 assert_eq!(products.len(), 2);
@@ -1040,10 +1349,12 @@ mod tests {
         scraper_candidates
             .expect_mark_as_scraped()
             .times(2)
-            .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let (tx, rx) = mpsc::channel(2);
-        let collector = tokio::spawn(run_push_collector(
+        let collector = tokio::spawn(run_raw_capture_collector(
             rx,
             Arc::new(push_service),
             Arc::new(scraper_candidates),
@@ -1052,7 +1363,7 @@ mod tests {
         ));
 
         let listing_source_id = ListingSourceId::new();
-        enqueue_product_push(
+        enqueue_raw_capture(
             &tx,
             (
                 item(listing_source_id, "one"),
@@ -1061,7 +1372,7 @@ mod tests {
         )
         .await
         .expect("first enqueue must succeed");
-        enqueue_product_push(
+        enqueue_raw_capture(
             &tx,
             (
                 item(listing_source_id, "two"),
@@ -1116,7 +1427,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            no_push_service(),
+            no_raw_capture_service(),
         )
     }
 
@@ -1151,7 +1462,7 @@ mod tests {
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
-            .returning(|_, _, _, _| Box::pin(async { Ok(None) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(None) }));
 
         let job = scraper_job(
             CrawlerCronConfig::default(),
@@ -1177,30 +1488,37 @@ mod tests {
         scraper_candidates
             .expect_mark_fetch_failure()
             .once()
-            .withf(move |_, _, _, _, status_code, next_retry_at| {
-                let expected_cooldown = durable_retry_cooldown_for(NetworkErrorKind::Timeout);
-                let expected_from =
-                    before + time::Duration::seconds(expected_cooldown.as_secs() as i64);
-                let expected_until = time::OffsetDateTime::now_utc()
-                    + time::Duration::seconds(expected_cooldown.as_secs() as i64)
-                    + time::Duration::seconds(1);
-                status_code.is_none()
-                    && *next_retry_at >= expected_from
-                    && *next_retry_at <= expected_until
-            })
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .withf(
+                move |_, _, _, _, status_code, next_retry_at, expected_raw_input_sha256| {
+                    let expected_cooldown = durable_retry_cooldown_for(NetworkErrorKind::Timeout);
+                    let expected_from =
+                        before + time::Duration::seconds(expected_cooldown.as_secs() as i64);
+                    let expected_until = time::OffsetDateTime::now_utc()
+                        + time::Duration::seconds(expected_cooldown.as_secs() as i64)
+                        + time::Duration::seconds(1);
+                    status_code.is_none()
+                        && *next_retry_at >= expected_from
+                        && *next_retry_at <= expected_until
+                        && expected_raw_input_sha256.is_none()
+                },
+            )
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let mut scraper_service = MockScraperService::new();
-        scraper_service.expect_scrape().returning(|_, url, _, _| {
-            let url = url.clone();
-            Box::pin(async move {
-                Err(ScraperError::HttpError {
-                    url,
-                    kind: crate::network::policy::NetworkErrorKind::Timeout,
-                    details: "timeout".to_string(),
+        scraper_service
+            .expect_scrape()
+            .returning(|_, url, _, _, _, _| {
+                let url = url.clone();
+                Box::pin(async move {
+                    Err(ScraperError::HttpError {
+                        url,
+                        kind: crate::network::policy::NetworkErrorKind::Timeout,
+                        details: "timeout".to_string(),
+                    })
                 })
-            })
-        });
+            });
 
         let job = scraper_job(
             CrawlerCronConfig::default(),
@@ -1212,9 +1530,147 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_mark_removed_url_dormant_only_after_raw_capture() {
+        let url = url::Url::parse("https://example.com/product/removed").unwrap();
+        let candidate = scraper_candidate("ListingSource", url.clone());
+        let listing_source_id = candidate.listing_source_id;
+        let outcome = handle_verified_removal(&candidate);
+        let request = outcome.capture.expect("removal must be queued for capture");
+
+        let mut raw_capture = MockProductListingRawCaptureService::new();
+        raw_capture
+            .expect_capture()
+            .once()
+            .withf(move |observations| {
+                observations.len() == 1
+                    && observations[0].command.listing_source_id == listing_source_id
+                    && observations[0].command.source_record_key
+                        == "https://example.com/product/removed"
+                    && observations[0].command.input.operation()
+                        == product_listing_normalization::RawProductListingOperation::Delete
+            })
+            .returning(|_| Box::pin(async { vec![true] }));
+
+        let mut scraper_candidates = MockScraperCandidateService::new();
+        scraper_candidates
+            .expect_set_disposition()
+            .once()
+            .withf(
+                move |source_id, candidate_url, disposition, expected_raw_input_sha256| {
+                    *source_id == listing_source_id
+                        && candidate_url.as_str() == "https://example.com/product/removed"
+                        && *disposition == CrawlerDisposition::DormantRemoved
+                        && expected_raw_input_sha256.is_none()
+                },
+            )
+            .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
+
+        let raw_capture: Arc<dyn ProductListingRawCaptureService> = Arc::new(raw_capture);
+        let scraper_candidates: Arc<dyn ScraperCandidateService> = Arc::new(scraper_candidates);
+        flush_batch(
+            &raw_capture,
+            &scraper_candidates,
+            vec![QueuedRawCapture {
+                request,
+                enqueued_at: tokio::time::Instant::now(),
+            }],
+            0,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn should_queue_sold_observation_when_previous_raw_input_hash_matches() {
+        let url = url::Url::parse("https://example.com/product/sold").unwrap();
+        let mut candidate = scraper_candidate("ListingSource", url.clone());
+        candidate.last_captured_raw_input_sha256 = Some(vec![3; 32]);
+
+        let raw_input = crawler_verified_removal_input(&url)
+            .unwrap_or_else(|error| panic!("test raw input: {error}"));
+        let mut scraper_service = MockScraperService::new();
+        scraper_service.expect_scrape().once().return_once(move |_, _, _, _, _, expected_raw_input_sha256| {
+            assert_eq!(expected_raw_input_sha256, Some(&[3; 32][..]));
+            Box::pin(async move {
+                Ok(Some(ScrapedProduct {
+                    raw_input,
+                    availability: product_listing_normalization::ListingAvailabilityQuickCheck::Resolved(
+                        product_listing_core::listing_availability::ListingAvailability::SoldOut,
+                    ),
+                    hash: "sold-hash".to_owned(),
+                    schema_fingerprint: "sold-schema".to_owned(),
+                    raw_input_sha256: vec![3; 32],
+                }))
+            })
+        });
+
+        let mut scraper_candidates = MockScraperCandidateService::new();
+        scraper_candidates.expect_mark_as_scraped().never();
+        let ctx = scrape_candidate_context(scraper_candidates, scraper_service);
+
+        let outcome = scrape_candidate(candidate, &ctx).await;
+
+        let request = outcome.capture.expect("sold scrape must queue raw capture");
+        let RawCaptureSuccessAction::MarkScraped(meta) = request.on_success else {
+            panic!("sold scrape must queue a scrape completion");
+        };
+        assert_eq!(
+            meta.expected_last_captured_raw_input_sha256.as_deref(),
+            Some(&[3_u8; 32][..])
+        );
+        assert!(!outcome.errored);
+        assert!(!outcome.skipped);
+    }
+
+    #[tokio::test]
+    async fn should_keep_removed_url_active_when_raw_capture_fails() {
+        let url = url::Url::parse("https://example.com/product/removed").unwrap();
+        let mut candidate = scraper_candidate("ListingSource", url);
+        let expected_last_captured_raw_input_sha256 = vec![5; 32];
+        candidate.last_captured_raw_input_sha256 =
+            Some(expected_last_captured_raw_input_sha256.clone());
+        let outcome = handle_verified_removal(&candidate);
+        let request = outcome.capture.expect("removal must be queued for capture");
+
+        let mut raw_capture = MockProductListingRawCaptureService::new();
+        raw_capture
+            .expect_capture()
+            .once()
+            .returning(|_| Box::pin(async { vec![false] }));
+
+        let mut scraper_candidates = MockScraperCandidateService::new();
+        scraper_candidates
+            .expect_mark_scraper_failure()
+            .once()
+            .withf(move |_, _, kind, message, received_raw_input_sha256| {
+                kind == "RawCaptureFailed"
+                    && message == "verified removal raw capture did not commit"
+                    && *received_raw_input_sha256
+                        == Some(expected_last_captured_raw_input_sha256.as_slice())
+            })
+            .returning(|_, _, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
+        scraper_candidates.expect_set_disposition().never();
+
+        let raw_capture: Arc<dyn ProductListingRawCaptureService> = Arc::new(raw_capture);
+        let scraper_candidates: Arc<dyn ScraperCandidateService> = Arc::new(scraper_candidates);
+        flush_batch(
+            &raw_capture,
+            &scraper_candidates,
+            vec![QueuedRawCapture {
+                request,
+                enqueued_at: tokio::time::Instant::now(),
+            }],
+            0,
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn should_mark_same_domain_500_fetch_failure() {
         let url = url::Url::parse("https://same-domain.com/product/1").unwrap();
-        let candidate = scraper_candidate("ListingSource", url.clone());
+        let mut candidate = scraper_candidate("ListingSource", url.clone());
+        let expected_last_captured_raw_input_sha256 = vec![6; 32];
+        candidate.last_captured_raw_input_sha256 =
+            Some(expected_last_captured_raw_input_sha256.clone());
         let listing_source_id = candidate.listing_source_id;
 
         let mut scraper_candidates = MockScraperCandidateService::new();
@@ -1222,19 +1678,29 @@ mod tests {
             .expect_mark_fetch_failure()
             .once()
             .withf(
-                move |received_listing_source_id, received_url, _, _, status_code, _| {
+                move |received_listing_source_id,
+                      received_url,
+                      _,
+                      _,
+                      status_code,
+                      _,
+                      received_raw_input_sha256| {
                     *received_listing_source_id == listing_source_id
                         && received_url == &url
                         && *status_code == Some(500)
+                        && *received_raw_input_sha256
+                            == Some(expected_last_captured_raw_input_sha256.as_slice())
                 },
             )
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
             .once()
-            .returning(|_, url, _, _| {
+            .returning(|_, url, _, _, _, _| {
                 let url = url.clone();
                 Box::pin(async move {
                     Err(ScraperError::HttpError {
@@ -1263,19 +1729,28 @@ mod tests {
             .expect_mark_fetch_failure()
             .once()
             .withf(
-                move |received_listing_source_id, received_url, _, _, status_code, _| {
+                move |received_listing_source_id,
+                      received_url,
+                      _,
+                      _,
+                      status_code,
+                      _,
+                      expected_raw_input_sha256| {
                     *received_listing_source_id == listing_source_id
                         && received_url == &url
                         && *status_code == Some(429)
+                        && expected_raw_input_sha256.is_none()
                 },
             )
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
             .once()
-            .returning(|_, url, _, _| {
+            .returning(|_, url, _, _, _, _| {
                 let url = url.clone();
                 Box::pin(async move {
                     Err(ScraperError::HttpError {
@@ -1314,10 +1789,16 @@ mod tests {
         scraper_candidates
             .expect_mark_fetch_failure()
             .once()
-            .withf(move |_, received_url, _, _, status_code, _| {
-                received_url == &first_url && *status_code == Some(500)
-            })
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .withf(
+                move |_, received_url, _, _, status_code, _, expected_raw_input_sha256| {
+                    received_url == &first_url
+                        && *status_code == Some(500)
+                        && expected_raw_input_sha256.is_none()
+                },
+            )
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let scrape_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let scrape_count_for_mock = Arc::clone(&scrape_count);
@@ -1325,7 +1806,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .times(2)
-            .returning(move |_, url, _, _| {
+            .returning(move |_, url, _, _, _, _| {
                 let url = url.clone();
                 let attempt = scrape_count_for_mock.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move {
@@ -1376,10 +1857,16 @@ mod tests {
         scraper_candidates
             .expect_mark_fetch_failure()
             .once()
-            .withf(move |_, received_url, _, _, status_code, _| {
-                received_url == &first_url && *status_code == Some(429)
-            })
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .withf(
+                move |_, received_url, _, _, status_code, _, expected_raw_input_sha256| {
+                    received_url == &first_url
+                        && *status_code == Some(429)
+                        && expected_raw_input_sha256.is_none()
+                },
+            )
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let scrape_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let scrape_count_for_mock = Arc::clone(&scrape_count);
@@ -1387,7 +1874,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .times(2)
-            .returning(move |_, url, _, _| {
+            .returning(move |_, url, _, _, _, _| {
                 let url = url.clone();
                 let attempt = scrape_count_for_mock.fetch_add(1, Ordering::SeqCst);
                 Box::pin(async move {
@@ -1430,12 +1917,14 @@ mod tests {
         scraper_candidates
             .expect_mark_fetch_failure()
             .once()
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
-            .returning(|listing_source_id, url, _, _| {
+            .returning(|listing_source_id, url, _, _, _, _| {
                 let url = url.clone();
                 let listing_source_id = *listing_source_id;
                 Box::pin(async move {
@@ -1481,19 +1970,28 @@ mod tests {
             .expect_mark_fetch_failure()
             .once()
             .withf(
-                move |received_listing_source_id, received_url, kind, _, _, _| {
+                move |received_listing_source_id,
+                      received_url,
+                      kind,
+                      _,
+                      _,
+                      _,
+                      expected_raw_input_sha256| {
                     *received_listing_source_id == listing_source_id
                         && received_url == &first_url
                         && kind == "PendingSchemaReview"
+                        && expected_raw_input_sha256.is_none()
                 },
             )
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
             .once()
-            .returning(|_, url, _, _| {
+            .returning(|_, url, _, _, _, _| {
                 let url = url.clone();
                 Box::pin(async move {
                     Err(ScraperError::PendingSchemaReview {
@@ -1529,12 +2027,14 @@ mod tests {
         scraper_candidates
             .expect_mark_fetch_failure()
             .once()
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
 
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
-            .returning(|_, url, _, _| {
+            .returning(|_, url, _, _, _, _| {
                 let url = url.clone();
                 Box::pin(async move {
                     Err(ScraperError::FreshSchemaNormalizationFailed {
@@ -1571,21 +2071,30 @@ mod tests {
             .expect_mark_fetch_failure()
             .once()
             .withf(
-                move |_, received_url, kind, _, status_code, next_retry_at| {
+                move |_,
+                      received_url,
+                      kind,
+                      _,
+                      status_code,
+                      next_retry_at,
+                      expected_raw_input_sha256| {
                     *received_url == url
                         && kind == "SchemaClassificationRejected"
                         && status_code.is_none()
                         && *next_retry_at > before
+                        && expected_raw_input_sha256.is_none()
                 },
             )
-            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(()) }));
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
         scraper_candidates.expect_mark_scraper_failure().never();
 
         let mut scraper_service = MockScraperService::new();
         scraper_service
             .expect_scrape()
             .once()
-            .returning(|_, url, _, _| {
+            .returning(|_, url, _, _, _, _| {
                 let url = url.clone();
                 Box::pin(async move {
                     Err(ScraperError::SchemaClassificationRejected {
@@ -1626,7 +2135,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .times(2)
-            .returning(|_, _, _, _| Box::pin(async { Ok(None) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(None) }));
 
         let job = scraper_job(
             CrawlerCronConfig::default(),
@@ -1682,7 +2191,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .times(3)
-            .returning(move |_, url, _, _| {
+            .returning(move |_, url, _, _, _, _| {
                 let url = url.clone();
                 let release_slow = Arc::clone(&release_slow_for_mock);
                 let slow_running = Arc::clone(&slow_running_for_mock);
@@ -1746,7 +2255,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .once()
-            .returning(|_, _, _, _| {
+            .returning(|_, _, _, _, _, _| {
                 Box::pin(async {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     Ok(None)
@@ -1787,7 +2296,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .times(1)
-            .returning(|_, _, _, _| Box::pin(async { Ok(None) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(None) }));
 
         let lock_manager = Arc::new(LocalLockManager::new());
         let prelocked = url::Url::parse("https://domain-a.com/product/1").unwrap();
@@ -1802,7 +2311,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            no_push_service(),
+            no_raw_capture_service(),
         );
 
         job.run_scraper_once().await;
@@ -1834,7 +2343,7 @@ mod tests {
         scraper_service
             .expect_scrape()
             .times(3)
-            .returning(|_, _, _, _| Box::pin(async { Ok(None) }));
+            .returning(|_, _, _, _, _, _| Box::pin(async { Ok(None) }));
 
         let job = scraper_job(
             CrawlerCronConfig::default(),

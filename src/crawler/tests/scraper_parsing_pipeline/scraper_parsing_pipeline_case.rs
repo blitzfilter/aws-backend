@@ -9,8 +9,6 @@ use crate::expectation_types::{NormalizedExpectation, NormalizedExpectationJson,
 pub struct ScraperParsingPipelineFixture {
     pub schemas: Vec<ProductCssSelectorSchema>,
     pub schema_index: usize,
-    pub raw_state: String,
-    pub availability_record: Option<ListingAvailability>,
     pub raw: RawExpectation,
     pub normalized: NormalizedExpectation,
     pub html_path: String,
@@ -27,8 +25,6 @@ impl ScraperParsingPipelineFixture {
 #[derive(Debug, Deserialize)]
 struct FixtureJson {
     html: String,
-    raw_state: String,
-    availability_record: String,
     schema: Option<ProductCssSelectorSchema>,
     schemas_file: Option<String>,
     #[serde(default)]
@@ -43,8 +39,7 @@ struct FixtureJson {
 ///   1. Drop the HTML file in `tests/fixtures/html/<listing_source>[_variant].html`.
 ///   2. Add the ListingSource cached schemas to `tests/fixtures/schemas/<listing_source>.json`.
 ///   3. Append an element to `tests/fixtures/fixtures.json` with
-///      `schemas_file`, `schema_index`, `html`, `raw_state`, `availability_record`,
-///      `raw`, and `normalized` fields.
+///      `schemas_file`, `schema_index`, `html`, `raw`, and `normalized` fields.
 ///
 /// No Rust code changes are needed.
 pub fn load_all_fixtures() -> Vec<ScraperParsingPipelineFixture> {
@@ -86,23 +81,10 @@ fn fixture_from_json(f: FixtureJson) -> ScraperParsingPipelineFixture {
     ScraperParsingPipelineFixture {
         schemas,
         schema_index: f.schema_index,
-        raw_state: f.raw_state,
-        availability_record: parse_availability_record(&f.availability_record),
         raw: f.raw,
         normalized: normalized_from_json(f.normalized),
         html_path: f.html,
     }
-}
-
-fn parse_availability_record(s: &str) -> Option<ListingAvailability> {
-    if s == "NO_ASSERTION" {
-        return None;
-    }
-
-    Some(
-        ListingAvailability::from_code(s)
-            .unwrap_or_else(|| panic!("unsupported availability_record '{s}' in fixtures.json")),
-    )
 }
 
 fn normalized_from_json(data: NormalizedExpectationJson) -> NormalizedExpectation {

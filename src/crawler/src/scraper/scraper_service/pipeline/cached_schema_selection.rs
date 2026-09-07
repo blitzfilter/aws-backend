@@ -1,6 +1,6 @@
 use crate::scraper::css_selector::product_schema::{ProductCssSelectorSchema, RawExtractedProduct};
 use crate::scraper::normalization::error::{NormalizationError, NormalizationFailureScope};
-use crate::scraper::normalization::product::NormalizedProduct;
+
 use crate::scraper::normalization::product_normalization_service::{
     NormalizationFailure, NormalizationSuccess, prepare_product,
 };
@@ -12,6 +12,7 @@ use crate::scraper::scraper_service::extraction::schema_candidates::{
 use crate::scraper::scraper_service::image_validation::filter_valid_image_urls;
 use crate::scraper::scraper_service::service::ScraperServiceImpl;
 use listing_source_core::ListingSourceId;
+use money::Currency;
 use tracing::debug;
 use url::Url;
 
@@ -25,7 +26,7 @@ pub(crate) enum FreshSchemaGenerationReason {
     /// No cached schema could be applied to the current page.
     NoCachedSchemaApplied,
     /// One or more cached schemas applied, but none produced a valid
-    /// normalized product.
+    /// prepared candidate.
     NoCachedSchemaNormalized,
 }
 
@@ -38,8 +39,20 @@ impl FreshSchemaGenerationReason {
     }
 }
 
+pub(crate) struct PreparedSchemaSelection {
+    pub(crate) prepared:
+        crate::scraper::normalization::product_normalization_service::PreparedProduct,
+    /// Untouched extraction retained as source evidence.
+    pub(crate) raw: RawExtractedProduct,
+    /// Crawler-validated image URLs in canonical group order for raw capture.
+    pub(crate) validated_image_urls: Vec<String>,
+    pub(crate) default_currency: Option<Currency>,
+    pub(crate) schema: ProductCssSelectorSchema,
+    pub(crate) fresh_schema: bool,
+}
+
 pub(crate) enum ExistingSchemaSelection {
-    Normalized(Box<NormalizedProduct>),
+    Prepared(Box<PreparedSchemaSelection>),
     /// Cached selection cannot produce a valid product — generate a
     /// completely new schema for the current page. Never carries a cached
     /// schema as generation input.
@@ -58,7 +71,7 @@ impl ScraperServiceImpl {
     /// richest to least rich.
     ///
     /// The first candidate that normalizes successfully wins. When no cached
-    /// candidate succeeds — either because none applied or none normalized —
+    /// candidate succeeds — either because none applied or none prepared —
     /// returns [`ExistingSchemaSelection::GenerateNewSchema`] so the caller
     /// falls back to fresh schema generation. No cached schema is ever
     /// selected as generation input.
@@ -105,37 +118,40 @@ impl ScraperServiceImpl {
         // Image validation is candidate-local and does not call the LLM. Do
         // it before scoring so thumbnails and malformed URLs cannot inflate
         // richness.
-        for mut candidate in candidates {
-            candidate.raw.images =
-                match filter_valid_image_urls(candidate.raw.images, url, &*self.image_validator)
-                    .await
-                {
+        for candidate in candidates {
+            let raw = candidate.raw;
+            let mut validated_raw = raw.clone();
+            let images = std::mem::take(&mut validated_raw.images);
+            validated_raw.images =
+                match filter_valid_image_urls(images, url, &*self.image_validator).await {
                     Ok(images) => images,
                     Err(NormalizationError::NoValidImages { .. }) => Vec::new(),
                     Err(err) => return Err(ScraperError::NormalizationError(err)),
                 };
             match prepare_product(
-                candidate.raw.clone(),
+                validated_raw.clone(),
                 url.clone(),
                 candidate.schema.default_currency.map(Into::into),
             ) {
                 Ok(prepared) => {
-                    let score = score_prepared_product(&candidate.raw, &prepared);
+                    let score = score_prepared_product(&validated_raw, &prepared);
                     prepared_candidates.push(PreparedSchemaCandidate {
                         schema_index: candidate.schema_index,
                         schema: candidate.schema,
-                        raw: candidate.raw,
+                        raw,
+                        validated_raw,
                         prepared,
                         score,
                     });
                 }
-                Err(err) => {
+                Err(err) if err.failure_scope() == NormalizationFailureScope::CandidateData => {
                     debug!(
                         candidate_schema_index = candidate.schema_index,
                         candidate_rejection_reason = err.failure_reason(),
                         "Cached candidate rejected during deterministic preparation"
                     );
                 }
+                Err(err) => return Err(ScraperError::NormalizationError(err)),
             }
         }
         rank_prepared_candidates(&mut prepared_candidates);
@@ -163,7 +179,13 @@ impl ScraperServiceImpl {
         for candidate in prepared_candidates {
             let raw = candidate.raw;
             match self
-                .normalize_applied_schema(listing_source_id, url, candidate.schema, raw)
+                .normalize_applied_schema(
+                    listing_source_id,
+                    url,
+                    candidate.schema,
+                    raw,
+                    candidate.validated_raw,
+                )
                 .await
             {
                 Ok(product) => {
@@ -173,7 +195,7 @@ impl ScraperServiceImpl {
                         candidate_normalization_result = "success",
                         "Cached schema selected"
                     );
-                    return Ok(ExistingSchemaSelection::Normalized(Box::new(product)));
+                    return Ok(ExistingSchemaSelection::Prepared(Box::new(product)));
                 }
                 Err(ScraperError::NormalizationError(err))
                     if err.failure_scope() == NormalizationFailureScope::CandidateData =>
@@ -217,23 +239,29 @@ impl ScraperServiceImpl {
         url: &Url,
         selected_schema: &ProductCssSelectorSchema,
         raw: RawExtractedProduct,
-    ) -> Result<NormalizedProduct, ScraperError> {
+        validated_raw: RawExtractedProduct,
+    ) -> Result<PreparedSchemaSelection, ScraperError> {
+        let default_currency = selected_schema.default_currency.map(Currency::from);
+        let validated_image_urls = validated_raw.images.clone();
         match self
             .normalization_service
-            .normalize(
-                raw,
-                url.clone(),
-                selected_schema.default_currency.map(money::Currency::from),
-            )
+            .normalize(validated_raw, url.clone(), default_currency)
             .await
         {
             Ok(NormalizationSuccess {
-                product,
+                prepared,
                 llm_calls_used,
             }) => {
                 self.consume_llm_budget_n_or_err(listing_source_id, url, llm_calls_used)
                     .await?;
-                Ok(product)
+                Ok(PreparedSchemaSelection {
+                    prepared,
+                    raw,
+                    validated_image_urls,
+                    default_currency,
+                    schema: selected_schema.clone(),
+                    fresh_schema: false,
+                })
             }
             Err(NormalizationFailure {
                 error,

@@ -1,34 +1,18 @@
-use async_trait::async_trait;
 use crawler::scraper::css_selector::product_schema::{
     ProductCssSelectorSchema, RawExtractedProduct,
 };
-use crawler::scraper::normalization::listing_availability_mapping::ListingAvailabilityMapping;
-use crawler::scraper::normalization::listing_availability_mapping_service::{
-    ListingAvailabilityMappingService, ListingAvailabilityMappingServiceError,
-};
+
 use crawler::scraper::normalization::product_normalization_service::{
     ProductListingNormalizationService, ProductListingNormalizationServiceImpl,
 };
 use crawler::scraper::scraper_service::rank_applicable_schema_indices;
 use money::Currency;
-use product_listing_core::listing_availability::ListingAvailability;
+
 use scraper::Html;
 
 use url::Url;
 
 use crate::expectation_types::{NormalizedExpectation, RawExpectation};
-
-struct FixedListingAvailabilityMappingService(ListingAvailabilityMapping);
-
-#[async_trait]
-impl ListingAvailabilityMappingService for FixedListingAvailabilityMappingService {
-    async fn get_listing_availability_mapping(
-        &self,
-        _raw: &str,
-    ) -> Result<(ListingAvailabilityMapping, bool), ListingAvailabilityMappingServiceError> {
-        Ok((self.0, false))
-    }
-}
 
 pub fn assert_extraction(
     schemas: &[ProductCssSelectorSchema],
@@ -80,8 +64,6 @@ pub fn assert_extraction(
 pub async fn assert_normalized(
     schema: &ProductCssSelectorSchema,
     html_src: &str,
-    _raw_state: &str,
-    availability_record: Option<ListingAvailability>,
     url: &str,
     expected: &NormalizedExpectation,
 ) {
@@ -90,13 +72,7 @@ pub async fn assert_normalized(
         .apply(&html)
         .unwrap_or_else(|e| panic!("schema apply failed: {e}"));
 
-    let mapping = match availability_record {
-        Some(availability) => ListingAvailabilityMapping::Availability(availability),
-        None => ListingAvailabilityMapping::NoAssertion,
-    };
-    let norm_svc = ProductListingNormalizationServiceImpl::new(Box::new(
-        FixedListingAvailabilityMappingService(mapping),
-    ));
+    let norm_svc = ProductListingNormalizationServiceImpl::new();
 
     let product_url = Url::parse(url).expect("test URL must be valid");
     let default_currency = schema.default_currency.map(Currency::from);
@@ -104,7 +80,7 @@ pub async fn assert_normalized(
         .normalize(raw, product_url, default_currency)
         .await
         .unwrap_or_else(|e| panic!("normalization failed: {e}"))
-        .product;
+        .prepared;
 
     assert_eq!(
         result.source_listing_id.to_string(),

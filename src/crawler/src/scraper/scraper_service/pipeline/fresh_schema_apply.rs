@@ -28,7 +28,7 @@ impl ScraperServiceImpl {
     /// On success returns the generated schema, its raw extraction, and the
     /// LLM evaluation so the caller can persist them together.
     #[tracing::instrument(
-        skip(self, html),
+        skip(self, html, expected_last_captured_raw_input_sha256),
         fields(
             listing_source_id = %listing_source_id,
             url = %url,
@@ -39,6 +39,7 @@ impl ScraperServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         html: &str,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<
         (
             ProductCssSelectorSchema,
@@ -83,8 +84,6 @@ impl ScraperServiceImpl {
                 }
                 self.save_removed_page_schema(listing_source_id, schema)
                     .await?;
-                self.mark_product_removed_best_effort(listing_source_id, url)
-                    .await;
                 return Err(ScraperError::ProductListingRemoved {
                     url: url.clone(),
                     details: "fresh schema generation classified page as removed".to_string(),
@@ -97,8 +96,12 @@ impl ScraperServiceImpl {
                         details: "not-product classification requires HIGH confidence".to_string(),
                     });
                 }
-                self.mark_url_other_best_effort(listing_source_id, url)
-                    .await;
+                self.mark_url_other_best_effort(
+                    listing_source_id,
+                    url,
+                    expected_last_captured_raw_input_sha256,
+                )
+                .await;
                 return Err(ScraperError::NotProductPage {
                     url: url.clone(),
                     details: reason,

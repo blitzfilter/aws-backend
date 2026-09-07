@@ -1,4 +1,3 @@
-use super::error::NormalizationError;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339, macros::format_description};
 
 // ---------------------------------------------------------------------------
@@ -161,7 +160,7 @@ fn try_rfc3339(s: &str) -> Option<OffsetDateTime> {
 /// 16. US datetime without seconds             (`06/01/2024 10:30`)        → UTC
 /// 17. US date-only                            (`06/01/2024`)              → midnight UTC
 /// 18. Unix epoch                              (`1717228800`)
-pub(super) fn parse_datetime(raw: &str) -> Option<OffsetDateTime> {
+pub fn parse_datetime(raw: &str) -> Option<OffsetDateTime> {
     let s = raw.trim();
 
     // ------------------------------------------------------------------
@@ -516,25 +515,22 @@ fn parse_iso_basic(s: &str) -> Option<OffsetDateTime> {
     try_rfc3339(&extended)
 }
 
-/// Parses an optional raw datetime string into an optional [`OffsetDateTime`].
-///
-/// - `None` input → `Ok(None)`
-/// - blank string → `Ok(None)`
-/// - unparseable string → `Err(make_err(raw))`
-pub(super) fn normalize_datetime_field(
-    raw: Option<String>,
-    make_err: impl Fn(String) -> NormalizationError,
-) -> Result<Option<OffsetDateTime>, NormalizationError> {
-    let Some(s) = raw else { return Ok(None) };
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("date-time input could not be parsed")]
+pub struct DateTimeNormalizationError;
 
-    let trimmed = s.trim().to_owned();
+/// Parses optional generic date-time input. Blank input means no assertion.
+pub fn normalize_date_time(
+    raw: Option<&str>,
+) -> Result<Option<OffsetDateTime>, DateTimeNormalizationError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
-
-    parse_datetime(&trimmed)
+    parse_datetime(trimmed)
         .map(Some)
-        .ok_or_else(|| make_err(trimmed))
+        .ok_or(DateTimeNormalizationError)
 }
 
 // ---------------------------------------------------------------------------
@@ -548,10 +544,10 @@ mod tests {
     use time::macros::datetime;
 
     use super::{
-        fix_compact_offset, fix_hyphen_time_separators, normalize_datetime_field, parse_datetime,
-        parse_month_abbrev, strip_fractional_seconds, tz_abbrev_to_offset_secs,
+        DateTimeNormalizationError, fix_compact_offset, fix_hyphen_time_separators,
+        normalize_date_time, parse_datetime, parse_month_abbrev, strip_fractional_seconds,
+        tz_abbrev_to_offset_secs,
     };
-    use crate::scraper::normalization::error::NormalizationError;
 
     // -----------------------------------------------------------------------
     // Unit tests for internal helpers
@@ -969,61 +965,20 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // normalize_datetime_field
+    // normalize_date_time
     // -----------------------------------------------------------------------
 
     #[test]
-    fn should_return_none_when_raw_is_none_for_normalize_datetime_field() {
-        let result = normalize_datetime_field(None, |r| {
-            NormalizationError::AuctionStartParseError { raw: r }
-        });
-        assert_eq!(result.unwrap(), None);
+    fn should_return_none_when_optional_datetime_is_absent_or_blank() {
+        assert_eq!(normalize_date_time(None), Ok(None));
+        assert_eq!(normalize_date_time(Some("  ")), Ok(None));
     }
 
     #[test]
-    fn should_return_none_when_raw_is_blank_for_normalize_datetime_field() {
-        let result = normalize_datetime_field(Some("  ".into()), |r| {
-            NormalizationError::AuctionStartParseError { raw: r }
-        });
-        assert_eq!(result.unwrap(), None);
-    }
-
-    #[test]
-    fn should_return_parsed_datetime_when_valid_string_for_normalize_datetime_field() {
-        let result = normalize_datetime_field(Some("2024-06-01T10:00:00Z".into()), |r| {
-            NormalizationError::AuctionStartParseError { raw: r }
-        });
-        assert_eq!(result.unwrap(), Some(datetime!(2024-06-01 10:00:00 UTC)));
-    }
-
-    #[test]
-    fn should_return_parsed_datetime_when_hyphenated_time_parts_for_normalize_datetime_field() {
-        let result = normalize_datetime_field(Some("2026-03-03T07-30-00Z".into()), |r| {
-            NormalizationError::AuctionStartParseError { raw: r }
-        });
-        assert_eq!(result.unwrap(), Some(datetime!(2026-03-03 07:30:00 UTC)));
-    }
-
-    #[test]
-    fn should_return_error_when_unparseable_string_for_normalize_datetime_field() {
-        let result = normalize_datetime_field(Some("not a date".into()), |r| {
-            NormalizationError::AuctionStartParseError { raw: r }
-        });
-        let err = result.unwrap_err();
+    fn should_return_typed_error_when_optional_datetime_is_invalid() {
         assert!(matches!(
-            err,
-            NormalizationError::AuctionStartParseError { raw } if raw == "not a date"
-        ));
-    }
-
-    #[test]
-    fn should_use_provided_error_constructor_when_field_is_auction_end() {
-        let result = normalize_datetime_field(Some("bad".into()), |r| {
-            NormalizationError::AuctionEndParseError { raw: r }
-        });
-        assert!(matches!(
-            result.unwrap_err(),
-            NormalizationError::AuctionEndParseError { .. }
+            normalize_date_time(Some("not a date")),
+            Err(DateTimeNormalizationError)
         ));
     }
 }

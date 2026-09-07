@@ -6,42 +6,12 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
-use indexmap::IndexSet;
 use listing_source_core::ListingSourceId;
-use product_listing_service::use_cases::{
-    IngestWoocommerceProductListingCommand, WoocommerceProductEventKind,
-};
-use serde::Deserialize;
-use url::Url;
+use woocommerce_service::{WoocommerceProductEventKind, WoocommerceWebhookIntakeCommand};
 
 const TOPIC_HEADER: &str = "x-wc-webhook-topic";
 const SIGNATURE_HEADER: &str = "x-wc-webhook-signature";
-
-#[derive(Debug, Deserialize)]
-struct WoocommerceProductDto {
-    id: u64,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    permalink: Option<Url>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    short_description: Option<String>,
-    #[serde(default)]
-    price: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    stock_status: Option<String>,
-    #[serde(default)]
-    images: Vec<WoocommerceImageDto>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WoocommerceImageDto {
-    src: Url,
-}
+const DELIVERY_ID_HEADER: &str = "x-wc-webhook-delivery-id";
 
 pub async fn post_woocommerce(
     State(state): State<WebhooksState>,
@@ -66,50 +36,24 @@ pub async fn post_woocommerce(
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
-    let payload = match serde_json::from_slice::<WoocommerceProductDto>(&body) {
+    let delivery_id = match delivery_id(&headers) {
         Ok(value) => value,
-        Err(_) => {
-            return ApiError::bad_request(BAD_BODY_VALUE)
-                .with_detail("Body must contain a valid WooCommerce product JSON value.")
-                .into_response();
-        }
-    };
-    let source_listing_id = match product_listing_core::source_listing_id::SourceListingId::try_from(
-        payload.id.to_string(),
-    ) {
-        Ok(value) => value,
-        Err(error) => {
-            return ApiError::bad_request(BAD_BODY_VALUE)
-                .with_detail(error.to_string())
-                .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
     let (context, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
     match state
-        .ingest
+        .intake
         .execute(
             &context,
-            IngestWoocommerceProductListingCommand {
+            WoocommerceWebhookIntakeCommand {
                 listing_source_id,
                 kind,
                 signature,
                 raw_body: body.to_vec(),
-                source_listing_id,
-                title: payload.name,
-                permalink: payload.permalink,
-                description_html: payload.description,
-                short_description_html: payload.short_description,
-                price: payload.price,
-                status: payload.status,
-                stock_status: payload.stock_status,
-                image_urls: payload
-                    .images
-                    .into_iter()
-                    .map(|image| image.src)
-                    .collect::<IndexSet<_>>(),
+                delivery_id,
             },
         )
         .await
@@ -144,6 +88,19 @@ fn event_kind(headers: &HeaderMap) -> Result<WoocommerceProductEventKind, ApiErr
             .with_header_field(TOPIC_HEADER)
             .with_detail("WooCommerce topic header is required.")),
     }
+}
+
+fn delivery_id(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    headers
+        .get(DELIVERY_ID_HEADER)
+        .map(|value| {
+            value.to_str().map(str::to_owned).map_err(|_| {
+                ApiError::bad_request(BAD_HEADER_VALUE)
+                    .with_header_field(DELIVERY_ID_HEADER)
+                    .with_detail("WooCommerce delivery ID must be valid header text.")
+            })
+        })
+        .transpose()
 }
 
 fn signature(headers: &HeaderMap) -> Result<Vec<u8>, ApiError> {
@@ -207,6 +164,29 @@ mod tests {
         headers.insert(TOPIC_HEADER, HeaderValue::from_static("order.created"));
         let unsupported = event_kind(&headers);
         assert!(matches!(unsupported, Err(error) if error.code() == BAD_HEADER_VALUE));
+    }
+
+    #[test]
+    fn should_read_optional_woocommerce_delivery_id() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(matches!(delivery_id(&HeaderMap::new()), Ok(None)));
+
+        let mut valid_headers = HeaderMap::new();
+        valid_headers.insert(
+            DELIVERY_ID_HEADER,
+            HeaderValue::from_static("delivery-identifier"),
+        );
+        assert!(matches!(
+            delivery_id(&valid_headers),
+            Ok(Some(value)) if value == "delivery-identifier"
+        ));
+
+        let mut invalid_headers = HeaderMap::new();
+        invalid_headers.insert(DELIVERY_ID_HEADER, HeaderValue::from_bytes(&[0xff])?);
+        assert!(matches!(
+            delivery_id(&invalid_headers),
+            Err(error) if error.code() == BAD_HEADER_VALUE
+        ));
+        Ok(())
     }
 
     #[test]

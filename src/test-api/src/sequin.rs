@@ -36,6 +36,7 @@ const WORKER_WEBHOOK_TABLES: &[&str] = &[
     "public.search_filter_matches",
 ];
 const NOTIFICATION_DELIVERY_TABLE: &str = "public.notification_deliveries";
+const PRODUCT_LISTING_RAW_REVISIONS_TABLE: &str = "public.product_listing_raw_revisions";
 
 static WORKER_WEBHOOK_SEQUIN: OnceCell<RunningSequin> = OnceCell::const_new();
 static WORKER_WEBHOOK_PORT: OnceLock<u16> = OnceLock::new();
@@ -249,6 +250,7 @@ fn sequin_config_yaml(webhook_url: &str, suffix: &str) -> String {
         .iter()
         .copied()
         .chain(std::iter::once(NOTIFICATION_DELIVERY_TABLE))
+        .chain(std::iter::once(PRODUCT_LISTING_RAW_REVISIONS_TABLE))
         .collect::<Vec<_>>()
         .join(", ");
     let include_tables = WORKER_WEBHOOK_TABLES
@@ -272,8 +274,21 @@ fn sequin_config_yaml(webhook_url: &str, suffix: &str) -> String {
             .replace("__SUFFIX__", suffix)
             .replace("__WEBHOOK_URL__", webhook_url);
     config.push_str(&format!(
-        "  {}",
-        notification_delivery_sink_yaml.replace('\n', "\n  ")
+        "  {}\n",
+        notification_delivery_sink_yaml
+            .trim_end()
+            .replace('\n', "\n  ")
+    ));
+
+    let product_listing_normalization_sink_yaml =
+        include_str!("sequin/product-listing-normalization-webhook-sink.yaml")
+            .replace("__SUFFIX__", suffix)
+            .replace("__WEBHOOK_URL__", webhook_url);
+    config.push_str(&format!(
+        "  {}\n",
+        product_listing_normalization_sink_yaml
+            .trim_end()
+            .replace('\n', "\n  ")
     ));
 
     config

@@ -74,12 +74,16 @@ uuid = { workspace = true, features = ["v4"] }
 watchlist-core = { workspace = true }
 watchlist-postgres = { workspace = true }
 watchlist-service = { workspace = true }
+woocommerce-service = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
 mockall = { workspace = true }
 openssl = { workspace = true, features = ["vendored"] }
+product-listing-normalization = { workspace = true }
+product-service = { workspace = true }
 rstest = { workspace = true }
+sha2 = { workspace = true }
 serial_test = { workspace = true }
 sqlx = { workspace = true }
 test-api = { workspace = true, features = ["aura-historia-api", "opensearch", "postgres"] }

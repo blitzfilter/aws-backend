@@ -46,10 +46,10 @@ use party_service::use_cases::commands::update_party::UpdatePartyError;
 use party_service::use_cases::queries::get_party::GetPartyError;
 use party_service::use_cases::queries::search_parties::SearchPartiesError;
 use product_listing_service::use_cases::{
+    AuthorizeProductListingRawCaptureError, CaptureProductListingRawObservationError,
     CreateProductListingError, GetProductListingError, GetProductListingHistoryError,
-    GetSimilarProductListingsError, IngestWoocommerceProductListingError,
-    SearchProductListingsError, UpdateProductListingError, UpsertProductListingError,
-    WithdrawProductListingError,
+    GetSimilarProductListingsError, SearchProductListingsError, UpdateProductListingError,
+    UpsertProductListingError, WithdrawProductListingError,
 };
 use search_filter_service::use_cases::{
     CreateSearchFilterError, DeleteOwnedSearchFilterError, GetOwnedSearchFilterError,
@@ -57,6 +57,7 @@ use search_filter_service::use_cases::{
     UpdateSearchFilterMatchFeedbackError,
 };
 use serde::Serialize;
+use woocommerce_service::WoocommerceWebhookIntakeError;
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -131,6 +132,12 @@ pub(crate) const BAD_QUERY_PARAMETER_VALUE: ApiErrorCode =
     ApiErrorCode("BAD_QUERY_PARAMETER_VALUE");
 pub(crate) const BAD_SORT_VALUE: ApiErrorCode = ApiErrorCode("BAD_SORT_VALUE");
 pub(crate) const CONFLICT: ApiErrorCode = ApiErrorCode("CONFLICT");
+pub(crate) const WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT: ApiErrorCode =
+    ApiErrorCode("WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT");
+pub(crate) const WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT: ApiErrorCode =
+    ApiErrorCode("WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT");
+pub(crate) const WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS: ApiErrorCode =
+    ApiErrorCode("WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS");
 pub(crate) const FORBIDDEN: ApiErrorCode = ApiErrorCode("FORBIDDEN");
 pub(crate) const INVALID_UUID: ApiErrorCode = ApiErrorCode("INVALID_UUID");
 pub(crate) const LISTING_SOURCE_INTERNAL_ERROR: ApiErrorCode =
@@ -1052,70 +1059,138 @@ impl From<WithdrawProductListingError> for ApiError {
     }
 }
 
-impl From<IngestWoocommerceProductListingError> for ApiError {
-    fn from(error: IngestWoocommerceProductListingError) -> Self {
+impl From<AuthorizeProductListingRawCaptureError> for ApiError {
+    fn from(error: AuthorizeProductListingRawCaptureError) -> Self {
         match error {
-            IngestWoocommerceProductListingError::MissingTitle
-            | IngestWoocommerceProductListingError::MissingUrl
-            | IngestWoocommerceProductListingError::InvalidPrice => {
-                ApiError::bad_request(BAD_BODY_VALUE)
-                    .with_detail("WooCommerce product payload is invalid.")
-            }
-            IngestWoocommerceProductListingError::MissingListingSourceCurrency
-            | IngestWoocommerceProductListingError::MissingListingSourceLanguage => {
-                ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
-                    .with_detail("WooCommerce listing source configuration is incomplete.")
-            }
-            IngestWoocommerceProductListingError::AuthenticatedActorRequired => {
+            AuthorizeProductListingRawCaptureError::AuthenticatedActorRequired => {
                 ApiError::unauthorized(INVALID_CREDENTIALS)
                     .with_header_field("Authorization")
                     .with_detail("Bearer token is required.")
             }
-            IngestWoocommerceProductListingError::Forbidden
-            | IngestWoocommerceProductListingError::ActorMayNotIngestForListingSource => {
+            AuthorizeProductListingRawCaptureError::Forbidden => {
                 ApiError::forbidden(FORBIDDEN)
                     .with_detail("Actor is not a partner of this listing source.")
             }
-            IngestWoocommerceProductListingError::ListingSourceNotFound => {
+            AuthorizeProductListingRawCaptureError::ListingSourceNotFound => {
                 ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
                     .with_detail("Listing source was not found.")
             }
-            IngestWoocommerceProductListingError::WebhookSecretNotConfigured => {
+            AuthorizeProductListingRawCaptureError::PartnerAuthorizationTemporarilyUnavailable {
+                ..
+            }
+            | AuthorizeProductListingRawCaptureError::BeginTransactionFailed { .. }
+            | AuthorizeProductListingRawCaptureError::CommitTransactionFailed { .. } => {
+                ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("WooCommerce webhook authorization is temporarily unavailable.")
+            }
+            AuthorizeProductListingRawCaptureError::PartnerAuthorizationInternal { .. } => {
+                ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
+                    .with_detail("WooCommerce webhook authorization failed internally.")
+            }
+        }
+    }
+}
+
+impl From<WoocommerceWebhookIntakeError> for ApiError {
+    fn from(error: WoocommerceWebhookIntakeError) -> Self {
+        match error {
+            WoocommerceWebhookIntakeError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            WoocommerceWebhookIntakeError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            WoocommerceWebhookIntakeError::MalformedPayload(_)
+            | WoocommerceWebhookIntakeError::InvalidSourcePayload(_)
+            | WoocommerceWebhookIntakeError::InvalidSourceTimestamp
+            | WoocommerceWebhookIntakeError::MissingTitle
+            | WoocommerceWebhookIntakeError::MissingUrl => ApiError::bad_request(BAD_BODY_VALUE)
+                .with_detail("WooCommerce product payload is invalid."),
+            WoocommerceWebhookIntakeError::InvalidProviderReceiptDeliveryId(_) => {
+                ApiError::bad_request(BAD_HEADER_VALUE)
+                    .with_header_field("x-wc-webhook-delivery-id")
+                    .with_detail("WooCommerce delivery ID is invalid.")
+            }
+            WoocommerceWebhookIntakeError::InvalidProviderReceiptScope(_) => {
+                ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
+                    .with_detail("WooCommerce raw product capture failed internally.")
+            }
+            WoocommerceWebhookIntakeError::MissingListingSourceCurrency
+            | WoocommerceWebhookIntakeError::MissingListingSourceLanguage => {
+                ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
+                    .with_detail("WooCommerce listing source configuration is incomplete.")
+            }
+            WoocommerceWebhookIntakeError::ListingSourceNotFound => {
+                ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                    .with_detail("Listing source was not found.")
+            }
+            WoocommerceWebhookIntakeError::WebhookSecretNotConfigured => {
                 ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
                     .with_detail("WooCommerce webhook secret is not configured.")
             }
-            IngestWoocommerceProductListingError::InvalidSignature => {
+            WoocommerceWebhookIntakeError::InvalidSignature => {
                 ApiError::unauthorized(BAD_HEADER_VALUE)
                     .with_header_field("x-wc-webhook-signature")
                     .with_detail("WooCommerce signature is invalid.")
             }
-            IngestWoocommerceProductListingError::PartnerAuthorizationTemporarilyUnavailable {
-                ..
-            }
-            | IngestWoocommerceProductListingError::ListingSourceTemporarilyUnavailable {
-                ..
-            } => ApiError::service_unavailable(LISTING_SOURCE_TEMPORARILY_UNAVAILABLE)
-                .with_detail("WooCommerce webhook validation is temporarily unavailable."),
-            IngestWoocommerceProductListingError::PartnerAuthorizationInternal { .. }
-            | IngestWoocommerceProductListingError::InvalidListingSourceReadModel { .. } => {
-                ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
-                    .with_detail("WooCommerce webhook validation failed internally.")
-            }
-            IngestWoocommerceProductListingError::InvalidProductListing { .. } => {
-                ApiError::bad_request(BAD_BODY_VALUE)
-                    .with_detail("WooCommerce product payload is invalid.")
-            }
-            IngestWoocommerceProductListingError::ListingWithdrawn => {
-                ApiError::conflict(CONFLICT).with_detail("ProductListing has been withdrawn.")
-            }
-            IngestWoocommerceProductListingError::ProductListingTitleSlugGenerationExhausted
-            | IngestWoocommerceProductListingError::ProductListingPersistenceFailed
-            | IngestWoocommerceProductListingError::ProductListingEventAppenderFailed { .. }
-            | IngestWoocommerceProductListingError::BeginTransactionFailed
-            | IngestWoocommerceProductListingError::CommitTransactionFailed => {
-                ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
-                    .with_detail("WooCommerce product ingestion is temporarily unavailable.")
-            }
+            WoocommerceWebhookIntakeError::ListingSourceRead(error) => match error {
+                listing_source_service::ports::ListingSourceReadError::TemporarilyUnavailable { .. } => {
+                    ApiError::service_unavailable(LISTING_SOURCE_TEMPORARILY_UNAVAILABLE)
+                        .with_detail("WooCommerce webhook validation is temporarily unavailable.")
+                }
+                listing_source_service::ports::ListingSourceReadError::InvalidReadModel { .. } => {
+                    ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
+                        .with_detail("WooCommerce webhook validation failed internally.")
+                }
+            },
+            WoocommerceWebhookIntakeError::Authorize(error) => error.into(),
+            WoocommerceWebhookIntakeError::Capture(error) => match error {
+                CaptureProductListingRawObservationError::AuthenticatedActorRequired => {
+                    ApiError::unauthorized(INVALID_CREDENTIALS)
+                        .with_header_field("Authorization")
+                        .with_detail("Bearer token is required.")
+                }
+                CaptureProductListingRawObservationError::Forbidden => {
+                    ApiError::forbidden(FORBIDDEN)
+                        .with_detail("Actor is not a partner of this listing source.")
+                }
+                CaptureProductListingRawObservationError::ListingSourceNotFound => {
+                    ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                        .with_detail("Listing source was not found.")
+                }
+                CaptureProductListingRawObservationError::InvalidInput { .. }
+                | CaptureProductListingRawObservationError::SourceRecordKeyTooLong { .. }
+                | CaptureProductListingRawObservationError::SourceRecordKeyEmbeddedNul => {
+                    ApiError::bad_request(BAD_BODY_VALUE)
+                        .with_detail("WooCommerce product payload is invalid.")
+                }
+                CaptureProductListingRawObservationError::ProviderReceiptDigestConflict => {
+                    ApiError::conflict(WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT)
+                        .with_detail("WooCommerce delivery receipt conflicts with prior evidence.")
+                }
+                CaptureProductListingRawObservationError::ProviderSourceOrderConflict => {
+                    ApiError::conflict(WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT)
+                        .with_detail("WooCommerce source order conflicts with prior evidence.")
+                }
+                CaptureProductListingRawObservationError::ProviderSourceOrderAmbiguous => {
+                    ApiError::conflict(WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS)
+                        .with_detail("WooCommerce source order cannot safely restore prior evidence.")
+                }
+                CaptureProductListingRawObservationError::PartnerAuthorizationTemporarilyUnavailable { .. }
+                | CaptureProductListingRawObservationError::BeginTransactionFailed
+                | CaptureProductListingRawObservationError::CaptureFailed { .. }
+                | CaptureProductListingRawObservationError::CommitTransactionFailed => {
+                    ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
+                        .with_detail("WooCommerce raw product capture is temporarily unavailable.")
+                }
+                CaptureProductListingRawObservationError::PartnerAuthorizationInternal { .. }
+                | CaptureProductListingRawObservationError::SourceRecordKeyHashCollision => {
+                    ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
+                        .with_detail("WooCommerce raw product capture failed internally.")
+                }
+            },
         }
     }
 }
@@ -2705,6 +2780,75 @@ impl IntoResponse for ApiError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn should_map_woocommerce_provider_receipt_digest_conflict_to_its_stable_code()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = ApiError::from(WoocommerceWebhookIntakeError::Capture(
+            CaptureProductListingRawObservationError::ProviderReceiptDigestConflict,
+        ))
+        .into_response();
+
+        assert_eq!(StatusCode::CONFLICT, response.status());
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        assert_eq!(
+            WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT.to_string(),
+            body["error"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_woocommerce_provider_source_order_conflict_to_its_stable_code()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = ApiError::from(WoocommerceWebhookIntakeError::Capture(
+            CaptureProductListingRawObservationError::ProviderSourceOrderConflict,
+        ))
+        .into_response();
+
+        assert_eq!(StatusCode::CONFLICT, response.status());
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        assert_eq!(
+            WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT.to_string(),
+            body["error"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_woocommerce_provider_source_order_ambiguity_to_its_stable_code()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = ApiError::from(WoocommerceWebhookIntakeError::Capture(
+            CaptureProductListingRawObservationError::ProviderSourceOrderAmbiguous,
+        ))
+        .into_response();
+
+        assert_eq!(StatusCode::CONFLICT, response.status());
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        assert_eq!(
+            WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS.to_string(),
+            body["error"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_ignored_woocommerce_authorization_denial_to_forbidden()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = ApiError::from(WoocommerceWebhookIntakeError::Authorize(
+            AuthorizeProductListingRawCaptureError::Forbidden,
+        ))
+        .into_response();
+
+        assert_eq!(StatusCode::FORBIDDEN, response.status());
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        assert_eq!(FORBIDDEN.to_string(), body["error"]);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn should_map_temporary_jwks_failure_to_service_unavailable()

@@ -1,0 +1,23 @@
+[package]
+name = "product-listing-normalization"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+localization = { workspace = true }
+money = { workspace = true }
+product-listing-core = { workspace = true }
+lingua = { workspace = true }
+once_cell = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }

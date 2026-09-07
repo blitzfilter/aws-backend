@@ -1,5 +1,7 @@
 use crawler::CrawlerDomainId;
-use crawler::spider::classification::url_metadata::{UrlClass, UrlPresence};
+use crawler::spider::classification::url_metadata::{
+    CrawlerDisposition, CrawlerUrlWriteOutcome, UrlClass,
+};
 use crawler::spider::classification::url_metadata_repository::{
     UrlMetadataRepository, UrlMetadataRepositoryError, UrlMetadataRepositoryImpl,
 };
@@ -60,7 +62,7 @@ async fn should_insert_and_update_url_for_its_same_owner() {
     assert_eq!(inserted.domain_id, domain_id);
     assert_eq!(inserted.url, url);
     assert_eq!(inserted.url_class, UrlClass::ProductListing);
-    assert_eq!(inserted.state, UrlPresence::Present);
+    assert_eq!(inserted.disposition, CrawlerDisposition::Active);
     assert!(inserted.last_scraped.is_none());
     assert!(inserted.last_scraped_hash.is_none());
 
@@ -72,7 +74,7 @@ async fn should_insert_and_update_url_for_its_same_owner() {
     assert_eq!(updated.domain_id, domain_id);
     assert_eq!(updated.url, url);
     assert_eq!(updated.url_class, UrlClass::Other);
-    assert_eq!(updated.state, UrlPresence::Present);
+    assert_eq!(updated.disposition, CrawlerDisposition::Active);
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
@@ -103,21 +105,31 @@ async fn should_mark_owned_url_as_scraped() {
         .await
         .unwrap();
 
-    let scraped = repository
-        .mark_as_scraped(&listing_source_id, &url, "content-hash")
-        .await
-        .unwrap();
+    assert_eq!(
+        repository
+            .mark_as_scraped(&listing_source_id, &url, "content-hash")
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
 
-    assert_eq!(scraped.listing_source_id, listing_source_id);
-    assert_eq!(scraped.domain_id, domain_id);
-    assert_eq!(scraped.last_scraped_hash.as_deref(), Some("content-hash"));
-    assert!(scraped.last_scraped.is_some());
-    assert_eq!(scraped.state, UrlPresence::Present);
+    let scraped: (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT last_scraped_hash, last_scraped::text, crawler_disposition \
+         FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(scraped.0.as_deref(), Some("content-hash"));
+    assert!(scraped.1.is_some());
+    assert_eq!(scraped.2, CrawlerDisposition::Active.as_str());
 }
 
 #[serial_test::serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn should_update_presence_for_owned_url() {
+async fn should_transition_owned_url_to_dormant_without_reactivation() {
     let pool = get_postgres_client().await;
     let repository = UrlMetadataRepositoryImpl::new(pool.clone());
     let listing_source_id = ListingSourceId::new();
@@ -134,18 +146,93 @@ async fn should_update_presence_for_owned_url() {
         .await
         .unwrap();
 
-    let withdrawn = repository
-        .set_presence(&listing_source_id, &url, &UrlPresence::Withdrawn)
-        .await
-        .unwrap();
-    assert_eq!(withdrawn.state, UrlPresence::Withdrawn);
+    assert_eq!(
+        repository
+            .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantRemoved)
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
 
-    let present = repository
-        .set_presence(&listing_source_id, &url, &UrlPresence::Present)
+    assert_eq!(
+        repository
+            .set_disposition(&listing_source_id, &url, CrawlerDisposition::Active)
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+    let row: (String, uuid::Uuid) = sqlx::query_as(
+        "SELECT crawler_disposition, domain_id FROM listing_source_urls \
+         WHERE listing_source_id = $1 AND url = $2",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, CrawlerDisposition::DormantRemoved.as_str());
+    assert_eq!(CrawlerDomainId::from(row.1), domain_id);
+}
+
+#[serial_test::serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_keep_dormant_removed_url_absorbing_during_rediscovery_and_active_update() {
+    let pool = get_postgres_client().await;
+    let repository = UrlMetadataRepositoryImpl::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    insert_source(&pool, listing_source_id).await;
+    let domain_id = insert_domain(&pool, listing_source_id, "absorbing.example.com").await;
+    let url = Url::parse("https://absorbing.example.com/products/1").unwrap();
+    repository
+        .upsert_link(
+            &listing_source_id,
+            &domain_id,
+            &url,
+            &UrlClass::ProductListing,
+        )
         .await
         .unwrap();
-    assert_eq!(present.state, UrlPresence::Present);
-    assert_eq!(present.domain_id, domain_id);
+
+    assert_eq!(
+        repository
+            .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantRemoved)
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    let rediscovered = repository
+        .upsert_link(&listing_source_id, &domain_id, &url, &UrlClass::Other)
+        .await
+        .unwrap();
+    assert_eq!(rediscovered.disposition, CrawlerDisposition::DormantRemoved);
+    assert_eq!(rediscovered.url_class, UrlClass::ProductListing);
+
+    assert_eq!(
+        repository
+            .mark_as_scraped(&listing_source_id, &url, "delayed-active-hash")
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+    assert_eq!(
+        repository
+            .set_disposition(&listing_source_id, &url, CrawlerDisposition::Active)
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+    let row: (String, Option<String>) = sqlx::query_as(
+        "SELECT crawler_disposition, last_scraped_hash FROM listing_source_urls \
+         WHERE listing_source_id = $1 AND url = $2",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, CrawlerDisposition::DormantRemoved.as_str());
+    assert!(row.1.is_none());
 }
 
 #[serial_test::serial]
@@ -175,14 +262,14 @@ async fn should_upsert_valid_url_batch_for_one_owned_domain() {
             && record.domain_id == domain_id
             && record.url == first
             && record.url_class == UrlClass::ProductListing
-            && record.state == UrlPresence::Present
+            && record.disposition == CrawlerDisposition::Active
     }));
     assert!(records.iter().any(|record| {
         record.listing_source_id == listing_source_id
             && record.domain_id == domain_id
             && record.url == second
             && record.url_class == UrlClass::Category
-            && record.state == UrlPresence::Present
+            && record.disposition == CrawlerDisposition::Active
     }));
 }
 

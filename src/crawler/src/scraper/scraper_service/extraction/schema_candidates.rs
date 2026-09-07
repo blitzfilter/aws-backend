@@ -1,6 +1,7 @@
 use crate::scraper::css_selector::product_schema::{
     ApplySchemaError, ProductCssSelectorSchema, RawExtractedProduct,
 };
+use crate::scraper::css_selector::rule::split_image_candidate_group;
 use crate::scraper::normalization::product_normalization_service::PreparedProduct;
 use scraper::Html;
 
@@ -135,7 +136,10 @@ pub(crate) struct AppliedSchemaCandidate<'a> {
 pub(crate) struct PreparedSchemaCandidate<'a> {
     pub schema_index: usize,
     pub schema: &'a ProductCssSelectorSchema,
+    /// Untouched extraction retained for source capture.
     pub raw: RawExtractedProduct,
+    /// Candidate-local copy whose images passed crawler validation.
+    pub validated_raw: RawExtractedProduct,
     #[allow(dead_code)]
     pub prepared: PreparedProduct,
     pub score: ExtractionCompletenessScore,
@@ -201,29 +205,44 @@ pub fn rank_applicable_schema_indices(
     let candidates = collect_applicable_candidates(schemas, &parsed).candidates;
     let base_url = url::Url::parse("https://example.com/").expect("static ranking base URL");
     let mut prepared_candidates = Vec::new();
-    for mut candidate in candidates {
+    for candidate in candidates {
+        let raw = candidate.raw;
+        let mut validated_raw = raw.clone();
         // Keep this fixture seam on the same deterministic lifecycle as
         // production. Network image probing is unavailable here, so only
         // obvious thumbnail/invalid URL candidates are discarded locally.
-        candidate.raw.images.retain(|image| {
-            let trimmed = image.trim();
-            !trimmed.to_ascii_lowercase().contains("thumb")
-                && (url::Url::parse(trimmed).is_ok() || base_url.join(trimmed).is_ok())
-        });
+        // Preserve ordered candidate-group semantics by choosing the first
+        // locally viable candidate from each group.
+        validated_raw.images = raw
+            .images
+            .iter()
+            .filter_map(|raw_image| {
+                split_image_candidate_group(raw_image)
+                    .into_iter()
+                    .find_map(|raw_candidate| {
+                        let candidate = raw_candidate.trim();
+                        let viable = !candidate.to_ascii_lowercase().contains("thumb")
+                            && (url::Url::parse(candidate).is_ok()
+                                || base_url.join(candidate).is_ok());
+                        viable.then(|| candidate.to_owned())
+                    })
+            })
+            .collect();
         let Ok(prepared) =
             crate::scraper::normalization::product_normalization_service::prepare_product(
-                candidate.raw.clone(),
+                validated_raw.clone(),
                 base_url.clone(),
                 candidate.schema.default_currency.map(Into::into),
             )
         else {
             continue;
         };
-        let score = score_prepared_product(&candidate.raw, &prepared);
+        let score = score_prepared_product(&validated_raw, &prepared);
         prepared_candidates.push(PreparedSchemaCandidate {
             schema_index: candidate.schema_index,
             schema: candidate.schema,
-            raw: candidate.raw,
+            raw,
+            validated_raw,
             prepared,
             score,
         });

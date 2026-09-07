@@ -383,7 +383,7 @@ mod tests {
     use crate::scraper::candidate_service::MockScraperCandidateService;
     use crate::scraper::scraper_service::MockScraperService;
     use crate::service::cron::config::CrawlerCronConfig;
-    use crate::service::cron::test_support::{noop_listing_source_registration, noop_product_push};
+    use crate::service::cron::test_support::{noop_listing_source_registration, noop_raw_capture};
     use crate::spider::advisory_lock::LocalLockManager;
     use crate::spider::candidate_service::{MockSpiderCandidateService, SpiderCandidate};
     use crate::spider::discovery::website_spider::CrawlFailureKind;
@@ -553,7 +553,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -647,7 +647,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -701,7 +701,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -751,7 +751,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -800,7 +800,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -854,7 +854,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -908,7 +908,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -968,7 +968,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -1027,7 +1027,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -1108,7 +1108,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;
@@ -1144,7 +1144,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             noop_listing_source_registration(),
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_spider_once().await;

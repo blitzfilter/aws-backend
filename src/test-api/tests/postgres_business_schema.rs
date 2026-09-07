@@ -84,6 +84,11 @@ async fn should_clear_business_rows_without_removing_pg_ttl_configuration() {
                 "oauth_third_party_exchange_codes".to_owned(),
                 "expires_at".to_owned(),
             ),
+            (
+                "public".to_owned(),
+                "product_listing_raw_provider_observation_receipts".to_owned(),
+                "expires_at".to_owned(),
+            ),
         ],
         ttl_registrations
     );

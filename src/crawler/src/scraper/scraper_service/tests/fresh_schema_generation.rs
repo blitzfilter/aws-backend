@@ -5,7 +5,7 @@ use crate::scraper::css_selector::removed_page_schema::RemovedPageSchema;
 use crate::scraper::css_selector::removed_page_schema_repository::MockRemovedPageSchemaRepository;
 use crate::scraper::css_selector::rule::ExtractionError;
 use crate::scraper::scraper_service::domain::errors::ScraperError;
-use crate::spider::classification::url_metadata::UrlClass;
+use crate::spider::classification::url_metadata::{CrawlerUrlWriteOutcome, UrlClass};
 use listing_source_core::ListingSourceId;
 
 fn invalid_schema() -> ProductCssSelectorSchema {
@@ -33,7 +33,7 @@ fn fetcher_with_sample_html() -> MockHtmlFetcher {
 }
 
 fn normalizer_with_success(url: Url) -> MockProductListingNormalizationService {
-    let expected = normalized_product(url);
+    let expected = prepared_product(url);
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -85,7 +85,7 @@ async fn should_use_yaml_only_when_single_schema_applies() {
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher_with_sample_html()),
@@ -96,7 +96,10 @@ async fn should_use_yaml_only_when_single_schema_applies() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some());
 }
 
@@ -139,7 +142,10 @@ async fn should_fail_when_fresh_schema_does_not_apply_after_initial_schema_failu
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         err,
         ScraperError::SchemaRegenerationExhausted {
@@ -194,7 +200,10 @@ async fn should_fail_when_fresh_schema_application_fails() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         err,
         ScraperError::SchemaRegenerationExhausted {
@@ -252,7 +261,10 @@ async fn should_not_consume_second_budget_call_when_fresh_schema_does_not_apply(
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         err,
         ScraperError::SchemaRegenerationExhausted { attempts: 1, .. }
@@ -322,16 +334,16 @@ async fn should_mark_withdrawn_when_fresh_generation_classifies_removed() {
     expect_budget_increment(&mut cand_svc, 1);
     let url_for_state = url.clone();
     cand_svc
-        .expect_set_presence()
-        .once()
+        .expect_set_disposition()
+        .never()
         .withf(
-            move |received_listing_source_id, received_url, received_state| {
+            move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_state
-                    && *received_state == UrlPresence::Withdrawn
+                    && *received_state == CrawlerDisposition::DormantRemoved
             },
         )
-        .returning(|_, _, _| Box::pin(async { Ok(()) }));
+        .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -343,7 +355,10 @@ async fn should_mark_withdrawn_when_fresh_generation_classifies_removed() {
     )
     .with_removed_page_schema_repository(Box::new(removed_repo));
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
 
     assert!(matches!(err, ScraperError::ProductListingRemoved { .. }));
 }
@@ -383,18 +398,25 @@ async fn should_mark_other_when_fresh_generation_classifies_not_product() {
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
+    let expected_last_captured_raw_input_sha256 = vec![4; 32];
+    let expected_raw_input_sha256_for_class = expected_last_captured_raw_input_sha256.clone();
     let url_for_class = url.clone();
     cand_svc
         .expect_set_class()
         .once()
         .withf(
-            move |received_listing_source_id, received_url, received_class| {
+            move |received_listing_source_id,
+                  received_url,
+                  received_class,
+                  expected_raw_input_sha256| {
                 *received_listing_source_id == id
                     && received_url == &url_for_class
                     && *received_class == UrlClass::Other
+                    && *expected_raw_input_sha256
+                        == Some(expected_raw_input_sha256_for_class.as_slice())
             },
         )
-        .returning(|_, _, _| Box::pin(async { Ok(()) }));
+        .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -405,7 +427,17 @@ async fn should_mark_other_when_fresh_generation_classifies_not_product() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(
+            &id,
+            &url,
+            None,
+            None,
+            None,
+            Some(expected_last_captured_raw_input_sha256.as_slice()),
+        )
+        .await
+        .unwrap_err();
 
     assert!(matches!(err, ScraperError::NotProductPage { .. }));
 }
@@ -464,7 +496,7 @@ async fn should_reject_low_confidence_fresh_classification(
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    cand_svc.expect_set_presence().never();
+    cand_svc.expect_set_disposition().never();
     cand_svc.expect_set_class().never();
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
@@ -477,7 +509,10 @@ async fn should_reject_low_confidence_fresh_classification(
     )
     .with_removed_page_schema_repository(Box::new(removed_repo));
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         err,
         ScraperError::SchemaClassificationRejected { .. }
@@ -547,7 +582,7 @@ async fn should_not_change_state_or_class_when_fresh_classification_does_not_mat
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    cand_svc.expect_set_presence().never();
+    cand_svc.expect_set_disposition().never();
     cand_svc.expect_set_class().never();
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
@@ -559,7 +594,10 @@ async fn should_not_change_state_or_class_when_fresh_classification_does_not_mat
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
 
     assert!(matches!(
         err,

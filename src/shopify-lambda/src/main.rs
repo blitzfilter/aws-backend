@@ -2,16 +2,12 @@ use aws_lambda_events::sqs::SqsEvent;
 use lambda_runtime::tracing::debug;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use listing_source_postgres::SqlxListingSourceReaders;
-use listing_source_service::use_cases::queries::get_shopify_source::GetSystemShopifySourceHandler;
 use platform_observability::{LogLevel, LoggingConfig, init};
 use platform_postgres::{PostgresPoolConfig, SqlxUnitOfWork};
 use product_listing_postgres::{
-    SqlxPartnerProductListingAuthorizerFactory, SqlxProductListingEventAppenderFactory,
-    SqlxProductListingRepositoryFactory,
+    SqlxPartnerProductListingAuthorizerFactory, SqlxProductListingRawCaptureWriterFactory,
 };
-use product_listing_service::use_cases::{
-    IngestShopifyProductListingHandler, UpsertProductListingHandler, WithdrawProductListingHandler,
-};
+use product_listing_service::use_cases::CaptureProductListingRawObservationHandler;
 use shopify_lambda::{ShopifyProductListingProcessor, handler};
 use std::{fmt::Display, str::FromStr};
 
@@ -20,23 +16,11 @@ async fn main() -> Result<(), Error> {
     init(logging_config_from_env());
 
     let pool = postgres_config_from_env()?.connect().await?;
-    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
-    let sources = SqlxListingSourceReaders::new(pool);
     let processor = ShopifyProductListingProcessor::new(
-        sources.clone(),
-        IngestShopifyProductListingHandler::new(
-            GetSystemShopifySourceHandler::new(sources),
-            UpsertProductListingHandler::new(
-                unit_of_work.clone(),
-                SqlxProductListingRepositoryFactory::new(),
-                SqlxProductListingEventAppenderFactory::new(),
-                SqlxPartnerProductListingAuthorizerFactory::new(),
-            ),
-        ),
-        WithdrawProductListingHandler::new(
-            unit_of_work,
-            SqlxProductListingRepositoryFactory::new(),
-            SqlxProductListingEventAppenderFactory::new(),
+        SqlxListingSourceReaders::new(pool.clone()),
+        CaptureProductListingRawObservationHandler::new(
+            SqlxUnitOfWork::new(pool),
+            SqlxProductListingRawCaptureWriterFactory::new(),
             SqlxPartnerProductListingAuthorizerFactory::new(),
         ),
     );

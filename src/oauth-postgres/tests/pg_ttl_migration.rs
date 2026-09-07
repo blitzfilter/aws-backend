@@ -23,6 +23,11 @@ async fn should_register_and_apply_pg_ttl_for_expiring_oauth_credentials() {
         let registrations: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT schema_name, table_name, column_name \
              FROM ttl_summary() \
+             WHERE table_name IN (\
+                 'access_tokens', \
+                 'oauth_authorization_codes', \
+                 'oauth_third_party_exchange_codes'\
+             ) \
              ORDER BY schema_name, table_name, column_name",
         )
         .fetch_all(&pool)

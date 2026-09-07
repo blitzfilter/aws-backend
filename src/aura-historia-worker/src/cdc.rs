@@ -8,6 +8,7 @@ use product_listing_core::{
     description::Description, listing_availability::ListingAvailability,
     product_listing_id::ProductListingId, source_listing_id::SourceListingId, title::Title,
 };
+use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -64,8 +65,9 @@ pub enum CdcOperation {
 }
 
 impl WorkerQueue {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::ProductListingOpenSearch,
+        Self::ProductListingRawNormalization,
         Self::WatchlistNotification,
         Self::SearchFilterPercolator,
         Self::SearchFilterMatchNotification,
@@ -128,6 +130,7 @@ pub struct DomainJob {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkerQueue {
     ProductListingOpenSearch,
+    ProductListingRawNormalization,
     WatchlistNotification,
     SearchFilterPercolator,
     SearchFilterMatchNotification,
@@ -168,6 +171,7 @@ impl OrderingKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DomainJobPayload {
     ProductListingEvent(ProductListingEventJob),
+    ProductListingRawRevision(ProductListingRawRevisionJob),
     SearchFilterChanged(SearchFilterChangedJob),
     SearchFilterMatchCreated(SearchFilterMatchCreatedJob),
     UserTierChanged(UserTierChangedJob),
@@ -178,6 +182,14 @@ pub enum DomainJobPayload {
 pub struct ProductListingEventJob {
     pub event_id: EventId,
     pub product_listing_id: ProductListingId,
+}
+
+/// Compact wake-up metadata. The normalizer rereads the immutable revision from PostgreSQL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductListingRawRevisionJob {
+    pub product_listing_raw_stream_id: ProductListingRawStreamId,
+    pub product_listing_raw_revision_id: ProductListingRawRevisionId,
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,6 +316,7 @@ enum CdcFanoutScope {
     ProductListingTranslation,
     ProductListingEmbedding,
     ProductListingOpenSearch,
+    ProductListingRawNormalization,
     NotificationDelivery,
 }
 
@@ -368,6 +381,13 @@ impl CdcFanout {
         Self {
             registry,
             scope: CdcFanoutScope::ProductListingOpenSearch,
+        }
+    }
+
+    pub fn product_listing_raw_normalization(registry: WorkerQueueRegistry) -> Self {
+        Self {
+            registry,
+            scope: CdcFanoutScope::ProductListingRawNormalization,
         }
     }
 
@@ -532,6 +552,19 @@ impl CdcFanout {
                     ))
                 }
             }
+            CdcFanoutScope::ProductListingRawNormalization => {
+                if matches!(
+                    CdcTable::from(change.table.as_str()),
+                    CdcTable::ProductListingRawRevisions
+                ) && change.operation == CdcOperation::Insert
+                {
+                    product_listing_raw_revision_job(change)
+                } else {
+                    Err(CdcRouteError::UnsupportedTableForWorker(
+                        change.table.clone(),
+                    ))
+                }
+            }
             CdcFanoutScope::NotificationDelivery => {
                 if matches!(
                     CdcTable::from(change.table.as_str()),
@@ -647,6 +680,10 @@ pub fn route_change(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError>
     match (table, change.operation) {
         (CdcTable::ProductListingEvents, CdcOperation::Insert) => product_event_jobs(change),
         (CdcTable::ProductListingEvents, _) => Ok(Vec::new()),
+        (CdcTable::ProductListingRawRevisions, CdcOperation::Insert) => {
+            product_listing_raw_revision_job(change)
+        }
+        (CdcTable::ProductListingRawRevisions, _) => Ok(Vec::new()),
         (CdcTable::SearchFilters, operation) => search_filter_changed_job(change, operation),
         (CdcTable::SearchFilterMatches, CdcOperation::Insert) => {
             search_filter_match_created_job(change)
@@ -669,6 +706,7 @@ pub fn route_change(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError>
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CdcTable {
     ProductListingEvents,
+    ProductListingRawRevisions,
     ProductListings,
     SearchFilters,
     SearchFilterMatches,
@@ -682,6 +720,7 @@ impl From<&str> for CdcTable {
     fn from(value: &str) -> Self {
         match value {
             "product_listing_events" => Self::ProductListingEvents,
+            "product_listing_raw_revisions" => Self::ProductListingRawRevisions,
             "product_listings" => Self::ProductListings,
             "search_filters" => Self::SearchFilters,
             "search_filter_matches" => Self::SearchFilterMatches,
@@ -1415,6 +1454,41 @@ fn search_filter_match_created_job(change: &CdcChange) -> Result<Vec<DomainJob>,
     )])
 }
 
+fn product_listing_raw_revision_job(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError> {
+    let row = required_row(change)?;
+    let stream_id_value = required_string(row, "product_listing_raw_stream_id")?;
+    let stream_id = uuid::Uuid::parse_str(&stream_id_value)
+        .map(ProductListingRawStreamId::from_uuid)
+        .map_err(|_| CdcRouteError::InvalidProductListingRawStreamId)?;
+    if stream_id.as_uuid().to_string() != stream_id_value {
+        return Err(CdcRouteError::InvalidProductListingRawStreamId);
+    }
+    let revision_id_value = required_string(row, "product_listing_raw_revision_id")?;
+    let revision_id = uuid::Uuid::parse_str(&revision_id_value)
+        .map(ProductListingRawRevisionId::from_uuid)
+        .map_err(|_| CdcRouteError::InvalidProductListingRawRevisionId)?;
+    if revision_id.as_uuid().to_string() != revision_id_value {
+        return Err(CdcRouteError::InvalidProductListingRawRevisionId);
+    }
+    let revision = required_integer(row, "revision")?;
+    let revision =
+        u64::try_from(revision).map_err(|_| CdcRouteError::InvalidProductListingRawRevision)?;
+    if revision == 0 {
+        return Err(CdcRouteError::InvalidProductListingRawRevision);
+    }
+
+    Ok(vec![domain_job(
+        WorkerQueue::ProductListingRawNormalization,
+        IdempotencyKey::new(format!("product-listing-raw-revision:{revision_id_value}")),
+        OrderingKey::new(format!("product-listing-raw-stream:{stream_id_value}")),
+        DomainJobPayload::ProductListingRawRevision(ProductListingRawRevisionJob {
+            product_listing_raw_stream_id: stream_id,
+            product_listing_raw_revision_id: revision_id,
+            revision,
+        }),
+    )])
+}
+
 fn notification_delivery_created_job(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError> {
     let row = required_row(change)?;
     let notification_delivery_id = required_string(row, "notification_delivery_id")?;
@@ -1532,6 +1606,12 @@ pub enum CdcRouteError {
     InvalidEventId,
     #[error("CDC change has an invalid product listing ID")]
     InvalidProductListingId,
+    #[error("CDC change has an invalid raw product listing stream ID")]
+    InvalidProductListingRawStreamId,
+    #[error("CDC change has an invalid raw product listing revision ID")]
+    InvalidProductListingRawRevisionId,
+    #[error("CDC change has an invalid raw product listing revision number")]
+    InvalidProductListingRawRevision,
     #[error("CDC change has a missing ProductListing event field {field}")]
     MissingProductListingEventField { field: String },
     #[error("CDC change has an invalid ProductListing event field {field}")]
@@ -1625,6 +1705,95 @@ mod tests {
             commit_lsn: None,
             commit_timestamp: None,
         }
+    }
+
+    fn raw_revision_change(operation: CdcOperation) -> CdcChange {
+        CdcChange {
+            schema: Some("public".to_owned()),
+            table: "product_listing_raw_revisions".to_owned(),
+            operation,
+            primary_key: BTreeMap::new(),
+            record: Some(serde_json::json!({
+                "product_listing_raw_stream_id": "10000000-0000-0000-0000-000000000001",
+                "product_listing_raw_revision_id": "20000000-0000-0000-0000-000000000001",
+                "revision": 3,
+                "source_payload": {"mustNotEnterQueue": true},
+            })),
+            old_record: None,
+            changed_columns: Vec::new(),
+            commit_lsn: None,
+            commit_timestamp: None,
+        }
+    }
+
+    #[test]
+    fn should_route_raw_revision_insert_with_typed_wakeup_metadata_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let jobs = product_listing_raw_revision_job(&raw_revision_change(CdcOperation::Insert))?;
+        let expected_stream_id = uuid::Uuid::parse_str("10000000-0000-0000-0000-000000000001")?;
+        let expected_revision_id = uuid::Uuid::parse_str("20000000-0000-0000-0000-000000000001")?;
+
+        assert!(matches!(
+            jobs.as_slice(),
+            [DomainJob {
+                target_queue: WorkerQueue::ProductListingRawNormalization,
+                idempotency_key,
+                ordering_key,
+                payload: DomainJobPayload::ProductListingRawRevision(ProductListingRawRevisionJob {
+                    product_listing_raw_stream_id,
+                    product_listing_raw_revision_id,
+                    revision: 3,
+                }),
+            }]
+                if idempotency_key.as_str() == "product-listing-raw-revision:20000000-0000-0000-0000-000000000001"
+                    && ordering_key.as_str() == "product-listing-raw-stream:10000000-0000-0000-0000-000000000001"
+                    && product_listing_raw_stream_id.as_uuid() == expected_stream_id
+                    && product_listing_raw_revision_id.as_uuid() == expected_revision_id
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_malformed_raw_revision_wakeup_metadata() {
+        for (field, value) in [
+            (
+                "product_listing_raw_stream_id",
+                serde_json::json!("invalid"),
+            ),
+            (
+                "product_listing_raw_revision_id",
+                serde_json::json!("invalid"),
+            ),
+            ("revision", serde_json::json!(0)),
+            ("revision", serde_json::json!(-1)),
+        ] {
+            let mut change = raw_revision_change(CdcOperation::Insert);
+            if let Some(row) = change.record.as_mut() {
+                row[field] = value;
+            }
+
+            assert!(product_listing_raw_revision_job(&change).is_err());
+        }
+    }
+
+    #[test]
+    fn should_reject_non_insert_or_other_table_for_raw_normalization_scope() {
+        let registry = WorkerQueueRegistry::new();
+        let fanout = CdcFanout::product_listing_raw_normalization(registry);
+
+        assert!(
+            fanout
+                .route_change(&raw_revision_change(CdcOperation::Update))
+                .is_err()
+        );
+        assert!(
+            fanout
+                .route_change(&product_event_change(
+                    "PRODUCT_LISTING_DISCOVERED",
+                    "DOMAIN"
+                ))
+                .is_err()
+        );
     }
 
     #[test]

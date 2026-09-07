@@ -19,16 +19,6 @@ fn should_classify_title_errors_as_cached_schema_fallback_failures() {
         NormalizationError::TitleEmpty.failure_scope(),
         NormalizationFailureScope::CandidateData
     );
-
-    assert_eq!(
-        NormalizationError::ListingAvailabilityMappingError(
-            crate::scraper::normalization::listing_availability_mapping_service::ListingAvailabilityMappingServiceError::DatabaseError(
-                sqlx::Error::RowNotFound,
-            ),
-        )
-        .failure_scope(),
-        NormalizationFailureScope::External
-    );
 }
 
 struct CountingImageValidator(std::sync::Arc<std::sync::atomic::AtomicUsize>);
@@ -81,7 +71,7 @@ async fn should_validate_images_before_ranking_all_cached_candidates() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -93,7 +83,12 @@ async fn should_validate_images_before_ranking_all_cached_candidates() {
         });
 
     let mut candidate_svc = MockScraperCandidateService::new();
-    expect_successful_bookkeeping(&mut candidate_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(
+        &mut candidate_svc,
+        id,
+        url.clone(),
+        CrawlerDisposition::Active,
+    );
     let image_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -107,7 +102,7 @@ async fn should_validate_images_before_ranking_all_cached_candidates() {
 
     assert!(
         service
-            .scrape(&id, &url, None, None)
+            .scrape(&id, &url, None, None, None, None)
             .await
             .unwrap()
             .is_some()
@@ -144,7 +139,7 @@ async fn assert_tries_next_cached_schema_after(error: NormalizationError) {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let first_error = Arc::new(std::sync::Mutex::new(Some(error)));
     let expected_scope = first_error
         .lock()
@@ -173,7 +168,7 @@ async fn assert_tries_next_cached_schema_after(error: NormalizationError) {
 
     let mut cand_svc = MockScraperCandidateService::new();
     if expected_scope == NormalizationFailureScope::CandidateData {
-        expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+        expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
     }
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
@@ -185,20 +180,12 @@ async fn assert_tries_next_cached_schema_after(error: NormalizationError) {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await;
-    match expected_scope {
-        NormalizationFailureScope::CandidateData => {
-            let product = result.unwrap().unwrap();
-            assert_eq!(
-                product.product.source_listing_id,
-                SourceListingId::try_from("SKU-42")
-                    .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
-            );
-        }
-        NormalizationFailureScope::External => {
-            assert!(matches!(result, Err(ScraperError::NormalizationError(_))));
-        }
-    }
+    let result = service.scrape(&id, &url, None, None, None, None).await;
+    let scraped = result.unwrap().unwrap();
+    assert_eq!(
+        scraped.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
+    );
 }
 
 #[tokio::test]
@@ -216,8 +203,8 @@ async fn should_try_next_cached_schema_after_description_language_failure() {
 
 #[tokio::test]
 async fn should_try_next_cached_schema_after_auction_start_failure() {
-    assert_tries_next_cached_schema_after(NormalizationError::AuctionStartParseError {
-        raw: "garbage".to_string(),
+    assert_tries_next_cached_schema_after(NormalizationError::DateTimeParseError {
+        field: product_listing_normalization::DateTimeField::AuctionStart,
     })
     .await;
 }
@@ -225,7 +212,7 @@ async fn should_try_next_cached_schema_after_auction_start_failure() {
 #[tokio::test]
 async fn should_try_next_cached_schema_after_price_failure() {
     assert_tries_next_cached_schema_after(NormalizationError::PriceParseError {
-        raw: "garbage".to_string(),
+        field: product_listing_normalization::PriceField::Price,
     })
     .await;
 }
@@ -288,7 +275,7 @@ async fn should_try_all_cached_schemas_before_fresh_generation() {
             Box::pin(async move { Ok(saved) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let norm_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
@@ -308,7 +295,7 @@ async fn should_try_all_cached_schemas_before_fresh_generation() {
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -320,14 +307,13 @@ async fn should_try_all_cached_schemas_before_fresh_generation() {
     );
 
     let result = service
-        .scrape(&id, &url, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
+        result.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
 }
 
@@ -382,7 +368,7 @@ async fn should_generate_fresh_schema_when_cached_data_fails() {
             Box::pin(async move { Ok(saved) })
         });
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let norm_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
@@ -402,7 +388,7 @@ async fn should_generate_fresh_schema_when_cached_data_fails() {
 
     let mut cand_svc = MockScraperCandidateService::new();
     expect_budget_increment(&mut cand_svc, 1);
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -414,67 +400,14 @@ async fn should_generate_fresh_schema_when_cached_data_fails() {
     );
 
     let result = service
-        .scrape(&id, &url, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
-        result.product.source_listing_id,
-        SourceListingId::try_from("SKU-42")
-            .unwrap_or_else(|error| panic!("valid source listing ID: {error}"))
+        result.availability,
+        ListingAvailabilityQuickCheck::Resolved(ListingAvailability::Available)
     );
-}
-
-#[tokio::test]
-async fn should_abort_without_fresh_schema_when_cached_candidate_has_external_failure() {
-    let id = listing_source_id();
-    let url = product_url();
-
-    let mut fetcher = MockHtmlFetcher::new();
-    fetcher
-        .expect_fetch()
-        .once()
-        .returning(|_| Box::pin(async { Ok(fetch_result(sample_html())) }));
-
-    let schema = listing_source_product_schemas(id);
-    let mut schema_svc = MockProductListingSchemaService::new();
-    schema_svc
-        .expect_find_product_schema()
-        .once()
-        .returning(move |_| {
-            let s = schema.clone();
-            Box::pin(async move { Ok(Some(s)) })
-        });
-    schema_svc.expect_generate_single_schema_for_page().never();
-    schema_svc.expect_save_product_schemas().never();
-
-    let mut norm_svc = MockProductListingNormalizationService::new();
-    norm_svc.expect_normalize().once().returning(|_, _, _| {
-        Box::pin(async {
-            Err(normalization_failure(
-                NormalizationError::ListingAvailabilityMappingError(
-                    crate::scraper::normalization::listing_availability_mapping_service::ListingAvailabilityMappingServiceError::DatabaseError(
-                        sqlx::Error::RowNotFound,
-                    ),
-                ),
-                0,
-            ))
-        })
-    });
-
-    let cand_svc = MockScraperCandidateService::new();
-
-    let service = ScraperServiceImpl::new_with_schema_seed_pages(
-        Box::new(fetcher),
-        Box::new(schema_svc),
-        Box::new(norm_svc),
-        Arc::new(cand_svc),
-        1,
-        DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
-    );
-
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
-    assert!(matches!(err, ScraperError::NormalizationError(_)));
 }
 
 #[tokio::test]
@@ -513,7 +446,7 @@ async fn should_normalize_with_empty_images_when_image_policy_rejects_all_candid
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -527,7 +460,7 @@ async fn should_normalize_with_empty_images_when_image_policy_rejects_all_candid
         });
 
     let mut cand_svc = MockScraperCandidateService::new();
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -538,7 +471,10 @@ async fn should_normalize_with_empty_images_when_image_policy_rejects_all_candid
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some());
 }
 
@@ -589,7 +525,7 @@ async fn should_keep_valid_image_fallback_after_malformed_candidate() {
     schema_svc.expect_generate_single_schema_for_page().never();
     schema_svc.expect_save_product_schemas().never();
 
-    let expected = normalized_product(url.clone());
+    let expected = prepared_product(url.clone());
     let mut norm_svc = MockProductListingNormalizationService::new();
     norm_svc
         .expect_normalize()
@@ -603,7 +539,7 @@ async fn should_keep_valid_image_fallback_after_malformed_candidate() {
         });
 
     let mut cand_svc = MockScraperCandidateService::new();
-    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), UrlPresence::Present);
+    expect_successful_bookkeeping(&mut cand_svc, id, url.clone(), CrawlerDisposition::Active);
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -614,7 +550,10 @@ async fn should_keep_valid_image_fallback_after_malformed_candidate() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some());
 }
 
@@ -701,7 +640,10 @@ async fn should_generate_single_schema_without_failed_schema_context() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(matches!(
         err,
         ScraperError::SchemaRegenerationExhausted {
@@ -781,7 +723,10 @@ async fn should_fail_when_fresh_schema_normalization_keeps_failing() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let err = service.scrape(&id, &url, None, None).await.unwrap_err();
+    let err = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap_err();
     assert!(
         matches!(
             err,

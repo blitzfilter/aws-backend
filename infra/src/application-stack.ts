@@ -155,7 +155,6 @@ export class ApplicationComputeStack extends cdk.Stack {
       artifactBucket,
       mailTemplateBucket,
       postgres: props.storage.postgres,
-      search: props.search,
     });
 
 
@@ -261,7 +260,6 @@ export class ApplicationEphemeralStack extends cdk.Stack {
       artifactBucket,
       mailTemplateBucket,
       postgres: this.storage.postgres,
-      search: this.search,
     });
 
 

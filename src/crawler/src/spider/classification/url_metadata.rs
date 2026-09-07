@@ -59,31 +59,46 @@ impl UrlClass {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum UrlPresence {
-    Present,
-    Withdrawn,
+/// Durable crawler scheduling state. Only successful crawler handoffs may make a URL dormant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum_macros::EnumIter)]
+pub enum CrawlerDisposition {
+    Active,
+    DormantSold,
+    DormantRemoved,
 }
 
-impl std::fmt::Display for UrlPresence {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Present => "PRESENT",
-            Self::Withdrawn => "WITHDRAWN",
-        })
+impl CrawlerDisposition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::DormantSold => "DORMANT_SOLD",
+            Self::DormantRemoved => "DORMANT_REMOVED",
+        }
     }
 }
 
-impl std::str::FromStr for UrlPresence {
+/// Result of a conditional crawler-local URL write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrawlerUrlWriteOutcome {
+    Applied,
+    NoopStale,
+}
+
+impl std::fmt::Display for CrawlerDisposition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for CrawlerDisposition {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "PRESENT" => Ok(Self::Present),
-            "WITHDRAWN" => Ok(Self::Withdrawn),
-            _ => Err(format!("Invalid URL presence: {value}")),
-        }
+        use strum::IntoEnumIterator;
+
+        Self::iter()
+            .find(|disposition| disposition.as_str() == value)
+            .ok_or_else(|| format!("Invalid crawler disposition: {value}"))
     }
 }
 
@@ -91,9 +106,7 @@ impl std::str::FromStr for UrlPresence {
 pub struct CrawledUrlMetadata {
     pub url: String,
     pub class: UrlClass,
-    pub presence: UrlPresence,
-    /// Canonical crawler-local availability code, if the last scrape asserted one.
-    pub availability: Option<String>,
+    pub disposition: CrawlerDisposition,
 
     #[serde(
         with = "time::serde::rfc3339::option",
@@ -111,12 +124,14 @@ pub struct CrawledUrlMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::UrlPresence;
+    use super::CrawlerDisposition;
+    use strum::IntoEnumIterator;
 
     #[test]
-    fn should_parse_only_presence_values() {
-        assert_eq!("PRESENT".parse(), Ok(UrlPresence::Present));
-        assert_eq!("WITHDRAWN".parse(), Ok(UrlPresence::Withdrawn));
-        assert!("AVAILABLE".parse::<UrlPresence>().is_err());
+    fn should_round_trip_exact_disposition_codes() {
+        for disposition in CrawlerDisposition::iter() {
+            assert_eq!(disposition.as_str().parse(), Ok(disposition));
+        }
+        assert!("active".parse::<CrawlerDisposition>().is_err());
     }
 }

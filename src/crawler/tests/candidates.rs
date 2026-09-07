@@ -1,28 +1,21 @@
 use crawler::CrawlerDomainId;
-use crawler::scraper::candidate_service::{
-    ProductListingSnapshot, ScraperCandidateService, ScraperCandidateServiceImpl,
-};
+use crawler::scraper::candidate_service::{ScraperCandidateService, ScraperCandidateServiceImpl};
 use crawler::spider::candidate_service::{SpiderCandidateService, SpiderCandidateServiceImpl};
-use crawler::spider::classification::url_metadata::{UrlClass, UrlPresence};
+use crawler::spider::classification::url_metadata::{
+    CrawlerDisposition, CrawlerUrlWriteOutcome, UrlClass,
+};
 use crawler::spider::classification::url_metadata_repository::{
     UrlMetadataRepository, UrlMetadataRepositoryImpl,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use test_api::*;
+use tokio::sync::Barrier;
 
 const POSTGRES: Postgres = Postgres::new("src/crawler/migrations");
 
-fn minimal_snapshot(url: &str) -> ProductListingSnapshot {
-    ProductListingSnapshot {
-        price: None,
-        price_estimate_min: None,
-        price_estimate_max: None,
-        url: url.to_string(),
-        images_hash: "0".repeat(64),
-        auction_start: None,
-        auction_end: None,
-        availability: Some("AVAILABLE".to_owned()),
-    }
+fn raw_input_hash() -> Vec<u8> {
+    vec![7; 32]
 }
 
 // ---------------------------------------------------------------------------
@@ -684,10 +677,13 @@ async fn scraper_should_persist_url_class_other_and_exclude_candidate_when_set_c
     .await
     .unwrap();
 
-    service
-        .set_class(&listing_source_id, &target_url, UrlClass::Other)
-        .await
-        .unwrap();
+    assert_eq!(
+        service
+            .set_class(&listing_source_id, &target_url, UrlClass::Other, None)
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
 
     let target_class: String = sqlx::query_scalar(
         "SELECT url_class FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
@@ -744,25 +740,25 @@ async fn scraper_should_not_return_candidate_when_listing_source_crawl_is_disabl
 }
 
 // ---------------------------------------------------------------------------
-// get_candidates — withdrawn URLs are not eligible, regardless of availability
+// get_candidates — dormant URLs are not eligible
 // ---------------------------------------------------------------------------
 
 #[serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn scraper_should_not_return_candidate_when_presence_is_withdrawn() {
+async fn scraper_should_not_return_candidate_when_disposition_is_dormant_removed() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
     let listing_source_id_uuid = uuid::Uuid::new_v4();
     let domain_id = insert_listing_source_with_domain(
         &pool,
         listing_source_id_uuid,
-        "scraper-presence.example.com",
+        "scraper-disposition.example.com",
     )
     .await;
     let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
-    let removed_url = url::Url::parse("https://scraper-presence.example.com/p/removed").unwrap();
+    let removed_url = url::Url::parse("https://scraper-disposition.example.com/p/removed").unwrap();
     let present_url =
-        url::Url::parse("https://scraper-presence.example.com/p/out-of-stock").unwrap();
+        url::Url::parse("https://scraper-disposition.example.com/p/out-of-stock").unwrap();
     let repository = UrlMetadataRepositoryImpl::new(pool.clone());
 
     for url in [&removed_url, &present_url] {
@@ -777,17 +773,13 @@ async fn scraper_should_not_return_candidate_when_presence_is_withdrawn() {
             .unwrap();
     }
     repository
-        .set_presence(&listing_source_id, &removed_url, &UrlPresence::Withdrawn)
+        .set_disposition(
+            &listing_source_id,
+            &removed_url,
+            CrawlerDisposition::DormantRemoved,
+        )
         .await
         .unwrap();
-
-    sqlx::query(
-        "UPDATE listing_source_urls SET last_scraped_availability = 'OUT_OF_STOCK' WHERE url = $1",
-    )
-    .bind(present_url.as_str())
-    .execute(&pool)
-    .await
-    .unwrap();
 
     let candidates = service.get_candidates(10, 100, &[]).await.unwrap();
 
@@ -1150,7 +1142,10 @@ async fn scraper_mark_as_scraped_should_set_last_scraped_and_hash() {
             &listing_source_id,
             &url,
             &scraped_hash,
-            &minimal_snapshot(url_str),
+            "schema-fingerprint",
+            &raw_input_hash(),
+            CrawlerDisposition::Active,
+            None,
         )
         .await
         .unwrap();
@@ -1169,6 +1164,484 @@ async fn scraper_mark_as_scraped_should_set_last_scraped_and_hash() {
         "last_scraped_hash should be updated"
     );
     assert!(row.1.is_some(), "last_scraped timestamp should be set");
+}
+
+#[serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn scraper_completion_should_not_overwrite_newer_dormant_scrape_metadata() {
+    let pool = get_postgres_client().await;
+    let service = ScraperCandidateServiceImpl::new(pool.clone());
+    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let domain_id = insert_listing_source_with_domain(
+        &pool,
+        listing_source_id_uuid,
+        "scraper-competing-completion.example.com",
+    )
+    .await;
+    let url = url::Url::parse("https://scraper-competing-completion.example.com/p/1").unwrap();
+    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+
+    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+    let dormant_raw_input_hash = vec![9; 32];
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "dormant-hash",
+                "dormant-schema",
+                &dormant_raw_input_hash,
+                CrawlerDisposition::DormantSold,
+                None,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "delayed-active-hash",
+                "delayed-active-schema",
+                &[8; 32],
+                CrawlerDisposition::Active,
+                None,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+
+    let row: (String, Option<String>, Option<String>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT crawler_disposition, last_scraped_hash, last_scraped_schema_fingerprint, \
+         last_captured_raw_input_sha256 FROM listing_source_urls WHERE url = $1",
+    )
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, CrawlerDisposition::DormantSold.as_str());
+    assert_eq!(row.1.as_deref(), Some("dormant-hash"));
+    assert_eq!(row.2.as_deref(), Some("dormant-schema"));
+    assert_eq!(row.3, Some(dormant_raw_input_hash));
+}
+
+#[serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn scraper_newer_active_completion_should_fence_delayed_active_completion_and_touch() {
+    let pool = get_postgres_client().await;
+    let service = ScraperCandidateServiceImpl::new(pool.clone());
+    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let domain_id = insert_listing_source_with_domain(
+        &pool,
+        listing_source_id_uuid,
+        "scraper-active-fence.example.com",
+    )
+    .await;
+    let url = url::Url::parse("https://scraper-active-fence.example.com/p/1").unwrap();
+    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+
+    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+    let observed_raw_input_sha256: Option<&[u8]> = None;
+    let newer_raw_input_sha256 = vec![9; 32];
+
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "newer-page-hash",
+                "newer-schema-fingerprint",
+                &newer_raw_input_sha256,
+                CrawlerDisposition::Active,
+                observed_raw_input_sha256,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "delayed-page-hash",
+                "delayed-schema-fingerprint",
+                &[8; 32],
+                CrawlerDisposition::Active,
+                observed_raw_input_sha256,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+    assert_eq!(
+        service
+            .touch_scraped(
+                &listing_source_id,
+                &url,
+                "delayed-page-hash",
+                "delayed-schema-fingerprint",
+                observed_raw_input_sha256,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+
+    let row: (String, Option<String>, Option<String>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT crawler_disposition, last_scraped_hash, last_scraped_schema_fingerprint, \
+         last_captured_raw_input_sha256 FROM listing_source_urls WHERE url = $1",
+    )
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, CrawlerDisposition::Active.as_str());
+    assert_eq!(row.1.as_deref(), Some("newer-page-hash"));
+    assert_eq!(row.2.as_deref(), Some("newer-schema-fingerprint"));
+    assert_eq!(row.3, Some(newer_raw_input_sha256));
+}
+
+#[serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn scraper_newer_active_completion_should_fence_delayed_sold_completion() {
+    let pool = get_postgres_client().await;
+    let service = ScraperCandidateServiceImpl::new(pool.clone());
+    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let domain_id = insert_listing_source_with_domain(
+        &pool,
+        listing_source_id_uuid,
+        "scraper-sold-fence.example.com",
+    )
+    .await;
+    let url = url::Url::parse("https://scraper-sold-fence.example.com/p/1").unwrap();
+    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+
+    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+    let observed_raw_input_sha256 = vec![1; 32];
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "observed-page-hash",
+                "observed-schema-fingerprint",
+                &observed_raw_input_sha256,
+                CrawlerDisposition::Active,
+                None,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    let newer_raw_input_sha256 = vec![2; 32];
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "newer-page-hash",
+                "newer-schema-fingerprint",
+                &newer_raw_input_sha256,
+                CrawlerDisposition::Active,
+                Some(observed_raw_input_sha256.as_slice()),
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "delayed-sold-page-hash",
+                "delayed-sold-schema-fingerprint",
+                &[3; 32],
+                CrawlerDisposition::DormantSold,
+                Some(observed_raw_input_sha256.as_slice()),
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+
+    let row: (String, Option<String>, Option<String>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT crawler_disposition, last_scraped_hash, last_scraped_schema_fingerprint, \
+         last_captured_raw_input_sha256 FROM listing_source_urls WHERE url = $1",
+    )
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, CrawlerDisposition::Active.as_str());
+    assert_eq!(row.1.as_deref(), Some("newer-page-hash"));
+    assert_eq!(row.2.as_deref(), Some("newer-schema-fingerprint"));
+    assert_eq!(row.3, Some(newer_raw_input_sha256));
+}
+
+#[serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn scraper_newer_active_completion_should_fence_delayed_removal_completion() {
+    let pool = get_postgres_client().await;
+    let service = ScraperCandidateServiceImpl::new(pool.clone());
+    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let domain_id = insert_listing_source_with_domain(
+        &pool,
+        listing_source_id_uuid,
+        "scraper-removal-fence.example.com",
+    )
+    .await;
+    let url = url::Url::parse("https://scraper-removal-fence.example.com/p/1").unwrap();
+    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+
+    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+    let observed_raw_input_sha256 = vec![4; 32];
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "observed-page-hash",
+                "observed-schema-fingerprint",
+                &observed_raw_input_sha256,
+                CrawlerDisposition::Active,
+                None,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    let newer_raw_input_sha256 = vec![5; 32];
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "newer-page-hash",
+                "newer-schema-fingerprint",
+                &newer_raw_input_sha256,
+                CrawlerDisposition::Active,
+                Some(observed_raw_input_sha256.as_slice()),
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    assert_eq!(
+        service
+            .set_disposition(
+                &listing_source_id,
+                &url,
+                CrawlerDisposition::DormantRemoved,
+                Some(observed_raw_input_sha256.as_slice()),
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::NoopStale
+    );
+
+    let row: (String, Option<String>, Option<String>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT crawler_disposition, last_scraped_hash, last_scraped_schema_fingerprint, \
+         last_captured_raw_input_sha256 FROM listing_source_urls WHERE url = $1",
+    )
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, CrawlerDisposition::Active.as_str());
+    assert_eq!(row.1.as_deref(), Some("newer-page-hash"));
+    assert_eq!(row.2.as_deref(), Some("newer-schema-fingerprint"));
+    assert_eq!(row.3, Some(newer_raw_input_sha256));
+}
+
+#[derive(sqlx::FromRow)]
+struct DelayedObserverUrlState {
+    url_class: String,
+    crawler_disposition: String,
+    last_scraped_hash: Option<String>,
+    last_captured_raw_input_sha256: Option<Vec<u8>>,
+    failure_count: i64,
+    last_error_kind: Option<String>,
+    last_error_message: Option<String>,
+    no_next_retry_at: bool,
+    no_last_status_code: bool,
+}
+
+#[serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn scraper_should_fence_delayed_observer_local_writes_when_newer_active_capture_commits() {
+    let pool = get_postgres_client().await;
+    let service = ScraperCandidateServiceImpl::new(pool.clone());
+    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let domain_id = insert_listing_source_with_domain(
+        &pool,
+        listing_source_id_uuid,
+        "scraper-delayed-observer-fence.example.com",
+    )
+    .await;
+    let url = url::Url::parse("https://scraper-delayed-observer-fence.example.com/p/1").unwrap();
+    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+
+    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+    let observed_raw_input_sha256 = vec![6; 32];
+    assert_eq!(
+        service
+            .mark_as_scraped(
+                &listing_source_id,
+                &url,
+                "observed-page-hash",
+                "observed-schema-fingerprint",
+                &observed_raw_input_sha256,
+                CrawlerDisposition::Active,
+                None,
+            )
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    let start = Arc::new(Barrier::new(2));
+    let newer_committed = Arc::new(Barrier::new(2));
+    let newer_raw_input_sha256 = vec![7; 32];
+
+    let newer_task = {
+        let service = ScraperCandidateServiceImpl::new(pool.clone());
+        let newer_listing_source_id = listing_source_id;
+        let url = url.clone();
+        let observed_raw_input_sha256 = observed_raw_input_sha256.clone();
+        let newer_raw_input_sha256 = newer_raw_input_sha256.clone();
+        let start = Arc::clone(&start);
+        let newer_committed = Arc::clone(&newer_committed);
+
+        tokio::spawn(async move {
+            start.wait().await;
+            assert_eq!(
+                service
+                    .mark_as_scraped(
+                        &newer_listing_source_id,
+                        &url,
+                        "newer-page-hash",
+                        "newer-schema-fingerprint",
+                        &newer_raw_input_sha256,
+                        CrawlerDisposition::Active,
+                        Some(observed_raw_input_sha256.as_slice()),
+                    )
+                    .await
+                    .unwrap(),
+                CrawlerUrlWriteOutcome::Applied
+            );
+            newer_committed.wait().await;
+        })
+    };
+
+    let delayed_task = {
+        let service = ScraperCandidateServiceImpl::new(pool.clone());
+        let delayed_listing_source_id = listing_source_id;
+        let url = url.clone();
+        let observed_raw_input_sha256 = observed_raw_input_sha256.clone();
+        let start = Arc::clone(&start);
+        let newer_committed = Arc::clone(&newer_committed);
+
+        tokio::spawn(async move {
+            start.wait().await;
+            newer_committed.wait().await;
+
+            assert_eq!(
+                service
+                    .set_class(
+                        &delayed_listing_source_id,
+                        &url,
+                        UrlClass::Other,
+                        Some(observed_raw_input_sha256.as_slice()),
+                    )
+                    .await
+                    .unwrap(),
+                CrawlerUrlWriteOutcome::NoopStale
+            );
+            assert_eq!(
+                service
+                    .mark_fetch_failure(
+                        &delayed_listing_source_id,
+                        &url,
+                        "DelayedFetchFailure",
+                        "delayed observer",
+                        Some(500),
+                        time::OffsetDateTime::now_utc() + time::Duration::hours(1),
+                        Some(observed_raw_input_sha256.as_slice()),
+                    )
+                    .await
+                    .unwrap(),
+                CrawlerUrlWriteOutcome::NoopStale
+            );
+            assert_eq!(
+                service
+                    .mark_scraper_failure(
+                        &delayed_listing_source_id,
+                        &url,
+                        "DelayedScraperFailure",
+                        "delayed observer",
+                        Some(observed_raw_input_sha256.as_slice()),
+                    )
+                    .await
+                    .unwrap(),
+                CrawlerUrlWriteOutcome::NoopStale
+            );
+            assert_eq!(
+                service
+                    .set_disposition(
+                        &delayed_listing_source_id,
+                        &url,
+                        CrawlerDisposition::DormantRemoved,
+                        Some(observed_raw_input_sha256.as_slice()),
+                    )
+                    .await
+                    .unwrap(),
+                CrawlerUrlWriteOutcome::NoopStale
+            );
+        })
+    };
+
+    newer_task.await.unwrap();
+    delayed_task.await.unwrap();
+
+    let row = sqlx::query_as::<_, DelayedObserverUrlState>(
+        "SELECT url_class, crawler_disposition, last_scraped_hash, \
+         last_captured_raw_input_sha256, failure_count::bigint AS failure_count, \
+         last_error_kind, last_error_message, next_retry_at IS NULL AS no_next_retry_at, \
+         last_status_code IS NULL AS no_last_status_code \
+         FROM listing_source_urls WHERE url = $1",
+    )
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.url_class, UrlClass::ProductListing.as_str());
+    assert_eq!(row.crawler_disposition, CrawlerDisposition::Active.as_str());
+    assert_eq!(row.last_scraped_hash.as_deref(), Some("newer-page-hash"));
+    assert_eq!(
+        row.last_captured_raw_input_sha256,
+        Some(newer_raw_input_sha256)
+    );
+    assert_eq!(row.failure_count, 0);
+    assert!(row.last_error_kind.is_none());
+    assert!(row.last_error_message.is_none());
+    assert!(row.no_next_retry_at);
+    assert!(row.no_last_status_code);
 }
 
 // ---------------------------------------------------------------------------
@@ -1203,7 +1676,15 @@ async fn scraper_mark_as_scraped_should_exclude_url_from_subsequent_get_candidat
     let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let url = url::Url::parse(url_str).unwrap();
     service
-        .mark_as_scraped(&listing_source_id, &url, &hash, &minimal_snapshot(url_str))
+        .mark_as_scraped(
+            &listing_source_id,
+            &url,
+            &hash,
+            "schema-fingerprint",
+            &raw_input_hash(),
+            CrawlerDisposition::Active,
+            None,
+        )
         .await
         .unwrap();
 
@@ -1261,7 +1742,7 @@ async fn scraper_seed_urls_should_exclude_current_url() {
 
 #[serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn scraper_seed_urls_should_only_include_same_listing_source_present_product_urls() {
+async fn scraper_seed_urls_should_only_include_same_listing_source_active_product_urls() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
@@ -1295,13 +1776,6 @@ async fn scraper_seed_urls_should_only_include_same_listing_source_present_produ
     )
     .await
     .unwrap();
-    repo.set_presence(
-        &seed_listing_source_id,
-        &eligible_url,
-        &UrlPresence::Present,
-    )
-    .await
-    .unwrap();
 
     let sold_url = url::Url::parse("https://seed-filters.example.com/p/sold").unwrap();
     repo.upsert_link(
@@ -1312,14 +1786,11 @@ async fn scraper_seed_urls_should_only_include_same_listing_source_present_produ
     )
     .await
     .unwrap();
-    repo.set_presence(&seed_listing_source_id, &sold_url, &UrlPresence::Present)
-        .await
-        .unwrap();
-    sqlx::query(
-        "UPDATE listing_source_urls SET last_scraped_availability = 'SOLD_OUT' WHERE url = $1",
+    repo.set_disposition(
+        &seed_listing_source_id,
+        &sold_url,
+        CrawlerDisposition::DormantSold,
     )
-    .bind(sold_url.as_str())
-    .execute(&pool)
     .await
     .unwrap();
 
@@ -1332,10 +1803,10 @@ async fn scraper_seed_urls_should_only_include_same_listing_source_present_produ
     )
     .await
     .unwrap();
-    repo.set_presence(
+    repo.set_disposition(
         &seed_listing_source_id,
         &withdrawn_url,
-        &UrlPresence::Withdrawn,
+        CrawlerDisposition::DormantRemoved,
     )
     .await
     .unwrap();
@@ -1385,12 +1856,12 @@ async fn scraper_seed_urls_should_only_include_same_listing_source_present_produ
         "current URL must be excluded"
     );
     assert!(
-        sampled.iter().any(|u| u == &sold_url),
-        "present sold-out listings remain eligible schema seed pages"
+        sampled.iter().all(|u| u != &sold_url),
+        "dormant sold URLs must be excluded"
     );
     assert!(
         sampled.iter().all(|u| u != &withdrawn_url),
-        "withdrawn URLs must be excluded"
+        "dormant removed URLs must be excluded"
     );
     assert!(
         sampled.iter().all(|u| u != &category_url),

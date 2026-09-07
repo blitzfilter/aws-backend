@@ -3,6 +3,7 @@ pub mod notification_delivery;
 pub mod product_content_assessment;
 pub mod product_embedding;
 pub mod product_listing_opensearch;
+pub mod product_listing_raw_normalization;
 pub mod product_translation;
 pub mod retry;
 pub mod search_filter_match_notifications;
@@ -66,6 +67,7 @@ pub enum WorkerScope {
     ProductListingTranslation,
     ProductListingEmbedding,
     ProductListingOpenSearch,
+    ProductListingRawNormalization,
     NotificationDelivery,
 }
 
@@ -96,6 +98,7 @@ impl WorkerScope {
             "product-translation" => Ok(Self::ProductListingTranslation),
             "product-embedding" => Ok(Self::ProductListingEmbedding),
             "product-listing-opensearch" => Ok(Self::ProductListingOpenSearch),
+            "product-listing-normalization" => Ok(Self::ProductListingRawNormalization),
             "notification-delivery" => Ok(Self::NotificationDelivery),
             _ => Err(WorkerStartupConfigError::InvalidScope { value }),
         }
@@ -111,6 +114,7 @@ impl WorkerScope {
             Self::ProductListingTranslation => WorkerQueue::ProductListingTranslate,
             Self::ProductListingEmbedding => WorkerQueue::ProductListingEmbed,
             Self::ProductListingOpenSearch => WorkerQueue::ProductListingOpenSearch,
+            Self::ProductListingRawNormalization => WorkerQueue::ProductListingRawNormalization,
             Self::NotificationDelivery => WorkerQueue::NotificationDelivery,
         }
     }
@@ -309,7 +313,8 @@ impl WorkerStartupConfig {
             ),
             WorkerScope::SearchFilterMatchNotification
             | WorkerScope::WatchlistNotification
-            | WorkerScope::ProductListingContentAssessment => (None, None, None),
+            | WorkerScope::ProductListingContentAssessment
+            | WorkerScope::ProductListingRawNormalization => (None, None, None),
         };
 
         Ok(Self {
@@ -660,6 +665,20 @@ impl WorkerRuntime {
         ))
     }
 
+    pub fn with_product_listing_raw_normalization_queue(
+        config: QueueConfig,
+    ) -> Result<(Self, WorkerQueueReceivers), QueueConfigError> {
+        let (sender, receiver) = in_memory_queue(config)?;
+        let registry = WorkerQueueRegistry::new()
+            .with_queue(WorkerQueue::ProductListingRawNormalization, sender);
+        let mut receivers = WorkerQueueReceivers::new();
+        receivers.insert(WorkerQueue::ProductListingRawNormalization, receiver);
+        Ok((
+            Self::new(CdcFanout::product_listing_raw_normalization(registry)),
+            receivers,
+        ))
+    }
+
     pub fn with_notification_delivery_queue(
         config: QueueConfig,
     ) -> Result<(Self, WorkerQueueReceivers), QueueConfigError> {
@@ -728,6 +747,9 @@ impl WorkerRuntimeComposition {
             }
             WorkerScope::ProductListingOpenSearch => {
                 WorkerRuntime::with_product_listing_opensearch_queue(config)?
+            }
+            WorkerScope::ProductListingRawNormalization => {
+                WorkerRuntime::with_product_listing_raw_normalization_queue(config)?
             }
             WorkerScope::NotificationDelivery => {
                 WorkerRuntime::with_notification_delivery_queue(config)?
@@ -983,7 +1005,8 @@ mod tests {
             }
             WorkerScope::SearchFilterMatchNotification
             | WorkerScope::WatchlistNotification
-            | WorkerScope::ProductListingContentAssessment => {}
+            | WorkerScope::ProductListingContentAssessment
+            | WorkerScope::ProductListingRawNormalization => {}
             WorkerScope::NotificationDelivery => {
                 values.insert(S3_BUCKET_NAME_TEMPLATES_ENV, "templates".to_owned());
                 values.insert(
@@ -1127,6 +1150,11 @@ mod tests {
         WorkerQueue::ProductListingEmbed
     )]
     #[case(
+        WorkerScope::ProductListingRawNormalization,
+        "product-listing-normalization",
+        WorkerQueue::ProductListingRawNormalization
+    )]
+    #[case(
         WorkerScope::NotificationDelivery,
         "notification-delivery",
         WorkerQueue::NotificationDelivery
@@ -1221,6 +1249,11 @@ mod tests {
         WorkerScope::ProductListingEmbedding,
         WorkerQueue::ProductListingEmbed,
         r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"30000000-0000-0000-0000-000000000001","product_listing_id":"40000000-0000-0000-0000-000000000001","event_type":"PRODUCT_LISTING_CHANGED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"images":{"previousCount":1,"currentCount":2}}}}]}"#
+    )]
+    #[case(
+        WorkerScope::ProductListingRawNormalization,
+        WorkerQueue::ProductListingRawNormalization,
+        r#"{"changes":[{"table":"product_listing_raw_revisions","operation":"insert","record":{"product_listing_raw_stream_id":"10000000-0000-0000-0000-000000000001","product_listing_raw_revision_id":"20000000-0000-0000-0000-000000000001","revision":1}}]}"#
     )]
     #[case(
         WorkerScope::NotificationDelivery,

@@ -1,14 +1,16 @@
 use crate::network::policy::NetworkErrorKind;
-use crate::scraper::candidate_service::ProductListingSnapshot;
 use crate::scraper::css_selector::removed_page_schema::RemovedPageSchema;
+use crate::scraper::raw_input::crawler_raw_input;
 use crate::scraper::scraper_service::domain::errors::ScraperError;
 use crate::scraper::scraper_service::domain::product::{ScrapedProduct, ScraperService};
 use crate::scraper::scraper_service::pipeline::cached_schema_selection::ExistingSchemaSelection;
 use crate::scraper::scraper_service::pipeline::fresh_schema_generation::FreshSchemaGenerationContext;
 use crate::scraper::scraper_service::service::{FetchError, ScraperServiceImpl};
-use crate::scraper::scraper_service::util::hash::{hash_html, hash_main_fragment};
+use crate::scraper::scraper_service::util::hash::{
+    fingerprint_schema_set, hash_html, hash_main_fragment,
+};
 use crate::scraper::scraper_service::util::html::extract_main_fragment;
-use crate::spider::classification::url_metadata::UrlPresence;
+use crate::spider::classification::url_metadata::CrawlerUrlWriteOutcome;
 use crate::spider::utils::url::CrawledUrl;
 use listing_source_core::ListingSourceId;
 use regex::Regex;
@@ -52,52 +54,36 @@ fn is_homepage(url: &Url) -> bool {
 }
 
 impl ScraperServiceImpl {
-    #[tracing::instrument(skip(self), fields(listing_source_id = %listing_source_id, url = %url))]
-    pub(crate) async fn mark_product_removed_best_effort(
-        &self,
-        listing_source_id: &ListingSourceId,
-        url: &Url,
-    ) {
-        if let Err(err) = self
-            .candidate_service
-            .set_presence(listing_source_id, url, UrlPresence::Withdrawn)
-            .await
-        {
-            warn!(error = ?err, "Failed to mark product as withdrawn");
-        }
-    }
-
-    #[tracing::instrument(skip(self), fields(listing_source_id = %listing_source_id, url = %url))]
-    pub(crate) async fn mark_product_present_best_effort(
-        &self,
-        listing_source_id: &ListingSourceId,
-        url: &Url,
-    ) {
-        if let Err(err) = self
-            .candidate_service
-            .set_presence(listing_source_id, url, UrlPresence::Present)
-            .await
-        {
-            warn!(error = ?err, "Failed to mark product as PRESENT");
-        }
-    }
-
-    #[tracing::instrument(skip(self), fields(listing_source_id = %listing_source_id, url = %url))]
+    #[tracing::instrument(
+        skip(self, expected_last_captured_raw_input_sha256),
+        fields(listing_source_id = %listing_source_id, url = %url)
+    )]
     pub(crate) async fn mark_url_other_best_effort(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) {
-        if let Err(err) = self
+        match self
             .candidate_service
             .set_class(
                 listing_source_id,
                 url,
                 crate::spider::classification::url_metadata::UrlClass::Other,
+                expected_last_captured_raw_input_sha256,
             )
             .await
         {
-            warn!(error = ?err, "Failed to mark URL as other");
+            Ok(CrawlerUrlWriteOutcome::Applied) => {}
+            Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                debug!(
+                    crawler_url_write_outcome = "stale_noop",
+                    "Skipped stale crawler URL classification"
+                );
+            }
+            Err(error) => {
+                warn!(error = %error, "Failed to mark URL as other");
+            }
         }
     }
 
@@ -136,13 +122,15 @@ impl ScraperServiceImpl {
 
 #[async_trait::async_trait]
 impl ScraperService for ScraperServiceImpl {
-    #[tracing::instrument(skip(self, last_scraped_hash), fields(listing_source_id = %listing_source_id, url = %url))]
+    #[tracing::instrument(skip(self, last_scraped_hash, last_scraped_schema_fingerprint, expected_last_captured_raw_input_sha256), fields(listing_source_id = %listing_source_id, url = %url))]
     async fn scrape(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
         product_url_pattern: Option<&str>,
         last_scraped_hash: Option<&str>,
+        last_scraped_schema_fingerprint: Option<&str>,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<Option<ScrapedProduct>, ScraperError> {
         let domain = url
             .host_str()
@@ -166,8 +154,6 @@ impl ScraperService for ScraperServiceImpl {
                 kind: NetworkErrorKind::HttpStatus(404 | 410),
                 details,
             }) => {
-                self.mark_product_removed_best_effort(listing_source_id, url)
-                    .await;
                 return Err(ScraperError::ProductListingRemoved {
                     url: url.clone(),
                     details,
@@ -192,8 +178,6 @@ impl ScraperService for ScraperServiceImpl {
             });
         }
         if is_redirect_to_non_product_page(url, &fetched.final_url, product_url_pattern) {
-            self.mark_product_removed_best_effort(listing_source_id, url)
-                .await;
             return Err(ScraperError::ProductListingRemoved {
                 url: url.clone(),
                 details: format!(
@@ -205,8 +189,6 @@ impl ScraperService for ScraperServiceImpl {
         let html = fetched.html;
 
         if self.is_removed_page(listing_source_id, &html).await? {
-            self.mark_product_removed_best_effort(listing_source_id, url)
-                .await;
             return Err(ScraperError::ProductListingRemoved {
                 url: url.clone(),
                 details: "soft-404 removed page matched configured removed-page schema".to_string(),
@@ -216,25 +198,44 @@ impl ScraperService for ScraperServiceImpl {
         let has_main = extract_main_fragment(&html).is_some();
         let current_hash = hash_main_fragment(&html).unwrap_or_else(|| hash_html(&html));
 
-        if has_main && last_scraped_hash == Some(current_hash.as_str()) {
-            debug!("Hash matches last scraped hash, skipping extraction.");
-            if let Err(e) = self
+        // Obtain the effective schema set before the fast path. Selector or raw-attribute
+        // changes must force extraction even when the page fragment is byte-identical.
+        let listing_source_product_schemas = self
+            .obtain_schemas(listing_source_id, url, product_url_pattern, &html)
+            .await?;
+        let stored_schema_fingerprint =
+            fingerprint_schema_set(&listing_source_product_schemas.product_schemas)
+                .map_err(ScraperError::SchemaFingerprint)?;
+
+        if has_main
+            && last_scraped_hash == Some(current_hash.as_str())
+            && last_scraped_schema_fingerprint == Some(stored_schema_fingerprint.as_str())
+        {
+            debug!("Page and schema fingerprints match; skipping extraction.");
+            match self
                 .candidate_service
-                .touch_scraped(listing_source_id, url, &current_hash)
+                .touch_scraped(
+                    listing_source_id,
+                    url,
+                    &current_hash,
+                    &stored_schema_fingerprint,
+                    expected_last_captured_raw_input_sha256,
+                )
                 .await
             {
-                warn!(error = %e, "Failed to touch url as scraped after hash-match skip");
+                Ok(CrawlerUrlWriteOutcome::Applied) => {}
+                Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                    debug!("Skipped stale page/schema fast-path completion");
+                }
+                Err(error) => {
+                    warn!(error = %error, "Failed to touch URL after page/schema fast-path skip");
+                }
             }
             return Ok(None);
         }
 
-        // 2. Obtain schemas (from DB or freshly created by LLM) -----------
-        let listing_source_product_schemas = self
-            .obtain_schemas(listing_source_id, url, product_url_pattern, &html)
-            .await?;
-
-        // 3. Select the richest cached schema that normalizes successfully.
-        let final_product = match self
+        // Select the richest cached schema that normalizes successfully.
+        let selection = match self
             .select_existing_schema_with_normalization(
                 listing_source_id,
                 url,
@@ -243,7 +244,7 @@ impl ScraperService for ScraperServiceImpl {
             )
             .await?
         {
-            ExistingSchemaSelection::Normalized(product) => *product,
+            ExistingSchemaSelection::Prepared(selection) => *selection,
             ExistingSchemaSelection::GenerateNewSchema { reason } => {
                 debug!(
                     domain,
@@ -257,30 +258,40 @@ impl ScraperService for ScraperServiceImpl {
                     url,
                     html: &html,
                     existing_schemas: &listing_source_product_schemas.product_schemas,
+                    expected_last_captured_raw_input_sha256,
                 })
                 .await?
             }
         };
 
-        // 4. Bookkeeping ------------------------------------------------
-        self.mark_product_present_best_effort(listing_source_id, url)
-            .await;
+        let mut effective_schemas = listing_source_product_schemas.product_schemas;
+        if selection.fresh_schema {
+            effective_schemas.push(selection.schema.clone());
+        }
+        let schema_fingerprint =
+            fingerprint_schema_set(&effective_schemas).map_err(ScraperError::SchemaFingerprint)?;
+        let raw_input = crawler_raw_input(
+            &selection.raw,
+            &selection.validated_image_urls,
+            url,
+            selection.default_currency,
+        )
+        .map_err(ScraperError::RawNormalizationInput)?;
+        let raw_input_sha256 = raw_input
+            .hash()
+            .map_err(ScraperError::RawNormalizationInput)?
+            .as_bytes()
+            .to_vec();
+        let availability = selection.prepared.availability;
 
-        // `mark_as_scraped` is intentionally NOT called here.  The caller
-        // (cron pipeline) must call it only after the push to the product
-        // backend has been confirmed, so that a failed push is retried on
-        // the next cycle.
-        let snapshot = ProductListingSnapshot::from_normalized(&final_product);
-
-        debug!(
-            domain,
-            source_listing_id = %final_product.source_listing_id,
-            "Scraping complete"
-        );
+        // `mark_as_scraped` is intentionally deferred until raw capture succeeds.
+        debug!(domain, "Scraping complete");
         Ok(Some(ScrapedProduct {
-            product: final_product,
+            raw_input,
+            availability,
             hash: current_hash,
-            snapshot,
+            schema_fingerprint,
+            raw_input_sha256,
         }))
     }
 }

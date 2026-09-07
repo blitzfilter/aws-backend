@@ -26,7 +26,7 @@ static DETECTOR: Lazy<LanguageDetector> = Lazy::new(|| {
 ///
 /// Returns `None` if the language cannot be identified as one of the supported
 /// languages (DE, EN, FR, ES, IT, ZH, PT, PL, TR, NL, CS, JA, RU, AR).
-pub(super) fn detect_language(text: &str) -> Option<Language> {
+pub fn detect_language(text: &str) -> Option<Language> {
     DETECTOR.detect_language_of(text).map(|lang| match lang {
         LinguaLanguage::English => Language::En,
         LinguaLanguage::German => Language::De,

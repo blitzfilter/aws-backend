@@ -261,9 +261,11 @@ dependencies = [
  "platform-observability",
  "platform-postgres",
  "product-listing-core",
+ "product-listing-normalization",
  "product-listing-opensearch",
  "product-listing-postgres",
  "product-listing-service",
+ "product-service",
  "reqwest 0.12.28",
  "rstest",
  "search-filter-core",
@@ -274,6 +276,7 @@ dependencies = [
  "serde_json",
  "serde_qs",
  "serial_test",
+ "sha2 0.11.0",
  "sqlx",
  "test-api",
  "thiserror 2.0.20",
@@ -292,6 +295,7 @@ dependencies = [
  "watchlist-core",
  "watchlist-postgres",
  "watchlist-service",
+ "woocommerce-service",
 ]
 
 [[package]]
@@ -355,10 +359,12 @@ dependencies = [
  "platform-observability",
  "platform-postgres",
  "product-listing-core",
+ "product-listing-normalization",
  "product-listing-opensearch",
  "product-listing-postgres",
  "product-listing-service",
  "product-listing-translation-llm",
+ "product-service",
  "reqwest 0.12.28",
  "rstest",
  "search-filter-core",
@@ -1826,6 +1832,7 @@ dependencies = [
  "once_cell",
  "platform-postgres",
  "product-listing-core",
+ "product-listing-normalization",
  "product-listing-postgres",
  "product-listing-service",
  "public-network-policy",
@@ -1841,6 +1848,7 @@ dependencies = [
  "spider",
  "sqlx",
  "strum 0.28.0",
+ "strum_macros 0.28.0",
  "test-api",
  "thiserror 2.0.20",
  "time",
@@ -5718,6 +5726,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "product-listing-normalization"
+version = "0.1.0"
+dependencies = [
+ "lingua",
+ "localization",
+ "money",
+ "once_cell",
+ "product-listing-core",
+ "regex",
+ "rstest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
+ "thiserror 2.0.20",
+ "time",
+ "url",
+]
+
+[[package]]
 name = "product-listing-opensearch"
 version = "0.1.0"
 dependencies = [
@@ -5764,12 +5793,15 @@ dependencies = [
  "notification-core",
  "platform-postgres",
  "product-listing-core",
+ "product-listing-normalization",
  "product-listing-service",
+ "product-service",
  "rstest",
  "search-filter-core",
  "serde",
  "serde_json",
  "serial_test",
+ "sha2 0.11.0",
  "sqlx",
  "strum 0.28.0",
  "test-api",
@@ -5792,7 +5824,6 @@ dependencies = [
  "fake",
  "fxrate-core",
  "fxrate-service",
- "html-to-markdown-rs",
  "indexmap 2.14.1",
  "listing-source-core",
  "listing-source-service",
@@ -5802,9 +5833,12 @@ dependencies = [
  "notification-service",
  "party-core",
  "product-listing-core",
+ "product-listing-normalization",
  "search-filter-core",
  "serde_json",
+ "sha2 0.11.0",
  "strum 0.28.0",
+ "strum_macros 0.28.0",
  "thiserror 2.0.20",
  "time",
  "tokio",
@@ -5827,6 +5861,27 @@ dependencies = [
  "product-listing-service",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "product-service"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "domain-primitives",
+ "indexmap 2.14.1",
+ "listing-source-core",
+ "product-listing-core",
+ "product-listing-normalization",
+ "product-listing-service",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -7054,7 +7109,6 @@ dependencies = [
  "fxrate-postgres",
  "fxrate-service",
  "html-to-markdown-rs",
- "indexmap 2.14.1",
  "lambda_runtime",
  "listing-source-core",
  "listing-source-postgres",
@@ -7063,9 +7117,10 @@ dependencies = [
  "money",
  "platform-observability",
  "platform-postgres",
- "product-listing-core",
+ "product-listing-normalization",
  "product-listing-postgres",
  "product-listing-service",
+ "product-service",
  "serde",
  "serde_json",
  "serial_test",
@@ -7076,7 +7131,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "url",
  "uuid",
 ]
 
@@ -9019,6 +9073,29 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "woocommerce-service"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "html-to-markdown-rs",
+ "listing-source-core",
+ "listing-source-service",
+ "localization",
+ "money",
+ "product-listing-normalization",
+ "product-listing-service",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "user-core",
+ "uuid",
+]
 
 [[package]]
 name = "writeable"

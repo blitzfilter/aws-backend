@@ -3,7 +3,7 @@ use super::metrics::PerfCounter;
 use crate::scraper::candidate_service::ScraperCandidateService;
 use crate::scraper::scraper_service::ScraperService;
 use crate::service::listing_source_registration::ListingSourceRegistrationService;
-use crate::service::product_push::ProductListingPushService;
+use crate::service::raw_capture::ProductListingRawCaptureService;
 use crate::spider::advisory_lock::LocalLockManager;
 use crate::spider::candidate_service::SpiderCandidateService;
 use crate::spider::service::SpiderService;
@@ -21,7 +21,7 @@ pub struct CrawlerCronJob {
     pub(super) scraper_candidates: Arc<dyn ScraperCandidateService>,
     pub(super) scraper_service: Arc<dyn ScraperService>,
     pub(super) listing_source_registration: Arc<ListingSourceRegistrationService>,
-    pub(super) product_push: Arc<dyn ProductListingPushService>,
+    pub(super) raw_capture: Arc<dyn ProductListingRawCaptureService>,
     pub(super) spider_perf: Arc<PerfCounter>,
     pub(super) scraper_perf: Arc<PerfCounter>,
 }
@@ -36,7 +36,7 @@ impl CrawlerCronJob {
         scraper_candidates: Box<dyn ScraperCandidateService>,
         scraper_service: Box<dyn ScraperService>,
         listing_source_registration: ListingSourceRegistrationService,
-        product_push: Box<dyn ProductListingPushService>,
+        raw_capture: Box<dyn ProductListingRawCaptureService>,
     ) -> Self {
         Self {
             config,
@@ -46,7 +46,7 @@ impl CrawlerCronJob {
             scraper_candidates: scraper_candidates.into(),
             scraper_service: scraper_service.into(),
             listing_source_registration: Arc::new(listing_source_registration),
-            product_push: product_push.into(),
+            raw_capture: raw_capture.into(),
             spider_perf: Arc::new(PerfCounter::new(50, "spider")),
             scraper_perf: Arc::new(PerfCounter::new(500, "scraper")),
         }
@@ -115,7 +115,7 @@ mod tests {
     use super::*;
     use crate::scraper::candidate_service::MockScraperCandidateService;
     use crate::scraper::scraper_service::MockScraperService;
-    use crate::service::cron::test_support::noop_product_push;
+    use crate::service::cron::test_support::noop_raw_capture;
     use crate::service::listing_source_registration::{
         ListingSourceRegistrationService, MockListingSourceRegistrationRepository,
         MockListingSourceRegistrationSource,
@@ -178,7 +178,7 @@ mod tests {
             Box::new(scraper_candidates),
             Box::new(scraper_service),
             listing_source_registration,
-            noop_product_push(),
+            noop_raw_capture(),
         );
 
         job.run_listing_source_sync_once().await;

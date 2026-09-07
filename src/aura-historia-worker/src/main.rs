@@ -2,6 +2,7 @@ use aura_historia_worker::notification_delivery::consume_notification_delivery_q
 use aura_historia_worker::product_content_assessment::consume_product_content_assessment_queue;
 use aura_historia_worker::product_embedding::consume_product_embedding_queue;
 use aura_historia_worker::product_listing_opensearch::consume_product_listing_opensearch_queue;
+use aura_historia_worker::product_listing_raw_normalization::consume_product_listing_raw_normalization_queue;
 use aura_historia_worker::product_translation::consume_product_translation_queue;
 use aura_historia_worker::search_filter_match_notifications::consume_search_filter_match_notification_queue;
 use aura_historia_worker::search_filter_percolator::consume_search_filter_percolator_queue;
@@ -47,11 +48,13 @@ use platform_observability::{LogLevel, LoggingConfig, init};
 use platform_postgres::{PostgresConnectError, SqlxUnitOfWork};
 use product_listing_opensearch::OpenSearchProductListingSearchProjection;
 use product_listing_postgres::{
+    SqlxPendingProductListingRawStreamReader,
     SqlxProductListingContentAssessmentSnapshotReaderFactory,
     SqlxProductListingContentAssessmentSourceReader,
     SqlxProductListingContentAssessmentWriterFactory, SqlxProductListingCurrentEventGuardFactory,
     SqlxProductListingEmbeddingSourceReader, SqlxProductListingEmbeddingWriterFactory,
-    SqlxProductListingSearchFilterMatchSourceReaderFactory,
+    SqlxProductListingEventAppenderFactory, SqlxProductListingRawNormalizationWriterFactory,
+    SqlxProductListingRepositoryFactory, SqlxProductListingSearchFilterMatchSourceReaderFactory,
     SqlxProductListingTranslationSourceReader, SqlxProductListingTranslationWriterFactory,
     SqlxProductListingWatchlistNotificationSourceReaderFactory,
 };
@@ -63,6 +66,9 @@ use product_listing_service::use_cases::{
     TranslateProductListingEventHandler, TranslateProductListingEventUseCase,
 };
 use product_listing_translation_llm::LargeLanguageModelProductListingTitleTranslator;
+use product_service::use_cases::{
+    NormalizeProductListingRawRevisionHandler, NormalizeProductListingRawRevisionUseCase,
+};
 use search_filter_opensearch::OpenSearchSearchFilterIndex;
 use search_filter_postgres::{
     SqlxActiveSearchFilterMatchCandidateReaderFactory, SqlxSearchFilterIndexReader,
@@ -75,6 +81,7 @@ use search_filter_service::use_cases::{
     ProjectSearchFilterChangeHandler, ProjectSearchFilterChangeUseCase,
 };
 use std::sync::Arc;
+use tokio::sync::watch;
 use user_postgres::SqlxUserTierEntitlementsFactory;
 use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
 
@@ -142,6 +149,9 @@ async fn main() -> Result<(), MainError> {
                 .vertex_ai()
                 .ok_or(MainError::MissingScopeConfig { scope })?;
             run_product_embedding(worker_config, pool, composition, vertex_ai).await
+        }
+        WorkerScope::ProductListingRawNormalization => {
+            run_product_listing_raw_normalization(worker_config, pool, composition).await
         }
         WorkerScope::NotificationDelivery => {
             let delivery = startup
@@ -292,6 +302,29 @@ async fn run_product_translation(
     finish_runtime(config, runtime, task).await
 }
 
+async fn run_product_listing_raw_normalization(
+    config: aura_historia_worker::WorkerConfig,
+    pool: sqlx::PgPool,
+    composition: WorkerRuntimeComposition,
+) -> Result<(), MainError> {
+    let handler: Arc<dyn NormalizeProductListingRawRevisionUseCase> =
+        Arc::new(NormalizeProductListingRawRevisionHandler::new(
+            SqlxUnitOfWork::new(pool.clone()),
+            SqlxProductListingRawNormalizationWriterFactory::new(),
+            SqlxProductListingRepositoryFactory::new(),
+            SqlxProductListingEventAppenderFactory::new(),
+            SqlxPendingProductListingRawStreamReader::new(pool),
+        ));
+    let (runtime, receiver) = composition.into_parts();
+    let (shutdown, shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(consume_product_listing_raw_normalization_queue(
+        receiver,
+        handler,
+        shutdown_rx,
+    ));
+    finish_raw_normalization_runtime(config, runtime, task, shutdown).await
+}
+
 async fn run_notification_delivery(
     config: aura_historia_worker::WorkerConfig,
     pool: sqlx::PgPool,
@@ -356,6 +389,24 @@ async fn run_watchlist_notifications(
     let (runtime, receiver) = composition.into_parts();
     let task = tokio::spawn(consume_watchlist_notification_queue(receiver, handler));
     finish_runtime(config, runtime, task).await
+}
+
+async fn finish_raw_normalization_runtime(
+    config: aura_historia_worker::WorkerConfig,
+    runtime: aura_historia_worker::WorkerRuntime,
+    task: tokio::task::JoinHandle<()>,
+    consumer_shutdown: watch::Sender<bool>,
+) -> Result<(), MainError> {
+    let shutdown_for_signal = consumer_shutdown.clone();
+    let result = run_until_shutdown_with_runtime(config, runtime, async move {
+        shutdown_signal().await;
+        let _previous_shutdown = shutdown_for_signal.send_replace(true);
+    })
+    .await;
+    let _previous_shutdown = consumer_shutdown.send_replace(true);
+    task.await.map_err(MainError::RawNormalizationConsumer)?;
+    result?;
+    Ok(())
 }
 
 async fn finish_runtime(
@@ -444,6 +495,8 @@ enum MainError {
     NotificationDispatch(
         #[from] notification_service::ports::notification_channel_sender::NotificationDeliveryDispatchError,
     ),
+    #[error("raw normalization consumer task stopped unexpectedly")]
+    RawNormalizationConsumer(#[source] tokio::task::JoinError),
     #[error(transparent)]
     Run(#[from] WorkerRunError),
 }

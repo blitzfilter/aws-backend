@@ -1,4 +1,4 @@
-use super::{error::NormalizationError, language::detect_language};
+use crate::{error::NormalizationError, language::detect_language};
 use localization::{Language, Localized};
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_core::{description::Description, title::Title};
@@ -7,10 +7,7 @@ use url::Url;
 
 /// Strict variant used only in tests — returns an error when `raw` is blank
 /// rather than falling back to the URL.
-#[cfg(test)]
-pub(super) fn normalize_source_listing_id(
-    raw: &str,
-) -> Result<SourceListingId, NormalizationError> {
+pub fn normalize_source_listing_id(raw: &str) -> Result<SourceListingId, NormalizationError> {
     SourceListingId::try_from(raw).map_err(|error| match error {
         product_listing_core::source_listing_id::InvalidSourceListingId::Blank => {
             NormalizationError::SourceListingIdEmpty
@@ -28,7 +25,7 @@ fn sha256_hex(input: &str) -> String {
 
 /// Returns the normalized extracted ID when present; otherwise falls back to
 /// a SHA-256 hash of the full URL string.
-pub(super) fn normalize_source_listing_id_with_url_sha_fallback(
+pub fn normalize_source_listing_id_with_url_sha_fallback(
     raw: &str,
     url: &Url,
 ) -> Result<SourceListingId, NormalizationError> {
@@ -42,7 +39,7 @@ pub(super) fn normalize_source_listing_id_with_url_sha_fallback(
 
 /// Returns the trimmed title string, or [`NormalizationError::TitleEmpty`] if
 /// the result is blank.
-pub(super) fn normalize_title(raw: &str) -> Result<Title, NormalizationError> {
+pub fn normalize_title(raw: &str) -> Result<Title, NormalizationError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(NormalizationError::TitleEmpty);
@@ -56,7 +53,7 @@ pub(super) fn normalize_title(raw: &str) -> Result<Title, NormalizationError> {
 /// blank, or [`NormalizationError::TitleUnknownLanguage`] if the language
 /// cannot be detected.
 #[allow(dead_code)]
-pub(super) fn normalize_title_localized(
+pub fn normalize_title_localized(
     raw: &str,
 ) -> Result<Localized<Language, Title>, NormalizationError> {
     let title = normalize_title(raw)?;
@@ -68,7 +65,7 @@ fn word_count(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
-pub(super) fn detect_description_language(fragments: &[String]) -> Option<Language> {
+pub fn detect_description_language(fragments: &[String]) -> Option<Language> {
     let cleaned: Vec<String> = fragments
         .iter()
         .map(|s| s.trim().to_owned())
@@ -80,7 +77,7 @@ pub(super) fn detect_description_language(fragments: &[String]) -> Option<Langua
     detect_language(cleaned.join("\n\n").as_str())
 }
 
-pub(super) fn localize_normalized_title(
+pub fn localize_normalized_title(
     title: Title,
     title_language: Option<Language>,
     description_language: Option<Language>,
@@ -103,7 +100,7 @@ pub(super) fn localize_normalized_title(
 /// Returns `Ok(None)` when all fragments are blank.  Returns
 /// [`NormalizationError::DescriptionUnknownLanguage`] when language detection
 /// fails on the joined text and no fallback language is available.
-pub(super) fn normalize_description(
+pub fn normalize_description(
     fragments: Vec<String>,
     fallback_language: Option<Language>,
 ) -> Result<Option<Localized<Language, Description>>, NormalizationError> {
@@ -140,7 +137,7 @@ mod tests {
         normalize_source_listing_id_with_url_sha_fallback, normalize_title,
         normalize_title_localized,
     };
-    use crate::scraper::normalization::error::NormalizationError;
+    use crate::error::NormalizationError;
 
     // -----------------------------------------------------------------------
     // source_listing_id

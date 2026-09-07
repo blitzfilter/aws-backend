@@ -1,59 +1,19 @@
 pub use super::error::NormalizationError;
-use super::{
-    datetime::normalize_datetime_field,
-    image::normalize_images,
-    language::detect_language,
-    price::normalize_price_field,
-    text::{
-        detect_description_language, localize_normalized_title, normalize_description,
-        normalize_source_listing_id_with_url_sha_fallback, normalize_title,
-    },
-};
+
 use crate::scraper::css_selector::product_schema::RawExtractedProduct;
-use crate::scraper::normalization::{
-    listing_availability_mapping_service::{
-        ListingAvailabilityMappingService, ListingAvailabilityMappingServiceError,
-    },
-    product::NormalizedProduct,
-};
-
-use localization::{Language, Localized};
 use money::Currency;
-use product_listing_core::{
-    description::Description, product_listing_image::ProductListingImage,
-    source_listing_id::SourceListingId, title::Title,
+use product_listing_normalization::{
+    AvailabilityNormalizationError, DateTimeField, DateTimeNormalizationError,
+    ImageUrlNormalizationError, PriceField, PriceNormalizationError, normalize_date_time,
+    normalize_description, normalize_image_urls, normalize_price,
+    normalize_source_listing_id_with_url_sha_fallback, normalize_title, quick_check_availability,
 };
-
-use tracing::debug;
 use url::Url;
-
-// ---------------------------------------------------------------------------
-// Trait
-// ---------------------------------------------------------------------------
 
 #[async_trait::async_trait]
 #[mockall::automock]
-pub trait ProductListingNormalizationService {
-    /// Normalise a raw extracted product.
-    ///
-    /// Availability is resolved from raw extraction text through the injected
-    /// [`ListingAvailabilityMappingService`]. Callers do not pre-resolve it; this
-    /// method performs the required asynchronous boundary work.
-    ///
-    /// When `raw.source_listing_id` is blank after trimming, a SHA-256 hash of
-    /// the full `url` string is used as a stable fallback identifier rather
-    /// than returning an error. This keeps the scrape pipeline alive on pages
-    /// where the CSS selector does not extract a product ID.
-    ///
-    /// `default_currency` is used as a fallback when the raw price string
-    /// contains no currency symbol or ISO code (e.g. bare "18,00" on a site
-    /// where EUR is implied).  It is set by the LLM during schema
-    /// creation/fixing and stored in the [`ProductCssSelectorSchema`].
-    ///
-    /// Returns `llm_calls_used` with either success or failure.  The value is
-    /// `1` when
-    /// the availability-mapping LLM fallback was invoked for an unseen raw value,
-    /// and `0` otherwise. Callers use this count against the per-ListingSource LLM budget.
+pub trait ProductListingNormalizationService: Send + Sync {
+    /// Normalizes crawler-extracted values using only the shared pure kernel.
     async fn normalize(
         &self,
         raw: RawExtractedProduct,
@@ -64,7 +24,10 @@ pub trait ProductListingNormalizationService {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizationSuccess {
-    pub product: NormalizedProduct,
+    /// Candidate-local prepared values. They support plausibility and ranking;
+    /// canonical writes use the separate raw-input handoff.
+    pub prepared: PreparedProduct,
+    /// Deterministic preparation never consumes LLM budget.
     pub llm_calls_used: u32,
 }
 
@@ -77,16 +40,23 @@ pub struct NormalizationFailure {
 
 pub type ProductListingNormalizationResult = Result<NormalizationSuccess, NormalizationFailure>;
 
-/// Deterministic candidate-local product data. Availability mapping is intentionally absent.
-#[derive(Debug, Clone)]
+/// Deterministic candidate-local product data. Source mapping stays in crawler.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PreparedProduct {
-    pub source_listing_id: SourceListingId,
-    pub title: Localized<Language, Title>,
-    pub description: Option<Localized<Language, Description>>,
+    /// Pure crawler outcome used only for local disposition.
+    pub availability: product_listing_normalization::ListingAvailabilityQuickCheck,
+    pub source_listing_id: product_listing_core::source_listing_id::SourceListingId,
+    pub title: localization::Localized<localization::Language, product_listing_core::title::Title>,
+    pub description: Option<
+        localization::Localized<
+            localization::Language,
+            product_listing_core::description::Description,
+        >,
+    >,
     pub price: Option<money::Price>,
     pub price_estimate_min: Option<money::Price>,
     pub price_estimate_max: Option<money::Price>,
-    pub images: Vec<ProductListingImage>,
+    pub images: Vec<product_listing_core::product_listing_image::ProductListingImage>,
     pub auction_start: Option<time::OffsetDateTime>,
     pub auction_end: Option<time::OffsetDateTime>,
     pub raw_attributes: std::collections::BTreeMap<String, Vec<String>>,
@@ -94,58 +64,40 @@ pub struct PreparedProduct {
     pub url: Url,
 }
 
-/// Apply deterministic normalization without database or LLM work.
 pub fn prepare_product(
     raw: RawExtractedProduct,
     url: Url,
     default_currency: Option<Currency>,
 ) -> Result<PreparedProduct, NormalizationError> {
-    let state_len = raw.state.trim().len();
-    if state_len > crate::scraper::normalization::listing_availability_mapping_service::MAX_AVAILABILITY_RAW_LEN {
-        return Err(NormalizationError::StateTextTooLong {
-            len: state_len,
-            max: crate::scraper::normalization::listing_availability_mapping_service::MAX_AVAILABILITY_RAW_LEN,
-        });
-    }
+    let availability =
+        quick_check_availability(raw.state.as_str()).map_err(map_availability_error)?;
     let source_listing_id =
         normalize_source_listing_id_with_url_sha_fallback(&raw.source_listing_id, &url)?;
-    let title = normalize_title(&raw.title)?;
-    let title_language = detect_language(title.as_ref());
-    let description_language = detect_description_language(&raw.description);
-    let title = localize_normalized_title(title, title_language, description_language)?;
+    let title = normalize_title(raw.title.as_str())?;
+    let title_language = product_listing_normalization::detect_language(title.as_ref());
+    let description_language =
+        product_listing_normalization::text::detect_description_language(&raw.description);
+    let title = product_listing_normalization::text::localize_normalized_title(
+        title,
+        title_language,
+        description_language,
+    )?;
     let description = normalize_description(raw.description, title_language)?;
-    let price = normalize_price_field(
-        raw.price,
-        "price",
-        &url,
-        default_currency,
-        |r| NormalizationError::PriceUnknownCurrency { raw: r },
-        |r| NormalizationError::PriceParseError { raw: r },
-    )?;
-    let price_estimate_min = normalize_price_field(
-        raw.price_estimate_min,
-        "price_estimate_min",
-        &url,
-        default_currency,
-        |r| NormalizationError::PriceEstimateMinUnknownCurrency { raw: r },
-        |r| NormalizationError::PriceEstimateMinParseError { raw: r },
-    )?;
-    let price_estimate_max = normalize_price_field(
-        raw.price_estimate_max,
-        "price_estimate_max",
-        &url,
-        default_currency,
-        |r| NormalizationError::PriceEstimateMaxUnknownCurrency { raw: r },
-        |r| NormalizationError::PriceEstimateMaxParseError { raw: r },
-    )?;
-    let images = normalize_images(raw.images, &url)?;
-    let auction_start = normalize_datetime_field(raw.auction_start, |r| {
-        NormalizationError::AuctionStartParseError { raw: r }
-    })?;
-    let auction_end = normalize_datetime_field(raw.auction_end, |r| {
-        NormalizationError::AuctionEndParseError { raw: r }
-    })?;
+
+    let price = normalize_price(raw.price.as_deref(), default_currency)
+        .map_err(|error| map_price_error(error, PriceField::Price))?;
+    let price_estimate_min = normalize_price(raw.price_estimate_min.as_deref(), default_currency)
+        .map_err(|error| map_price_error(error, PriceField::EstimateMin))?;
+    let price_estimate_max = normalize_price(raw.price_estimate_max.as_deref(), default_currency)
+        .map_err(|error| map_price_error(error, PriceField::EstimateMax))?;
+    let images = normalize_image_urls(raw.images, &url).map_err(map_image_error)?;
+    let auction_start = normalize_date_time(raw.auction_start.as_deref())
+        .map_err(|error| map_date_time_error(error, DateTimeField::AuctionStart))?;
+    let auction_end = normalize_date_time(raw.auction_end.as_deref())
+        .map_err(|error| map_date_time_error(error, DateTimeField::AuctionEnd))?;
+
     Ok(PreparedProduct {
+        availability,
         source_listing_id,
         title,
         description,
@@ -161,110 +113,82 @@ pub fn prepare_product(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-
-pub struct ProductListingNormalizationServiceImpl {
-    listing_availability_mapping_service: Box<dyn ListingAvailabilityMappingService + Send + Sync>,
-}
+pub struct ProductListingNormalizationServiceImpl;
 
 impl ProductListingNormalizationServiceImpl {
-    pub fn new(
-        listing_availability_mapping_service: Box<
-            dyn ListingAvailabilityMappingService + Send + Sync,
-        >,
-    ) -> Self {
-        Self {
-            listing_availability_mapping_service,
-        }
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ProductListingNormalizationServiceImpl {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait::async_trait]
 impl ProductListingNormalizationService for ProductListingNormalizationServiceImpl {
-    #[tracing::instrument(skip(self, raw), fields(url = %url))]
     async fn normalize(
         &self,
         raw: RawExtractedProduct,
         url: Url,
         default_currency: Option<Currency>,
     ) -> ProductListingNormalizationResult {
-        debug!(
-            source_listing_id = %raw.source_listing_id,
-            title = %raw.title,
-            state = %raw.state,
-            price = ?raw.price,
-            price_estimate_min = ?raw.price_estimate_min,
-            price_estimate_max = ?raw.price_estimate_max,
-            images_count = raw.images.len(),
-            has_description = !raw.description.is_empty(),
-            has_auction_start = raw.auction_start.is_some(),
-            has_auction_end = raw.auction_end.is_some(),
-            "Normalizing raw extracted product"
-        );
-        let prepared =
-            prepare_product(raw, url, default_currency).map_err(|error| NormalizationFailure {
-                error,
-                llm_calls_used: 0,
-            })?;
-
-        // Resolve availability only after deterministic candidate validation. This
-        // avoids DB/LLM work for candidates that cannot become a listing.
-        let (availability_mapping, state_llm_called) = self
-            .listing_availability_mapping_service
-            .get_listing_availability_mapping(&prepared.raw_state)
-            .await
-            .map_err(|error| NormalizationFailure {
-                llm_calls_used: match &error {
-                    ListingAvailabilityMappingServiceError::LargeLanguageModelError(_)
-                    | ListingAvailabilityMappingServiceError::UnparsableResponse
-                    | ListingAvailabilityMappingServiceError::DatabaseErrorAfterLlm(_) => 1,
-                    ListingAvailabilityMappingServiceError::RawStateTooLong { .. }
-                    | ListingAvailabilityMappingServiceError::ResponseJsonSchemaSerialization(_)
-                    | ListingAvailabilityMappingServiceError::DatabaseError(_) => 0,
-                },
-                error: match error {
-                    ListingAvailabilityMappingServiceError::RawStateTooLong { len, max } => {
-                        NormalizationError::StateTextTooLong { len, max }
-                    }
-                    other => NormalizationError::ListingAvailabilityMappingError(other),
-                },
-            })?;
-        let llm_calls_used = u32::from(state_llm_called);
-
+        let prepared = prepare_product(raw, url, default_currency).map_err(failure)?;
         Ok(NormalizationSuccess {
-            product: NormalizedProduct {
-                source_listing_id: prepared.source_listing_id,
-                title: prepared.title,
-                description: prepared.description,
-                price: prepared.price,
-                price_estimate_min: prepared.price_estimate_min,
-                price_estimate_max: prepared.price_estimate_max,
-                availability: availability_mapping,
-                url: prepared.url,
-                images: prepared.images,
-                auction_start: prepared.auction_start,
-                auction_end: prepared.auction_end,
-                raw_attributes: prepared.raw_attributes,
-            },
-            llm_calls_used,
+            prepared,
+            llm_calls_used: 0,
         })
+    }
+}
+
+fn failure(error: NormalizationError) -> NormalizationFailure {
+    NormalizationFailure {
+        error,
+        llm_calls_used: 0,
+    }
+}
+
+fn map_price_error(error: PriceNormalizationError, field: PriceField) -> NormalizationError {
+    match error {
+        PriceNormalizationError::UnknownCurrency => {
+            NormalizationError::PriceUnknownCurrency { field }
+        }
+        PriceNormalizationError::ParseFailure => NormalizationError::PriceParseError { field },
+    }
+}
+
+fn map_image_error(error: ImageUrlNormalizationError) -> NormalizationError {
+    match error {
+        ImageUrlNormalizationError::InvalidUrl(source) => {
+            NormalizationError::InvalidImageUrl(source)
+        }
+    }
+}
+
+fn map_date_time_error(_: DateTimeNormalizationError, field: DateTimeField) -> NormalizationError {
+    NormalizationError::DateTimeParseError { field }
+}
+
+fn map_availability_error(error: AvailabilityNormalizationError) -> NormalizationError {
+    match error {
+        AvailabilityNormalizationError::InputTooLong { len, max } => {
+            NormalizationError::AvailabilityTextTooLong { len, max }
+        }
+        AvailabilityNormalizationError::EmbeddedNul => {
+            NormalizationError::AvailabilityTextEmbeddedNul
+        }
+        AvailabilityNormalizationError::RegexSetCompilationFailed => {
+            NormalizationError::AvailabilityRegexSetCompilationFailed
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scraper::normalization::listing_availability_mapping::ListingAvailabilityMapping;
-    use crate::scraper::normalization::listing_availability_mapping_service::{
-        ListingAvailabilityMappingServiceError, MockListingAvailabilityMappingService,
-    };
-    use product_listing_core::listing_availability::ListingAvailability;
-
-    fn base_url() -> Url {
-        Url::parse("https://example.com/listings/123").unwrap()
-    }
+    use product_listing_normalization::ListingAvailabilityQuickCheck;
 
     fn raw() -> RawExtractedProduct {
         RawExtractedProduct {
@@ -274,7 +198,7 @@ mod tests {
             price: None,
             price_estimate_min: None,
             price_estimate_max: None,
-            state: "availability text".into(),
+            state: "sold out".into(),
             images: vec![],
             auction_start: None,
             auction_end: None,
@@ -282,118 +206,39 @@ mod tests {
         }
     }
 
-    fn service(mapping: ListingAvailabilityMapping) -> ProductListingNormalizationServiceImpl {
-        let mut mapping_service = MockListingAvailabilityMappingService::new();
-        mapping_service
-            .expect_get_listing_availability_mapping()
-            .returning(move |_| Box::pin(async move { Ok((mapping, false)) }));
-        ProductListingNormalizationServiceImpl::new(Box::new(mapping_service))
+    #[test]
+    fn should_map_invalid_availability_regex_sets_to_a_system_failure() {
+        let error =
+            map_availability_error(AvailabilityNormalizationError::RegexSetCompilationFailed);
+
+        assert_eq!(
+            error.failure_reason(),
+            "availability_regex_set_compilation_failed"
+        );
+        assert_eq!(
+            error.failure_scope(),
+            product_listing_normalization::error::NormalizationFailureScope::System
+        );
     }
 
     #[tokio::test]
-    async fn should_keep_reliable_availability_mapping() {
-        let result = service(ListingAvailabilityMapping::Availability(
-            ListingAvailability::InStock,
-        ))
-        .normalize(raw(), base_url(), None)
-        .await
-        .unwrap();
+    async fn should_use_pure_availability_normalization_without_llm_budget() {
+        let result = ProductListingNormalizationServiceImpl::new()
+            .normalize(
+                raw(),
+                Url::parse("https://example.com/listings/123")
+                    .unwrap_or_else(|error| panic!("test URL must parse: {error}")),
+                None,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("product must normalize: {error}"));
 
-        assert_eq!(
-            result.product.availability,
-            ListingAvailabilityMapping::Availability(ListingAvailability::InStock)
-        );
         assert_eq!(result.llm_calls_used, 0);
-    }
-
-    #[tokio::test]
-    async fn should_keep_no_assertion_mapping() {
-        let result = service(ListingAvailabilityMapping::NoAssertion)
-            .normalize(raw(), base_url(), None)
-            .await
-            .unwrap();
-
         assert_eq!(
-            result.product.availability,
-            ListingAvailabilityMapping::NoAssertion
+            result.prepared.availability,
+            ListingAvailabilityQuickCheck::Resolved(
+                product_listing_core::listing_availability::ListingAvailability::SoldOut
+            )
         );
-    }
-
-    #[tokio::test]
-    async fn should_keep_ignore_mapping_without_converting_it_to_no_assertion() {
-        let result = service(ListingAvailabilityMapping::Ignore)
-            .normalize(raw(), base_url(), None)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            result.product.availability,
-            ListingAvailabilityMapping::Ignore
-        );
-    }
-
-    #[tokio::test]
-    async fn should_not_map_availability_when_deterministic_validation_fails() {
-        let mut mapping_service = MockListingAvailabilityMappingService::new();
-        mapping_service
-            .expect_get_listing_availability_mapping()
-            .times(0);
-        let service = ProductListingNormalizationServiceImpl::new(Box::new(mapping_service));
-        let mut invalid = raw();
-        invalid.title.clear();
-
-        let error = service
-            .normalize(invalid, base_url(), None)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(error.error, NormalizationError::TitleEmpty));
-        assert_eq!(error.llm_calls_used, 0);
-    }
-
-    #[tokio::test]
-    async fn should_count_mapping_llm_call_when_boundary_service_uses_llm() {
-        let mut mapping_service = MockListingAvailabilityMappingService::new();
-        mapping_service
-            .expect_get_listing_availability_mapping()
-            .returning(|_| {
-                Box::pin(async {
-                    Ok((
-                        ListingAvailabilityMapping::Availability(ListingAvailability::Available),
-                        true,
-                    ))
-                })
-            });
-        let service = ProductListingNormalizationServiceImpl::new(Box::new(mapping_service));
-
-        let result = service.normalize(raw(), base_url(), None).await.unwrap();
-
-        assert_eq!(result.llm_calls_used, 1);
-    }
-
-    #[tokio::test]
-    async fn should_preserve_mapping_service_error() {
-        let mut mapping_service = MockListingAvailabilityMappingService::new();
-        mapping_service
-            .expect_get_listing_availability_mapping()
-            .returning(|_| {
-                Box::pin(async {
-                    Err(ListingAvailabilityMappingServiceError::DatabaseError(
-                        sqlx::Error::RowNotFound,
-                    ))
-                })
-            });
-        let service = ProductListingNormalizationServiceImpl::new(Box::new(mapping_service));
-
-        let error = service
-            .normalize(raw(), base_url(), None)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            error.error,
-            NormalizationError::ListingAvailabilityMappingError(_)
-        ));
-        assert_eq!(error.llm_calls_used, 0);
     }
 }

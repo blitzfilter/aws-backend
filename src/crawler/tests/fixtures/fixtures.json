@@ -1,7 +1,6 @@
 [
   {
     "html": "tests/fixtures/html/weitze_available.html",
-    "raw_state": "cart",
     "schema": {
       "source_listing_id": {
         "selector": ".nr",
@@ -71,13 +70,11 @@
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/chairish_available.html",
-    "raw_state": "instock",
     "schema": {
       "price": {
         "type": "text",
@@ -163,13 +160,11 @@
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/lot-tissimo_listed.html",
-    "raw_state": "true",
     "schema": {
       "source_listing_id": {
         "selector": "input#LotId",
@@ -186,7 +181,6 @@
         "type": "attribute",
         "name": "content"
       },
-
       "state": {
         "selector": "input#lot-is-ended",
         "type": "attribute",
@@ -236,12 +230,10 @@
       "auction_start": null,
       "auction_end": null,
       "availability": null
-    },
-    "availability_record": "NO_ASSERTION"
+    }
   },
   {
     "html": "tests/fixtures/html/antik-und-stil_available.html",
-    "raw_state": "In den Warenkorb",
     "schema": {
       "source_listing_id": {
         "selector": ".product_meta .sku",
@@ -302,7 +294,6 @@
       "url": "https://antik-und-stil.com/produkt/runder-esstisch-mit-marmorplatte-biedermeier-ca-1850-antik-stil/",
       "images": [
         "https://antik-und-stil.com/wp-content/uploads/2025/03/Tisch-Marmor1000-x-1000-px-1000-x-1000-px-1.png",
-        "https://antik-und-stil.com/wp-content/uploads/2025/03/Tisch-Marmor1000-x-1000-px-1000-x-1000-px-1.png",
         "https://antik-und-stil.com/wp-content/uploads/2025/03/20250219_083921-scaled.jpg",
         "https://antik-und-stil.com/wp-content/uploads/2025/03/20250219_084007-scaled.jpg",
         "https://antik-und-stil.com/wp-content/uploads/2025/03/20250219_083950-scaled.jpg",
@@ -315,12 +306,10 @@
       "auction_start": null,
       "auction_end": null,
       "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+    }
   },
   {
     "html": "tests/fixtures/html/wandel-antik_available.html",
-    "raw_state": "Sie m\u00f6chten diesen Artikel erwerben? Kontaktieren Sie uns:",
     "schema": {
       "source_listing_id": {
         "selector": ".elementor-repeater-item-57316fe .elementor-post-info__item--type-custom",
@@ -383,13 +372,11 @@
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/nicholaswells_available.html",
-    "raw_state": "instock",
     "schema": {
       "default_currency": "EUR",
       "description": {
@@ -467,13 +454,11 @@
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/proantic_available.html",
-    "raw_state": "in stock",
     "schema": {
       "source_listing_id": {
         "selector": "meta[property='product:retailer_item_id']",
@@ -493,7 +478,6 @@
         "selector": ".prixobj",
         "type": "text"
       },
-
       "state": {
         "selector": "meta[property='product:availability']",
         "type": "attribute",
@@ -556,13 +540,11 @@
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": "IN_STOCK"
+    }
   },
   {
     "html": "tests/fixtures/html/georgianantiques_available.html",
-    "raw_state": "instock",
     "schema": {
       "source_listing_id": {
         "selector": ".summary .sku",
@@ -622,13 +604,11 @@
       "images": [],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/collingeantiques_listed.html",
-    "raw_state": "Price: \u00a3795",
     "schemas_file": "tests/fixtures/schemas/collingeantiques.json",
     "schema_index": 0,
     "raw": {
@@ -678,12 +658,10 @@
       "auction_start": null,
       "auction_end": null,
       "availability": null
-    },
-    "availability_record": "NO_ASSERTION"
+    }
   },
   {
     "html": "tests/fixtures/html/collingeantiques_sold.html",
-    "raw_state": "SOLD",
     "schemas_file": "tests/fixtures/schemas/collingeantiques.json",
     "schema_index": 1,
     "raw": {
@@ -743,12 +721,10 @@
       "auction_start": null,
       "auction_end": null,
       "availability": "SOLD_OUT"
-    },
-    "availability_record": "SOLD_OUT"
+    }
   },
   {
     "html": "tests/fixtures/html/georgianantiques_sale.html",
-    "raw_state": "Product Enquiry",
     "schemas_file": "tests/fixtures/schemas/georgianantiques.json",
     "schema_index": 0,
     "raw": {
@@ -795,20 +771,17 @@
       "images": [
         "https://www.georgianantiques.net/wp-content/uploads/2026/01/GAN_2916.jpg",
         "https://www.georgianantiques.net/wp-content/uploads/2026/01/GAN_2923.jpg",
-        "https://www.georgianantiques.net/wp-content/uploads/2026/01/GAN_2916.jpg",
         "https://www.georgianantiques.net/wp-content/uploads/2026/01/GAN_2917.jpg",
         "https://www.georgianantiques.net/wp-content/uploads/2026/01/GAN_2918.jpg",
         "https://www.georgianantiques.net/wp-content/uploads/2026/01/GAN_2920.jpg"
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/georgianantiques_priceless.html",
-    "raw_state": "Product Enquiry",
     "schemas_file": "tests/fixtures/schemas/georgianantiques.json",
     "schema_index": 2,
     "raw": {
@@ -885,13 +858,11 @@
       ],
       "auction_start": null,
       "auction_end": null,
-      "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+      "availability": null
+    }
   },
   {
     "html": "tests/fixtures/html/antik-und-stil_sale.html",
-    "raw_state": "In den Warenkorb",
     "schemas_file": "tests/fixtures/schemas/antik-und-stil.json",
     "schema_index": 3,
     "raw": {
@@ -948,18 +919,15 @@
         "https://antik-und-stil.com/wp-content/uploads/2026/03/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-597-e1785865004697.webp",
         "https://antik-und-stil.com/wp-content/uploads/2026/03/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-598.webp",
         "https://antik-und-stil.com/wp-content/uploads/2026/03/6735ECC4-577D-485C-B0E2-7AD5C526D75A.webp",
-        "https://antik-und-stil.com/wp-content/uploads/2026/03/56A8EEE6-078D-496D-8362-FDF3E6170795.webp",
         "https://antik-und-stil.com/wp-content/uploads/2026/08/116E42D1-38A4-4297-A18E-8E5384B2750E_result.webp"
       ],
       "auction_start": null,
       "auction_end": null,
       "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+    }
   },
   {
     "html": "tests/fixtures/html/antik-und-stil_priceless.html",
-    "raw_state": "In den Warenkorb",
     "schemas_file": "tests/fixtures/schemas/antik-und-stil.json",
     "schema_index": 3,
     "raw": {
@@ -1014,13 +982,11 @@
         "https://antik-und-stil.com/wp-content/uploads/2026/02/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-551.webp",
         "https://antik-und-stil.com/wp-content/uploads/2026/02/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-550.webp",
         "https://antik-und-stil.com/wp-content/uploads/2026/02/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-549.webp",
-        "https://antik-und-stil.com/wp-content/uploads/2026/02/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-555.webp",
-        "https://antik-und-stil.com/wp-content/uploads/2026/02/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-553.webp"
+        "https://antik-und-stil.com/wp-content/uploads/2026/02/Kein-Titel-105-x-105-mm-155-x-105-mm-105-x-105-mm-105-x-105-px-155-x-155-px-155-x-155-px-500-x-500-px-1024-x-1024-px-555.webp"
       ],
       "auction_start": null,
       "auction_end": null,
       "availability": "AVAILABLE"
-    },
-    "availability_record": "AVAILABLE"
+    }
   }
 ]
