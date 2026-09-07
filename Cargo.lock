@@ -2572,7 +2572,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3631,7 +3631,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4770,7 +4770,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5868,7 +5868,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.43",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -5907,9 +5907,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6345,7 +6345,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6425,7 +6425,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7193,9 +7193,9 @@ dependencies = [
 
 [[package]]
 name = "spider"
-version = "2.53.6"
+version = "2.53.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f632f279822d8cb180a554fd15b3487ac90852298a17f6c2c2f8148cc87d6b90"
+checksum = "fd745f8618f4081c53e38ca89adb5ff02f19a9e1ef3dbc87095b8e5824354775"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -7233,9 +7233,9 @@ dependencies = [
 
 [[package]]
 name = "spider_agent_types"
-version = "2.53.6"
+version = "2.53.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5fdf41e0a2bd6c9f3992d0cdb0e74f83c2123d57eab321bcc370628b963b12b"
+checksum = "d540684645870a4f61295d2dea1a9976d3a0e5563038ffe286ecb61c5f98bd1c"
 dependencies = [
  "aho-corasick",
  "llm_models_spider",
@@ -8803,7 +8803,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
