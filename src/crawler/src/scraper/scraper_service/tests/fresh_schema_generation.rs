@@ -340,7 +340,7 @@ async fn should_mark_withdrawn_when_fresh_generation_classifies_removed() {
             move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_state
-                    && *received_state == CrawlerDisposition::DormantRemoved
+                    && *received_state == CrawlerDisposition::Active
             },
         )
         .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
