@@ -125,8 +125,11 @@ CREATE TABLE product_listing_raw_streams (
             OR (
                 latest_provider_source_ordering_state = 'KNOWN'
                 AND latest_provider_source_epoch_seconds IS NOT NULL
+                AND latest_provider_source_nanoseconds IS NOT NULL
                 AND latest_provider_source_nanoseconds BETWEEN 0 AND 999999999
+                AND latest_provider_source_operation IS NOT NULL
                 AND latest_provider_source_operation IN ('UPSERT', 'DELETE')
+                AND latest_provider_source_observation_sha256 IS NOT NULL
                 AND octet_length(latest_provider_source_observation_sha256) = 32
             )
             OR (
@@ -134,6 +137,7 @@ CREATE TABLE product_listing_raw_streams (
                 AND latest_provider_source_epoch_seconds IS NULL
                 AND latest_provider_source_nanoseconds IS NULL
                 AND latest_provider_source_operation IS NULL
+                AND latest_provider_source_observation_sha256 IS NOT NULL
                 AND octet_length(latest_provider_source_observation_sha256) = 32
             )
         ),

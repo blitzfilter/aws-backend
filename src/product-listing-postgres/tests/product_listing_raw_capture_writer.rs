@@ -1335,6 +1335,117 @@ async fn should_rollback_provider_receipt_with_capture() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_reject_null_required_provider_source_ordering_fields() {
+    let pool = get_postgres_client().await;
+    let listing_source_id = seed_listing_source(
+        &pool,
+        "raw-capture-provider-source-ordering-null-constraint-source",
+    )
+    .await;
+    let digest = vec![9; 32];
+
+    let known_with_null_nanoseconds = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "KNOWN",
+        Some(1),
+        None,
+        Some("UPSERT"),
+        Some(digest.clone()),
+    )
+    .await;
+    assert_provider_source_ordering_check_violation(known_with_null_nanoseconds);
+
+    let known_with_null_operation = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "KNOWN",
+        Some(1),
+        Some(123),
+        None,
+        Some(digest.clone()),
+    )
+    .await;
+    assert_provider_source_ordering_check_violation(known_with_null_operation);
+
+    let known_with_null_digest = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "KNOWN",
+        Some(1),
+        Some(123),
+        Some("UPSERT"),
+        None,
+    )
+    .await;
+    assert_provider_source_ordering_check_violation(known_with_null_digest);
+
+    let unknown_delete_with_null_digest = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "UNKNOWN_DELETE",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_provider_source_ordering_check_violation(unknown_delete_with_null_digest);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_accept_valid_provider_source_ordering_shapes() {
+    let pool = get_postgres_client().await;
+    let listing_source_id = seed_listing_source(
+        &pool,
+        "raw-capture-provider-source-ordering-valid-constraint-source",
+    )
+    .await;
+
+    let no_ordering = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "NO_ORDERING",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        no_ordering.is_ok(),
+        "NO_ORDERING shape must be valid: {no_ordering:?}"
+    );
+
+    let known = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "KNOWN",
+        Some(1),
+        Some(999_999_999),
+        Some("UPSERT"),
+        Some(vec![8; 32]),
+    )
+    .await;
+    assert!(known.is_ok(), "KNOWN shape must be valid: {known:?}");
+
+    let unknown_delete = insert_raw_stream_with_provider_source_ordering(
+        &pool,
+        listing_source_id,
+        "UNKNOWN_DELETE",
+        None,
+        None,
+        None,
+        Some(vec![7; 32]),
+    )
+    .await;
+    assert!(
+        unknown_delete.is_ok(),
+        "UNKNOWN_DELETE shape must be valid: {unknown_delete:?}"
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_not_persist_provider_receipt_for_web_crawl() {
     let pool = get_postgres_client().await;
     let listing_source_id =
@@ -1365,6 +1476,57 @@ async fn should_not_persist_provider_receipt_for_web_crawl() {
         (None, None, None),
         provider_source_order_head(&pool, listing_source_id).await
     );
+}
+
+async fn insert_raw_stream_with_provider_source_ordering(
+    pool: &sqlx::PgPool,
+    listing_source_id: ListingSourceId,
+    ordering_state: &str,
+    epoch_seconds: Option<i64>,
+    nanoseconds: Option<i32>,
+    operation: Option<&str>,
+    observation_sha256: Option<Vec<u8>>,
+) -> Result<(), sqlx::Error> {
+    let stream_id = uuid::Uuid::new_v4();
+    let source_record_key = stream_id.to_string();
+    let source_record_key_sha256 = Sha256::digest(source_record_key.as_bytes()).to_vec();
+
+    sqlx::query(
+        r#"
+        INSERT INTO product_listing_raw_streams (
+            product_listing_raw_stream_id,
+            listing_source_id,
+            ingestion_method,
+            source_record_key,
+            source_record_key_sha256,
+            latest_revision,
+            latest_provider_source_ordering_state,
+            latest_provider_source_epoch_seconds,
+            latest_provider_source_nanoseconds,
+            latest_provider_source_operation,
+            latest_provider_source_observation_sha256
+        ) VALUES ($1, $2, 'SHOPIFY', $3, $4, 0, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(stream_id)
+    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(source_record_key)
+    .bind(source_record_key_sha256)
+    .bind(ordering_state)
+    .bind(epoch_seconds)
+    .bind(nanoseconds)
+    .bind(operation)
+    .bind(observation_sha256)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+fn assert_provider_source_ordering_check_violation(result: Result<(), sqlx::Error>) {
+    assert!(matches!(
+        result,
+        Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("23514")
+    ));
 }
 
 fn write(
