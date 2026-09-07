@@ -708,7 +708,7 @@ async fn should_return_duplicate_for_unchanged_provider_receipt_after_later_chan
         }
     ));
     assert_eq!(
-        (Some(occurred_at(2)), Some(unchanged_evidence.to_vec())),
+        (Some(2), Some(0), Some(unchanged_evidence.to_vec())),
         source_order_head
     );
     assert!(matches!(
@@ -724,6 +724,63 @@ async fn should_return_duplicate_for_unchanged_provider_receipt_after_later_chan
     ));
     assert_eq!(2, raw_revision_count(&pool, listing_source_id).await);
     assert_eq!(3, provider_receipt_count(&pool, listing_source_id).await);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_accept_same_woocommerce_observation_from_legacy_guard_without_new_revision() {
+    let pool = get_postgres_client().await;
+    let listing_source_id =
+        seed_listing_source(&pool, "raw-capture-legacy-woocommerce-source").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let factory = SqlxProductListingRawCaptureWriterFactory::new();
+    let first = provider_write(
+        listing_source_id,
+        json!({"id": "123", "state": "active"}),
+        json!({}),
+        json!({}),
+        "delivery-old",
+        occurred_at(10),
+    );
+    let old_digest = canonical_source_evidence(&first);
+    assert!(matches!(
+        capture(&unit_of_work, &factory, first).await,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
+    ));
+    sqlx::query(
+        "UPDATE product_listing_raw_streams \
+         SET latest_provider_source_ordering_state = 'LEGACY', \
+             latest_provider_source_observation_sha256 = $1 \
+         WHERE listing_source_id = $2",
+    )
+    .bind(old_digest.as_slice())
+    .bind(uuid::Uuid::from(listing_source_id))
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("seed legacy guard: {error}"));
+
+    let same = capture(
+        &unit_of_work,
+        &factory,
+        provider_write(
+            listing_source_id,
+            json!({"state": "active", "id": "123"}),
+            json!({}),
+            json!({}),
+            "delivery-new",
+            occurred_at(10),
+        ),
+    )
+    .await;
+
+    assert!(matches!(
+        same,
+        ProductListingRawCaptureWriteOutcome::Unchanged {
+            latest_revision: 1,
+            ..
+        }
+    ));
+    assert_eq!(1, raw_revision_count(&pool, listing_source_id).await);
+    assert_eq!(2, provider_receipt_count(&pool, listing_source_id).await);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
@@ -897,7 +954,122 @@ async fn should_not_collapse_equal_source_payload_with_different_operation() {
     ));
     assert!(matches!(
         capture_result(&unit_of_work, &factory, delete).await,
-        Err(ProductListingRawCaptureWriteError::ProviderSourceOrderConflict)
+        Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
+    ));
+    assert_eq!(1, raw_revision_count(&pool, listing_source_id).await);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_block_timestamped_upsert_after_timestamp_free_delete_without_recording_receipt() {
+    let pool = get_postgres_client().await;
+    let listing_source_id =
+        seed_listing_source(&pool, "raw-capture-unknown-delete-barrier-source").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let factory = SqlxProductListingRawCaptureWriterFactory::new();
+
+    assert!(matches!(
+        capture(
+            &unit_of_work,
+            &factory,
+            provider_write(
+                listing_source_id,
+                json!({"state": "active"}),
+                json!({}),
+                json!({}),
+                "delivery-active",
+                occurred_at(10)
+            ),
+        )
+        .await,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
+    ));
+    let mut delete = with_operation(
+        provider_write(
+            listing_source_id,
+            json!({"id": "123"}),
+            json!({}),
+            json!({}),
+            "delivery-delete",
+            occurred_at(11),
+        ),
+        RawProductListingOperation::Delete,
+    );
+    delete.source_occurred_at = None;
+    assert!(matches!(
+        capture(&unit_of_work, &factory, delete).await,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 2, .. }
+    ));
+
+    let blocked = capture_result(
+        &unit_of_work,
+        &factory,
+        provider_write(
+            listing_source_id,
+            json!({"state": "delayed"}),
+            json!({}),
+            json!({}),
+            "delivery-delayed",
+            occurred_at(12),
+        ),
+    )
+    .await;
+
+    assert!(matches!(
+        blocked,
+        Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
+    ));
+    assert_eq!(2, raw_revision_count(&pool, listing_source_id).await);
+    assert_eq!(2, provider_receipt_count(&pool, listing_source_id).await);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_keep_nanosecond_order_after_postgres_round_trip() {
+    let pool = get_postgres_client().await;
+    let listing_source_id = seed_listing_source(&pool, "raw-capture-nanosecond-order-source").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let factory = SqlxProductListingRawCaptureWriterFactory::new();
+    let deleted_at = occurred_at(10)
+        .replace_nanosecond(123_456_900)
+        .unwrap_or_else(|error| panic!("timestamp: {error}"));
+    let older_at = occurred_at(10)
+        .replace_nanosecond(123_456_100)
+        .unwrap_or_else(|error| panic!("timestamp: {error}"));
+
+    let delete = with_operation(
+        provider_write(
+            listing_source_id,
+            json!({"id": "123"}),
+            json!({}),
+            json!({}),
+            "delivery-delete",
+            deleted_at,
+        ),
+        RawProductListingOperation::Delete,
+    );
+    assert!(matches!(
+        capture(&unit_of_work, &factory, delete).await,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
+    ));
+    let delayed = capture(
+        &unit_of_work,
+        &factory,
+        provider_write(
+            listing_source_id,
+            json!({"state": "older"}),
+            json!({}),
+            json!({}),
+            "delivery-older",
+            older_at,
+        ),
+    )
+    .await;
+
+    assert!(matches!(
+        delayed,
+        ProductListingRawCaptureWriteOutcome::Stale {
+            latest_revision: 1,
+            ..
+        }
     ));
     assert_eq!(1, raw_revision_count(&pool, listing_source_id).await);
 }
@@ -1017,7 +1189,7 @@ async fn should_order_shopify_and_woocommerce_source_timestamps_without_provider
         assert_eq!(1, raw_revision_count(&pool, listing_source_id).await);
         assert_eq!(0, provider_receipt_count(&pool, listing_source_id).await);
         assert_eq!(
-            (Some(occurred_at(2)), Some(newer_evidence.to_vec())),
+            (Some(2), Some(0), Some(newer_evidence.to_vec())),
             provider_source_order_head(&pool, listing_source_id).await
         );
     }
@@ -1197,7 +1369,7 @@ async fn should_not_persist_provider_receipt_for_web_crawl() {
     ));
     assert_eq!(0, provider_receipt_count(&pool, listing_source_id).await);
     assert_eq!(
-        (None, None),
+        (None, None, None),
         provider_source_order_head(&pool, listing_source_id).await
     );
 }
@@ -1419,11 +1591,12 @@ async fn provider_receipt_count(pool: &sqlx::PgPool, listing_source_id: ListingS
 async fn provider_source_order_head(
     pool: &sqlx::PgPool,
     listing_source_id: ListingSourceId,
-) -> (Option<OffsetDateTime>, Option<Vec<u8>>) {
+) -> (Option<i64>, Option<i32>, Option<Vec<u8>>) {
     sqlx::query_as(
         r#"
         SELECT
-            latest_provider_source_occurred_at,
+            latest_provider_source_epoch_seconds,
+            latest_provider_source_nanoseconds,
             latest_provider_source_observation_sha256
         FROM product_listing_raw_streams
         WHERE listing_source_id = $1

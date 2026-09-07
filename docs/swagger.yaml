@@ -763,6 +763,12 @@ paths:
 
         Logical receipt expiry permits a new receipt but never removes or rewrites a captured raw revision or its provenance.
 
+        A timestamp-free DELETE establishes a restore barrier. A later UPSERT without a provably newer `date_modified_gmt`
+
+        returns `409 WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS`; it creates neither a receipt nor a raw revision, so the
+
+        original request remains recoverable for reconciliation and retry.
+
         Authorized ignored create/update events persist no receipt, even when they include a delivery identifier.
 
 
@@ -1031,7 +1037,7 @@ paths:
                 title: Not Found
                 error: LISTING_SOURCE_NOT_FOUND
         "409":
-          description: Conflict — a delivery receipt conflicts with its retained evidence digest (`WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT`), or distinct evidence has the same `date_modified_gmt` timestamp (`WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT`)
+          description: Conflict — a delivery receipt conflicts with its retained evidence digest (`WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT`), distinct evidence has the same `date_modified_gmt` timestamp (`WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT`), or an UPSERT cannot safely cross a delete ordering boundary (`WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS`).
           content:
             application/problem+json:
               schema:
@@ -1049,6 +1055,12 @@ paths:
                     status: 409
                     title: Conflict
                     error: WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT
+                source_order_ambiguous:
+                  summary: Source timestamp cannot prove a post-delete restore is newer
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS
         "503":
           description: Service unavailable — this route emits only `AUTH_TEMPORARILY_UNAVAILABLE`, `LISTING_SOURCE_TEMPORARILY_UNAVAILABLE`, or `PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`.
           content:

@@ -125,6 +125,7 @@ async fn should_distinguish_shopify_webhook_and_eventbridge_delivery_ids_with_sa
         webhook_payload.clone(),
         "shopify-event-webhook",
         Some("same-delivery-id"),
+        None,
         "eventbridge-with-webhook",
     ))
     .await;
@@ -133,6 +134,7 @@ async fn should_distinguish_shopify_webhook_and_eventbridge_delivery_ids_with_sa
         domain,
         eventbridge_payload.clone(),
         "shopify-event-eventbridge",
+        None,
         None,
         "same-delivery-id",
     ))
@@ -189,6 +191,7 @@ async fn should_preserve_e2_b_after_retrying_e1_a_and_capture_e3_a() {
         e1_a.clone(),
         "shopify-event-e1",
         Some("webhook-shared"),
+        Some("2026-01-01T00:00:01Z"),
         "eventbridge-e1",
     ))
     .await;
@@ -198,6 +201,7 @@ async fn should_preserve_e2_b_after_retrying_e1_a_and_capture_e3_a() {
         e2_b.clone(),
         "shopify-event-e2",
         Some("webhook-shared"),
+        Some("2026-01-01T00:00:02Z"),
         "eventbridge-e2",
     ))
     .await;
@@ -257,6 +261,7 @@ async fn should_preserve_e2_b_after_retrying_e1_a_and_capture_e3_a() {
         e1_a.clone(),
         "shopify-event-e1-redelivery",
         Some("webhook-shared"),
+        Some("2026-01-01T00:00:01Z"),
         "eventbridge-e1-redelivery",
     ))
     .await;
@@ -283,6 +288,7 @@ async fn should_preserve_e2_b_after_retrying_e1_a_and_capture_e3_a() {
         e3_a.clone(),
         "shopify-event-e3",
         None,
+        Some("2026-01-01T00:00:03Z"),
         "eventbridge-e3",
     ))
     .await;
@@ -328,6 +334,7 @@ async fn should_acknowledge_conflicting_shopify_provider_receipt_without_retry()
         e1_a.clone(),
         "shopify-event-e1",
         Some("webhook-e1"),
+        Some("2026-01-01T00:00:01Z"),
         "eventbridge-e1",
     ))
     .await;
@@ -337,6 +344,7 @@ async fn should_acknowledge_conflicting_shopify_provider_receipt_without_retry()
         conflicting_b,
         "shopify-event-e1-conflict",
         Some("webhook-e1"),
+        Some("2026-01-01T00:00:02Z"),
         "eventbridge-e1-conflict",
     ))
     .await;
@@ -355,7 +363,7 @@ async fn should_acknowledge_conflicting_shopify_provider_receipt_without_retry()
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
-async fn should_apply_shopify_updated_at_ordering_and_retry_conflicts() {
+async fn should_apply_shopify_trigger_timestamp_ordering_and_retry_conflicts() {
     let source = seed_source().await;
     let domain = source.domain.as_str();
     let newer_a = shopify_payload_with_updated_at(
@@ -383,6 +391,7 @@ async fn should_apply_shopify_updated_at_ordering_and_retry_conflicts() {
         newer_a.clone(),
         "shopify-event-newer",
         Some("webhook-newer"),
+        Some("2026-01-01T00:00:02Z"),
         "eventbridge-newer",
     ))
     .await;
@@ -392,6 +401,7 @@ async fn should_apply_shopify_updated_at_ordering_and_retry_conflicts() {
         older_b.clone(),
         "shopify-event-older",
         Some("webhook-older"),
+        Some("2026-01-01T00:00:01Z"),
         "eventbridge-older",
     ))
     .await;
@@ -401,6 +411,7 @@ async fn should_apply_shopify_updated_at_ordering_and_retry_conflicts() {
         same_time_c,
         "shopify-event-same-time",
         Some("webhook-same-time"),
+        Some("2026-01-01T00:00:02Z"),
         "eventbridge-same-time",
     ))
     .await;
@@ -679,7 +690,7 @@ async fn should_acknowledge_permanently_malformed_shopify_product_without_captur
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
-async fn should_acknowledge_invalid_shopify_updated_at_without_capture() {
+async fn should_capture_invalid_shopify_updated_at_without_trigger_timestamp() {
     let source = seed_source().await;
     let mut payload = shopify_payload(110, 5, serde_json::json!({}));
     payload["updated_at"] = serde_json::json!("not-a-timestamp");
@@ -694,7 +705,11 @@ async fn should_acknowledge_invalid_shopify_updated_at_without_capture() {
     .await;
 
     assert!(response.batch_item_failures.is_empty());
-    assert_eq!(0, raw_revision_count(source.id, 110).await);
+    assert_eq!(1, raw_revision_count(source.id, 110).await);
+    assert_eq!(
+        None,
+        raw_revision(source.id, 110, 1).await.source_occurred_at
+    );
 }
 
 async fn invoke(event: LambdaEvent<SqsEvent>) -> aws_lambda_events::sqs::SqsBatchResponse {
@@ -807,6 +822,7 @@ fn event_with_payload(
         payload,
         shopify_event_id,
         None,
+        None,
         event_bridge_event_id,
     )
 }
@@ -817,6 +833,7 @@ fn event_with_provider_metadata(
     payload: serde_json::Value,
     shopify_event_id: &str,
     shopify_webhook_id: Option<&str>,
+    shopify_triggered_at: Option<&str>,
     event_bridge_event_id: &str,
 ) -> LambdaEvent<SqsEvent> {
     let mut metadata = serde_json::json!({
@@ -824,22 +841,17 @@ fn event_with_provider_metadata(
         "X-Shopify-Shop-Domain": shop_domain,
         "X-Shopify-Event-Id": shopify_event_id,
     });
-    if let (Some(metadata), Some(shopify_webhook_id)) =
-        (metadata.as_object_mut(), shopify_webhook_id)
-    {
-        metadata.insert(
-            "X-Shopify-Webhook-Id".to_owned(),
-            serde_json::Value::String(shopify_webhook_id.to_owned()),
-        );
-    }
-    if let Some(triggered_at) = payload
-        .get("updated_at")
-        .and_then(serde_json::Value::as_str)
-    {
-        if let Some(metadata) = metadata.as_object_mut() {
+    if let Some(metadata) = metadata.as_object_mut() {
+        if let Some(shopify_webhook_id) = shopify_webhook_id {
+            metadata.insert(
+                "X-Shopify-Webhook-Id".to_owned(),
+                serde_json::Value::String(shopify_webhook_id.to_owned()),
+            );
+        }
+        if let Some(shopify_triggered_at) = shopify_triggered_at {
             metadata.insert(
                 "X-Shopify-Triggered-At".to_owned(),
-                serde_json::Value::String(triggered_at.to_owned()),
+                serde_json::Value::String(shopify_triggered_at.to_owned()),
             );
         }
     }

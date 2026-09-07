@@ -87,6 +87,8 @@ pub enum CaptureProductListingRawObservationError {
     ProviderReceiptDigestConflict,
     #[error("provider source order conflicts with existing source evidence")]
     ProviderSourceOrderConflict,
+    #[error("provider source order cannot safely restore a withdrawn listing")]
+    ProviderSourceOrderAmbiguous,
     #[error("failed to begin raw product listing capture transaction")]
     BeginTransactionFailed,
     #[error("raw product listing capture failed")]
@@ -424,6 +426,9 @@ fn capture_error_code(error: &CaptureProductListingRawObservationError) -> &'sta
         CaptureProductListingRawObservationError::ProviderSourceOrderConflict => {
             "PROVIDER_SOURCE_ORDER_CONFLICT"
         }
+        CaptureProductListingRawObservationError::ProviderSourceOrderAmbiguous => {
+            "PROVIDER_SOURCE_ORDER_AMBIGUOUS"
+        }
         CaptureProductListingRawObservationError::BeginTransactionFailed => {
             "BEGIN_TRANSACTION_FAILED"
         }
@@ -489,6 +494,9 @@ impl From<ProductListingRawCaptureWriteError> for CaptureProductListingRawObserv
             }
             ProductListingRawCaptureWriteError::ProviderSourceOrderConflict => {
                 Self::ProviderSourceOrderConflict
+            }
+            ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous => {
+                Self::ProviderSourceOrderAmbiguous
             }
             ProductListingRawCaptureWriteError::CaptureFailed { source } => {
                 Self::CaptureFailed { source }

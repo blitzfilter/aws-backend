@@ -136,6 +136,8 @@ pub(crate) const WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT: ApiErrorCode =
     ApiErrorCode("WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT");
 pub(crate) const WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT: ApiErrorCode =
     ApiErrorCode("WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT");
+pub(crate) const WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS: ApiErrorCode =
+    ApiErrorCode("WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS");
 pub(crate) const FORBIDDEN: ApiErrorCode = ApiErrorCode("FORBIDDEN");
 pub(crate) const INVALID_UUID: ApiErrorCode = ApiErrorCode("INVALID_UUID");
 pub(crate) const LISTING_SOURCE_INTERNAL_ERROR: ApiErrorCode =
@@ -1171,6 +1173,10 @@ impl From<WoocommerceWebhookIntakeError> for ApiError {
                 CaptureProductListingRawObservationError::ProviderSourceOrderConflict => {
                     ApiError::conflict(WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT)
                         .with_detail("WooCommerce source order conflicts with prior evidence.")
+                }
+                CaptureProductListingRawObservationError::ProviderSourceOrderAmbiguous => {
+                    ApiError::conflict(WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS)
+                        .with_detail("WooCommerce source order cannot safely restore prior evidence.")
                 }
                 CaptureProductListingRawObservationError::PartnerAuthorizationTemporarilyUnavailable { .. }
                 | CaptureProductListingRawObservationError::BeginTransactionFailed
@@ -2806,6 +2812,24 @@ mod tests {
         let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
         assert_eq!(
             WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT.to_string(),
+            body["error"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_woocommerce_provider_source_order_ambiguity_to_its_stable_code()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = ApiError::from(WoocommerceWebhookIntakeError::Capture(
+            CaptureProductListingRawObservationError::ProviderSourceOrderAmbiguous,
+        ))
+        .into_response();
+
+        assert_eq!(StatusCode::CONFLICT, response.status());
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        assert_eq!(
+            WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS.to_string(),
             body["error"]
         );
         Ok(())
