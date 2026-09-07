@@ -17,6 +17,7 @@ use product_service::use_cases::{
     NormalizeProductListingRawRevisionMode, NormalizeProductListingRawRevisionUseCase,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -25,6 +26,58 @@ use user_core::access_token::Scope;
 const SECRET: &str = "woocommerce-webhook-test-secret";
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[derive(Debug, PartialEq, Eq)]
+enum RawStreamSourceOrder {
+    NoOrdering,
+    Known {
+        epoch_seconds: i64,
+        nanoseconds: i32,
+        operation: String,
+        digest: Vec<u8>,
+    },
+    UnknownDelete {
+        digest: Vec<u8>,
+    },
+}
+
+#[derive(sqlx::FromRow)]
+struct RawStreamSourceOrderRow {
+    ordering_state: String,
+    epoch_seconds: Option<i64>,
+    nanoseconds: Option<i32>,
+    operation: Option<String>,
+    digest: Option<Vec<u8>>,
+}
+
+impl RawStreamSourceOrderRow {
+    fn into_source_order(self) -> Result<RawStreamSourceOrder, std::io::Error> {
+        match (
+            self.ordering_state.as_str(),
+            self.epoch_seconds,
+            self.nanoseconds,
+            self.operation,
+            self.digest,
+        ) {
+            ("NO_ORDERING", None, None, None, None) => Ok(RawStreamSourceOrder::NoOrdering),
+            ("KNOWN", Some(epoch_seconds), Some(nanoseconds), Some(operation), Some(digest)) => {
+                Ok(RawStreamSourceOrder::Known {
+                    epoch_seconds,
+                    nanoseconds,
+                    operation,
+                    digest,
+                })
+            }
+            ("UNKNOWN_DELETE", None, None, None, Some(digest)) => {
+                Ok(RawStreamSourceOrder::UnknownDelete { digest })
+            }
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid persisted provider source order",
+            )),
+        }
+    }
+}
 
 fn assert_test_result(result: TestResult) {
     assert!(result.is_ok(), "{result:?}");
@@ -171,7 +224,7 @@ async fn should_not_create_revision_when_only_woocommerce_delivery_id_changes() 
         assert_eq!(1, raw_revision_count(listing_source_id, "20").await?);
         assert_eq!(2, provider_receipt_count(listing_source_id, "20").await?);
         assert_eq!(
-            (None, None),
+            RawStreamSourceOrder::NoOrdering,
             raw_stream_source_order(listing_source_id, "20").await?
         );
         assert_eq!(0, product_count(listing_source_id).await?);
@@ -239,10 +292,12 @@ async fn should_capture_woocommerce_e1_a_e2_b_retry_e1_and_e3_a_in_provider_orde
             raw_revision_count(listing_source_id, source_record_key).await?
         );
         assert_eq!(
-            (
-                Some(woocommerce_timestamp(e2_timestamp)?),
-                Some(canonical_source_payload_digest(&e2)?),
-            ),
+            RawStreamSourceOrder::Known {
+                epoch_seconds: woocommerce_timestamp(e2_timestamp)?.unix_timestamp(),
+                nanoseconds: 0,
+                operation: "UPSERT".to_owned(),
+                digest: provider_source_order_digest("UPSERT", &e2)?,
+            },
             raw_stream_source_order(listing_source_id, source_record_key).await?
         );
 
@@ -263,10 +318,12 @@ async fn should_capture_woocommerce_e1_a_e2_b_retry_e1_and_e3_a_in_provider_orde
             raw_revision_count(listing_source_id, source_record_key).await?
         );
         assert_eq!(
-            (
-                Some(woocommerce_timestamp(e2_timestamp)?),
-                Some(canonical_source_payload_digest(&e2)?),
-            ),
+            RawStreamSourceOrder::Known {
+                epoch_seconds: woocommerce_timestamp(e2_timestamp)?.unix_timestamp(),
+                nanoseconds: 0,
+                operation: "UPSERT".to_owned(),
+                digest: provider_source_order_digest("UPSERT", &e2)?,
+            },
             raw_stream_source_order(listing_source_id, source_record_key).await?
         );
 
@@ -330,10 +387,12 @@ async fn should_capture_woocommerce_e1_a_e2_b_retry_e1_and_e3_a_in_provider_orde
             provider_receipts(listing_source_id, source_record_key).await?
         );
         assert_eq!(
-            (
-                Some(woocommerce_timestamp(e3_timestamp)?),
-                Some(canonical_source_payload_digest(&e3)?),
-            ),
+            RawStreamSourceOrder::Known {
+                epoch_seconds: woocommerce_timestamp(e3_timestamp)?.unix_timestamp(),
+                nanoseconds: 0,
+                operation: "UPSERT".to_owned(),
+                digest: provider_source_order_digest("UPSERT", &e3)?,
+            },
             raw_stream_source_order(listing_source_id, source_record_key).await?
         );
         Ok(())
@@ -552,10 +611,12 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
             provider_receipts(listing_source_id, source_record_key).await?
         );
         assert_eq!(
-            (
-                Some(woocommerce_timestamp(current_timestamp)?),
-                Some(canonical_source_payload_digest(&current)?),
-            ),
+            RawStreamSourceOrder::Known {
+                epoch_seconds: woocommerce_timestamp(current_timestamp)?.unix_timestamp(),
+                nanoseconds: 0,
+                operation: "UPSERT".to_owned(),
+                digest: provider_source_order_digest("UPSERT", &current)?,
+            },
             raw_stream_source_order(listing_source_id, source_record_key).await?
         );
         Ok(())
@@ -656,7 +717,9 @@ async fn should_capture_delete_before_asynchronous_withdrawal() {
         let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
         assert_eq!(0, provider_receipt_count(listing_source_id, "22").await?);
         assert_eq!(
-            (None, None),
+            RawStreamSourceOrder::UnknownDelete {
+                digest: provider_source_order_digest("DELETE", &deleted)?,
+            },
             raw_stream_source_order(listing_source_id, "22").await?
         );
         Ok(())
@@ -974,10 +1037,14 @@ async fn provider_receipts(
 async fn raw_stream_source_order(
     listing_source_id: uuid::Uuid,
     source_record_key: &str,
-) -> Result<(Option<OffsetDateTime>, Option<Vec<u8>>), sqlx::Error> {
+) -> Result<RawStreamSourceOrder, Box<dyn std::error::Error>> {
     let pool = get_postgres_client().await;
-    sqlx::query_as(
-        "SELECT latest_provider_source_occurred_at, latest_provider_source_observation_sha256 \
+    let row: RawStreamSourceOrderRow = sqlx::query_as(
+        "SELECT latest_provider_source_ordering_state AS ordering_state, \
+                latest_provider_source_epoch_seconds AS epoch_seconds, \
+                latest_provider_source_nanoseconds AS nanoseconds, \
+                latest_provider_source_operation AS operation, \
+                latest_provider_source_observation_sha256 AS digest \
          FROM product_listing_raw_streams \
          WHERE listing_source_id = $1 AND ingestion_method = 'WOOCOMMERCE' \
            AND source_record_key = $2",
@@ -985,7 +1052,8 @@ async fn raw_stream_source_order(
     .bind(listing_source_id)
     .bind(source_record_key)
     .fetch_one(&pool)
-    .await
+    .await?;
+    Ok(row.into_source_order()?)
 }
 
 async fn raw_revisions(
@@ -1132,6 +1200,19 @@ fn reordered_product_body_with_modified_gmt(
 fn canonical_source_payload_digest(body: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let payload = SourcePayload::new(serde_json::from_str(body)?)?;
     Ok(payload.canonical_sha256()?.as_bytes().to_vec())
+}
+
+fn provider_source_order_digest(
+    operation: &str,
+    body: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let canonical_payload_digest = canonical_source_payload_digest(body)?;
+    let mut digest = Sha256::new();
+    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER\0");
+    digest.update(operation.as_bytes());
+    digest.update([0]);
+    digest.update(canonical_payload_digest);
+    Ok(digest.finalize().to_vec())
 }
 
 fn woocommerce_timestamp(value: &str) -> Result<OffsetDateTime, time::error::Parse> {

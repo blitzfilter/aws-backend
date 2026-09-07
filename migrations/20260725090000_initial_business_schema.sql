@@ -96,7 +96,10 @@ CREATE TABLE product_listing_raw_streams (
     source_record_key_sha256 bytea NOT NULL,
     latest_revision bigint NOT NULL,
     latest_input_sha256 bytea,
-    latest_provider_source_occurred_at timestamptz,
+    latest_provider_source_epoch_seconds bigint,
+    latest_provider_source_nanoseconds integer,
+    latest_provider_source_operation text,
+    latest_provider_source_ordering_state text NOT NULL DEFAULT 'NO_ORDERING',
     latest_provider_source_observation_sha256 bytea,
     created timestamptz NOT NULL DEFAULT now(),
     updated timestamptz NOT NULL DEFAULT now(),
@@ -110,19 +113,29 @@ CREATE TABLE product_listing_raw_streams (
         CHECK (latest_revision >= 0),
     CONSTRAINT product_listing_raw_streams_latest_input_sha256_length_check
         CHECK (latest_input_sha256 IS NULL OR octet_length(latest_input_sha256) = 32),
-    CONSTRAINT product_listing_raw_streams_latest_provider_source_ordering_pair_check
+    CONSTRAINT product_listing_raw_streams_provider_source_ordering_shape_check
         CHECK (
-            (latest_provider_source_occurred_at IS NULL
-                AND latest_provider_source_observation_sha256 IS NULL)
-            OR (
-                latest_provider_source_occurred_at IS NOT NULL
-                AND latest_provider_source_observation_sha256 IS NOT NULL
+            (
+                latest_provider_source_ordering_state = 'NO_ORDERING'
+                AND latest_provider_source_epoch_seconds IS NULL
+                AND latest_provider_source_nanoseconds IS NULL
+                AND latest_provider_source_operation IS NULL
+                AND latest_provider_source_observation_sha256 IS NULL
             )
-        ),
-    CONSTRAINT product_listing_raw_streams_latest_provider_source_observation_sha256_length_check
-        CHECK (
-            latest_provider_source_observation_sha256 IS NULL
-            OR octet_length(latest_provider_source_observation_sha256) = 32
+            OR (
+                latest_provider_source_ordering_state = 'KNOWN'
+                AND latest_provider_source_epoch_seconds IS NOT NULL
+                AND latest_provider_source_nanoseconds BETWEEN 0 AND 999999999
+                AND latest_provider_source_operation IN ('UPSERT', 'DELETE')
+                AND octet_length(latest_provider_source_observation_sha256) = 32
+            )
+            OR (
+                latest_provider_source_ordering_state = 'UNKNOWN_DELETE'
+                AND latest_provider_source_epoch_seconds IS NULL
+                AND latest_provider_source_nanoseconds IS NULL
+                AND latest_provider_source_operation IS NULL
+                AND octet_length(latest_provider_source_observation_sha256) = 32
+            )
         ),
     CONSTRAINT product_listing_raw_streams_identity_unique
         UNIQUE (listing_source_id, ingestion_method, source_record_key_sha256)

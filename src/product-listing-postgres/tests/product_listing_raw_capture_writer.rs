@@ -23,6 +23,15 @@ use time::OffsetDateTime;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
+#[derive(sqlx::FromRow)]
+struct ProviderSourceOrderStateRow {
+    latest_provider_source_ordering_state: String,
+    latest_provider_source_epoch_seconds: Option<i64>,
+    latest_provider_source_nanoseconds: Option<i32>,
+    latest_provider_source_operation: Option<String>,
+    latest_provider_source_observation_sha256: Option<Vec<u8>>,
+}
+
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_append_only_material_raw_input_changes() {
     let pool = get_postgres_client().await;
@@ -727,63 +736,6 @@ async fn should_return_duplicate_for_unchanged_provider_receipt_after_later_chan
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
-async fn should_accept_same_woocommerce_observation_from_legacy_guard_without_new_revision() {
-    let pool = get_postgres_client().await;
-    let listing_source_id =
-        seed_listing_source(&pool, "raw-capture-legacy-woocommerce-source").await;
-    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
-    let factory = SqlxProductListingRawCaptureWriterFactory::new();
-    let first = provider_write(
-        listing_source_id,
-        json!({"id": "123", "state": "active"}),
-        json!({}),
-        json!({}),
-        "delivery-old",
-        occurred_at(10),
-    );
-    let old_digest = canonical_source_evidence(&first);
-    assert!(matches!(
-        capture(&unit_of_work, &factory, first).await,
-        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
-    ));
-    sqlx::query(
-        "UPDATE product_listing_raw_streams \
-         SET latest_provider_source_ordering_state = 'LEGACY', \
-             latest_provider_source_observation_sha256 = $1 \
-         WHERE listing_source_id = $2",
-    )
-    .bind(old_digest.as_slice())
-    .bind(uuid::Uuid::from(listing_source_id))
-    .execute(&pool)
-    .await
-    .unwrap_or_else(|error| panic!("seed legacy guard: {error}"));
-
-    let same = capture(
-        &unit_of_work,
-        &factory,
-        provider_write(
-            listing_source_id,
-            json!({"state": "active", "id": "123"}),
-            json!({}),
-            json!({}),
-            "delivery-new",
-            occurred_at(10),
-        ),
-    )
-    .await;
-
-    assert!(matches!(
-        same,
-        ProductListingRawCaptureWriteOutcome::Unchanged {
-            latest_revision: 1,
-            ..
-        }
-    ));
-    assert_eq!(1, raw_revision_count(&pool, listing_source_id).await);
-    assert_eq!(2, provider_receipt_count(&pool, listing_source_id).await);
-}
-
-#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_reject_provider_receipt_digest_mismatch_before_duplicate_check() {
     let pool = get_postgres_client().await;
     let listing_source_id = seed_listing_source(
@@ -1000,7 +952,18 @@ async fn should_block_timestamped_upsert_after_timestamp_free_delete_without_rec
         ProductListingRawCaptureWriteOutcome::Changed { revision: 2, .. }
     ));
 
-    let blocked = capture_result(
+    let mut timestamp_free_upsert = provider_write(
+        listing_source_id,
+        json!({"state": "timestamp-free"}),
+        json!({}),
+        json!({}),
+        "delivery-timestamp-free",
+        occurred_at(12),
+    );
+    timestamp_free_upsert.source_occurred_at = None;
+    let timestamp_free_blocked =
+        capture_result(&unit_of_work, &factory, timestamp_free_upsert).await;
+    let timestamped_blocked = capture_result(
         &unit_of_work,
         &factory,
         provider_write(
@@ -1009,14 +972,44 @@ async fn should_block_timestamped_upsert_after_timestamp_free_delete_without_rec
             json!({}),
             json!({}),
             "delivery-delayed",
-            occurred_at(12),
+            occurred_at(13),
         ),
     )
     .await;
 
     assert!(matches!(
-        blocked,
+        timestamp_free_blocked,
         Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
+    ));
+    assert!(matches!(
+        timestamped_blocked,
+        Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
+    ));
+    let source_order_state: ProviderSourceOrderStateRow = sqlx::query_as(
+        "SELECT latest_provider_source_ordering_state, \
+                    latest_provider_source_epoch_seconds, \
+                    latest_provider_source_nanoseconds, \
+                    latest_provider_source_operation, \
+                    latest_provider_source_observation_sha256 \
+             FROM product_listing_raw_streams WHERE listing_source_id = $1",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("read unknown-delete source order: {error}"));
+    assert_eq!(
+        "UNKNOWN_DELETE",
+        source_order_state.latest_provider_source_ordering_state
+    );
+    assert_eq!(
+        None,
+        source_order_state.latest_provider_source_epoch_seconds
+    );
+    assert_eq!(None, source_order_state.latest_provider_source_nanoseconds);
+    assert_eq!(None, source_order_state.latest_provider_source_operation);
+    assert!(matches!(
+        source_order_state.latest_provider_source_observation_sha256,
+        Some(digest) if digest.len() == 32
     ));
     assert_eq!(2, raw_revision_count(&pool, listing_source_id).await);
     assert_eq!(2, provider_receipt_count(&pool, listing_source_id).await);
@@ -1535,7 +1528,7 @@ fn provider_receipt(
 fn source_order_observation(write: &ProductListingRawCaptureWrite) -> [u8; 32] {
     let source_evidence_sha256 = canonical_source_evidence(write);
     let mut digest = Sha256::new();
-    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER_V1\0");
+    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER\0");
     digest.update(write.input.operation().as_str().as_bytes());
     digest.update([0]);
     digest.update(source_evidence_sha256);

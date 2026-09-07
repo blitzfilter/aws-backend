@@ -371,7 +371,7 @@ fn provider_source_order_observation_sha256(
     source_evidence_sha256: &[u8; 32],
 ) -> [u8; 32] {
     let mut digest = Sha256::new();
-    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER_V1\0");
+    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER\0");
     digest.update(operation.as_bytes());
     digest.update([0]);
     digest.update(source_evidence_sha256);
@@ -420,10 +420,8 @@ enum LatestProviderSourceOrder<'a> {
         operation: &'a str,
         observation_sha256: &'a [u8],
     },
-    UnknownDelete,
-    Legacy {
-        epoch_seconds: i64,
-        nanoseconds: i32,
+    UnknownDelete {
+        observation_sha256: &'a [u8],
     },
 }
 
@@ -432,34 +430,30 @@ fn latest_provider_source_order(
     expected_evidence_sha256_length: usize,
 ) -> Result<LatestProviderSourceOrder<'_>, ProductListingRawCaptureWriteError> {
     match stream.latest_provider_source_ordering_state.as_str() {
-        "UNKNOWN" => match (
+        "NO_ORDERING" => match (
             stream.latest_provider_source_epoch_seconds,
             stream.latest_provider_source_nanoseconds,
             stream.latest_provider_source_operation.as_deref(),
             stream.latest_provider_source_observation_sha256.as_deref(),
         ) {
             (None, None, None, None) => Ok(LatestProviderSourceOrder::NoOrdering),
-            (None, None, Some("DELETE"), None) | (None, None, Some("DELETE"), Some(_)) => {
-                Ok(LatestProviderSourceOrder::UnknownDelete)
-            }
             _ => Err(invalid_capture_state(
                 "raw stream provider source ordering state is invalid",
             )),
         },
-        "LEGACY" => match (
+        "UNKNOWN_DELETE" => match (
             stream.latest_provider_source_epoch_seconds,
             stream.latest_provider_source_nanoseconds,
+            stream.latest_provider_source_operation.as_deref(),
+            stream.latest_provider_source_observation_sha256.as_deref(),
         ) {
-            (Some(epoch_seconds), Some(nanoseconds))
-                if (0..1_000_000_000).contains(&nanoseconds) =>
+            (None, None, None, Some(observation_sha256))
+                if observation_sha256.len() == expected_evidence_sha256_length =>
             {
-                Ok(LatestProviderSourceOrder::Legacy {
-                    epoch_seconds,
-                    nanoseconds,
-                })
+                Ok(LatestProviderSourceOrder::UnknownDelete { observation_sha256 })
             }
             _ => Err(invalid_capture_state(
-                "raw stream legacy provider source ordering state is invalid",
+                "raw stream provider source ordering state is invalid",
             )),
         },
         "KNOWN" => match (
@@ -514,16 +508,16 @@ fn source_ordering_decision(
         ) if incoming_operation == "UPSERT" => {
             Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
         }
-        (LatestProviderSourceOrder::Legacy { .. }, None) if incoming_operation == "UPSERT" => {
-            Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
-        }
+
         (LatestProviderSourceOrder::Known { .. }, None)
         | (LatestProviderSourceOrder::NoOrdering, None)
             if incoming_operation == "UPSERT" =>
         {
             Ok((None, false, false))
         }
-        (LatestProviderSourceOrder::UnknownDelete, None) if incoming_operation == "UPSERT" => {
+        (LatestProviderSourceOrder::UnknownDelete { .. }, None)
+            if incoming_operation == "UPSERT" =>
+        {
             Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
         }
         (_, None) => match incoming_observation_sha256 {
@@ -534,31 +528,14 @@ fn source_ordering_decision(
             )),
             _ => Ok((None, false, false)),
         },
-        (LatestProviderSourceOrder::UnknownDelete, Some(incoming))
+        (LatestProviderSourceOrder::UnknownDelete { .. }, Some(incoming))
             if incoming.operation == "UPSERT" =>
         {
             Err(ProductListingRawCaptureWriteError::ProviderSourceOrderAmbiguous)
         }
-        (LatestProviderSourceOrder::UnknownDelete, Some(_)) => Ok((None, false, false)),
-        (
-            LatestProviderSourceOrder::Legacy {
-                epoch_seconds,
-                nanoseconds,
-            },
-            Some(incoming),
-        ) => {
-            match (incoming.epoch_seconds, incoming.nanoseconds).cmp(&(epoch_seconds, nanoseconds))
-            {
-                std::cmp::Ordering::Less => Ok((None, true, false)),
-                std::cmp::Ordering::Greater => Ok((
-                    Some(SourceOrderingAdvancement::Known(incoming)),
-                    false,
-                    false,
-                )),
-                // Legacy guards lost submicrosecond precision and used a payload-only digest.
-                // Equal bucket observations cannot be safely distinguished or restored.
-                std::cmp::Ordering::Equal => Ok((None, false, true)),
-            }
+        (LatestProviderSourceOrder::UnknownDelete { observation_sha256 }, Some(_)) => {
+            debug_assert_eq!(observation_sha256.len(), 32);
+            Ok((None, false, false))
         }
         (
             LatestProviderSourceOrder::Known {
@@ -625,8 +602,8 @@ async fn update_provider_source_order(
                 UPDATE product_listing_raw_streams
                 SET latest_provider_source_epoch_seconds = NULL,
                     latest_provider_source_nanoseconds = NULL,
-                    latest_provider_source_operation = 'DELETE',
-                    latest_provider_source_ordering_state = 'UNKNOWN',
+                    latest_provider_source_operation = NULL,
+                    latest_provider_source_ordering_state = 'UNKNOWN_DELETE',
                     latest_provider_source_observation_sha256 = $1,
                     updated = now()
                 WHERE product_listing_raw_stream_id = $2
