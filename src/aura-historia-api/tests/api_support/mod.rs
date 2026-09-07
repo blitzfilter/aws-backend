@@ -109,8 +109,8 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
-    SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRepositoryFactory,
+    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use user_core::stripe_customer_id::StripeCustomerId;
 use user_core::user_id::UserId;
@@ -1331,12 +1331,14 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             SqlxWatchlistRepositoryFactory,
             SqlxWatchlistQuotaReaderFactory,
             user_postgres::SqlxUserTierEntitlementsFactory::new(),
+            SqlxProductListingLifecycleGuardFactory::new(),
         )),
         Arc::new(UpdateWatchlistProductListingHandler::new(
             unit_of_work.clone(),
             SqlxWatchlistRepositoryFactory,
             SqlxWatchlistQuotaReaderFactory,
             user_postgres::SqlxUserTierEntitlementsFactory::new(),
+            SqlxProductListingLifecycleGuardFactory::new(),
         )),
         Arc::new(UnwatchProductListingHandler::new(
             unit_of_work.clone(),

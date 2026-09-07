@@ -127,8 +127,8 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
-    SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRepositoryFactory,
+    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use product_listing_service::use_cases::{
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
@@ -790,12 +790,14 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxWatchlistRepositoryFactory,
         SqlxWatchlistQuotaReaderFactory,
         SqlxUserTierEntitlementsFactory::new(),
+        SqlxProductListingLifecycleGuardFactory::new(),
     );
     let update_watchlist_product = UpdateWatchlistProductListingHandler::new(
         unit_of_work.clone(),
         SqlxWatchlistRepositoryFactory,
         SqlxWatchlistQuotaReaderFactory,
         SqlxUserTierEntitlementsFactory::new(),
+        SqlxProductListingLifecycleGuardFactory::new(),
     );
     let unwatch_product =
         UnwatchProductListingHandler::new(unit_of_work.clone(), SqlxWatchlistRepositoryFactory);
