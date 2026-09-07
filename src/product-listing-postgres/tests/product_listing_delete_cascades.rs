@@ -51,6 +51,17 @@ async fn should_cascade_product_listing_owned_rows_and_retain_notification_snaps
         assert_eq!(seeded.product_listing_id, notification.0);
         assert_eq!(seeded.notification_payload, notification.1);
 
+        let delivery: (Uuid, String, String, String) = sqlx::query_as(
+            "SELECT notification_id, channel, target_key, status FROM notification_deliveries WHERE notification_delivery_id = $1",
+        )
+        .bind(seeded.notification_delivery_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(seeded.notification_id, delivery.0);
+        assert_eq!("EMAIL", delivery.1);
+        assert_eq!("user@delete-cascade.test", delivery.2);
+        assert_eq!("PENDING", delivery.3);
+
         Ok(())
     }
     .await;
@@ -81,6 +92,7 @@ async fn assert_no_product_listing_rows(
 struct SeededRows {
     product_listing_id: Uuid,
     notification_id: Uuid,
+    notification_delivery_id: Uuid,
     notification_payload: serde_json::Value,
 }
 
@@ -90,6 +102,7 @@ async fn seed_product_listing_owned_rows(pool: &sqlx::PgPool) -> Result<SeededRo
     let user_id = Uuid::new_v4();
     let search_filter_id = Uuid::new_v4();
     let notification_id = Uuid::new_v4();
+    let notification_delivery_id = Uuid::new_v4();
     let party_id = Uuid::new_v4();
     let listing_source_id = Uuid::new_v4();
     let listing_source_slug_id = format!("delete-cascade-source-{listing_source_id}");
@@ -184,12 +197,18 @@ async fn seed_product_listing_owned_rows(pool: &sqlx::PgPool) -> Result<SeededRo
         .bind(&notification_payload)
         .execute(&mut *transaction)
         .await?;
+    sqlx::query("INSERT INTO notification_deliveries (notification_delivery_id, notification_id, channel, target_key, status) VALUES ($1, $2, 'EMAIL', 'user@delete-cascade.test', 'PENDING')")
+        .bind(notification_delivery_id)
+        .bind(notification_id)
+        .execute(&mut *transaction)
+        .await?;
 
     transaction.commit().await?;
 
     Ok(SeededRows {
         product_listing_id,
         notification_id,
+        notification_delivery_id,
         notification_payload,
     })
 }

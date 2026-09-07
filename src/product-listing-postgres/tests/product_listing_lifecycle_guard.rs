@@ -53,7 +53,7 @@ async fn lifecycle_guard_flow() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut competing_transaction = pool.begin().await?;
     let competing_lock = sqlx::query(
-        "SELECT product_listing_id FROM product_listings WHERE product_listing_id = $1 FOR UPDATE NOWAIT",
+        "SELECT product_listing_id FROM product_listings WHERE product_listing_id = $1 FOR NO KEY UPDATE NOWAIT",
     )
     .bind(uuid::Uuid::from(active_listing_id))
     .execute(&mut *competing_transaction)
@@ -65,6 +65,20 @@ async fn lifecycle_guard_flow() -> Result<(), Box<dyn std::error::Error>> {
     competing_transaction.rollback().await?;
 
     guard_transaction.commit().await?;
+
+    let mut released_competing_transaction = pool.begin().await?;
+    let released_competing_lock = sqlx::query(
+        "SELECT product_listing_id FROM product_listings WHERE product_listing_id = $1 FOR NO KEY UPDATE NOWAIT",
+    )
+    .bind(uuid::Uuid::from(active_listing_id))
+    .execute(&mut *released_competing_transaction)
+    .await;
+    assert!(
+        released_competing_lock.is_ok(),
+        "a ProductListing no-key-update lock did not succeed after the lifecycle guard released its share lock: {released_competing_lock:?}"
+    );
+    released_competing_transaction.rollback().await?;
+
     Ok(())
 }
 
