@@ -109,10 +109,10 @@ impl UserRepository for SqlxUserRepository<'_> {
             r#"
             INSERT INTO users (
                 user_id, email, first_name, last_name, language, currency, measurement_unit,
-                show_unassessed_or_sensitive_content, tier, role, stripe_customer_id
+                show_unassessed_or_sensitive_content, suspended, tier, role, stripe_customer_id
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11
+                $8, $9, $10, $11, $12
             )
             RETURNING {}
             "#,
@@ -128,6 +128,7 @@ impl UserRepository for SqlxUserRepository<'_> {
             .bind(bind_currency(preferences.currency))
             .bind(bind_measurement_unit(preferences.measurement_unit))
             .bind(preferences.show_unassessed_or_sensitive_content)
+            .bind(user.is_suspended())
             .bind(bind_tier(account.tier))
             .bind(bind_role(account.role))
             .bind(account.stripe_customer_id.as_ref().map(AsRef::as_ref))
@@ -152,10 +153,10 @@ impl UserRepository for SqlxUserRepository<'_> {
             r#"
             INSERT INTO users (
                 user_id, email, first_name, last_name, language, currency, measurement_unit,
-                show_unassessed_or_sensitive_content, tier, role, stripe_customer_id
+                show_unassessed_or_sensitive_content, suspended, tier, role, stripe_customer_id
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11
+                $8, $9, $10, $11, $12
             )
             ON CONFLICT (user_id) DO NOTHING
             RETURNING {}
@@ -172,6 +173,7 @@ impl UserRepository for SqlxUserRepository<'_> {
             .bind(bind_currency(preferences.currency))
             .bind(bind_measurement_unit(preferences.measurement_unit))
             .bind(preferences.show_unassessed_or_sensitive_content)
+            .bind(user.is_suspended())
             .bind(bind_tier(account.tier))
             .bind(bind_role(account.role))
             .bind(account.stripe_customer_id.as_ref().map(AsRef::as_ref))
@@ -216,12 +218,13 @@ impl UserRepository for SqlxUserRepository<'_> {
                 currency = $6,
                 measurement_unit = $7,
                 show_unassessed_or_sensitive_content = $8,
-                tier = $9,
-                role = $10,
-                stripe_customer_id = $11,
+                suspended = $9,
+                tier = $10,
+                role = $11,
+                stripe_customer_id = $12,
                 version = version + 1,
                 updated = now()
-            WHERE user_id = $1 AND version = $12
+            WHERE user_id = $1 AND version = $13
             RETURNING {}
             "#,
             user_columns(),
@@ -236,6 +239,7 @@ impl UserRepository for SqlxUserRepository<'_> {
             .bind(bind_currency(preferences.currency))
             .bind(bind_measurement_unit(preferences.measurement_unit))
             .bind(preferences.show_unassessed_or_sensitive_content)
+            .bind(user.is_suspended())
             .bind(bind_tier(account.tier))
             .bind(bind_role(account.role))
             .bind(account.stripe_customer_id.as_ref().map(AsRef::as_ref))

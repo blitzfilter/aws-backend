@@ -636,13 +636,31 @@ async fn withdrawn_product_listing_event_flow() -> Result<(), Box<dyn std::error
         worker.project_filter(&filter).await?;
         refresh_index("user_search_filters").await;
 
-        let (product_listing_id, event_id) =
-            create_withdrawn_product_with_domain_event(&worker.pool, &product_listing_query)
-                .await?;
+        let (product_listing_id, historical_event_id) =
+            create_product_with_domain_event(&worker.pool, &product_listing_query).await?;
+        wait_for_match(&worker.pool, historical_event_id, 1).await?;
 
-        assert_product_listing_is_current_and_withdrawn(&worker.pool, product_listing_id, event_id)
-            .await?;
-        assert_no_matches_for(&worker.pool, event_id, NO_SIDE_EFFECT_OBSERVATION).await
+        let withdrawal_event_id =
+            withdraw_product_listing_and_insert_event(&worker.pool, product_listing_id).await?;
+        assert_product_listing_is_current_and_withdrawn(
+            &worker.pool,
+            product_listing_id,
+            withdrawal_event_id,
+        )
+        .await?;
+        assert_match_count_for_duration(
+            &worker.pool,
+            historical_event_id,
+            1,
+            NO_SIDE_EFFECT_OBSERVATION,
+        )
+        .await?;
+        assert_no_matches_for(
+            &worker.pool,
+            withdrawal_event_id,
+            NO_SIDE_EFFECT_OBSERVATION,
+        )
+        .await
     }
     .await;
 
@@ -1357,21 +1375,6 @@ async fn create_product_with_event(
         .await
 }
 
-async fn create_withdrawn_product_with_domain_event(
-    pool: &sqlx::PgPool,
-    title: &str,
-) -> Result<(ProductListingId, EventId), sqlx::Error> {
-    create_product_with_event_and_lifecycle(
-        pool,
-        title,
-        "PRODUCT_LISTING_CHANGED",
-        "DOMAIN",
-        json!({"lifecycle": {"transition": "WITHDRAWN", "previousAvailability": "AVAILABLE"}}),
-        "WITHDRAWN",
-    )
-    .await
-}
-
 async fn create_product_with_event_and_lifecycle(
     pool: &sqlx::PgPool,
     title: &str,
@@ -1627,6 +1630,34 @@ async fn insert_filter(
         .await?;
     transaction.commit().await?;
     Ok(inserted.version)
+}
+
+async fn withdraw_product_listing_and_insert_event(
+    pool: &sqlx::PgPool,
+    product_listing_id: ProductListingId,
+) -> Result<EventId, sqlx::Error> {
+    let event_id = EventId::new();
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())",
+    )
+    .bind(uuid::Uuid::from(event_id))
+    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(json!({
+        "availability": {"previous": "AVAILABLE", "current": null},
+        "lifecycle": {"transition": "WITHDRAWN", "previousAvailability": "AVAILABLE"}
+    }))
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE product_listings SET current_event_id = $1, lifecycle = 'WITHDRAWN', availability = NULL, version = version + 1, projection_version = projection_version + 1, updated = now() WHERE product_listing_id = $2",
+    )
+    .bind(uuid::Uuid::from(event_id))
+    .bind(uuid::Uuid::from(product_listing_id))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(event_id)
 }
 
 async fn update_product_and_insert_event(

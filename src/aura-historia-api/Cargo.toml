@@ -7,6 +7,8 @@ edition = "2024"
 admin-overview-postgres = { workspace = true }
 admin-overview-service = { workspace = true }
 async-trait = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-cognitoidentityprovider = { workspace = true }
 application = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -64,6 +66,7 @@ tower-http = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 user-core = { workspace = true }
+user-cognito = { workspace = true }
 user-postgres = { workspace = true }
 user-service = { workspace = true }
 user-zoho = { workspace = true }

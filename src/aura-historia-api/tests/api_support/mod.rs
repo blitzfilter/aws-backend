@@ -5,7 +5,7 @@ use admin_overview_service::GetAdminOverviewHandler;
 use application::transaction::{Transaction, UnitOfWork};
 use aura_historia_api::auth::{
     ApiAuthService, AuraAccessTokenAuthenticator, AuthError, RequestMetadata, TokenAuthenticator,
-    TransportPrincipal,
+    TransportPrincipal, UserAuthenticationAuthenticator,
 };
 use aura_historia_api::state::{
     AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
@@ -72,6 +72,7 @@ use partnership_postgres::{
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationHandler,
+        dissolve_partnership::DissolvePartnershipHandler,
         grant_partnership_listing_source::GrantPartnershipListingSourceHandler,
         grant_partnership_membership::GrantPartnershipMembershipHandler,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewHandler,
@@ -108,8 +109,9 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRepositoryFactory,
-    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRawCaptureWriterFactory,
+    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
+    SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use user_core::stripe_customer_id::StripeCustomerId;
 use user_core::user_id::UserId;
@@ -133,7 +135,7 @@ use search_filter_service::use_cases::{
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use test_api::{get_opensearch_client, get_postgres_client};
 use time::OffsetDateTime;
 use url::Url;
@@ -144,14 +146,16 @@ use user_core::access_token::{
 use user_core::tier::UserTier;
 use user_service::ports::{
     AccessTokenRepository, AccessTokenRepositoryFactory, NewsletterSubscriptionWriteError,
-    NewsletterSubscriptionWriter,
+    NewsletterSubscriptionWriter, UserSessionRevocationError, UserSessionRevoker,
 };
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierHandler;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenHandler;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenHandler;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensHandler;
 use user_service::use_cases::commands::delete_user::DeleteUserHandler;
+use user_service::use_cases::commands::revoke_user_sessions::RevokeUserSessionsHandler;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenHandler;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileHandler;
 use user_service::use_cases::commands::upsert_newsletter_subscription::UpsertNewsletterSubscriptionHandler;
@@ -160,7 +164,9 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminHandler;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenHandler;
 use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
+use user_service::use_cases::{AuthenticateUserHandler, SuspendUserHandler, UnsuspendUserHandler};
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
 use watchlist_service::use_cases::{
     ListWatchlistHandler, UnwatchProductListingHandler, UpdateWatchlistProductListingHandler,
@@ -251,6 +257,40 @@ impl NewsletterSubscriptionWriter for SuccessfulNewsletterWriter {
         &self,
         _subscription: &user_core::newsletter_subscription::NewsletterSubscription,
     ) -> Result<(), NewsletterSubscriptionWriteError> {
+        Ok(())
+    }
+}
+
+static SESSION_REVOCATION_FAILURES: OnceLock<Mutex<HashSet<UserId>>> = OnceLock::new();
+
+pub fn fail_session_revocation_for(user_id: UserId) {
+    let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
+    match failures.lock() {
+        Ok(mut failures) => {
+            failures.insert(user_id);
+        }
+        Err(poisoned) => {
+            poisoned.into_inner().insert(user_id);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SuccessfulUserSessionRevoker;
+
+#[async_trait::async_trait]
+impl UserSessionRevoker for SuccessfulUserSessionRevoker {
+    async fn revoke_sessions(&self, user_id: UserId) -> Result<(), UserSessionRevocationError> {
+        let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
+        let should_fail = match failures.lock() {
+            Ok(mut failures) => failures.remove(&user_id),
+            Err(poisoned) => poisoned.into_inner().remove(&user_id),
+        };
+        if should_fail {
+            return Err(UserSessionRevocationError::TemporarilyUnavailable {
+                source: application::error::box_error(std::io::Error::other("Cognito unavailable")),
+            });
+        }
         Ok(())
     }
 }
@@ -851,9 +891,15 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
     let access_token_use_case = user_service::use_cases::AuthenticateAccessTokenHandler::new(
         user_postgres::SqlxAccessTokenAuthenticationReader::new(pool.clone()),
     );
-    let authenticator = Arc::new(ApiAuthService::new(
-        RejectJwtAuthenticator,
-        AuraAccessTokenAuthenticator::new(access_token_use_case),
+    let authenticate_user = AuthenticateUserHandler::new(
+        user_postgres::SqlxUserAuthenticationReader::new(pool.clone()),
+    );
+    let authenticator = Arc::new(UserAuthenticationAuthenticator::new(
+        ApiAuthService::new(
+            RejectJwtAuthenticator,
+            AuraAccessTokenAuthenticator::new(access_token_use_case),
+        ),
+        authenticate_user,
     ));
     let opensearch_client = get_opensearch_client().await;
     let create_listing_source = CreateListingSourceHandler::new(
@@ -952,6 +998,11 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
     let get_admin_partnership = GetAdminPartnershipHandler::new(
         unit_of_work.clone(),
         SqlxPartnershipDetailsReaderFactory::new(),
+        user_postgres::SqlxUserAdminReaderFactory::new(),
+    );
+    let dissolve_partnership = DissolvePartnershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
         user_postgres::SqlxUserAdminReaderFactory::new(),
     );
     let grant_partnership_membership = GrantPartnershipMembershipHandler::new(
@@ -1158,12 +1209,34 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             user_postgres::SqlxUserRepositoryFactory::new(),
             user_postgres::SqlxUserAdminReaderFactory::new(),
         )),
+        Arc::new(SuspendUserHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(UnsuspendUserHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(RevokeUserSessionsHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+            user_postgres::SqlxUserAccountReaderFactory::new(),
+            SuccessfulUserSessionRevoker,
+        )),
         Arc::new(CreateAccessTokenHandler::new(
             unit_of_work.clone(),
             user_postgres::SqlxAccessTokenRepositoryFactory::new(),
         )),
         Arc::new(ListAccessTokensHandler::new(
             user_postgres::SqlxAccessTokenListReader::new(pool.clone()),
+        )),
+        Arc::new(ListAdminAccessTokensHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxAdminAccessTokenListReaderFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+            user_postgres::SqlxUserAccountReaderFactory::new(),
         )),
         Arc::new(GetAccessTokenHandler::new(
             user_postgres::SqlxAccessTokenDetailsReader::new(pool.clone()),
@@ -1175,6 +1248,18 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(DeleteAccessTokenHandler::new(
             unit_of_work.clone(),
             user_postgres::SqlxAccessTokenRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(DeleteAccessTokenHandler::new_admin_only(
+            unit_of_work.clone(),
+            user_postgres::SqlxAccessTokenRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        )),
+        Arc::new(DeleteAccessTokensHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxAccessTokenRepositoryFactory::new(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+            user_postgres::SqlxUserAccountReaderFactory::new(),
         )),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );
@@ -1253,12 +1338,14 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             SqlxWatchlistRepositoryFactory,
             SqlxWatchlistQuotaReaderFactory,
             user_postgres::SqlxUserTierEntitlementsFactory::new(),
+            SqlxProductListingLifecycleGuardFactory::new(),
         )),
         Arc::new(UpdateWatchlistProductListingHandler::new(
             unit_of_work.clone(),
             SqlxWatchlistRepositoryFactory,
             SqlxWatchlistQuotaReaderFactory,
             user_postgres::SqlxUserTierEntitlementsFactory::new(),
+            SqlxProductListingLifecycleGuardFactory::new(),
         )),
         Arc::new(UnwatchProductListingHandler::new(
             unit_of_work.clone(),
@@ -1287,7 +1374,8 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(grant_partnership_listing_source),
         Arc::new(revoke_partnership_listing_source),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
-    );
+    )
+    .with_dissolve(Arc::new(dissolve_partnership));
 
     let billing_prices = BillingPriceIds {
         pro_monthly: "price_pro_monthly".to_owned(),

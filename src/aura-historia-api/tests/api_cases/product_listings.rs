@@ -322,7 +322,7 @@ async fn should_return_not_found_for_missing_product_title_slug() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_return_not_found_for_withdrawn_product_title_slug() {
+async fn should_return_not_found_for_withdrawn_product_by_id_or_title_slug() {
     let product_listing_id = seed_product().await;
     let title_slug = ProductListingSlugId::from_title_and_suffix(
         "acceptance product",
@@ -338,15 +338,20 @@ async fn should_return_not_found_for_withdrawn_product_title_slug() {
     .await
     .unwrap_or_else(|error| panic!("failed to withdraw product fixture: {error}"));
 
-    let (response, _) = get_json(format!("/api/v1/product-listings/by-slug/{title_slug}")).await;
-    let (status, body) = json_response(response).await;
+    for path in [
+        format!("/api/v1/product-listings/{product_listing_id}"),
+        format!("/api/v1/product-listings/by-slug/{title_slug}"),
+    ] {
+        let (response, _) = get_json(path).await;
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::NOT_FOUND,
-        "PRODUCT_LISTING_NOT_FOUND",
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::NOT_FOUND,
+            "PRODUCT_LISTING_NOT_FOUND",
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]

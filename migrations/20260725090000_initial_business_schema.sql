@@ -7,6 +7,7 @@ CREATE TABLE users (
     currency text,
     measurement_unit text,
     show_unassessed_or_sensitive_content boolean NOT NULL DEFAULT false,
+    suspended boolean NOT NULL DEFAULT false,
     tier text NOT NULL,
     role text NOT NULL,
     stripe_customer_id text UNIQUE,
@@ -237,9 +238,11 @@ CREATE INDEX product_listing_raw_normalizations_stream_revision_idx
 CREATE TABLE partnerships (
     partnership_id uuid PRIMARY KEY,
     party_id uuid NOT NULL UNIQUE REFERENCES parties(party_id) ON DELETE CASCADE,
+    business_state text NOT NULL DEFAULT 'ACTIVE',
     version bigint NOT NULL DEFAULT 1,
     created timestamptz NOT NULL DEFAULT now(),
     updated timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT partnerships_business_state_check CHECK (business_state IN ('ACTIVE', 'DISSOLVED')),
     CONSTRAINT partnerships_version_positive CHECK (version >= 1)
 );
 

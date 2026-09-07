@@ -13,6 +13,7 @@ pub mod product_listing_embedding_source_reader;
 pub mod product_listing_embedding_writer;
 pub mod product_listing_event_appender;
 pub mod product_listing_history_reader;
+pub mod product_listing_lifecycle_guard;
 pub mod product_listing_percolation;
 pub mod product_listing_price_filter_plan;
 pub mod product_listing_raw_capture_writer;
@@ -87,6 +88,10 @@ pub use product_listing_event_appender::{
 };
 pub use product_listing_history_reader::{
     ProductListingHistoryReadError, ProductListingHistoryReader, ProductListingHistoryReaderFactory,
+};
+pub use product_listing_lifecycle_guard::{
+    ProductListingLifecycleGuard, ProductListingLifecycleGuardError,
+    ProductListingLifecycleGuardFactory,
 };
 pub use product_listing_percolation::{
     ProductListingPercolationInput, ProductListingPercolationValuation,

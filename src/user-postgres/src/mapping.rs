@@ -27,6 +27,7 @@ pub(crate) struct UserRow {
     pub currency: Option<String>,
     pub measurement_unit: Option<String>,
     pub show_unassessed_or_sensitive_content: bool,
+    pub suspended: bool,
     pub tier: String,
     pub role: String,
     pub stripe_customer_id: Option<String>,
@@ -36,7 +37,7 @@ pub(crate) struct UserRow {
 }
 
 pub(crate) fn user_columns() -> &'static str {
-    "user_id, email, first_name, last_name, language, currency, measurement_unit, show_unassessed_or_sensitive_content, tier, role, stripe_customer_id, version, created, updated"
+    "user_id, email, first_name, last_name, language, currency, measurement_unit, show_unassessed_or_sensitive_content, suspended, tier, role, stripe_customer_id, version, created, updated"
 }
 
 impl TryFrom<UserRow> for VersionedUser {
@@ -50,6 +51,7 @@ impl TryFrom<UserRow> for VersionedUser {
             profile: profile_from_row(&row)?,
             preferences: preferences_from_row(&row)?,
             account: account_from_row(&row)?,
+            suspended: row.suspended,
         })?;
 
         Ok(VersionedUser::new(value, version))
@@ -457,6 +459,7 @@ mod tests {
             currency: Some("GBP".to_owned()),
             measurement_unit: Some("IMPERIAL".to_owned()),
             show_unassessed_or_sensitive_content: true,
+            suspended: false,
             tier: "PRO".to_owned(),
             role: "ADMIN".to_owned(),
             stripe_customer_id: Some("cus_test".to_owned()),

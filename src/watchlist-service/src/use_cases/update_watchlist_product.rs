@@ -8,7 +8,13 @@ use application::operation_context::{
     CredentialCapability, OperationAuthorizationError, OperationContext,
 };
 use application::transaction::{Transaction, UnitOfWork};
-use product_listing_core::product_listing_id::ProductListingId;
+use product_listing_core::{
+    listing_lifecycle::ListingLifecycle, product_listing_id::ProductListingId,
+};
+use product_listing_service::ports::{
+    ProductListingLifecycleGuard, ProductListingLifecycleGuardError,
+    ProductListingLifecycleGuardFactory,
+};
 use user_core::user_id::UserId;
 use user_service::ports::{
     UserTierEntitlements, UserTierEntitlementsError, UserTierEntitlementsFactory,
@@ -41,6 +47,10 @@ pub enum UpdateWatchlistProductListingError {
     ConcurrencyConflict,
     #[error("user not found")]
     UserNotFound,
+    #[error("product listing not found")]
+    ProductListingNotFound,
+    #[error("product listing is unavailable")]
+    ProductListingUnavailable,
     #[error("watchlist quota exceeded: {active_count}/{quota} active entries are already in use")]
     WatchlistQuotaExceeded { active_count: usize, quota: usize },
     #[error("user tier entitlement lock failed")]
@@ -75,32 +85,41 @@ pub trait UpdateWatchlistProductListingUseCase: Send + Sync {
     ) -> Result<UpdateWatchlistProductListingResult, UpdateWatchlistProductListingError>;
 }
 
-pub struct UpdateWatchlistProductListingHandler<U, R, Q, A> {
+pub struct UpdateWatchlistProductListingHandler<U, R, Q, A, G> {
     unit_of_work: U,
     watchlist: R,
     quotas: Q,
     tier_entitlements: A,
+    product_listing_lifecycle: G,
 }
 
-impl<U, R, Q, A> UpdateWatchlistProductListingHandler<U, R, Q, A> {
-    pub fn new(unit_of_work: U, watchlist: R, quotas: Q, tier_entitlements: A) -> Self {
+impl<U, R, Q, A, G> UpdateWatchlistProductListingHandler<U, R, Q, A, G> {
+    pub fn new(
+        unit_of_work: U,
+        watchlist: R,
+        quotas: Q,
+        tier_entitlements: A,
+        product_listing_lifecycle: G,
+    ) -> Self {
         Self {
             unit_of_work,
             watchlist,
             quotas,
             tier_entitlements,
+            product_listing_lifecycle,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, R, Q, A> UpdateWatchlistProductListingUseCase
-    for UpdateWatchlistProductListingHandler<U, R, Q, A>
+impl<U, R, Q, A, G> UpdateWatchlistProductListingUseCase
+    for UpdateWatchlistProductListingHandler<U, R, Q, A, G>
 where
     U: UnitOfWork,
     R: WatchlistRepositoryFactory<U::Tx>,
     Q: WatchlistQuotaReaderFactory<U::Tx>,
     A: UserTierEntitlementsFactory<U::Tx>,
+    G: ProductListingLifecycleGuardFactory<U::Tx>,
 {
     #[tracing::instrument(name = "update_watchlist_product", skip_all, fields(user_id = %command.user_id, product_listing_id = %command.product_listing_id, principal_type = context.principal.kind(), request_id = %context.request_id, correlation_id = %context.correlation_id))]
     async fn execute(
@@ -134,6 +153,19 @@ where
                 .await
                 .map_err(tier_entitlements_error)?
                 .ok_or(UpdateWatchlistProductListingError::UserNotFound)?;
+            match self
+                .product_listing_lifecycle
+                .in_transaction(&mut tx)
+                .lock_and_find_lifecycle(command.product_listing_id)
+                .await
+                .map_err(product_listing_lifecycle_guard_error)?
+            {
+                None => return Err(UpdateWatchlistProductListingError::ProductListingNotFound),
+                Some(ListingLifecycle::Withdrawn) => {
+                    return Err(UpdateWatchlistProductListingError::ProductListingUnavailable);
+                }
+                Some(ListingLifecycle::Active) => {}
+            }
             if let Some(quota) = active_watchlist_quota(tier) {
                 let active_count = self
                     .quotas
@@ -233,6 +265,19 @@ fn tier_entitlements_error(error: UserTierEntitlementsError) -> UpdateWatchlistP
     }
 }
 
+fn product_listing_lifecycle_guard_error(
+    error: ProductListingLifecycleGuardError,
+) -> UpdateWatchlistProductListingError {
+    match error {
+        ProductListingLifecycleGuardError::LockFailed { source } => {
+            UpdateWatchlistProductListingError::TemporarilyUnavailable { source }
+        }
+        ProductListingLifecycleGuardError::InvalidListingLifecyclePersisted => {
+            UpdateWatchlistProductListingError::InvalidPersistedState
+        }
+    }
+}
+
 fn watchlist_quota_read_error(
     error: WatchlistQuotaReadError,
 ) -> UpdateWatchlistProductListingError {
@@ -266,6 +311,11 @@ mod tests {
     use super::*;
 
     use application::error::static_error;
+    use product_listing_core::listing_lifecycle::ListingLifecycle;
+    use product_listing_service::ports::{
+        ProductListingLifecycleGuard, ProductListingLifecycleGuardError,
+        ProductListingLifecycleGuardFactory,
+    };
 
     use crate::ports::{
         VersionedWatchlistProductListing, WatchlistProductListingView, WatchlistQuotaReadError,
@@ -309,6 +359,26 @@ mod tests {
         tier: UserTier,
     }
 
+    #[derive(Clone, Copy)]
+    enum TestLifecycleGuardOutcome {
+        Active,
+        Missing,
+        Withdrawn,
+        LockFailed,
+        InvalidPersistedState,
+    }
+
+    #[derive(Clone)]
+    struct TestLifecycleGuardFactory {
+        state: SharedState,
+        outcome: TestLifecycleGuardOutcome,
+    }
+
+    struct TestLifecycleGuard {
+        state: SharedState,
+        outcome: TestLifecycleGuardOutcome,
+    }
+
     struct TestAccountReader {
         tier: UserTier,
     }
@@ -319,6 +389,7 @@ mod tests {
         committed: Arc<Mutex<bool>>,
         updated: Arc<Mutex<usize>>,
         deleted: Arc<Mutex<usize>>,
+        lifecycle_guard_calls: Arc<Mutex<usize>>,
         force_concurrency_conflict: bool,
     }
 
@@ -352,6 +423,13 @@ mod tests {
 
         fn deleted(&self) -> usize {
             self.deleted.lock().map(|value| *value).unwrap_or(0)
+        }
+
+        fn lifecycle_guard_calls(&self) -> usize {
+            self.lifecycle_guard_calls
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(0)
         }
     }
 
@@ -406,6 +484,18 @@ mod tests {
         }
     }
 
+    impl<Tx> ProductListingLifecycleGuardFactory<Tx> for TestLifecycleGuardFactory {
+        fn in_transaction<'tx>(
+            &'tx self,
+            _tx: &'tx mut Tx,
+        ) -> impl ProductListingLifecycleGuard + 'tx {
+            TestLifecycleGuard {
+                state: self.state.clone(),
+                outcome: self.outcome,
+            }
+        }
+    }
+
     impl<Tx> WatchlistReaderFactory<Tx> for TestWatchlistFactory {
         fn in_transaction<'tx>(&'tx self, _tx: &'tx mut Tx) -> impl WatchlistReader + 'tx {
             TestWatchlistPort {
@@ -429,6 +519,37 @@ mod tests {
             _tier: UserTier,
         ) -> Result<(), UserTierEntitlementsError> {
             Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingLifecycleGuard for TestLifecycleGuard {
+        async fn lock_and_find_lifecycle(
+            &mut self,
+            _product_listing_id: ProductListingId,
+        ) -> Result<Option<ListingLifecycle>, ProductListingLifecycleGuardError> {
+            self.state
+                .lifecycle_guard_calls
+                .lock()
+                .map(|mut calls| *calls += 1)
+                .map_err(|_| ProductListingLifecycleGuardError::LockFailed {
+                    source: static_error(
+                        "watchlist lifecycle guard test counter mutex is poisoned",
+                    ),
+                })?;
+            match self.outcome {
+                TestLifecycleGuardOutcome::Active => Ok(Some(ListingLifecycle::Active)),
+                TestLifecycleGuardOutcome::Missing => Ok(None),
+                TestLifecycleGuardOutcome::Withdrawn => Ok(Some(ListingLifecycle::Withdrawn)),
+                TestLifecycleGuardOutcome::LockFailed => {
+                    Err(ProductListingLifecycleGuardError::LockFailed {
+                        source: static_error("product listing lifecycle guard test lock failure"),
+                    })
+                }
+                TestLifecycleGuardOutcome::InvalidPersistedState => {
+                    Err(ProductListingLifecycleGuardError::InvalidListingLifecyclePersisted)
+                }
+            }
         }
     }
 
@@ -655,13 +776,18 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn should_update_notifications_when_entry_exists() -> Result<(), String> {
-        let user_id = UserId::new();
-        let product_listing_id = ProductListingId::new();
-        let state = SharedState::with_entry(entry(user_id, product_listing_id, true));
-
-        let result = UpdateWatchlistProductListingHandler::new(
+    fn handler(
+        state: SharedState,
+        tier: UserTier,
+        lifecycle_outcome: TestLifecycleGuardOutcome,
+    ) -> UpdateWatchlistProductListingHandler<
+        TestUnitOfWork,
+        TestWatchlistFactory,
+        TestWatchlistFactory,
+        TestAccountFactory,
+        TestLifecycleGuardFactory,
+    > {
+        UpdateWatchlistProductListingHandler::new(
             TestUnitOfWork {
                 state: state.clone(),
                 ..Default::default()
@@ -672,9 +798,24 @@ mod tests {
             TestWatchlistFactory {
                 state: state.clone(),
             },
-            TestAccountFactory {
-                tier: UserTier::Free,
+            TestAccountFactory { tier },
+            TestLifecycleGuardFactory {
+                state,
+                outcome: lifecycle_outcome,
             },
+        )
+    }
+
+    #[tokio::test]
+    async fn should_update_notifications_when_entry_exists() -> Result<(), String> {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::with_entry(entry(user_id, product_listing_id, true));
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &context_for_user(user_id),
@@ -700,20 +841,10 @@ mod tests {
         let product_listing_id = ProductListingId::new();
         let state = SharedState::with_entry(entry(user_id, product_listing_id, true));
 
-        let result = UpdateWatchlistProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestAccountFactory {
-                tier: UserTier::Free,
-            },
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &context_for_user(user_id),
@@ -741,20 +872,10 @@ mod tests {
         let mut state = SharedState::with_entry(entry(user_id, product_listing_id, true));
         state.force_concurrency_conflict = true;
 
-        let result = UpdateWatchlistProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestAccountFactory {
-                tier: UserTier::Free,
-            },
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &context_for_user(user_id),
@@ -780,29 +901,17 @@ mod tests {
         let user_id = UserId::new();
         let state = SharedState::default();
 
-        let result = UpdateWatchlistProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory { state },
-            TestAccountFactory {
-                tier: UserTier::Free,
-            },
-        )
-        .execute(
-            &context_for_user(user_id),
-            UpdateWatchlistProductListingCommand {
-                user_id,
-                product_listing_id: ProductListingId::new(),
-                notifications: Some(false),
-                state: None,
-            },
-        )
-        .await;
+        let result = handler(state, UserTier::Free, TestLifecycleGuardOutcome::Active)
+            .execute(
+                &context_for_user(user_id),
+                UpdateWatchlistProductListingCommand {
+                    user_id,
+                    product_listing_id: ProductListingId::new(),
+                    notifications: Some(false),
+                    state: None,
+                },
+            )
+            .await;
 
         assert!(matches!(
             result,
@@ -810,34 +919,209 @@ mod tests {
         ));
     }
 
+    fn inactive_entry(
+        user_id: UserId,
+        product_listing_id: ProductListingId,
+    ) -> WatchlistProductListing {
+        let mut entry = entry(user_id, product_listing_id, true);
+        entry.change_state(WatchlistState::InactiveByUser);
+        entry
+    }
+
+    #[tokio::test]
+    async fn should_reactivate_when_listing_is_active() -> Result<(), String> {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::with_entry(inactive_entry(user_id, product_listing_id));
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
+        )
+        .execute(
+            &context_for_user(user_id),
+            UpdateWatchlistProductListingCommand {
+                user_id,
+                product_listing_id,
+                notifications: None,
+                state: Some(WatchlistState::Active),
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(WatchlistState::Active, result.entry.state());
+        assert_eq!(1, state.lifecycle_guard_calls());
+        assert_eq!(1, state.updated());
+        assert!(state.committed());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_reject_reactivation_when_listing_is_missing_or_withdrawn() {
+        for (outcome, expected_missing) in [
+            (TestLifecycleGuardOutcome::Missing, true),
+            (TestLifecycleGuardOutcome::Withdrawn, false),
+        ] {
+            let user_id = UserId::new();
+            let product_listing_id = ProductListingId::new();
+            let state = SharedState::with_entry(inactive_entry(user_id, product_listing_id));
+
+            let result = handler(state.clone(), UserTier::Free, outcome)
+                .execute(
+                    &context_for_user(user_id),
+                    UpdateWatchlistProductListingCommand {
+                        user_id,
+                        product_listing_id,
+                        notifications: None,
+                        state: Some(WatchlistState::Active),
+                    },
+                )
+                .await;
+
+            if expected_missing {
+                assert!(matches!(
+                    result,
+                    Err(UpdateWatchlistProductListingError::ProductListingNotFound)
+                ));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(UpdateWatchlistProductListingError::ProductListingUnavailable)
+                ));
+            }
+            assert_eq!(1, state.lifecycle_guard_calls());
+            assert_eq!(0, state.updated());
+            assert!(!state.committed());
+        }
+    }
+
+    #[tokio::test]
+    async fn should_preserve_lifecycle_guard_lock_failure_and_reject_invalid_persisted_state()
+    -> Result<(), String> {
+        for outcome in [
+            TestLifecycleGuardOutcome::LockFailed,
+            TestLifecycleGuardOutcome::InvalidPersistedState,
+        ] {
+            let user_id = UserId::new();
+            let product_listing_id = ProductListingId::new();
+            let state = SharedState::with_entry(inactive_entry(user_id, product_listing_id));
+
+            let result = handler(state.clone(), UserTier::Free, outcome)
+                .execute(
+                    &context_for_user(user_id),
+                    UpdateWatchlistProductListingCommand {
+                        user_id,
+                        product_listing_id,
+                        notifications: None,
+                        state: Some(WatchlistState::Active),
+                    },
+                )
+                .await;
+
+            match (outcome, result) {
+                (
+                    TestLifecycleGuardOutcome::LockFailed,
+                    Err(UpdateWatchlistProductListingError::TemporarilyUnavailable { source }),
+                ) => assert_eq!(
+                    "product listing lifecycle guard test lock failure",
+                    source.to_string()
+                ),
+                (
+                    TestLifecycleGuardOutcome::InvalidPersistedState,
+                    Err(UpdateWatchlistProductListingError::InvalidPersistedState),
+                ) => {}
+                (_, error) => {
+                    return Err(format!("unexpected lifecycle guard result: {error:?}"));
+                }
+            }
+            assert_eq!(1, state.lifecycle_guard_calls());
+            assert!(!state.committed());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_bypass_lifecycle_guard_for_retained_withdrawn_operations() -> Result<(), String>
+    {
+        for command in [
+            UpdateWatchlistProductListingCommand {
+                user_id: UserId::new(),
+                product_listing_id: ProductListingId::new(),
+                notifications: Some(false),
+                state: None,
+            },
+            UpdateWatchlistProductListingCommand {
+                user_id: UserId::new(),
+                product_listing_id: ProductListingId::new(),
+                notifications: None,
+                state: Some(WatchlistState::InactiveByUser),
+            },
+        ] {
+            let state =
+                SharedState::with_entry(entry(command.user_id, command.product_listing_id, true));
+            handler(
+                state.clone(),
+                UserTier::Free,
+                TestLifecycleGuardOutcome::Withdrawn,
+            )
+            .execute(&context_for_user(command.user_id), command)
+            .await
+            .map_err(|error| error.to_string())?;
+
+            assert_eq!(0, state.lifecycle_guard_calls());
+            assert_eq!(1, state.updated());
+            assert!(state.committed());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_bypass_lifecycle_guard_for_active_idempotent_update() -> Result<(), String> {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::with_entry(entry(user_id, product_listing_id, true));
+
+        handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Withdrawn,
+        )
+        .execute(
+            &context_for_user(user_id),
+            UpdateWatchlistProductListingCommand {
+                user_id,
+                product_listing_id,
+                notifications: None,
+                state: Some(WatchlistState::Active),
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(0, state.lifecycle_guard_calls());
+        assert_eq!(0, state.updated());
+        assert!(state.committed());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn should_forbid_delegated_user_without_watchlist_write() {
         let user_id = UserId::new();
         let state = SharedState::default();
 
-        let result = UpdateWatchlistProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory { state },
-            TestAccountFactory {
-                tier: UserTier::Free,
-            },
-        )
-        .execute(
-            &delegated_context(user_id, BTreeSet::new()),
-            UpdateWatchlistProductListingCommand {
-                user_id,
-                product_listing_id: ProductListingId::new(),
-                notifications: Some(false),
-                state: None,
-            },
-        )
-        .await;
+        let result = handler(state, UserTier::Free, TestLifecycleGuardOutcome::Active)
+            .execute(
+                &delegated_context(user_id, BTreeSet::new()),
+                UpdateWatchlistProductListingCommand {
+                    user_id,
+                    product_listing_id: ProductListingId::new(),
+                    notifications: Some(false),
+                    state: None,
+                },
+            )
+            .await;
 
         assert!(matches!(
             result,

@@ -1,9 +1,11 @@
 use crate::use_cases::{
-    AdminGetUserUseCase, AuthenticateAccessTokenUseCase, ChangeUserRoleUseCase,
-    ChangeUserTierUseCase, CheckUserAdminUseCase, CreateAccessTokenUseCase, CreateUserUseCase,
-    DeleteAccessTokenUseCase, DeleteUserUseCase, FindUserByStripeCustomerIdUseCase,
-    GetAccessTokenUseCase, GetOwnUserUseCase, ListAccessTokensUseCase, SearchUsersUseCase,
-    SetUserStripeCustomerIdUseCase, UpdateAccessTokenUseCase, UpdateUserProfileUseCase,
+    AdminGetUserUseCase, AuthenticateAccessTokenUseCase, AuthenticateUserUseCase,
+    ChangeUserRoleUseCase, ChangeUserTierUseCase, CheckUserAdminUseCase, CreateAccessTokenUseCase,
+    CreateUserUseCase, DeleteAccessTokenUseCase, DeleteAccessTokensUseCase, DeleteUserUseCase,
+    FindUserByStripeCustomerIdUseCase, GetAccessTokenUseCase, GetOwnUserUseCase,
+    ListAccessTokensUseCase, RevokeUserSessionsUseCase, SearchUsersUseCase,
+    SetUserStripeCustomerIdUseCase, SuspendUserUseCase, UpdateAccessTokenUseCase,
+    UpdateUserProfileUseCase,
 };
 use std::sync::Arc;
 
@@ -12,6 +14,8 @@ pub struct UserUseCases {
     pub update_profile: Arc<dyn UpdateUserProfileUseCase>,
     pub change_role: Arc<dyn ChangeUserRoleUseCase>,
     pub change_tier: Arc<dyn ChangeUserTierUseCase>,
+    pub suspend: Arc<dyn SuspendUserUseCase>,
+    pub revoke_sessions: Arc<dyn RevokeUserSessionsUseCase>,
     pub set_stripe_customer_id: Arc<dyn SetUserStripeCustomerIdUseCase>,
     pub get_own: Arc<dyn GetOwnUserUseCase>,
     pub admin_get: Arc<dyn AdminGetUserUseCase>,
@@ -21,10 +25,12 @@ pub struct UserUseCases {
     pub create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+    pub delete_access_tokens: Arc<dyn DeleteAccessTokensUseCase>,
     pub delete: Arc<dyn DeleteUserUseCase>,
     pub get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
     pub authenticate_access_token: Arc<dyn AuthenticateAccessTokenUseCase>,
+    pub authenticate_user: Arc<dyn AuthenticateUserUseCase>,
 }
 
 pub struct UserUseCasesInput {
@@ -32,6 +38,8 @@ pub struct UserUseCasesInput {
     pub update_profile: Arc<dyn UpdateUserProfileUseCase>,
     pub change_role: Arc<dyn ChangeUserRoleUseCase>,
     pub change_tier: Arc<dyn ChangeUserTierUseCase>,
+    pub suspend: Arc<dyn SuspendUserUseCase>,
+    pub revoke_sessions: Arc<dyn RevokeUserSessionsUseCase>,
     pub set_stripe_customer_id: Arc<dyn SetUserStripeCustomerIdUseCase>,
     pub get_own: Arc<dyn GetOwnUserUseCase>,
     pub admin_get: Arc<dyn AdminGetUserUseCase>,
@@ -41,10 +49,12 @@ pub struct UserUseCasesInput {
     pub create_access_token: Arc<dyn CreateAccessTokenUseCase>,
     pub update_access_token: Arc<dyn UpdateAccessTokenUseCase>,
     pub delete_access_token: Arc<dyn DeleteAccessTokenUseCase>,
+    pub delete_access_tokens: Arc<dyn DeleteAccessTokensUseCase>,
     pub delete: Arc<dyn DeleteUserUseCase>,
     pub get_access_token: Arc<dyn GetAccessTokenUseCase>,
     pub list_access_tokens: Arc<dyn ListAccessTokensUseCase>,
     pub authenticate_access_token: Arc<dyn AuthenticateAccessTokenUseCase>,
+    pub authenticate_user: Arc<dyn AuthenticateUserUseCase>,
 }
 
 impl UserUseCases {
@@ -54,6 +64,8 @@ impl UserUseCases {
             update_profile: input.update_profile,
             change_role: input.change_role,
             change_tier: input.change_tier,
+            suspend: input.suspend,
+            revoke_sessions: input.revoke_sessions,
             set_stripe_customer_id: input.set_stripe_customer_id,
             get_own: input.get_own,
             admin_get: input.admin_get,
@@ -63,10 +75,12 @@ impl UserUseCases {
             create_access_token: input.create_access_token,
             update_access_token: input.update_access_token,
             delete_access_token: input.delete_access_token,
+            delete_access_tokens: input.delete_access_tokens,
             delete: input.delete,
             get_access_token: input.get_access_token,
             list_access_tokens: input.list_access_tokens,
             authenticate_access_token: input.authenticate_access_token,
+            authenticate_user: input.authenticate_user,
         }
     }
 }

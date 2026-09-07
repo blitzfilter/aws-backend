@@ -1,5 +1,9 @@
 use crate::ports::{
     AccessTokenRepository, AccessTokenRepositoryError, AccessTokenRepositoryFactory,
+    UserAdminReadError, UserAdminReaderFactory,
+};
+use crate::use_cases::authorization::{
+    RequireAdminActorError, require_admin_actor, require_admin_actor_credential,
 };
 use application::error::BoxError;
 use application::operation_context::{
@@ -62,35 +66,52 @@ pub trait DeleteAccessTokenUseCase: Send + Sync {
     ) -> Result<DeleteAccessTokenResult, DeleteAccessTokenError>;
 }
 
-pub struct DeleteAccessTokenHandler<U, R> {
+pub struct DeleteAccessTokenHandler<U, R, A> {
     unit_of_work: U,
     repository: R,
+    admin_reader: A,
+    admin_only: bool,
 }
 
-impl<U, R> DeleteAccessTokenHandler<U, R> {
-    pub fn new(unit_of_work: U, repository: R) -> Self {
+impl<U, R, A> DeleteAccessTokenHandler<U, R, A> {
+    pub fn new(unit_of_work: U, repository: R, admin_reader: A) -> Self {
         Self {
             unit_of_work,
             repository,
+            admin_reader,
+            admin_only: false,
+        }
+    }
+
+    pub fn new_admin_only(unit_of_work: U, repository: R, admin_reader: A) -> Self {
+        Self {
+            unit_of_work,
+            repository,
+            admin_reader,
+            admin_only: true,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, R> DeleteAccessTokenUseCase for DeleteAccessTokenHandler<U, R>
+impl<U, R, A> DeleteAccessTokenUseCase for DeleteAccessTokenHandler<U, R, A>
 where
     U: UnitOfWork,
     R: AccessTokenRepositoryFactory<U::Tx>,
+    A: UserAdminReaderFactory<U::Tx>,
 {
     #[tracing::instrument(
         name = "delete_access_token",
         skip_all,
         fields(
-            user_id = %command.user_id,
+            target_user_id = %command.user_id,
             access_token_id = %command.access_token_id,
             principal_type = context.principal.kind(),
+            actor_id = tracing::field::Empty,
             request_id = %context.request_id,
             correlation_id = %context.correlation_id,
+            deletion_outcome = tracing::field::Empty,
+            outcome = tracing::field::Empty,
         )
     )]
     async fn execute(
@@ -98,34 +119,85 @@ where
         context: &OperationContext,
         command: DeleteAccessTokenCommand,
     ) -> Result<DeleteAccessTokenResult, DeleteAccessTokenError> {
-        authorize_access_token_write(context, command.user_id)?;
+        if let Some(actor_id) = context.principal.actor_id() {
+            tracing::Span::current().record("actor_id", tracing::field::display(actor_id));
+        }
 
-        let mut tx = self
-            .unit_of_work
-            .begin()
-            .await
-            .map_err(|_| DeleteAccessTokenError::BeginTransactionFailed)?;
-        self.repository
-            .in_transaction(&mut tx)
-            .delete_by_id(command.user_id, command.access_token_id)
-            .await?;
-        tx.commit()
-            .await
-            .map_err(|_| DeleteAccessTokenError::CommitTransactionFailed)?;
+        let result = async {
+            if self.admin_only {
+                require_admin_actor_credential(context, CredentialCapability::AccessTokensWrite)?;
+            } else {
+                authorize_access_token_write(context, command.user_id)?;
+            }
 
-        tracing::info!(
-            event = "access_token.deleted",
-            actor_type = context.principal.kind(),
-            actor_id = %context.principal.label(),
-            user_id = %command.user_id,
-            access_token_id = %command.access_token_id,
-            outcome = "success",
-        );
+            let mut tx = self
+                .unit_of_work
+                .begin()
+                .await
+                .map_err(|_| DeleteAccessTokenError::BeginTransactionFailed)?;
+            if self.admin_only {
+                let mut admin_reader = self.admin_reader.in_transaction(&mut tx);
+                require_admin_actor(context, &mut admin_reader).await?;
+            }
+            let deleted = self
+                .repository
+                .in_transaction(&mut tx)
+                .delete_by_id(command.user_id, command.access_token_id)
+                .await?;
+            tx.commit()
+                .await
+                .map_err(|_| DeleteAccessTokenError::CommitTransactionFailed)?;
 
-        Ok(DeleteAccessTokenResult {
-            user_id: command.user_id,
-            access_token_id: command.access_token_id,
-        })
+            Ok((
+                DeleteAccessTokenResult {
+                    user_id: command.user_id,
+                    access_token_id: command.access_token_id,
+                },
+                deleted,
+            ))
+        }
+        .await;
+
+        let actor_id = context.principal.actor_id();
+        match result {
+            Ok((result, deleted)) => {
+                let deletion_outcome = if deleted { "deleted" } else { "already_absent" };
+                tracing::Span::current().record("deletion_outcome", deletion_outcome);
+                tracing::Span::current().record("outcome", "success");
+                tracing::info!(
+                    event = "access_token.deleted",
+                    action = "delete_access_token",
+                    actor_type = context.principal.kind(),
+                    actor_id = actor_id.as_deref().unwrap_or(""),
+                    target_type = "user_access_token",
+                    target_user_id = %command.user_id,
+                    access_token_id = %command.access_token_id,
+                    deletion_outcome,
+                    request_id = %context.request_id,
+                    correlation_id = %context.correlation_id,
+                    outcome = "success",
+                );
+                Ok(result)
+            }
+            Err(error) => {
+                tracing::Span::current().record("deletion_outcome", "unknown");
+                tracing::Span::current().record("outcome", "failure");
+                tracing::warn!(
+                    event = "access_token.deleted",
+                    action = "delete_access_token",
+                    actor_type = context.principal.kind(),
+                    actor_id = actor_id.as_deref().unwrap_or(""),
+                    target_type = "user_access_token",
+                    target_user_id = %command.user_id,
+                    access_token_id = %command.access_token_id,
+                    request_id = %context.request_id,
+                    correlation_id = %context.correlation_id,
+                    error_category = %error,
+                    outcome = "failure",
+                );
+                Err(error)
+            }
+        }
     }
 }
 
@@ -149,6 +221,30 @@ impl From<OperationAuthorizationError> for DeleteAccessTokenError {
             }
             OperationAuthorizationError::Forbidden
             | OperationAuthorizationError::InsufficientCapability { .. } => Self::Forbidden,
+        }
+    }
+}
+
+impl From<RequireAdminActorError> for DeleteAccessTokenError {
+    fn from(error: RequireAdminActorError) -> Self {
+        match error {
+            RequireAdminActorError::AuthenticationRequired => Self::AuthenticatedActorRequired,
+            RequireAdminActorError::Forbidden => Self::Forbidden,
+            RequireAdminActorError::UserAdminRead(error) => error.into(),
+        }
+    }
+}
+
+impl From<UserAdminReadError> for DeleteAccessTokenError {
+    fn from(error: UserAdminReadError) -> Self {
+        match error {
+            UserAdminReadError::TemporarilyUnavailable { source } => {
+                Self::TemporarilyUnavailable { source }
+            }
+            UserAdminReadError::InvalidReadModel { source } => {
+                Self::InvalidPersistedState { source }
+            }
+            UserAdminReadError::Internal { source } => Self::Internal { source },
         }
     }
 }
@@ -181,12 +277,14 @@ mod tests {
     };
     use crate::ports::{
         AccessTokenRepository, AccessTokenRepositoryError, AccessTokenRepositoryFactory,
-        AccessTokenStorageVersion, VersionedAccessToken,
+        AccessTokenStorageVersion, UserAdminActorView, UserAdminReader, UserAdminReaderFactory,
+        VersionedAccessToken,
     };
     use application::operation_context::{CorrelationId, OperationContext, Principal, RequestId};
     use application::transaction::{Transaction, TransactionError, UnitOfWork};
     use std::sync::{Arc, Mutex, MutexGuard};
     use user_core::access_token::{AccessToken, AccessTokenId, HashedRawAccessToken};
+    use user_core::role::UserRole;
     use user_core::user_id::UserId;
 
     #[derive(Default)]
@@ -200,6 +298,15 @@ mod tests {
     struct Fakes(Arc<Mutex<State>>);
     struct FakeTx(Fakes);
     struct FakeRepository(Fakes);
+
+    #[derive(Clone, Copy)]
+    struct FakeAdminReaderFactory {
+        role: Option<UserRole>,
+    }
+
+    struct FakeAdminReader {
+        role: Option<UserRole>,
+    }
 
     fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         match mutex.lock() {
@@ -278,6 +385,13 @@ mod tests {
             lock(&self.0.0).delete_calls += 1;
             Ok(true)
         }
+
+        async fn delete_by_user_id(
+            &mut self,
+            _user_id: UserId,
+        ) -> Result<u64, AccessTokenRepositoryError> {
+            Ok(0)
+        }
     }
 
     impl AccessTokenRepositoryFactory<FakeTx> for Fakes {
@@ -289,19 +403,39 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl UserAdminReader for FakeAdminReader {
+        async fn find_admin_actor(
+            &mut self,
+            user_id: UserId,
+        ) -> Result<Option<UserAdminActorView>, crate::ports::UserAdminReadError> {
+            Ok(self.role.map(|role| UserAdminActorView { user_id, role }))
+        }
+    }
+
+    impl UserAdminReaderFactory<FakeTx> for FakeAdminReaderFactory {
+        fn in_transaction<'tx>(&'tx self, _tx: &'tx mut FakeTx) -> impl UserAdminReader + 'tx {
+            FakeAdminReader { role: self.role }
+        }
+    }
+
     #[tokio::test]
     async fn should_delete_access_token_in_committed_transaction() {
         let user_id = UserId::new();
         let fakes = Fakes::default();
-        let result = DeleteAccessTokenHandler::new(fakes.clone(), fakes.clone())
-            .execute(
-                &context(Principal::User(user_id)),
-                DeleteAccessTokenCommand {
-                    user_id,
-                    access_token_id: AccessTokenId::new(),
-                },
-            )
-            .await;
+        let result = DeleteAccessTokenHandler::new(
+            fakes.clone(),
+            fakes.clone(),
+            FakeAdminReaderFactory { role: None },
+        )
+        .execute(
+            &context(Principal::User(user_id)),
+            DeleteAccessTokenCommand {
+                user_id,
+                access_token_id: AccessTokenId::new(),
+            },
+        )
+        .await;
 
         assert!(result.is_ok());
         let state = lock(&fakes.0);
@@ -313,9 +447,69 @@ mod tests {
     #[tokio::test]
     async fn should_reject_anonymous_delete_before_starting_transaction() {
         let fakes = Fakes::default();
-        let result = DeleteAccessTokenHandler::new(fakes.clone(), fakes.clone())
+        let result = DeleteAccessTokenHandler::new(
+            fakes.clone(),
+            fakes.clone(),
+            FakeAdminReaderFactory { role: None },
+        )
+        .execute(
+            &context(Principal::Anonymous),
+            DeleteAccessTokenCommand {
+                user_id: UserId::new(),
+                access_token_id: AccessTokenId::new(),
+            },
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(DeleteAccessTokenError::AuthenticatedActorRequired)
+        ));
+        assert_eq!(0, lock(&fakes.0).begins);
+    }
+
+    #[tokio::test]
+    async fn should_allow_admin_to_delete_another_users_access_token() {
+        let admin_id = UserId::new();
+        let target_id = UserId::new();
+        let fakes = Fakes::default();
+        let handler = DeleteAccessTokenHandler::new_admin_only(
+            fakes.clone(),
+            fakes.clone(),
+            FakeAdminReaderFactory {
+                role: Some(UserRole::Admin),
+            },
+        );
+
+        let result = handler
             .execute(
-                &context(Principal::Anonymous),
+                &context(Principal::User(admin_id)),
+                DeleteAccessTokenCommand {
+                    user_id: target_id,
+                    access_token_id: AccessTokenId::new(),
+                },
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(1, lock(&fakes.0).delete_calls);
+    }
+
+    #[tokio::test]
+    async fn should_reject_non_admin_admin_delete_before_deleting() {
+        let actor_id = UserId::new();
+        let fakes = Fakes::default();
+        let handler = DeleteAccessTokenHandler::new_admin_only(
+            fakes.clone(),
+            fakes.clone(),
+            FakeAdminReaderFactory {
+                role: Some(UserRole::User),
+            },
+        );
+
+        let result = handler
+            .execute(
+                &context(Principal::User(actor_id)),
                 DeleteAccessTokenCommand {
                     user_id: UserId::new(),
                     access_token_id: AccessTokenId::new(),
@@ -323,10 +517,10 @@ mod tests {
             )
             .await;
 
-        assert!(matches!(
-            result,
-            Err(DeleteAccessTokenError::AuthenticatedActorRequired)
-        ));
-        assert_eq!(0, lock(&fakes.0).begins);
+        assert!(matches!(result, Err(DeleteAccessTokenError::Forbidden)));
+        let state = lock(&fakes.0);
+        assert_eq!(0, state.delete_calls);
+        assert_eq!(1, state.begins);
+        assert_eq!(0, state.commits);
     }
 }

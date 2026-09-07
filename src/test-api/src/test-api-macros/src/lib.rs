@@ -28,7 +28,7 @@ use syn::{Expr, ExprArray, ItemFn, parse_macro_input};
 ///
 /// impl S3 {
 ///     pub fn service_names() -> &'static [&'static str] {
-///         "s3"
+///         &["s3"]
 ///     }
 ///
 ///     pub async fn set_up() {

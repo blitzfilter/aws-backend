@@ -62,6 +62,11 @@ pub trait AccessTokenRepository: Send {
         user_id: UserId,
         access_token_id: AccessTokenId,
     ) -> Result<bool, AccessTokenRepositoryError>;
+
+    async fn delete_by_user_id(
+        &mut self,
+        user_id: UserId,
+    ) -> Result<u64, AccessTokenRepositoryError>;
 }
 
 pub trait AccessTokenRepositoryFactory<Tx>: Send + Sync {

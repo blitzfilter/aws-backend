@@ -284,6 +284,84 @@ async fn should_count_only_active_watchlist_entries_in_transaction() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_keep_active_watch_count_and_intervals_when_product_listing_is_withdrawn() {
+    let pool = get_postgres_client().await;
+    let unit = SqlxUnitOfWork::new(pool.clone());
+    let repository = SqlxWatchlistRepositoryFactory;
+    let quotas = SqlxWatchlistQuotaReaderFactory;
+    let user_id = seed_user(&pool, "watchlist-postgres-withdrawn-count@example.com").await;
+    let product_listing_id =
+        seed_product(&pool, "watchlist-postgres-withdrawn-count-product").await;
+    let entry = WatchlistProductListing::rehydrate(
+        user_id,
+        product_listing_id,
+        true,
+        WatchlistState::Active,
+    );
+    let interval_start = (OffsetDateTime::now_utc() - Duration::hours(1))
+        .replace_nanosecond(0)
+        .unwrap_or_else(|error| panic!("failed to normalize interval baseline: {error}"));
+
+    let mut tx = begin(&unit).await;
+    repository
+        .in_transaction(&mut tx)
+        .insert(&entry)
+        .await
+        .unwrap_or_else(|error| panic!("insert active entry failed: {error:?}"));
+    commit(tx).await;
+    sqlx::query(
+        "UPDATE product_listing_watchlist SET active_since = $3, notifications_enabled_since = $3 WHERE user_id = $1 AND product_listing_id = $2",
+    )
+    .bind(uuid::Uuid::from(user_id))
+    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(interval_start)
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to set watchlist interval baseline: {error:?}"));
+
+    sqlx::query(
+        "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to withdraw product listing: {error:?}"));
+
+    let mut tx = begin(&unit).await;
+    let active_count = quotas
+        .in_transaction(&mut tx)
+        .count_active_for_user(user_id)
+        .await
+        .unwrap_or_else(|error| panic!("count active entries failed: {error:?}"));
+    commit(tx).await;
+
+    assert_eq!(1, active_count);
+    assert_eq!(
+        (
+            "ACTIVE".to_owned(),
+            Some(interval_start),
+            Some(interval_start)
+        ),
+        watchlist_state_and_intervals(&pool, user_id, product_listing_id).await
+    );
+
+    sqlx::query("UPDATE product_listings SET lifecycle = 'ACTIVE' WHERE product_listing_id = $1")
+        .bind(uuid::Uuid::from(product_listing_id))
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to restore product listing fixture: {error:?}"));
+
+    assert_eq!(
+        (
+            "ACTIVE".to_owned(),
+            Some(interval_start),
+            Some(interval_start)
+        ),
+        watchlist_state_and_intervals(&pool, user_id, product_listing_id).await
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_report_watchlist_update_and_delete_concurrency_conflicts() {
     let pool = get_postgres_client().await;
     let unit = SqlxUnitOfWork::new(pool.clone());
@@ -684,6 +762,21 @@ async fn repository_update(
         .await
         .unwrap_or_else(|error| panic!("watchlist update failed: {error:?}"));
     commit(tx).await;
+}
+
+async fn watchlist_state_and_intervals(
+    pool: &sqlx::PgPool,
+    user_id: UserId,
+    product_listing_id: ProductListingId,
+) -> (String, Option<OffsetDateTime>, Option<OffsetDateTime>) {
+    sqlx::query_as(
+        "SELECT state, active_since, notifications_enabled_since FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
+    )
+    .bind(uuid::Uuid::from(user_id))
+    .bind(uuid::Uuid::from(product_listing_id))
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to read watchlist state and intervals: {error:?}"))
 }
 
 async fn intervals(

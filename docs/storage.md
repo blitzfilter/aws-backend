@@ -4,7 +4,7 @@
 
 PostgreSQL is the sole production owner of notifications and external-delivery intent. Notification storage has no TTL.
 
-- `notifications` stores one immutable typed content snapshot per semantic reason. `origin_event_id` is provenance only and is absent for partnership-application notifications.
+- `notifications` stores one immutable typed content snapshot per semantic reason. `origin_event_id` is provenance only and is absent for partnership-application notifications. ProductListing references are snapshot provenance, not foreign keys: physical ProductListing deletion retains the Notification and its `notification_deliveries`; deleting a Notification cascades its deliveries.
 - Watchlist idempotency is `(user_id, origin_event_id, kind)`. Search-filter idempotency is `(user_id, user_search_filter_id, product_listing_id, origin_event_id)`. Partnership-application idempotency is `(user_id, partnership_application_id)`.
 - A single Product event may create a watchlist notification and one distinct notification for every matching search filter.
 - `notification_deliveries` owns durable external-delivery state, separate from a Notification. One Notification may have several delivery rows. Each row is unique per `(notification_id, channel, target_key)` and contains no copied notification payload or target value. The application planner selects channels and inserts requested rows in the same PostgreSQL transaction as newly inserted notifications; each channel adapter resolves its own target. EMAIL/PRIMARY is the sole production plan.
@@ -19,6 +19,7 @@ PostgreSQL is the sole production owner of notifications and external-delivery i
 - `product_listing_watchlist.active_since` is non-null only for `ACTIVE` rows and marks the beginning of the current active interval.
 - `product_listing_watchlist.notifications_enabled_since` is non-null exactly when `notifications = true` and marks the beginning of the current email-enabled interval.
 - Watchlist notification readers compare both interval starts with immutable `product_listing_events.event_time`; deactivation/reactivation and email disable/re-enable start new intervals. These fields are repository-owned persistence metadata, not REST payload fields.
+- ProductListing withdrawal is reversible and does not mutate retained watch rows: active quota occupancy, watch state, and both current-interval timestamps remain. Create and inactive-to-active reactivation lock the authoritative ProductListing lifecycle in the same PostgreSQL transaction as tier/quota checks and the write; notification-only updates and deactivation remain manageable for withdrawn listings. An explicit physical ProductListing delete cascades watchlist rows.
 
 ## Partnerships and Party
 

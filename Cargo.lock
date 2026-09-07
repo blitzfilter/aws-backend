@@ -222,6 +222,8 @@ dependencies = [
  "admin-overview-service",
  "application",
  "async-trait",
+ "aws-config",
+ "aws-sdk-cognitoidentityprovider",
  "axum",
  "base64 0.23.1",
  "billing-service",
@@ -283,6 +285,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "url",
+ "user-cognito",
  "user-core",
  "user-postgres",
  "user-service",
@@ -4066,9 +4069,9 @@ dependencies = [
 
 [[package]]
 name = "lambda_runtime"
-version = "1.3.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "484647f147899f866a7b5db6aaa1671e943f89f4be76e2a383c96b1b27058294"
+checksum = "1b4a47ba6672230da151bb4bc10e4c09c9dcb7f6b363f47dc3ce84df1ec9bbbd"
 dependencies = [
  "async-stream",
  "base64 0.22.1",
@@ -4091,9 +4094,9 @@ dependencies = [
 
 [[package]]
 name = "lambda_runtime_api_client"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a92e6500e47d17c1ffd3e6ad3ca224bb86382fc8b63414f6f20b1b2d98dfb7cf"
+checksum = "09c46c8324555826a4040136b25ed8c1abb45ab2969f7ec1c3324048ed0c29a2"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -4448,9 +4451,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.3"
+version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d317b4b9eb398e6acce275758ec6125535505e7a146fb1a9b8bda2451b0ff4c"
+checksum = "ff9840bcc50b71349309900da0ce7279aa336ae71d73250b07998932c7d97c25"
 dependencies = [
  "hashbrown 0.17.1",
 ]
@@ -7242,9 +7245,9 @@ dependencies = [
 
 [[package]]
 name = "spider"
-version = "2.53.6"
+version = "2.53.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f632f279822d8cb180a554fd15b3487ac90852298a17f6c2c2f8148cc87d6b90"
+checksum = "fd745f8618f4081c53e38ca89adb5ff02f19a9e1ef3dbc87095b8e5824354775"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -7282,9 +7285,9 @@ dependencies = [
 
 [[package]]
 name = "spider_agent_types"
-version = "2.53.6"
+version = "2.53.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5fdf41e0a2bd6c9f3992d0cdb0e74f83c2123d57eab321bcc370628b963b12b"
+checksum = "d540684645870a4f61295d2dea1a9976d3a0e5563038ffe286ecb61c5f98bd1c"
 dependencies = [
  "aho-corasick",
  "llm_models_spider",
@@ -8445,6 +8448,18 @@ name = "urlencoding"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
+
+[[package]]
+name = "user-cognito"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "aws-sdk-cognitoidentityprovider",
+ "thiserror 2.0.20",
+ "user-core",
+ "user-service",
+]
 
 [[package]]
 name = "user-core"

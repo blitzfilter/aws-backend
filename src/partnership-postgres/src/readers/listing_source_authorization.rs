@@ -31,7 +31,8 @@ impl ListingSourceAuthorization for SqlxListingSourceAuthorization {
                   ON source.listing_source_id = source_grant.listing_source_id \
                 WHERE member.user_id = $1 \
                   AND source_grant.listing_source_id = $2 \
-                  AND partnership.party_id = source.operator_party_id\
+                  AND partnership.party_id = source.operator_party_id \
+                  AND partnership.business_state = 'ACTIVE'\
             )",
         )
         .bind(uuid::Uuid::from(user_id))
@@ -62,6 +63,7 @@ impl ListingSourceAuthorization for SqlxListingSourceAuthorization {
              JOIN partnerships partnership \
                ON partnership.partnership_id = source_grant.partnership_id \
               AND partnership.party_id = s.operator_party_id \
+              AND partnership.business_state = 'ACTIVE' \
              WHERE member.user_id = $1 \
              ORDER BY s.name",
         )

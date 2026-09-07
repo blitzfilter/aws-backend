@@ -22,6 +22,7 @@ use partnership_service::use_cases::queries::list_administered_listing_sources::
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationError,
+        dissolve_partnership::DissolvePartnershipError,
         grant_partnership_listing_source::GrantPartnershipListingSourceError,
         grant_partnership_membership::GrantPartnershipMembershipError,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewError,
@@ -64,7 +65,9 @@ use user_service::use_cases::commands::change_user_role::ChangeUserRoleError;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierError;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenError;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenError;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensError;
 use user_service::use_cases::commands::delete_user::DeleteUserError;
+use user_service::use_cases::commands::revoke_user_sessions::RevokeUserSessionsError;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenError;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileError;
 use user_service::use_cases::commands::upsert_newsletter_subscription::UpsertNewsletterSubscriptionError;
@@ -73,7 +76,9 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminError;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenError;
 use user_service::use_cases::queries::get_own_user::GetOwnUserError;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensError;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensError;
 use user_service::use_cases::queries::search_users::SearchUsersError;
+use user_service::use_cases::{SuspendUserError, UnsuspendUserError};
 use watchlist_service::use_cases::{
     ListWatchlistError, UnwatchProductListingError, UpdateWatchlistProductListingError,
     WatchProductListingError,
@@ -146,6 +151,8 @@ pub(crate) const PRODUCT_LISTING_INTERNAL_ERROR: ApiErrorCode =
     ApiErrorCode("PRODUCT_LISTING_INTERNAL_ERROR");
 pub(crate) const PRODUCT_LISTING_NOT_FOUND: ApiErrorCode =
     ApiErrorCode("PRODUCT_LISTING_NOT_FOUND");
+pub(crate) const PRODUCT_LISTING_UNAVAILABLE: ApiErrorCode =
+    ApiErrorCode("PRODUCT_LISTING_UNAVAILABLE");
 pub(crate) const PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
     ApiErrorCode("PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE");
 pub(crate) const SEARCH_FILTER_ALREADY_EXISTS: ApiErrorCode =
@@ -1703,6 +1710,105 @@ impl From<DeleteUserError> for ApiError {
     }
 }
 
+impl From<SuspendUserError> for ApiError {
+    fn from(error: SuspendUserError) -> Self {
+        match error {
+            SuspendUserError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            SuspendUserError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            SuspendUserError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            SuspendUserError::LastAdminProtected => ApiError::conflict(CONFLICT)
+                .with_detail("At least one active administrator must remain."),
+            SuspendUserError::ConcurrencyConflict
+            | SuspendUserError::EmailConflict { .. }
+            | SuspendUserError::StripeCustomerConflict { .. } => ApiError::conflict(CONFLICT)
+                .with_detail("User suspension conflicts with current state."),
+            SuspendUserError::InvalidReason => {
+                ApiError::bad_request(BAD_BODY_VALUE).with_detail("Suspension reason is invalid.")
+            }
+            SuspendUserError::TemporarilyUnavailable { .. }
+            | SuspendUserError::BeginTransactionFailed
+            | SuspendUserError::CommitTransactionFailed => {
+                ApiError::service_unavailable(USER_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("User could not be suspended right now.")
+            }
+            SuspendUserError::InvalidPersistedState { .. } | SuspendUserError::Internal { .. } => {
+                ApiError::internal_server_error(USER_INTERNAL_ERROR)
+                    .with_detail("User suspension failed internally.")
+            }
+        }
+    }
+}
+
+impl From<RevokeUserSessionsError> for ApiError {
+    fn from(error: RevokeUserSessionsError) -> Self {
+        match error {
+            RevokeUserSessionsError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            RevokeUserSessionsError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            RevokeUserSessionsError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            RevokeUserSessionsError::TemporarilyUnavailable { .. }
+            | RevokeUserSessionsError::BeginTransactionFailed
+            | RevokeUserSessionsError::CommitTransactionFailed => {
+                ApiError::service_unavailable(USER_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("User sessions could not be revoked right now.")
+            }
+            RevokeUserSessionsError::InvalidPersistedState { .. }
+            | RevokeUserSessionsError::Internal { .. } => {
+                ApiError::internal_server_error(USER_INTERNAL_ERROR)
+                    .with_detail("User session revocation failed internally.")
+            }
+        }
+    }
+}
+
+impl From<UnsuspendUserError> for ApiError {
+    fn from(error: UnsuspendUserError) -> Self {
+        match error {
+            UnsuspendUserError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            UnsuspendUserError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            UnsuspendUserError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            UnsuspendUserError::ConcurrencyConflict
+            | UnsuspendUserError::EmailConflict { .. }
+            | UnsuspendUserError::StripeCustomerConflict { .. } => ApiError::conflict(CONFLICT)
+                .with_detail("User reactivation conflicts with current state."),
+            UnsuspendUserError::TemporarilyUnavailable { .. }
+            | UnsuspendUserError::BeginTransactionFailed
+            | UnsuspendUserError::CommitTransactionFailed => {
+                ApiError::service_unavailable(USER_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("User could not be reactivated right now.")
+            }
+            UnsuspendUserError::InvalidPersistedState { .. }
+            | UnsuspendUserError::Internal { .. } => {
+                ApiError::internal_server_error(USER_INTERNAL_ERROR)
+                    .with_detail("User reactivation failed internally.")
+            }
+        }
+    }
+}
+
 impl From<CreateAccessTokenError> for ApiError {
     fn from(error: CreateAccessTokenError) -> Self {
         match error {
@@ -1751,6 +1857,34 @@ impl From<ListAccessTokensError> for ApiError {
             }
             ListAccessTokensError::InvalidPersistedState { .. }
             | ListAccessTokensError::Internal { .. } => {
+                ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
+                    .with_detail("Access token operation failed internally.")
+            }
+        }
+    }
+}
+impl From<ListAdminAccessTokensError> for ApiError {
+    fn from(error: ListAdminAccessTokensError) -> Self {
+        match error {
+            ListAdminAccessTokensError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            ListAdminAccessTokensError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            ListAdminAccessTokensError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            ListAdminAccessTokensError::TemporarilyUnavailable { .. }
+            | ListAdminAccessTokensError::BeginTransactionFailed
+            | ListAdminAccessTokensError::CommitTransactionFailed => {
+                ApiError::service_unavailable(ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Access token store is temporarily unavailable.")
+            }
+            ListAdminAccessTokensError::InvalidPersistedState { .. }
+            | ListAdminAccessTokensError::Internal { .. } => {
                 ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
                     .with_detail("Access token operation failed internally.")
             }
@@ -1815,6 +1949,34 @@ impl From<UpdateAccessTokenError> for ApiError {
             }
             UpdateAccessTokenError::InvalidPersistedState { .. }
             | UpdateAccessTokenError::Internal { .. } => {
+                ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
+                    .with_detail("Access token operation failed internally.")
+            }
+        }
+    }
+}
+impl From<DeleteAccessTokensError> for ApiError {
+    fn from(error: DeleteAccessTokensError) -> Self {
+        match error {
+            DeleteAccessTokensError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            DeleteAccessTokensError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            DeleteAccessTokensError::UserNotFound => {
+                ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            DeleteAccessTokensError::TemporarilyUnavailable { .. }
+            | DeleteAccessTokensError::BeginTransactionFailed
+            | DeleteAccessTokensError::CommitTransactionFailed => {
+                ApiError::service_unavailable(ACCESS_TOKEN_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Access token store is temporarily unavailable.")
+            }
+            DeleteAccessTokensError::InvalidPersistedState { .. }
+            | DeleteAccessTokensError::Internal { .. } => {
                 ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR)
                     .with_detail("Access token operation failed internally.")
             }
@@ -1897,6 +2059,14 @@ impl From<WatchProductListingError> for ApiError {
             WatchProductListingError::UserNotFound => {
                 ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
             }
+            WatchProductListingError::ProductListingNotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+                    .with_detail("ProductListing was not found.")
+            }
+            WatchProductListingError::ProductListingUnavailable => {
+                ApiError::conflict(PRODUCT_LISTING_UNAVAILABLE)
+                    .with_detail("ProductListing is unavailable.")
+            }
             WatchProductListingError::WatchlistQuotaExceeded {
                 active_count,
                 quota,
@@ -1936,6 +2106,14 @@ impl From<UpdateWatchlistProductListingError> for ApiError {
             }
             UpdateWatchlistProductListingError::UserNotFound => {
                 ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            UpdateWatchlistProductListingError::ProductListingNotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+                    .with_detail("ProductListing was not found.")
+            }
+            UpdateWatchlistProductListingError::ProductListingUnavailable => {
+                ApiError::conflict(PRODUCT_LISTING_UNAVAILABLE)
+                    .with_detail("ProductListing is unavailable.")
             }
             UpdateWatchlistProductListingError::WatchlistQuotaExceeded {
                 active_count,
@@ -2145,6 +2323,33 @@ impl From<GetAdminPartnershipError> for ApiError {
             | GetAdminPartnershipError::Internal { .. } => {
                 ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
                     .with_detail("Partnership details failed internally.")
+            }
+        }
+    }
+}
+
+impl From<DissolvePartnershipError> for ApiError {
+    fn from(error: DissolvePartnershipError) -> Self {
+        match error {
+            DissolvePartnershipError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            DissolvePartnershipError::PartnershipNotFound => {
+                ApiError::not_found(PARTNERSHIP_NOT_FOUND).with_detail("Partnership was not found.")
+            }
+            DissolvePartnershipError::ConcurrencyConflict => {
+                ApiError::conflict(CONFLICT).with_detail("Partnership was changed concurrently.")
+            }
+            DissolvePartnershipError::TemporarilyUnavailable { .. }
+            | DissolvePartnershipError::BeginTransactionFailed
+            | DissolvePartnershipError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTNERSHIP_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Partnership dissolution is temporarily unavailable.")
+            }
+            DissolvePartnershipError::InvalidPersistedState { .. }
+            | DissolvePartnershipError::Internal { .. } => {
+                ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
+                    .with_detail("Partnership dissolution failed internally.")
             }
         }
     }
@@ -2630,6 +2835,56 @@ mod tests {
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
         let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
         assert_eq!(AUTH_TEMPORARILY_UNAVAILABLE.to_string(), body["error"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_watch_product_listing_lifecycle_errors_to_public_problems()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (error, expected_status, expected_code) in [
+            (
+                WatchProductListingError::ProductListingNotFound,
+                StatusCode::NOT_FOUND,
+                PRODUCT_LISTING_NOT_FOUND,
+            ),
+            (
+                WatchProductListingError::ProductListingUnavailable,
+                StatusCode::CONFLICT,
+                PRODUCT_LISTING_UNAVAILABLE,
+            ),
+        ] {
+            let response = ApiError::from(error).into_response();
+
+            assert_eq!(expected_status, response.status());
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+            assert_eq!(expected_code.to_string(), body["error"]);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_update_watchlist_product_listing_lifecycle_errors_to_public_problems()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (error, expected_status, expected_code) in [
+            (
+                UpdateWatchlistProductListingError::ProductListingNotFound,
+                StatusCode::NOT_FOUND,
+                PRODUCT_LISTING_NOT_FOUND,
+            ),
+            (
+                UpdateWatchlistProductListingError::ProductListingUnavailable,
+                StatusCode::CONFLICT,
+                PRODUCT_LISTING_UNAVAILABLE,
+            ),
+        ] {
+            let response = ApiError::from(error).into_response();
+
+            assert_eq!(expected_status, response.status());
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+            assert_eq!(expected_code.to_string(), body["error"]);
+        }
         Ok(())
     }
 

@@ -25,6 +25,7 @@ pub(crate) mod wire;
 use crate::auth::{
     ApiAuthService, AuraAccessTokenAuthenticator, AuthError, CognitoJwtAuthenticator,
     CognitoJwtConfig, JwksProvider, ReqwestJwksProvider, TokenAuthenticator,
+    UserAuthenticationAuthenticator,
 };
 use crate::state::{
     AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
@@ -94,6 +95,7 @@ use partnership_postgres::{
 use partnership_service::use_cases::{
     commands::{
         approve_partnership_application::ApprovePartnershipApplicationHandler,
+        dissolve_partnership::DissolvePartnershipHandler,
         grant_partnership_listing_source::GrantPartnershipListingSourceHandler,
         grant_partnership_membership::GrantPartnershipMembershipHandler,
         mark_partnership_application_in_review::MarkPartnershipApplicationInReviewHandler,
@@ -126,8 +128,9 @@ use product_listing_postgres::{
     SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
     SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRepositoryFactory,
-    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRawCaptureWriterFactory,
+    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
+    SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
@@ -152,18 +155,20 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::info;
+use user_cognito::CognitoUserSessionRevoker;
 use user_postgres::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
-    SqlxAccessTokenRepositoryFactory, SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory,
-    SqlxUserAdminReaderFactory, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
+    SqlxAccessTokenRepositoryFactory, SqlxAdminAccessTokenListReaderFactory,
+    SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory,
+    SqlxUserAuthenticationReader, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
     SqlxUserTierEntitlementsFactory,
 };
-use user_service::use_cases::AuthenticateAccessTokenHandler;
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierHandler;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenHandler;
 use user_service::use_cases::commands::delete_access_token::DeleteAccessTokenHandler;
+use user_service::use_cases::commands::delete_access_tokens::DeleteAccessTokensHandler;
 use user_service::use_cases::commands::delete_user::DeleteUserHandler;
 use user_service::use_cases::commands::update_access_token::UpdateAccessTokenHandler;
 use user_service::use_cases::commands::update_user_profile::UpdateUserProfileHandler;
@@ -173,7 +178,12 @@ use user_service::use_cases::queries::check_user_admin::CheckUserAdminHandler;
 use user_service::use_cases::queries::get_access_token::GetAccessTokenHandler;
 use user_service::use_cases::queries::get_own_user::GetOwnUserHandler;
 use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandler;
+use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
+use user_service::use_cases::{
+    AuthenticateAccessTokenHandler, AuthenticateUserHandler, RevokeUserSessionsHandler,
+    SuspendUserHandler, UnsuspendUserHandler,
+};
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
 use watchlist_service::use_cases::{
@@ -187,6 +197,7 @@ pub const VERTEX_AI_LOCATION_ENV: &str = "VERTEX_AI_LOCATION";
 pub const COGNITO_ISSUER_ENV: &str = "AURA_HISTORIA_COGNITO_ISSUER";
 pub const COGNITO_JWKS_URL_ENV: &str = "AURA_HISTORIA_COGNITO_JWKS_URL";
 pub const COGNITO_APP_CLIENT_IDS_ENV: &str = "AURA_HISTORIA_COGNITO_APP_CLIENT_IDS";
+pub const COGNITO_USER_POOL_ID_ENV: &str = "AURA_HISTORIA_COGNITO_USER_POOL_ID";
 pub const STRIPE_API_KEY_ENV: &str = "STRIPE_API_KEY";
 pub const STRIPE_CHECKOUT_SUCCESS_URL_ENV: &str = "STRIPE_CHECKOUT_SUCCESS_URL";
 pub const STRIPE_CHECKOUT_CANCEL_URL_ENV: &str = "STRIPE_CHECKOUT_CANCEL_URL";
@@ -220,6 +231,7 @@ const GOOGLE_CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud
 pub struct ApiConfig {
     bind_addr: SocketAddr,
     cognito_jwt: CognitoJwtConfig,
+    cognito_user_pool_id: String,
     vertex_ai_embedding: VertexAiEmbeddingConfig,
     stripe_billing: StripeBillingConfig,
     billing_prices: BillingPriceIds,
@@ -256,6 +268,7 @@ impl ApiConfig {
         if app_client_ids.is_empty() {
             return Err(ApiConfigError::EmptyCognitoAppClientIds);
         }
+        let cognito_user_pool_id = required_config(&mut get, COGNITO_USER_POOL_ID_ENV)?;
         let vertex_ai_embedding = VertexAiEmbeddingConfig::new(
             get(VERTEX_AI_PROJECT_ID_ENV)
                 .unwrap_or_else(|| DEFAULT_VERTEX_AI_PROJECT_ID.to_owned()),
@@ -286,6 +299,7 @@ impl ApiConfig {
         Ok(Self {
             bind_addr,
             cognito_jwt: CognitoJwtConfig::new(issuer, jwks_url, app_client_ids),
+            cognito_user_pool_id,
             vertex_ai_embedding,
             stripe_billing,
             billing_prices,
@@ -299,6 +313,10 @@ impl ApiConfig {
 
     pub fn cognito_jwt(&self) -> &CognitoJwtConfig {
         &self.cognito_jwt
+    }
+
+    pub fn cognito_user_pool_id(&self) -> &str {
+        &self.cognito_user_pool_id
     }
 
     pub fn vertex_ai_embedding(&self) -> &VertexAiEmbeddingConfig {
@@ -530,6 +548,24 @@ pub fn app(state: AppState) -> Router {
                         .patch(users::admin_users::patch_admin_user)
                         .delete(users::admin_users::delete_admin_user),
                 )
+                .route(
+                    "/api/v1/admin/users/{user_id}/suspension",
+                    axum::routing::put(users::suspend_user::suspend_user)
+                        .delete(users::unsuspend_user::unsuspend_user),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/sessions/revoke",
+                    post(users::revoke_user_sessions::revoke_user_sessions),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/access-tokens",
+                    get(users::access_tokens::list_admin_access_tokens)
+                        .delete(users::access_tokens::delete_admin_access_tokens),
+                )
+                .route(
+                    "/api/v1/admin/users/{user_id}/access-tokens/{access_token_id}",
+                    delete(users::access_tokens::delete_admin_access_token),
+                )
                 .with_state(users),
         );
     }
@@ -608,7 +644,10 @@ struct RuntimeReadiness {
     opensearch: OpenSearch,
 }
 
-#[async_trait::async_trait]
+use async_trait::async_trait;
+use aws_config::BehaviorVersion;
+
+#[async_trait]
 impl ReadinessCheck for RuntimeReadiness {
     async fn check(&self) -> Result<(), ()> {
         self.postgres.acquire().await.map_err(|_| ())?;
@@ -623,6 +662,11 @@ pub async fn app_state_from_env() -> Result<AppState, ApiStateError> {
 }
 
 async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateError> {
+    let cognito_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+    let cognito_session_revoker = CognitoUserSessionRevoker::new(
+        aws_sdk_cognitoidentityprovider::Client::new(&cognito_config),
+        config.cognito_user_pool_id(),
+    );
     let pool = postgres_pool_from_env().await?;
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let get_product_listing_history = GetProductListingHistoryHandler::new(
@@ -748,12 +792,14 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxWatchlistRepositoryFactory,
         SqlxWatchlistQuotaReaderFactory,
         SqlxUserTierEntitlementsFactory::new(),
+        SqlxProductListingLifecycleGuardFactory::new(),
     );
     let update_watchlist_product = UpdateWatchlistProductListingHandler::new(
         unit_of_work.clone(),
         SqlxWatchlistRepositoryFactory,
         SqlxWatchlistQuotaReaderFactory,
         SqlxUserTierEntitlementsFactory::new(),
+        SqlxProductListingLifecycleGuardFactory::new(),
     );
     let unwatch_product =
         UnwatchProductListingHandler::new(unit_of_work.clone(), SqlxWatchlistRepositoryFactory);
@@ -786,6 +832,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     let get_admin_partnership = GetAdminPartnershipHandler::new(
         unit_of_work.clone(),
         SqlxPartnershipDetailsReaderFactory::new(),
+        SqlxUserAdminReaderFactory::new(),
+    );
+    let dissolve_partnership = DissolvePartnershipHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnershipRepositoryFactory::new(),
         SqlxUserAdminReaderFactory::new(),
     );
     let grant_partnership_membership = GrantPartnershipMembershipHandler::new(
@@ -924,6 +975,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
 
     let access_token_use_case =
         AuthenticateAccessTokenHandler::new(SqlxAccessTokenAuthenticationReader::new(pool.clone()));
+    let authenticate_user =
+        AuthenticateUserHandler::new(SqlxUserAuthenticationReader::new(pool.clone()));
     let jwks_client = reqwest::Client::builder()
         .connect_timeout(JWKS_CONNECT_TIMEOUT)
         .timeout(JWKS_REQUEST_TIMEOUT)
@@ -933,6 +986,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         config,
         ReqwestJwksProvider::new(jwks_client),
         AuraAccessTokenAuthenticator::new(access_token_use_case),
+        authenticate_user,
     )
     .map_err(ApiStateError::CognitoJwt)?;
     let notifications_state = NotificationsState::new(
@@ -1016,12 +1070,34 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         change_user_tier: Arc::new(change_user_tier),
         delete_user: Arc::new(delete_user),
         admin_delete_user: Arc::new(admin_delete_user),
+        suspend_user: Arc::new(SuspendUserHandler::new(
+            unit_of_work.clone(),
+            SqlxUserRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        unsuspend_user: Arc::new(UnsuspendUserHandler::new(
+            unit_of_work.clone(),
+            SqlxUserRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        revoke_user_sessions: Arc::new(RevokeUserSessionsHandler::new(
+            unit_of_work.clone(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
+            cognito_session_revoker,
+        )),
         create_access_token: Arc::new(CreateAccessTokenHandler::new(
             unit_of_work.clone(),
             SqlxAccessTokenRepositoryFactory::new(),
         )),
         list_access_tokens: Arc::new(ListAccessTokensHandler::new(
             SqlxAccessTokenListReader::new(pool.clone()),
+        )),
+        admin_list_access_tokens: Arc::new(ListAdminAccessTokensHandler::new(
+            unit_of_work.clone(),
+            SqlxAdminAccessTokenListReaderFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
         )),
         get_access_token: Arc::new(GetAccessTokenHandler::new(
             SqlxAccessTokenDetailsReader::new(pool.clone()),
@@ -1033,6 +1109,18 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         delete_access_token: Arc::new(DeleteAccessTokenHandler::new(
             unit_of_work.clone(),
             SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        admin_delete_access_token: Arc::new(DeleteAccessTokenHandler::new_admin_only(
+            unit_of_work.clone(),
+            SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+        )),
+        admin_delete_access_tokens: Arc::new(DeleteAccessTokensHandler::new(
+            unit_of_work.clone(),
+            SqlxAccessTokenRepositoryFactory::new(),
+            SqlxUserAdminReaderFactory::new(),
+            SqlxUserAccountReaderFactory::new(),
         )),
         authenticator: Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     };
@@ -1154,7 +1242,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         Arc::new(grant_partnership_listing_source),
         Arc::new(revoke_partnership_listing_source),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
-    );
+    )
+    .with_dissolve(Arc::new(dissolve_partnership));
 
     let readiness = Arc::new(RuntimeReadiness {
         postgres: pool,
@@ -1273,19 +1362,21 @@ fn google_application_default_credentials()
         })
 }
 
-fn compose_authenticator<P, A>(
+fn compose_authenticator<P, A, U>(
     config: &ApiConfig,
     jwks_provider: P,
     access_token_authenticator: A,
+    authenticate_user: U,
 ) -> Result<Arc<dyn TokenAuthenticator>, AuthError>
 where
     P: JwksProvider + 'static,
     A: TokenAuthenticator + 'static,
+    U: user_service::use_cases::AuthenticateUserUseCase + 'static,
 {
     let cognito_jwt = CognitoJwtAuthenticator::new(config.cognito_jwt().clone(), jwks_provider)?;
-    Ok(Arc::new(ApiAuthService::new(
-        cognito_jwt,
-        access_token_authenticator,
+    Ok(Arc::new(UserAuthenticationAuthenticator::new(
+        ApiAuthService::new(cognito_jwt, access_token_authenticator),
+        authenticate_user,
     )))
 }
 

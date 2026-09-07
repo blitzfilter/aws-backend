@@ -15,6 +15,7 @@ pub struct User {
     profile: UserProfile,
     preferences: UserPreferences,
     account: UserAccount,
+    suspended: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +35,7 @@ pub struct RehydratedUserState {
     pub profile: UserProfile,
     pub preferences: UserPreferences,
     pub account: UserAccount,
+    pub suspended: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -84,6 +86,7 @@ impl User {
             profile: input.profile,
             preferences: input.preferences,
             account: input.account,
+            suspended: false,
         })
     }
 
@@ -96,6 +99,7 @@ impl User {
             profile: state.profile,
             preferences: state.preferences,
             account: state.account,
+            suspended: state.suspended,
         })
     }
 
@@ -120,6 +124,14 @@ impl User {
 
     pub fn change_role(&mut self, role: UserRole) -> ChangeOutcome {
         replace_if_changed(&mut self.account.role, role)
+    }
+
+    pub fn suspend(&mut self) -> ChangeOutcome {
+        replace_if_changed(&mut self.suspended, true)
+    }
+
+    pub fn unsuspend(&mut self) -> ChangeOutcome {
+        replace_if_changed(&mut self.suspended, false)
     }
 
     pub fn change_stripe_customer_id(
@@ -161,6 +173,10 @@ impl User {
 
     pub fn account(&self) -> &UserAccount {
         &self.account
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        self.suspended
     }
 
     pub fn name(&self) -> Option<Name> {
@@ -217,7 +233,7 @@ mod tests {
         let result = User::create(input);
 
         assert!(
-            matches!(result, Ok(ref user) if user.id() == id && user.email() == &email && user.account().tier == UserTier::Free)
+            matches!(result, Ok(ref user) if user.id() == id && user.email() == &email && user.account().tier == UserTier::Free && !user.is_suspended())
         );
     }
 
@@ -376,6 +392,75 @@ mod tests {
         let outcome = user.change_role(UserRole::User);
 
         assert_eq!(ChangeOutcome::Unchanged, outcome);
+    }
+
+    #[test]
+    fn should_suspend_user_without_changing_role_or_tier() {
+        let mut user =
+            User::create(new_user()).unwrap_or_else(|error| panic!("user create failed: {error}"));
+        let role = user.account().role;
+        let tier = user.account().tier;
+
+        let outcome = user.suspend();
+
+        assert_eq!(ChangeOutcome::Changed, outcome);
+        assert!(user.is_suspended());
+        assert_eq!(role, user.account().role);
+        assert_eq!(tier, user.account().tier);
+    }
+
+    #[test]
+    fn should_report_unchanged_when_user_already_suspended() {
+        let mut user =
+            User::create(new_user()).unwrap_or_else(|error| panic!("user create failed: {error}"));
+        let _ = user.suspend();
+
+        let outcome = user.suspend();
+
+        assert_eq!(ChangeOutcome::Unchanged, outcome);
+        assert!(user.is_suspended());
+    }
+
+    #[test]
+    fn should_unsuspend_user_without_changing_role_or_tier() {
+        let mut user =
+            User::create(new_user()).unwrap_or_else(|error| panic!("user create failed: {error}"));
+        let role = user.account().role;
+        let tier = user.account().tier;
+        let _ = user.suspend();
+
+        let outcome = user.unsuspend();
+
+        assert_eq!(ChangeOutcome::Changed, outcome);
+        assert!(!user.is_suspended());
+        assert_eq!(role, user.account().role);
+        assert_eq!(tier, user.account().tier);
+    }
+
+    #[test]
+    fn should_report_unchanged_when_user_already_active() {
+        let mut user =
+            User::create(new_user()).unwrap_or_else(|error| panic!("user create failed: {error}"));
+
+        let outcome = user.unsuspend();
+
+        assert_eq!(ChangeOutcome::Unchanged, outcome);
+        assert!(!user.is_suspended());
+    }
+
+    #[test]
+    fn should_restore_suspension_state_when_rehydrating() {
+        let input = new_user();
+        let result = User::rehydrate(RehydratedUserState {
+            id: input.id,
+            email: input.email,
+            profile: input.profile,
+            preferences: input.preferences,
+            account: input.account,
+            suspended: true,
+        });
+
+        assert!(matches!(result, Ok(user) if user.is_suspended()));
     }
 
     #[test]

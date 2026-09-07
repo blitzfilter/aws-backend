@@ -373,6 +373,13 @@ mod tests {
         ) -> Result<bool, AccessTokenRepositoryError> {
             Ok(true)
         }
+
+        async fn delete_by_user_id(
+            &mut self,
+            _user_id: UserId,
+        ) -> Result<u64, AccessTokenRepositoryError> {
+            Ok(0)
+        }
     }
 
     impl AccessTokenRepositoryFactory<FakeTx> for Fakes {

@@ -152,6 +152,19 @@ impl AccessTokenRepository for SqlxAccessTokenRepository<'_> {
 
         Ok(result.rows_affected() > 0)
     }
+
+    async fn delete_by_user_id(
+        &mut self,
+        user_id: UserId,
+    ) -> Result<u64, AccessTokenRepositoryError> {
+        let result = sqlx::query("DELETE FROM access_tokens WHERE user_id = $1")
+            .bind(uuid::Uuid::from(user_id))
+            .execute(&mut *self.connection)
+            .await
+            .map_err(write_error)?;
+
+        Ok(result.rows_affected())
+    }
 }
 
 fn version_to_i64(version: AccessTokenStorageVersion) -> Result<i64, AccessTokenRepositoryError> {

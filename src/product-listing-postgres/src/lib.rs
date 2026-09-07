@@ -32,7 +32,8 @@ pub use readers::{
     SqlxProductListingContentAssessmentSnapshotReaderFactory,
     SqlxProductListingCurrentEventGuardFactory, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
-    SqlxProductListingHistoryReaderFactory, SqlxProductListingSearchFilterMatchSourceReaderFactory,
-    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingHistoryReaderFactory, SqlxProductListingLifecycleGuardFactory,
+    SqlxProductListingSearchFilterMatchSourceReaderFactory, SqlxProductListingUserStateReader,
+    SqlxProductListingWatchlistDetailsReaderFactory,
     SqlxProductListingWatchlistNotificationSourceReaderFactory,
 };

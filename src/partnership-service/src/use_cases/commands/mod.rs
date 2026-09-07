@@ -1,4 +1,5 @@
 pub mod approve_partnership_application;
+pub mod dissolve_partnership;
 pub mod grant_partnership_listing_source;
 pub mod grant_partnership_membership;
 pub mod mark_partnership_application_in_review;

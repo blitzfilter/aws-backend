@@ -584,6 +584,172 @@ async fn should_invalidate_oauth_credentials_when_client_is_deleted() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_require_authentication_for_admin_oauth_client_collection_and_item_routes() {
+    let client = reqwest::Client::new();
+    let routes = [
+        (
+            reqwest::Method::GET,
+            format!("{}/api/v1/admin/oauth-clients", AURA_API.base_url()),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("{}/api/v1/admin/oauth-clients", AURA_API.base_url()),
+        ),
+        (
+            reqwest::Method::GET,
+            format!(
+                "{}/api/v1/admin/oauth-clients/{}",
+                AURA_API.base_url(),
+                uuid::Uuid::new_v4()
+            ),
+        ),
+        (
+            reqwest::Method::PATCH,
+            format!(
+                "{}/api/v1/admin/oauth-clients/{}",
+                AURA_API.base_url(),
+                uuid::Uuid::new_v4()
+            ),
+        ),
+        (
+            reqwest::Method::DELETE,
+            format!(
+                "{}/api/v1/admin/oauth-clients/{}",
+                AURA_API.base_url(),
+                uuid::Uuid::new_v4()
+            ),
+        ),
+    ];
+
+    for (method, url) in routes {
+        let response = client
+            .request(method, url)
+            .send()
+            .await
+            .unwrap_or_else(|error| {
+                panic!("failed to reject unauthenticated OAuth route: {error}")
+            });
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        api_support::assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::UNAUTHORIZED,
+            "INVALID_CREDENTIALS",
+        );
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_invalid_uuid_for_admin_oauth_client_update_and_delete() {
+    let (client, token) = authenticated_client().await;
+
+    for method in [reqwest::Method::PATCH, reqwest::Method::DELETE] {
+        let request_body = if method == reqwest::Method::PATCH {
+            "{}"
+        } else {
+            ""
+        };
+        let response = client
+            .request(
+                method,
+                format!(
+                    "{}/api/v1/admin/oauth-clients/not-a-uuid",
+                    AURA_API.base_url()
+                ),
+            )
+            .bearer_auth(&token)
+            .body(request_body)
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate OAuth client UUID: {error}"));
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        api_support::assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_UUID",
+        );
+        assert_eq!("clientId", body["source"]["field"]);
+        assert_eq!("PATH", body["source"]["type"]);
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_bad_body_for_malformed_admin_oauth_client_create() {
+    let (client, token) = authenticated_client().await;
+    let response = client
+        .post(format!(
+            "{}/api/v1/admin/oauth-clients",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body("{")
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to validate malformed OAuth client body: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    api_support::assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "BAD_BODY_VALUE",
+    );
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_bad_query_for_malformed_admin_oauth_client_search_after_shape() {
+    let token = admin_read_token().await;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/v1/admin/oauth-clients",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(token)
+        .query(&[("searchAfter", "{}")])
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to validate OAuth client cursor: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    api_support::assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "BAD_QUERY_PARAMETER_VALUE",
+    );
+    assert_eq!("searchAfter", body["source"]["field"]);
+    assert_eq!("QUERY", body["source"]["type"]);
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_return_canonical_problems_for_invalid_or_missing_admin_oauth_client() {
     let admin_token = admin_read_token().await;
     let client = reqwest::Client::new();
