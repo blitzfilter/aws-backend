@@ -355,7 +355,7 @@ async fn should_acknowledge_conflicting_shopify_provider_receipt_without_retry()
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
-async fn should_apply_shopify_updated_at_ordering_and_acknowledge_conflicts() {
+async fn should_apply_shopify_updated_at_ordering_and_retry_conflicts() {
     let source = seed_source().await;
     let domain = source.domain.as_str();
     let newer_a = shopify_payload_with_updated_at(
@@ -407,7 +407,14 @@ async fn should_apply_shopify_updated_at_ordering_and_acknowledge_conflicts() {
 
     assert!(newer.batch_item_failures.is_empty());
     assert!(stale.batch_item_failures.is_empty());
-    assert!(same_time.batch_item_failures.is_empty());
+    assert_eq!(
+        vec!["message-eventbridge-same-time"],
+        same_time
+            .batch_item_failures
+            .into_iter()
+            .map(|failure| failure.item_identifier)
+            .collect::<Vec<_>>(),
+    );
     assert_eq!(1, raw_revision_count(source.id, 109).await);
     assert_eq!(
         Some(occurred_at("2026-01-01T00:00:02Z")),

@@ -244,7 +244,6 @@ fn should_retry(error: &ShopifyProductListingProcessingError) -> bool {
                 | CaptureProductListingRawObservationError::ListingSourceNotFound
                 | CaptureProductListingRawObservationError::SourceRecordKeyHashCollision
                 | CaptureProductListingRawObservationError::ProviderReceiptDigestConflict
-                | CaptureProductListingRawObservationError::ProviderSourceOrderConflict
         ),
     }
 }
@@ -381,15 +380,31 @@ mod tests {
     }
 
     #[test]
-    fn should_not_retry_provider_receipt_conflicts() {
-        for error in [
-            CaptureProductListingRawObservationError::ProviderReceiptDigestConflict,
-            CaptureProductListingRawObservationError::ProviderSourceOrderConflict,
-        ] {
-            assert!(!should_retry(
-                &ShopifyProductListingProcessingError::Capture(error)
-            ));
-        }
+    fn should_retry_distinct_shopify_delivery_with_conflicting_source_order() {
+        assert!(should_retry(
+            &ShopifyProductListingProcessingError::Capture(
+                CaptureProductListingRawObservationError::ProviderSourceOrderConflict,
+            )
+        ));
+        assert!(!should_retry(
+            &ShopifyProductListingProcessingError::Capture(
+                CaptureProductListingRawObservationError::ProviderReceiptDigestConflict,
+            )
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_only_fail_conflicted_record_in_shopify_batch() {
+        let processor = FakeProcessor::source_order_conflict_on_second_call();
+        let result = handler(
+            events(vec![("valid", valid_body()), ("conflicted", valid_body())]),
+            &processor,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("handler failed: {error}"));
+
+        assert_eq!(vec!["conflicted"], identifiers(result));
+        assert_eq!(2, call_count(&processor));
     }
 
     #[test]
@@ -449,11 +464,21 @@ mod tests {
     }
 
     fn event(message_id: &str, body: String) -> LambdaEvent<SqsEvent> {
-        let mut message = SqsMessage::default();
-        message.message_id = Some(message_id.to_owned());
-        message.body = Some(body);
+        events(vec![(message_id, body)])
+    }
+
+    fn events(records: Vec<(&str, String)>) -> LambdaEvent<SqsEvent> {
+        let records = records
+            .into_iter()
+            .map(|(message_id, body)| {
+                let mut message = SqsMessage::default();
+                message.message_id = Some(message_id.to_owned());
+                message.body = Some(body);
+                message
+            })
+            .collect();
         let mut sqs_event = SqsEvent::default();
-        sqs_event.records = vec![message];
+        sqs_event.records = records;
         LambdaEvent::new(sqs_event, Context::default())
     }
 
@@ -496,6 +521,7 @@ mod tests {
         Success,
         Failure,
         InvalidPayload,
+        SourceOrderConflictOnSecondCall,
     }
 
     #[derive(Clone)]
@@ -525,6 +551,13 @@ mod tests {
                 result: FakeResult::InvalidPayload,
             }
         }
+
+        fn source_order_conflict_on_second_call() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(0)),
+                result: FakeResult::SourceOrderConflictOnSecondCall,
+            }
+        }
     }
 
     fn call_count(processor: &FakeProcessor) -> usize {
@@ -544,7 +577,11 @@ mod tests {
             _payload: Value,
             _provenance: ShopifyEventProvenance,
         ) -> Result<(), ShopifyProductListingProcessingError> {
-            *self.calls.lock().unwrap_or_else(|error| error.into_inner()) += 1;
+            let call_count = {
+                let mut calls = self.calls.lock().unwrap_or_else(|error| error.into_inner());
+                *calls += 1;
+                *calls
+            };
             match self.result {
                 FakeResult::Success => Ok(()),
                 FakeResult::Failure => Err(ShopifyProductListingProcessingError::Capture(
@@ -557,6 +594,12 @@ mod tests {
                         ShopifyProductEventError::MissingTitle,
                     ))
                 }
+                FakeResult::SourceOrderConflictOnSecondCall if call_count == 2 => {
+                    Err(ShopifyProductListingProcessingError::Capture(
+                        CaptureProductListingRawObservationError::ProviderSourceOrderConflict,
+                    ))
+                }
+                FakeResult::SourceOrderConflictOnSecondCall => Ok(()),
             }
         }
     }
