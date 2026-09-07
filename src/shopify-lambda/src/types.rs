@@ -27,6 +27,8 @@ pub struct ShopifyEventMetadata {
     pub event_id: Option<String>,
     #[serde(rename = "X-Shopify-Webhook-Id", default)]
     pub webhook_id: Option<String>,
+    #[serde(rename = "X-Shopify-Triggered-At", default)]
+    pub triggered_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,6 +99,8 @@ pub enum ShopifyProductEventError {
     MissingListingSourceCurrency,
     #[error("Shopify product updated_at is invalid")]
     InvalidUpdatedAt(#[source] time::error::Parse),
+    #[error("Shopify trigger timestamp is invalid")]
+    InvalidTriggeredAt(#[source] time::error::Parse),
 }
 
 impl ShopifyProductEventKind {
@@ -106,6 +110,15 @@ impl ShopifyProductEventKind {
         self,
         source: &ShopifySource,
         payload: Value,
+    ) -> Result<ShopifyListingAction, ShopifyProductEventError> {
+        self.listing_action_with_source_occurred_at(source, payload, None)
+    }
+
+    pub fn listing_action_with_source_occurred_at(
+        self,
+        source: &ShopifySource,
+        payload: Value,
+        source_occurred_at: Option<OffsetDateTime>,
     ) -> Result<ShopifyListingAction, ShopifyProductEventError> {
         let source_payload = SourcePayload::new(payload.clone())
             .map_err(ShopifyProductEventError::InvalidSourcePayload)?;
@@ -144,8 +157,6 @@ impl ShopifyProductEventKind {
             context,
         )
         .map_err(ShopifyProductEventError::InvalidSourcePayload)?;
-        let source_occurred_at = product_source_occurred_at(&product)?;
-
         Ok(ShopifyListingAction::Capture(ShopifyRawObservation {
             source_record_key,
             input,
@@ -154,15 +165,13 @@ impl ShopifyProductEventKind {
     }
 }
 
-fn product_source_occurred_at(
-    product: &ShopifyProductPayload,
+pub fn source_occurred_at_from_triggered_at(
+    triggered_at: Option<&str>,
 ) -> Result<Option<OffsetDateTime>, ShopifyProductEventError> {
-    product
-        .updated_at
-        .as_deref()
-        .map(|updated_at| {
-            OffsetDateTime::parse(updated_at, &Rfc3339)
-                .map_err(ShopifyProductEventError::InvalidUpdatedAt)
+    triggered_at
+        .map(|value| {
+            OffsetDateTime::parse(value, &Rfc3339)
+                .map_err(ShopifyProductEventError::InvalidTriggeredAt)
         })
         .transpose()
 }
@@ -399,6 +408,32 @@ mod tests {
             json!({"action": "CLEAR"}),
             observation.input.raw_values().value()["price"]
         );
+    }
+
+    #[test]
+    fn should_parse_shopify_trigger_time_for_id_only_delete() {
+        assert_eq!(
+            Some(
+                OffsetDateTime::parse("2026-09-07T10:02:00Z", &Rfc3339)
+                    .unwrap_or_else(|error| panic!("timestamp: {error}")),
+            ),
+            source_occurred_at_from_triggered_at(Some("2026-09-07T10:02:00Z"))
+                .unwrap_or_else(|error| panic!("trigger timestamp: {error}")),
+        );
+        assert!(matches!(
+            ShopifyProductEventKind::Delete
+                .listing_action_with_source_occurred_at(
+                    &source(),
+                    json!({"id": 42}),
+                    source_occurred_at_from_triggered_at(Some("2026-09-07T10:02:00Z"))
+                        .unwrap_or_else(|error| panic!("trigger timestamp: {error}")),
+                ),
+            Ok(ShopifyListingAction::Capture(ShopifyRawObservation {
+                source_occurred_at: Some(_),
+                input,
+                ..
+            })) if input.operation() == RawProductListingOperation::Delete
+        ));
     }
 
     #[test]

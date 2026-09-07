@@ -4,6 +4,7 @@ use product_listing_service::ports::{
     ProductListingRawCaptureWriteOutcome, ProductListingRawCaptureWriter,
     ProductListingRawCaptureWriterFactory, ProductListingRawRevisionId, ProductListingRawStreamId,
 };
+use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 use time::OffsetDateTime;
 
@@ -70,6 +71,15 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             source: box_error(error),
         })?
         .map(|evidence| *evidence.as_bytes());
+        let source_order_observation_sha256 =
+            canonical_source_evidence_sha256
+                .as_ref()
+                .map(|source_evidence_sha256| {
+                    provider_source_order_observation_sha256(
+                        write.input.operation().as_str(),
+                        source_evidence_sha256,
+                    )
+                });
 
         sqlx::query(
             r#"
@@ -190,12 +200,12 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             source_ordering_advancement,
             source_observation_is_stale,
             source_observation_matches_stream_head,
-        ) = match (write.source_occurred_at, canonical_source_evidence_sha256) {
-            (Some(source_occurred_at), Some(canonical_source_evidence_sha256)) => {
-                match latest_provider_source_order(&stream, canonical_source_evidence_sha256.len())?
+        ) = match (write.source_occurred_at, source_order_observation_sha256) {
+            (Some(source_occurred_at), Some(source_order_observation_sha256)) => {
+                match latest_provider_source_order(&stream, source_order_observation_sha256.len())?
                 {
                     None => (
-                        Some((source_occurred_at, canonical_source_evidence_sha256)),
+                        Some((source_occurred_at, source_order_observation_sha256)),
                         false,
                         false,
                     ),
@@ -204,14 +214,14 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                             (None, true, false)
                         } else if source_occurred_at == latest_source_occurred_at
                             && latest_source_evidence_sha256
-                                != canonical_source_evidence_sha256.as_slice()
+                                != source_order_observation_sha256.as_slice()
                         {
                             return Err(
                                 ProductListingRawCaptureWriteError::ProviderSourceOrderConflict,
                             );
                         } else if source_occurred_at > latest_source_occurred_at {
                             (
-                                Some((source_occurred_at, canonical_source_evidence_sha256)),
+                                Some((source_occurred_at, source_order_observation_sha256)),
                                 false,
                                 false,
                             )
@@ -395,6 +405,18 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             revision,
         })
     }
+}
+
+fn provider_source_order_observation_sha256(
+    operation: &str,
+    source_evidence_sha256: &[u8; 32],
+) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER_V1\0");
+    digest.update(operation.as_bytes());
+    digest.update([0]);
+    digest.update(source_evidence_sha256);
+    digest.finalize().into()
 }
 
 fn latest_provider_source_order(

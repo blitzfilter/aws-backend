@@ -4,7 +4,7 @@ pub use types::{
     ShopifyEventDetail, ShopifyEventMetadata, ShopifyImagePayload, ShopifyListingAction,
     ShopifyProductEventError, ShopifyProductEventKind, ShopifyProductPayload,
     ShopifyRawObservation, ShopifyVariantPayload, fallbacked_html_to_markdown,
-    product_availability,
+    product_availability, source_occurred_at_from_triggered_at,
 };
 
 use application::operation_context::{CorrelationId, OperationContext, Principal, RequestId};
@@ -45,6 +45,7 @@ pub struct ShopifyEventProvenance {
     pub shopify_event_id: Option<String>,
     pub webhook_id: Option<String>,
     pub event_bridge_event_id: Option<String>,
+    pub triggered_at: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,12 +117,15 @@ where
         else {
             return Ok(());
         };
-        let ShopifyListingAction::Capture(observation) = kind
+        let ShopifyListingAction::Capture(mut observation) = kind
             .listing_action(&source, payload)
             .map_err(ShopifyProductListingProcessingError::InvalidPayload)?
         else {
             return Ok(());
         };
+        observation.source_occurred_at =
+            source_occurred_at_from_triggered_at(provenance.triggered_at.as_deref())
+                .map_err(ShopifyProductListingProcessingError::InvalidPayload)?;
         let provider_receipt = shopify_provider_receipt(
             provenance.topic.as_str(),
             provenance.webhook_id.as_deref(),
@@ -134,6 +138,7 @@ where
             "shopifyEventId": &provenance.shopify_event_id,
             "shopifyWebhookId": &provenance.webhook_id,
             "eventBridgeEventId": &provenance.event_bridge_event_id,
+            "shopifyTriggeredAt": &provenance.triggered_at,
         }))
         .map_err(ShopifyProductListingProcessingError::InvalidProvenance)?;
 
@@ -211,6 +216,7 @@ async fn process_event(
         shopify_event_id: detail.metadata.event_id,
         webhook_id: detail.metadata.webhook_id,
         event_bridge_event_id,
+        triggered_at: detail.metadata.triggered_at,
     };
     match processor
         .execute(context, kind, shop_domain, detail.payload, provenance)

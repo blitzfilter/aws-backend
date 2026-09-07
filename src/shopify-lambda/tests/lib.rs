@@ -832,6 +832,17 @@ fn event_with_provider_metadata(
             serde_json::Value::String(shopify_webhook_id.to_owned()),
         );
     }
+    if let Some(triggered_at) = payload
+        .get("updated_at")
+        .and_then(serde_json::Value::as_str)
+    {
+        if let Some(metadata) = metadata.as_object_mut() {
+            metadata.insert(
+                "X-Shopify-Triggered-At".to_owned(),
+                serde_json::Value::String(triggered_at.to_owned()),
+            );
+        }
+    }
 
     let mut event = EventBridgeEvent::default();
     event.id = Some(event_bridge_event_id.to_owned());

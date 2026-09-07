@@ -17,6 +17,7 @@ use product_listing_service::ports::{
     SourceRecordKeySha256,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 use time::OffsetDateTime;
 
@@ -663,7 +664,7 @@ async fn should_return_duplicate_for_unchanged_provider_receipt_after_later_chan
         "delivery-unchanged",
         occurred_at(2),
     );
-    let unchanged_evidence = canonical_source_evidence(&unchanged_write);
+    let unchanged_evidence = source_order_observation(&unchanged_write);
 
     let first = capture(
         &unit_of_work,
@@ -864,6 +865,44 @@ async fn should_reject_conflicting_provider_source_order_evidence() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_not_collapse_equal_source_payload_with_different_operation() {
+    let pool = get_postgres_client().await;
+    let listing_source_id =
+        seed_listing_source(&pool, "raw-capture-provider-operation-source-order-source").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let factory = SqlxProductListingRawCaptureWriterFactory::new();
+    let upsert = provider_write(
+        listing_source_id,
+        json!({"id": "same-source-object"}),
+        json!({"title": "Cabinet"}),
+        json!({"baseUrl": "https://example.test"}),
+        "delivery-upsert",
+        occurred_at(1),
+    );
+    let delete = with_operation(
+        provider_write(
+            listing_source_id,
+            json!({"id": "same-source-object"}),
+            json!({}),
+            json!({"baseUrl": "https://example.test"}),
+            "delivery-delete",
+            occurred_at(1),
+        ),
+        RawProductListingOperation::Delete,
+    );
+
+    assert!(matches!(
+        capture(&unit_of_work, &factory, upsert).await,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
+    ));
+    assert!(matches!(
+        capture_result(&unit_of_work, &factory, delete).await,
+        Err(ProductListingRawCaptureWriteError::ProviderSourceOrderConflict)
+    ));
+    assert_eq!(1, raw_revision_count(&pool, listing_source_id).await);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_return_unchanged_after_recording_receipt_when_equal_provider_observation_changes_config()
  {
     let pool = get_postgres_client().await;
@@ -946,7 +985,7 @@ async fn should_order_shopify_and_woocommerce_source_timestamps_without_provider
             json!({}),
             occurred_at(2),
         );
-        let newer_evidence = canonical_source_evidence(&newer_write);
+        let newer_evidence = source_order_observation(&newer_write);
 
         let newer = capture(&unit_of_work, &factory, newer_write).await;
         let stale = capture(
@@ -1238,6 +1277,30 @@ fn write_for(
     }
 }
 
+fn with_operation(
+    mut write: ProductListingRawCaptureWrite,
+    operation: RawProductListingOperation,
+) -> ProductListingRawCaptureWrite {
+    write.input = ProductListingNormalizationInput::new(
+        operation,
+        write.input.payload_format(),
+        write.input.payload_schema_version(),
+        write.input.raw_values_schema_version(),
+        SourcePayload::new(write.input.source_payload().value().clone())
+            .unwrap_or_else(|error| panic!("source payload: {error}")),
+        RawProductListingValues::new(write.input.raw_values().value().clone())
+            .unwrap_or_else(|error| panic!("raw values: {error}")),
+        NormalizationContext::new(write.input.normalization_context().value().clone())
+            .unwrap_or_else(|error| panic!("normalization context: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("normalization input: {error}"));
+    write.input_sha256 = write
+        .input
+        .hash()
+        .unwrap_or_else(|error| panic!("input hash: {error}"));
+    write
+}
+
 fn provider_write(
     listing_source_id: ListingSourceId,
     source_payload: Value,
@@ -1295,6 +1358,16 @@ fn provider_receipt(
         SourceEvidenceSha256::new(source_evidence_sha256),
     )
     .unwrap_or_else(|error| panic!("provider receipt: {error}"))
+}
+
+fn source_order_observation(write: &ProductListingRawCaptureWrite) -> [u8; 32] {
+    let source_evidence_sha256 = canonical_source_evidence(write);
+    let mut digest = Sha256::new();
+    digest.update(b"PRODUCT_LISTING_PROVIDER_SOURCE_ORDER_V1\0");
+    digest.update(write.input.operation().as_str().as_bytes());
+    digest.update([0]);
+    digest.update(source_evidence_sha256);
+    digest.finalize().into()
 }
 
 fn canonical_source_evidence(write: &ProductListingRawCaptureWrite) -> [u8; 32] {
