@@ -16,7 +16,7 @@
 - Watchlist pagination uses `created DESC, product_listing_id ASC`; the cursor contains both values so tied creation times cannot skip or duplicate product_listings.
 - ProductListing views are public `application::personalized::Personalized` ProductListing-service contracts. Watchlist owns orchestration, authorization, canonical user-state retention, and hidden-listing redaction.
 - Watchlist writes require `watchlist:write`.
-- Create and reactivation lock the authoritative user tier through transaction-scoped `UserTierEntitlements` before quota counts and writes; tier reconciliation locks user first, then affected rows, and increments changed watchlist versions. Quotas are Free 20, Pro 100, Ultimate unlimited.
+- Create locks the authoritative user tier, checks an existing entry, then locks the authoritative ProductListing lifecycle in the same transaction before quota and write. Update locks ProductListing lifecycle only for inactive-to-active reactivation, after tier lock and before quota; retained withdrawn-watch notification, deactivation, and active-idempotent operations bypass it. Missing listing is not found; withdrawn listing is unavailable. Tier reconciliation locks user first, then affected rows, and increments changed watchlist versions. Quotas are Free 20, Pro 100, Ultimate unlimited.
 - Watchlist list reads require owner/service/system access and delegated `watchlist:read`.
 
 ## Ownership

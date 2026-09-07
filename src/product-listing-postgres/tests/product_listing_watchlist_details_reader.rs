@@ -8,6 +8,7 @@ use money::{MonetaryAmount, Price};
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_core::description::Description;
 use product_listing_core::listing_availability::ListingAvailability;
+use product_listing_core::listing_lifecycle::ListingLifecycle;
 use product_listing_core::product_listing::{
     NewProductListing, ProductListing, ProductListingAuction, ProductListingPricing,
 };
@@ -106,6 +107,37 @@ async fn should_join_watchlisted_product_localization_and_user_state() {
             .show_unassessed_or_sensitive_content
     );
     assert!(!user_state.search_filter.matched);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_retain_withdrawn_product_in_watchlist_collection() {
+    let pool = get_postgres_client().await;
+    let product = persist_product(&pool, "watchlist-withdrawn", None, None).await;
+    let user_id = seed_user(&pool, "FREE", false).await;
+    insert_watchlist(
+        &pool,
+        user_id,
+        product.id(),
+        true,
+        OffsetDateTime::UNIX_EPOCH,
+    )
+    .await;
+    sqlx::query(
+        "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product.id()))
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("withdraw product fixture: {error}"));
+
+    let product_listings = find_for_user(&pool, user_id, Language::En).await;
+    let [view] = product_listings.as_slice() else {
+        panic!("expected retained withdrawn watchlist product");
+    };
+
+    assert_eq!(product.id(), view.item.product_listing_id);
+    assert_eq!(ListingLifecycle::Withdrawn, view.item.lifecycle);
+    assert!(view.item.availability.is_none());
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]

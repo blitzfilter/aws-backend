@@ -926,6 +926,7 @@ mod tests {
         inserts: VecDeque<Result<(), ProductListingRepositoryError>>,
         insert_calls: usize,
         update_calls: usize,
+        last_updated_lifecycle: Option<product_listing_core::listing_lifecycle::ListingLifecycle>,
         event_calls: usize,
         authorization_calls: usize,
     }
@@ -1017,7 +1018,9 @@ mod tests {
             _: EventId,
             _: ProductListingWriteEffects,
         ) -> Result<VersionedProductListing, ProductListingRepositoryError> {
-            test_lock(&self.0).update_calls += 1;
+            let mut state = test_lock(&self.0);
+            state.update_calls += 1;
+            state.last_updated_lifecycle = Some(listing.lifecycle());
             Ok(Versioned::new(listing.clone(), expected_version.next()))
         }
     }
@@ -1190,6 +1193,44 @@ mod tests {
             (0, 1, 1, 0, 0, 1, 1, 1)
         );
     }
+    #[tokio::test]
+    async fn should_restore_withdrawn_listing_on_canonical_upsert() {
+        let mut withdrawn = listing_with_price(Some(price(10)));
+        withdrawn.take_pending_event_payload();
+        withdrawn
+            .withdraw()
+            .unwrap_or_else(|error| panic!("withdraw fixture: {error}"));
+        withdrawn.take_pending_event_payload();
+        let state = Arc::new(Mutex::new(HandlerState {
+            finds: VecDeque::from([Some(Versioned::new(
+                withdrawn,
+                ProductListingStorageVersion::INITIAL,
+            ))]),
+            ..Default::default()
+        }));
+
+        let result = handler(&state)
+            .execute(&handler_context(), handler_command())
+            .await;
+
+        assert!(matches!(
+            result,
+            Ok(UpsertProductListingResult::Updated(
+                UpdateProductListingResult {
+                    outcome: ChangeOutcome::Changed,
+                    ..
+                }
+            ))
+        ));
+        let state = test_lock(&state);
+        assert_eq!(1, state.update_calls);
+        assert_eq!(
+            Some(product_listing_core::listing_lifecycle::ListingLifecycle::Active),
+            state.last_updated_lifecycle
+        );
+        assert_eq!(1, state.event_calls);
+    }
+
     #[tokio::test]
     async fn should_rerun_source_race_without_new_candidate_when_winner_is_now_existing() {
         let state = Arc::new(Mutex::new(HandlerState {

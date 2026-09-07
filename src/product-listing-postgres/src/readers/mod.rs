@@ -6,6 +6,7 @@ mod product_listing_details_batch_reader;
 mod product_listing_details_reader;
 mod product_listing_embedding_reader;
 mod product_listing_history_reader;
+mod product_listing_lifecycle_guard;
 mod product_listing_search_filter_match_source_reader;
 mod product_listing_user_state_reader;
 mod product_listing_watchlist_details_reader;
@@ -18,6 +19,7 @@ pub use product_listing_details_batch_reader::SqlxProductListingDetailsBatchRead
 pub use product_listing_details_reader::SqlxProductListingDetailsReaderFactory;
 pub use product_listing_embedding_reader::SqlxProductListingEmbeddingReaderFactory;
 pub use product_listing_history_reader::SqlxProductListingHistoryReaderFactory;
+pub use product_listing_lifecycle_guard::SqlxProductListingLifecycleGuardFactory;
 pub use product_listing_search_filter_match_source_reader::SqlxProductListingSearchFilterMatchSourceReaderFactory;
 pub use product_listing_user_state_reader::SqlxProductListingUserStateReader;
 pub use product_listing_watchlist_details_reader::SqlxProductListingWatchlistDetailsReaderFactory;

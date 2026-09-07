@@ -8,7 +8,13 @@ use application::operation_context::{
     CredentialCapability, OperationAuthorizationError, OperationContext,
 };
 use application::transaction::{Transaction, UnitOfWork};
-use product_listing_core::product_listing_id::ProductListingId;
+use product_listing_core::{
+    listing_lifecycle::ListingLifecycle, product_listing_id::ProductListingId,
+};
+use product_listing_service::ports::{
+    ProductListingLifecycleGuard, ProductListingLifecycleGuardError,
+    ProductListingLifecycleGuardFactory,
+};
 use user_core::user_id::UserId;
 use user_service::ports::{
     UserTierEntitlements, UserTierEntitlementsError, UserTierEntitlementsFactory,
@@ -38,6 +44,10 @@ pub enum WatchProductListingError {
     AlreadyExists,
     #[error("user not found")]
     UserNotFound,
+    #[error("product listing not found")]
+    ProductListingNotFound,
+    #[error("product listing is unavailable")]
+    ProductListingUnavailable,
     #[error("watchlist quota exceeded: {active_count}/{quota} active entries are already in use")]
     WatchlistQuotaExceeded { active_count: usize, quota: usize },
     #[error("user tier entitlement lock failed")]
@@ -72,31 +82,40 @@ pub trait WatchProductListingUseCase: Send + Sync {
     ) -> Result<WatchProductListingResult, WatchProductListingError>;
 }
 
-pub struct WatchProductListingHandler<U, R, Q, A> {
+pub struct WatchProductListingHandler<U, R, Q, A, G> {
     unit_of_work: U,
     watchlist: R,
     quotas: Q,
     tier_entitlements: A,
+    product_listing_lifecycle: G,
 }
 
-impl<U, R, Q, A> WatchProductListingHandler<U, R, Q, A> {
-    pub fn new(unit_of_work: U, watchlist: R, quotas: Q, tier_entitlements: A) -> Self {
+impl<U, R, Q, A, G> WatchProductListingHandler<U, R, Q, A, G> {
+    pub fn new(
+        unit_of_work: U,
+        watchlist: R,
+        quotas: Q,
+        tier_entitlements: A,
+        product_listing_lifecycle: G,
+    ) -> Self {
         Self {
             unit_of_work,
             watchlist,
             quotas,
             tier_entitlements,
+            product_listing_lifecycle,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, R, Q, A> WatchProductListingUseCase for WatchProductListingHandler<U, R, Q, A>
+impl<U, R, Q, A, G> WatchProductListingUseCase for WatchProductListingHandler<U, R, Q, A, G>
 where
     U: UnitOfWork,
     R: WatchlistRepositoryFactory<U::Tx>,
     Q: WatchlistQuotaReaderFactory<U::Tx>,
     A: UserTierEntitlementsFactory<U::Tx>,
+    G: ProductListingLifecycleGuardFactory<U::Tx>,
 {
     #[tracing::instrument(name = "watch_product", skip_all, fields(user_id = %command.user_id, product_listing_id = %command.product_listing_id, request_id = %context.request_id, correlation_id = %context.correlation_id))]
     async fn execute(
@@ -126,6 +145,19 @@ where
             .is_some()
         {
             return Err(WatchProductListingError::AlreadyExists);
+        }
+        match self
+            .product_listing_lifecycle
+            .in_transaction(&mut tx)
+            .lock_and_find_lifecycle(command.product_listing_id)
+            .await
+            .map_err(product_listing_lifecycle_guard_error)?
+        {
+            None => return Err(WatchProductListingError::ProductListingNotFound),
+            Some(ListingLifecycle::Withdrawn) => {
+                return Err(WatchProductListingError::ProductListingUnavailable);
+            }
+            Some(ListingLifecycle::Active) => {}
         }
         if let Some(quota) = active_watchlist_quota(tier) {
             let active_count = self
@@ -208,6 +240,19 @@ fn watchlist_quota_read_error(error: WatchlistQuotaReadError) -> WatchProductLis
     }
 }
 
+fn product_listing_lifecycle_guard_error(
+    error: ProductListingLifecycleGuardError,
+) -> WatchProductListingError {
+    match error {
+        ProductListingLifecycleGuardError::LockFailed { source } => {
+            WatchProductListingError::TemporarilyUnavailable { source }
+        }
+        ProductListingLifecycleGuardError::InvalidListingLifecyclePersisted => {
+            WatchProductListingError::InvalidPersistedState
+        }
+    }
+}
+
 impl From<WatchlistRepositoryError> for WatchProductListingError {
     fn from(value: WatchlistRepositoryError) -> Self {
         match value {
@@ -233,6 +278,10 @@ mod tests {
     use super::*;
 
     use application::error::static_error;
+    use product_listing_service::ports::{
+        ProductListingLifecycleGuard, ProductListingLifecycleGuardError,
+        ProductListingLifecycleGuardFactory,
+    };
 
     use crate::ports::{
         VersionedWatchlistProductListing, WatchlistProductListingView, WatchlistQuotaReadError,
@@ -271,18 +320,42 @@ mod tests {
         state: SharedState,
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     struct TestAccountFactory {
+        state: SharedState,
         tier: UserTier,
     }
 
     struct TestAccountReader {
+        state: SharedState,
         tier: UserTier,
+    }
+
+    #[derive(Clone, Copy, Default)]
+    enum TestLifecycleGuardOutcome {
+        #[default]
+        Active,
+        Missing,
+        Withdrawn,
+        LockFailed,
+        InvalidPersistedState,
+    }
+
+    #[derive(Clone)]
+    struct TestLifecycleGuardFactory {
+        state: SharedState,
+        outcome: TestLifecycleGuardOutcome,
+    }
+
+    struct TestLifecycleGuard {
+        state: SharedState,
+        outcome: TestLifecycleGuardOutcome,
     }
 
     #[derive(Clone, Default)]
     struct SharedState {
         entries: Arc<Mutex<Vec<VersionedWatchlistProductListing>>>,
+        calls: Arc<Mutex<Vec<&'static str>>>,
         committed: Arc<Mutex<bool>>,
         updated: Arc<Mutex<usize>>,
         deleted: Arc<Mutex<usize>>,
@@ -308,6 +381,19 @@ mod tests {
             }
         }
 
+        fn record_call(&self, call: &'static str) {
+            if let Ok(mut calls) = self.calls.lock() {
+                calls.push(call);
+            }
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls
+                .lock()
+                .map(|calls| calls.clone())
+                .unwrap_or_default()
+        }
+
         fn committed(&self) -> bool {
             self.committed.lock().map(|value| *value).unwrap_or(false)
         }
@@ -324,6 +410,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Transaction for TestTransaction {
         async fn commit(self) -> Result<(), TransactionError> {
+            self.state.record_call("commit");
             if self.fail_commit {
                 return Err(TransactionError::CommitFailed);
             }
@@ -340,6 +427,7 @@ mod tests {
         type Tx = TestTransaction;
 
         async fn begin(&self) -> Result<Self::Tx, TransactionError> {
+            self.state.record_call("begin");
             if self.fail_begin {
                 return Err(TransactionError::BeginFailed);
             }
@@ -368,7 +456,22 @@ mod tests {
 
     impl<Tx> UserTierEntitlementsFactory<Tx> for TestAccountFactory {
         fn in_transaction<'tx>(&'tx self, _tx: &'tx mut Tx) -> impl UserTierEntitlements + 'tx {
-            TestAccountReader { tier: self.tier }
+            TestAccountReader {
+                state: self.state.clone(),
+                tier: self.tier,
+            }
+        }
+    }
+
+    impl<Tx> ProductListingLifecycleGuardFactory<Tx> for TestLifecycleGuardFactory {
+        fn in_transaction<'tx>(
+            &'tx self,
+            _tx: &'tx mut Tx,
+        ) -> impl ProductListingLifecycleGuard + 'tx {
+            TestLifecycleGuard {
+                state: self.state.clone(),
+                outcome: self.outcome,
+            }
         }
     }
 
@@ -386,6 +489,7 @@ mod tests {
             &mut self,
             _user_id: UserId,
         ) -> Result<Option<UserTier>, UserTierEntitlementsError> {
+            self.state.record_call("tier");
             Ok(Some(self.tier))
         }
 
@@ -399,11 +503,35 @@ mod tests {
     }
 
     #[async_trait::async_trait]
+    impl ProductListingLifecycleGuard for TestLifecycleGuard {
+        async fn lock_and_find_lifecycle(
+            &mut self,
+            _product_listing_id: ProductListingId,
+        ) -> Result<Option<ListingLifecycle>, ProductListingLifecycleGuardError> {
+            self.state.record_call("guard");
+            match self.outcome {
+                TestLifecycleGuardOutcome::Active => Ok(Some(ListingLifecycle::Active)),
+                TestLifecycleGuardOutcome::Missing => Ok(None),
+                TestLifecycleGuardOutcome::Withdrawn => Ok(Some(ListingLifecycle::Withdrawn)),
+                TestLifecycleGuardOutcome::LockFailed => {
+                    Err(ProductListingLifecycleGuardError::LockFailed {
+                        source: static_error("product listing lifecycle guard test lock failure"),
+                    })
+                }
+                TestLifecycleGuardOutcome::InvalidPersistedState => {
+                    Err(ProductListingLifecycleGuardError::InvalidListingLifecyclePersisted)
+                }
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
     impl WatchlistQuotaReader for TestWatchlistPort {
         async fn count_active_for_user(
             &mut self,
             user_id: UserId,
         ) -> Result<usize, WatchlistQuotaReadError> {
+            self.state.record_call("quota");
             self.state
                 .entries
                 .lock()
@@ -428,6 +556,7 @@ mod tests {
             user_id: UserId,
             product_listing_id: ProductListingId,
         ) -> Result<Option<VersionedWatchlistProductListing>, WatchlistRepositoryError> {
+            self.state.record_call("duplicate");
             self.state
                 .entries
                 .lock()
@@ -449,6 +578,7 @@ mod tests {
             &mut self,
             entry: &WatchlistProductListing,
         ) -> Result<VersionedWatchlistProductListing, WatchlistRepositoryError> {
+            self.state.record_call("insert");
             let mut entries =
                 self.state
                     .entries
@@ -618,13 +748,18 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn should_watch_product_when_entry_missing() -> Result<(), String> {
-        let user_id = UserId::new();
-        let product_listing_id = ProductListingId::new();
-        let state = SharedState::default();
-
-        let result = WatchProductListingHandler::new(
+    fn handler(
+        state: SharedState,
+        tier: UserTier,
+        lifecycle_outcome: TestLifecycleGuardOutcome,
+    ) -> WatchProductListingHandler<
+        TestUnitOfWork,
+        TestWatchlistFactory,
+        TestWatchlistFactory,
+        TestAccountFactory,
+        TestLifecycleGuardFactory,
+    > {
+        WatchProductListingHandler::new(
             TestUnitOfWork {
                 state: state.clone(),
                 ..Default::default()
@@ -636,8 +771,37 @@ mod tests {
                 state: state.clone(),
             },
             TestAccountFactory {
-                tier: UserTier::Free,
+                state: state.clone(),
+                tier,
             },
+            TestLifecycleGuardFactory {
+                state,
+                outcome: lifecycle_outcome,
+            },
+        )
+    }
+
+    fn command(
+        user_id: UserId,
+        product_listing_id: ProductListingId,
+    ) -> WatchProductListingCommand {
+        WatchProductListingCommand {
+            user_id,
+            product_listing_id,
+            notifications: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn should_watch_product_when_entry_missing() -> Result<(), String> {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::default();
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &context_for_user(user_id),
@@ -654,35 +818,35 @@ mod tests {
         assert_eq!(product_listing_id, result.entry.product_listing_id());
         assert!(result.entry.notifications());
         assert!(state.committed());
+        assert_eq!(
+            vec![
+                "begin",
+                "tier",
+                "duplicate",
+                "guard",
+                "quota",
+                "insert",
+                "commit"
+            ],
+            state.calls()
+        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn should_return_already_exists_when_entry_exists() {
+    async fn should_return_already_exists_without_lifecycle_guard_when_entry_exists() {
         let user_id = UserId::new();
         let product_listing_id = ProductListingId::new();
         let state = SharedState::with_entry(entry(user_id, product_listing_id, true));
 
-        let result = WatchProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory { state },
-            TestAccountFactory {
-                tier: UserTier::Free,
-            },
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &context_for_user(user_id),
-            WatchProductListingCommand {
-                user_id,
-                product_listing_id,
-                notifications: true,
-            },
+            command(user_id, product_listing_id),
         )
         .await;
 
@@ -690,6 +854,7 @@ mod tests {
             result,
             Err(WatchProductListingError::AlreadyExists)
         ));
+        assert_eq!(vec!["begin", "tier", "duplicate"], state.calls());
     }
 
     #[tokio::test]
@@ -700,28 +865,14 @@ mod tests {
             state.push(entry(user_id, ProductListingId::new(), true));
         }
 
-        let result = WatchProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestAccountFactory {
-                tier: UserTier::Pro,
-            },
+        let result = handler(
+            state.clone(),
+            UserTier::Pro,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &context_for_user(user_id),
-            WatchProductListingCommand {
-                user_id,
-                product_listing_id: ProductListingId::new(),
-                notifications: true,
-            },
+            command(user_id, ProductListingId::new()),
         )
         .await;
 
@@ -740,29 +891,125 @@ mod tests {
         let user_id = UserId::new();
         let state = SharedState::default();
 
-        let result = WatchProductListingHandler::new(
-            TestUnitOfWork {
-                state: state.clone(),
-                ..Default::default()
-            },
-            TestWatchlistFactory {
-                state: state.clone(),
-            },
-            TestWatchlistFactory { state },
-            TestAccountFactory {
-                tier: UserTier::Free,
-            },
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Active,
         )
         .execute(
             &delegated_context(user_id, BTreeSet::new()),
-            WatchProductListingCommand {
-                user_id,
-                product_listing_id: ProductListingId::new(),
-                notifications: true,
-            },
+            command(user_id, ProductListingId::new()),
         )
         .await;
 
         assert!(matches!(result, Err(WatchProductListingError::Forbidden)));
+        assert!(state.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn should_return_product_listing_not_found_when_lifecycle_guard_finds_no_listing() {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::default();
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Missing,
+        )
+        .execute(
+            &context_for_user(user_id),
+            command(user_id, product_listing_id),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(WatchProductListingError::ProductListingNotFound)
+        ));
+        assert_eq!(vec!["begin", "tier", "duplicate", "guard"], state.calls());
+    }
+
+    #[tokio::test]
+    async fn should_return_product_listing_unavailable_when_lifecycle_guard_finds_withdrawn_listing()
+     {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::default();
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::Withdrawn,
+        )
+        .execute(
+            &context_for_user(user_id),
+            command(user_id, product_listing_id),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(WatchProductListingError::ProductListingUnavailable)
+        ));
+        assert_eq!(vec!["begin", "tier", "duplicate", "guard"], state.calls());
+    }
+
+    #[tokio::test]
+    async fn should_preserve_lifecycle_guard_lock_failure_source_as_temporary_error()
+    -> Result<(), String> {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::default();
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::LockFailed,
+        )
+        .execute(
+            &context_for_user(user_id),
+            command(user_id, product_listing_id),
+        )
+        .await;
+
+        let source = match result {
+            Err(WatchProductListingError::TemporarilyUnavailable { source }) => source,
+            error => {
+                return Err(format!(
+                    "expected temporary lifecycle guard lock failure: {error:?}"
+                ));
+            }
+        };
+        assert_eq!(
+            "product listing lifecycle guard test lock failure",
+            source.to_string()
+        );
+        assert_eq!(vec!["begin", "tier", "duplicate", "guard"], state.calls());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_invalid_persisted_state_when_lifecycle_guard_finds_invalid_state() {
+        let user_id = UserId::new();
+        let product_listing_id = ProductListingId::new();
+        let state = SharedState::default();
+
+        let result = handler(
+            state.clone(),
+            UserTier::Free,
+            TestLifecycleGuardOutcome::InvalidPersistedState,
+        )
+        .execute(
+            &context_for_user(user_id),
+            command(user_id, product_listing_id),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(WatchProductListingError::InvalidPersistedState)
+        ));
+        assert_eq!(vec!["begin", "tier", "duplicate", "guard"], state.calls());
     }
 }

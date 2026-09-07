@@ -1027,7 +1027,8 @@ paths:
       summary: Get a single product by title slug
       description: >-
         Retrieves an active ProductListing by its immutable Aura-owned
-        `productListingTitleSlugId`, derived from its title.
+        `productListingTitleSlugId`, derived from its title. Withdrawn listings
+        return `404 PRODUCT_LISTING_NOT_FOUND`; this endpoint never returns `410`.
       operationId: getProductListingByTitleSlug
       tags:
         - ProductListings
@@ -1089,7 +1090,9 @@ paths:
   /api/v1/product-listings/{productListingId}:
     get:
       summary: Get a single product
-      description: "Retrieves a single product by its `productListingId`.
+      description:
+        "Retrieves a single product by its `productListingId`. Withdrawn listings return
+        `404 PRODUCT_LISTING_NOT_FOUND`; this endpoint never returns `410`.
 
 
         `pricing.source` preserves seller-supplied source amounts and currencies. `pricing.display` contains
@@ -1165,7 +1168,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
         "404":
-          description: Product not found
+          description: ProductListing not found, including a withdrawn listing
           content:
             application/problem+json:
               schema:
@@ -3365,15 +3368,32 @@ paths:
                 title: Forbidden
                 error: FORBIDDEN
         "404":
-          description: User not found
+          description: User or ProductListing not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                user_not_found:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: USER_NOT_FOUND
+                product_listing_not_found:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: PRODUCT_LISTING_NOT_FOUND
+        "409":
+          description: ProductListing is withdrawn and cannot be watched
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
               example:
-                status: 404
-                title: Not Found
-                error: USER_NOT_FOUND
+                status: 409
+                title: Conflict
+                error: PRODUCT_LISTING_UNAVAILABLE
         "422":
           description: Unprocessable Entity - watchlist quota exceeded
           content:
@@ -7272,15 +7292,22 @@ paths:
                 title: Unauthorized
                 error: UNAUTHORIZED
         "404":
-          description: Watchlist entry not found
+          description: Watchlist entry or ProductListing not found
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              example:
-                status: 404
-                title: Not Found
-                error: WATCHLIST_ENTRY_NOT_FOUND
+              examples:
+                watchlist_entry_not_found:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: WATCHLIST_ENTRY_NOT_FOUND
+                product_listing_not_found:
+                  value:
+                    status: 404
+                    title: Not Found
+                    error: PRODUCT_LISTING_NOT_FOUND
         "422":
           description: Unprocessable Entity - watchlist quota exceeded during reactivation
           content:
@@ -7295,16 +7322,23 @@ paths:
                   Exceeded the maximum amount of watchlist entries. There are already 20/20 active watchlist entries
                   occupied.
         "409":
-          description: Watchlist entry was changed concurrently
+          description: Watchlist entry was changed concurrently, or a withdrawn ProductListing cannot be reactivated
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              example:
-                status: 409
-                title: Conflict
-                error: CONFLICT
-                detail: Watchlist entry was changed concurrently.
+              examples:
+                concurrency_conflict:
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: CONFLICT
+                    detail: Watchlist entry was changed concurrently.
+                product_listing_unavailable:
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: PRODUCT_LISTING_UNAVAILABLE
         "500":
           description: Internal server error
           content:

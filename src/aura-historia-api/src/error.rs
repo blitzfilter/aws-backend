@@ -146,6 +146,8 @@ pub(crate) const PRODUCT_LISTING_INTERNAL_ERROR: ApiErrorCode =
     ApiErrorCode("PRODUCT_LISTING_INTERNAL_ERROR");
 pub(crate) const PRODUCT_LISTING_NOT_FOUND: ApiErrorCode =
     ApiErrorCode("PRODUCT_LISTING_NOT_FOUND");
+pub(crate) const PRODUCT_LISTING_UNAVAILABLE: ApiErrorCode =
+    ApiErrorCode("PRODUCT_LISTING_UNAVAILABLE");
 pub(crate) const PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
     ApiErrorCode("PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE");
 pub(crate) const SEARCH_FILTER_ALREADY_EXISTS: ApiErrorCode =
@@ -1988,6 +1990,14 @@ impl From<WatchProductListingError> for ApiError {
             WatchProductListingError::UserNotFound => {
                 ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
             }
+            WatchProductListingError::ProductListingNotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+                    .with_detail("ProductListing was not found.")
+            }
+            WatchProductListingError::ProductListingUnavailable => {
+                ApiError::conflict(PRODUCT_LISTING_UNAVAILABLE)
+                    .with_detail("ProductListing is unavailable.")
+            }
             WatchProductListingError::WatchlistQuotaExceeded {
                 active_count,
                 quota,
@@ -2027,6 +2037,14 @@ impl From<UpdateWatchlistProductListingError> for ApiError {
             }
             UpdateWatchlistProductListingError::UserNotFound => {
                 ApiError::not_found(USER_NOT_FOUND).with_detail("User was not found.")
+            }
+            UpdateWatchlistProductListingError::ProductListingNotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+                    .with_detail("ProductListing was not found.")
+            }
+            UpdateWatchlistProductListingError::ProductListingUnavailable => {
+                ApiError::conflict(PRODUCT_LISTING_UNAVAILABLE)
+                    .with_detail("ProductListing is unavailable.")
             }
             UpdateWatchlistProductListingError::WatchlistQuotaExceeded {
                 active_count,
@@ -2697,6 +2715,56 @@ mod tests {
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
         let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
         assert_eq!(AUTH_TEMPORARILY_UNAVAILABLE.to_string(), body["error"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_watch_product_listing_lifecycle_errors_to_public_problems()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (error, expected_status, expected_code) in [
+            (
+                WatchProductListingError::ProductListingNotFound,
+                StatusCode::NOT_FOUND,
+                PRODUCT_LISTING_NOT_FOUND,
+            ),
+            (
+                WatchProductListingError::ProductListingUnavailable,
+                StatusCode::CONFLICT,
+                PRODUCT_LISTING_UNAVAILABLE,
+            ),
+        ] {
+            let response = ApiError::from(error).into_response();
+
+            assert_eq!(expected_status, response.status());
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+            assert_eq!(expected_code.to_string(), body["error"]);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_update_watchlist_product_listing_lifecycle_errors_to_public_problems()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (error, expected_status, expected_code) in [
+            (
+                UpdateWatchlistProductListingError::ProductListingNotFound,
+                StatusCode::NOT_FOUND,
+                PRODUCT_LISTING_NOT_FOUND,
+            ),
+            (
+                UpdateWatchlistProductListingError::ProductListingUnavailable,
+                StatusCode::CONFLICT,
+                PRODUCT_LISTING_UNAVAILABLE,
+            ),
+        ] {
+            let response = ApiError::from(error).into_response();
+
+            assert_eq!(expected_status, response.status());
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            let body = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+            assert_eq!(expected_code.to_string(), body["error"]);
+        }
         Ok(())
     }
 
