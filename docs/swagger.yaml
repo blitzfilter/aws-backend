@@ -3385,15 +3385,24 @@ paths:
                     title: Not Found
                     error: PRODUCT_LISTING_NOT_FOUND
         "409":
-          description: ProductListing is withdrawn and cannot be watched
+          description: Watchlist entry already exists, or the ProductListing is withdrawn and cannot be watched
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              example:
-                status: 409
-                title: Conflict
-                error: PRODUCT_LISTING_UNAVAILABLE
+              examples:
+                already_exists:
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: CONFLICT
+                    detail: Watchlist entry already exists.
+                product_listing_unavailable:
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: PRODUCT_LISTING_UNAVAILABLE
+                    detail: ProductListing is unavailable.
         "422":
           description: Unprocessable Entity - watchlist quota exceeded
           content:

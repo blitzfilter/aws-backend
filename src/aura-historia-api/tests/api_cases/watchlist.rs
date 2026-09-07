@@ -205,7 +205,7 @@ async fn should_list_current_user_watchlist() {
 
     let response = client
         .get(format!("{}/api/v1/me/watchlist", AURA_API.base_url()))
-        .bearer_auth(String::from(token))
+        .bearer_auth(String::from(token.clone()))
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to list watchlist API: {error}"));
@@ -220,6 +220,34 @@ async fn should_list_current_user_watchlist() {
     assert_eq!(
         "CURRENT",
         body["items"][0]["item"]["pricing"]["valuation"]["type"]
+    );
+
+    withdraw_product(product_listing_id).await;
+
+    let response = client
+        .get(format!("{}/api/v1/me/watchlist", AURA_API.base_url()))
+        .bearer_auth(String::from(token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to list withdrawn watchlist API: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(
+        serde_json::json!(product_listing_id.to_string()),
+        body["items"][0]["item"]["productListingId"]
+    );
+    assert_eq!(
+        serde_json::json!("WITHDRAWN"),
+        body["items"][0]["item"]["lifecycle"]
+    );
+    assert_eq!(
+        serde_json::json!(true),
+        body["items"][0]["userState"]["watchlist"]["watching"]
+    );
+    assert_eq!(
+        serde_json::json!(true),
+        body["items"][0]["userState"]["watchlist"]["notifications"]
     );
 }
 
