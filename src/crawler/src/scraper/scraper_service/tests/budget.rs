@@ -36,7 +36,7 @@ async fn should_return_llm_budget_exceeded_when_increment_is_rejected_on_schema_
     );
 
     let err = service
-        .scrape(&id, &url, None, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap_err();
     assert!(matches!(

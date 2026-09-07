@@ -27,14 +27,15 @@ pub use normalization_input::{
     NORMALIZATION_INPUT_HASH_BYTES, NormalizationContext, NormalizationInputError,
     NormalizationInputHash, ProductListingNormalizationInput, RawProductListingOperation,
     RawProductListingPayloadFormat, RawProductListingProvenance, RawProductListingValues,
-    SchemaVersionField, SourcePayload,
+    SchemaVersionField, SourcePayload, SourcePayloadHash,
 };
 pub use price::{PriceNormalizationError, normalize_price};
 pub use raw_values_normalizer::{
-    PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1, ProductListingNormalizationContextV1,
-    ProductListingRawValuesNormalizationError, ProductListingRawValuesNormalizationOutcome,
-    ProductListingRawValuesNormalizer, ProductListingRawValuesPatch,
-    ProductListingRawValuesResolved, ProductListingRawValuesV1,
+    PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+    ProductListingNormalizationContextV1, ProductListingRawValuesNormalizationError,
+    ProductListingRawValuesNormalizationOutcome, ProductListingRawValuesNormalizer,
+    ProductListingRawValuesPatch, ProductListingRawValuesPriceFormat,
+    ProductListingRawValuesResolved, ProductListingRawValuesV1, ProductListingRawValuesV2,
 };
 pub use source_listing_id::{
     SourceListingIdNormalizationError, normalize_source_listing_id_with_url_sha_fallback,

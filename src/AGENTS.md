@@ -125,6 +125,7 @@
 - `src/product-listing-normalization/AGENTS.md` — pure ProductListing normalization kernel.
 - `src/product-service/AGENTS.md` — raw ProductListing normalization service.
 - `src/product-listing-service/AGENTS.md` — canonical ProductListing service crate.
+- `src/woocommerce-service/AGENTS.md` — WooCommerce product webhook intake service crate.
 - `src/product-listing-translation-llm/AGENTS.md` — ProductListing title LLM adapter crate.
 - `src/product-listing-postgres/AGENTS.md` — canonical ProductListing Postgres adapter crate.
 - `src/platform-observability/AGENTS.md` — typed tracing subscriber setup.

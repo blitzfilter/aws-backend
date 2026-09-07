@@ -40,5 +40,6 @@ pub trait ScraperService: Send + Sync {
         product_url_pattern: Option<&str>,
         last_scraped_hash: Option<&str>,
         last_scraped_schema_fingerprint: Option<&str>,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<Option<ScrapedProduct>, ScraperError>;
 }

@@ -81,6 +81,7 @@ use search_filter_service::use_cases::{
     ProjectSearchFilterChangeHandler, ProjectSearchFilterChangeUseCase,
 };
 use std::sync::Arc;
+use tokio::sync::watch;
 use user_postgres::SqlxUserTierEntitlementsFactory;
 use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
 
@@ -315,10 +316,13 @@ async fn run_product_listing_raw_normalization(
             SqlxPendingProductListingRawStreamReader::new(pool),
         ));
     let (runtime, receiver) = composition.into_parts();
+    let (shutdown, shutdown_rx) = watch::channel(false);
     let task = tokio::spawn(consume_product_listing_raw_normalization_queue(
-        receiver, handler,
+        receiver,
+        handler,
+        shutdown_rx,
     ));
-    finish_runtime(config, runtime, task).await
+    finish_raw_normalization_runtime(config, runtime, task, shutdown).await
 }
 
 async fn run_notification_delivery(
@@ -385,6 +389,24 @@ async fn run_watchlist_notifications(
     let (runtime, receiver) = composition.into_parts();
     let task = tokio::spawn(consume_watchlist_notification_queue(receiver, handler));
     finish_runtime(config, runtime, task).await
+}
+
+async fn finish_raw_normalization_runtime(
+    config: aura_historia_worker::WorkerConfig,
+    runtime: aura_historia_worker::WorkerRuntime,
+    task: tokio::task::JoinHandle<()>,
+    consumer_shutdown: watch::Sender<bool>,
+) -> Result<(), MainError> {
+    let shutdown_for_signal = consumer_shutdown.clone();
+    let result = run_until_shutdown_with_runtime(config, runtime, async move {
+        shutdown_signal().await;
+        let _previous_shutdown = shutdown_for_signal.send_replace(true);
+    })
+    .await;
+    let _previous_shutdown = consumer_shutdown.send_replace(true);
+    task.await.map_err(MainError::RawNormalizationConsumer)?;
+    result?;
+    Ok(())
 }
 
 async fn finish_runtime(
@@ -473,6 +495,8 @@ enum MainError {
     NotificationDispatch(
         #[from] notification_service::ports::notification_channel_sender::NotificationDeliveryDispatchError,
     ),
+    #[error("raw normalization consumer task stopped unexpectedly")]
+    RawNormalizationConsumer(#[source] tokio::task::JoinError),
     #[error(transparent)]
     Run(#[from] WorkerRunError),
 }

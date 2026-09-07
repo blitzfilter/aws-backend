@@ -95,6 +95,8 @@ CREATE TABLE product_listing_raw_streams (
     source_record_key_sha256 bytea NOT NULL,
     latest_revision bigint NOT NULL,
     latest_input_sha256 bytea,
+    latest_provider_source_occurred_at timestamptz,
+    latest_provider_source_observation_sha256 bytea,
     created timestamptz NOT NULL DEFAULT now(),
     updated timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT product_listing_raw_streams_ingestion_method_check
@@ -107,8 +109,45 @@ CREATE TABLE product_listing_raw_streams (
         CHECK (latest_revision >= 0),
     CONSTRAINT product_listing_raw_streams_latest_input_sha256_length_check
         CHECK (latest_input_sha256 IS NULL OR octet_length(latest_input_sha256) = 32),
+    CONSTRAINT product_listing_raw_streams_latest_provider_source_ordering_pair_check
+        CHECK (
+            (latest_provider_source_occurred_at IS NULL
+                AND latest_provider_source_observation_sha256 IS NULL)
+            OR (
+                latest_provider_source_occurred_at IS NOT NULL
+                AND latest_provider_source_observation_sha256 IS NOT NULL
+            )
+        ),
+    CONSTRAINT product_listing_raw_streams_latest_provider_source_observation_sha256_length_check
+        CHECK (
+            latest_provider_source_observation_sha256 IS NULL
+            OR octet_length(latest_provider_source_observation_sha256) = 32
+        ),
     CONSTRAINT product_listing_raw_streams_identity_unique
         UNIQUE (listing_source_id, ingestion_method, source_record_key_sha256)
+);
+
+-- Operational provider-delivery idempotency state. It is deliberately separate
+-- from product_listing_raw_revisions, the sole raw-normalization CDC source.
+CREATE TABLE product_listing_raw_provider_observation_receipts (
+    product_listing_raw_stream_id uuid NOT NULL
+        REFERENCES product_listing_raw_streams(product_listing_raw_stream_id) ON DELETE CASCADE,
+    provider_scope text NOT NULL,
+    provider_delivery_id text NOT NULL,
+    observation_sha256 bytea NOT NULL,
+    expires_at timestamptz NOT NULL DEFAULT now() + interval '90 days',
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (
+        product_listing_raw_stream_id,
+        provider_scope,
+        provider_delivery_id
+    ),
+    CONSTRAINT product_listing_raw_provider_observation_receipts_provider_scope_check
+        CHECK (octet_length(provider_scope) BETWEEN 1 AND 128),
+    CONSTRAINT product_listing_raw_provider_observation_receipts_provider_delivery_id_check
+        CHECK (octet_length(provider_delivery_id) BETWEEN 1 AND 512),
+    CONSTRAINT product_listing_raw_provider_observation_receipts_observation_sha256_length_check
+        CHECK (octet_length(observation_sha256) = 32)
 );
 
 CREATE TABLE product_listing_raw_revisions (
@@ -152,9 +191,6 @@ CREATE TABLE product_listing_raw_revisions (
     CONSTRAINT product_listing_raw_revisions_revision_positive_check
         CHECK (revision >= 1)
 );
-
-CREATE INDEX product_listing_raw_revisions_stream_revision_idx
-    ON product_listing_raw_revisions (product_listing_raw_stream_id, revision ASC);
 
 CREATE TABLE product_listing_raw_normalization_heads (
     product_listing_raw_stream_id uuid PRIMARY KEY
@@ -367,7 +403,6 @@ CREATE TABLE product_listings (
 );
 
 CREATE INDEX product_listings_listing_source_id_idx ON product_listings (listing_source_id);
-CREATE INDEX product_listings_listing_source_url_idx ON product_listings (listing_source_id, url);
 CREATE INDEX product_listings_lifecycle_updated_idx ON product_listings (lifecycle, updated DESC);
 CREATE INDEX product_listings_sale_observation_fx_rate_id_idx ON product_listings (sale_observation_fx_rate_id);
 
@@ -966,3 +1001,8 @@ CREATE INDEX oauth_third_party_exchange_codes_access_token_idx
 SELECT ttl_create_index('public.access_tokens', 'expires_at', 0);
 SELECT ttl_create_index('public.oauth_authorization_codes', 'expires_at', 0);
 SELECT ttl_create_index('public.oauth_third_party_exchange_codes', 'expires_at', 0);
+SELECT ttl_create_index(
+    'public.product_listing_raw_provider_observation_receipts',
+    'expires_at',
+    0
+);

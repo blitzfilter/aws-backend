@@ -5,6 +5,7 @@ use product_listing_service::ports::{
     ProductListingRawCaptureWriterFactory, ProductListingRawRevisionId, ProductListingRawStreamId,
 };
 use sqlx::PgConnection;
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqlxProductListingRawCaptureWriterFactory;
@@ -19,6 +20,8 @@ struct RawStreamHeadRow {
     source_record_key: String,
     latest_revision: i64,
     latest_input_sha256: Option<Vec<u8>>,
+    latest_provider_source_occurred_at: Option<OffsetDateTime>,
+    latest_provider_source_observation_sha256: Option<Vec<u8>>,
 }
 
 impl SqlxProductListingRawCaptureWriterFactory {
@@ -48,6 +51,25 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
     ) -> Result<ProductListingRawCaptureWriteOutcome, ProductListingRawCaptureWriteError> {
         let listing_source_id = uuid::Uuid::from(write.listing_source_id);
         let source_record_key_sha256 = write.source_record_key_sha256.as_bytes().as_slice();
+        let provider_receipt = match write.ingestion_method {
+            product_listing_service::ports::ProductListingRawIngestionMethod::WebCrawl => None,
+            product_listing_service::ports::ProductListingRawIngestionMethod::Shopify
+            | product_listing_service::ports::ProductListingRawIngestionMethod::Woocommerce => {
+                write.provider_receipt.as_ref()
+            }
+        };
+        let canonical_source_evidence_sha256 = match write.ingestion_method {
+            product_listing_service::ports::ProductListingRawIngestionMethod::WebCrawl => None,
+            product_listing_service::ports::ProductListingRawIngestionMethod::Shopify
+            | product_listing_service::ports::ProductListingRawIngestionMethod::Woocommerce => {
+                Some(write.input.source_payload().canonical_sha256())
+            }
+        }
+        .transpose()
+        .map_err(|error| ProductListingRawCaptureWriteError::CaptureFailed {
+            source: box_error(error),
+        })?
+        .map(|evidence| *evidence.as_bytes());
 
         sqlx::query(
             r#"
@@ -77,7 +99,9 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                 product_listing_raw_stream_id,
                 source_record_key,
                 latest_revision,
-                latest_input_sha256
+                latest_input_sha256,
+                latest_provider_source_occurred_at,
+                latest_provider_source_observation_sha256
             FROM product_listing_raw_streams
             WHERE listing_source_id = $1
               AND ingestion_method = $2
@@ -98,7 +122,171 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
 
         let latest_revision = u64::try_from(stream.latest_revision)
             .map_err(|_| invalid_capture_state("raw stream revision is invalid"))?;
+
+        if let Some(provider_receipt) = provider_receipt {
+            let canonical_source_evidence_sha256 =
+                canonical_source_evidence_sha256.as_ref().ok_or_else(|| {
+                    invalid_capture_state("provider receipt source evidence is missing")
+                })?;
+            if provider_receipt.source_evidence_sha256().as_bytes()
+                != canonical_source_evidence_sha256
+            {
+                return Err(ProductListingRawCaptureWriteError::ProviderReceiptDigestConflict);
+            }
+
+            sqlx::query(
+                r#"
+                DELETE FROM product_listing_raw_provider_observation_receipts
+                WHERE product_listing_raw_stream_id = $1
+                  AND provider_scope = $2
+                  AND provider_delivery_id = $3
+                  AND expires_at <= clock_timestamp()
+                "#,
+            )
+            .bind(stream.product_listing_raw_stream_id)
+            .bind(provider_receipt.scope().as_str())
+            .bind(provider_receipt.delivery_id())
+            .execute(&mut *self.connection)
+            .await
+            .map_err(capture_failed)?;
+
+            let existing_evidence_sha256 = sqlx::query_scalar::<_, Vec<u8>>(
+                r#"
+                SELECT observation_sha256
+                FROM product_listing_raw_provider_observation_receipts
+                WHERE product_listing_raw_stream_id = $1
+                  AND provider_scope = $2
+                  AND provider_delivery_id = $3
+                "#,
+            )
+            .bind(stream.product_listing_raw_stream_id)
+            .bind(provider_receipt.scope().as_str())
+            .bind(provider_receipt.delivery_id())
+            .fetch_optional(&mut *self.connection)
+            .await
+            .map_err(capture_failed)?;
+
+            if let Some(existing_evidence_sha256) = existing_evidence_sha256 {
+                if existing_evidence_sha256.len() != canonical_source_evidence_sha256.len() {
+                    return Err(invalid_capture_state(
+                        "provider receipt evidence hash is invalid",
+                    ));
+                }
+                if existing_evidence_sha256.as_slice()
+                    == canonical_source_evidence_sha256.as_slice()
+                {
+                    return Ok(ProductListingRawCaptureWriteOutcome::Duplicate {
+                        product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
+                            stream.product_listing_raw_stream_id,
+                        ),
+                        latest_revision,
+                    });
+                }
+                return Err(ProductListingRawCaptureWriteError::ProviderReceiptDigestConflict);
+            }
+        }
+
+        let (
+            source_ordering_advancement,
+            source_observation_is_stale,
+            source_observation_matches_stream_head,
+        ) = match (write.source_occurred_at, canonical_source_evidence_sha256) {
+            (Some(source_occurred_at), Some(canonical_source_evidence_sha256)) => {
+                match latest_provider_source_order(&stream, canonical_source_evidence_sha256.len())?
+                {
+                    None => (
+                        Some((source_occurred_at, canonical_source_evidence_sha256)),
+                        false,
+                        false,
+                    ),
+                    Some((latest_source_occurred_at, latest_source_evidence_sha256)) => {
+                        if source_occurred_at < latest_source_occurred_at {
+                            (None, true, false)
+                        } else if source_occurred_at == latest_source_occurred_at
+                            && latest_source_evidence_sha256
+                                != canonical_source_evidence_sha256.as_slice()
+                        {
+                            return Err(
+                                ProductListingRawCaptureWriteError::ProviderSourceOrderConflict,
+                            );
+                        } else if source_occurred_at > latest_source_occurred_at {
+                            (
+                                Some((source_occurred_at, canonical_source_evidence_sha256)),
+                                false,
+                                false,
+                            )
+                        } else {
+                            (None, false, true)
+                        }
+                    }
+                }
+            }
+            _ => (None, false, false),
+        };
+
+        if let Some(provider_receipt) = provider_receipt {
+            let canonical_source_evidence_sha256 =
+                canonical_source_evidence_sha256.as_ref().ok_or_else(|| {
+                    invalid_capture_state("provider receipt source evidence is missing")
+                })?;
+            sqlx::query(
+                r#"
+                INSERT INTO product_listing_raw_provider_observation_receipts (
+                    product_listing_raw_stream_id,
+                    provider_scope,
+                    provider_delivery_id,
+                    observation_sha256
+                ) VALUES ($1, $2, $3, $4)
+                "#,
+            )
+            .bind(stream.product_listing_raw_stream_id)
+            .bind(provider_receipt.scope().as_str())
+            .bind(provider_receipt.delivery_id())
+            .bind(canonical_source_evidence_sha256.as_slice())
+            .execute(&mut *self.connection)
+            .await
+            .map_err(capture_failed)?;
+        }
+
+        if source_observation_matches_stream_head {
+            return Ok(ProductListingRawCaptureWriteOutcome::Unchanged {
+                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
+                    stream.product_listing_raw_stream_id,
+                ),
+                latest_revision,
+            });
+        }
+
+        if source_observation_is_stale {
+            return Ok(ProductListingRawCaptureWriteOutcome::Stale {
+                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
+                    stream.product_listing_raw_stream_id,
+                ),
+                latest_revision,
+            });
+        }
+
         if stream.latest_input_sha256.as_deref() == Some(write.input_sha256.as_bytes().as_slice()) {
+            if let Some((source_occurred_at, source_evidence_sha256)) =
+                source_ordering_advancement.as_ref()
+            {
+                sqlx::query(
+                    r#"
+                    UPDATE product_listing_raw_streams
+                    SET latest_provider_source_occurred_at = $1,
+                        latest_provider_source_observation_sha256 = $2,
+                        updated = now()
+                    WHERE product_listing_raw_stream_id = $3
+                    "#,
+                )
+                .bind(*source_occurred_at)
+                .bind(source_evidence_sha256.as_slice())
+                .bind(stream.product_listing_raw_stream_id)
+                .execute(&mut *self.connection)
+                .await
+                .map_err(capture_failed)?;
+            }
+
             return Ok(ProductListingRawCaptureWriteOutcome::Unchanged {
                 product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
                     stream.product_listing_raw_stream_id,
@@ -162,17 +350,36 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
         .await
         .map_err(capture_failed)?;
 
+        let advances_provider_source_order = source_ordering_advancement.is_some();
+        let advanced_source_occurred_at = source_ordering_advancement
+            .as_ref()
+            .map(|(source_occurred_at, _)| *source_occurred_at);
+        let advanced_source_evidence_sha256 = source_ordering_advancement
+            .as_ref()
+            .map(|(_, source_evidence_sha256)| source_evidence_sha256.as_slice());
+
         sqlx::query(
             r#"
             UPDATE product_listing_raw_streams
             SET latest_revision = $1,
                 latest_input_sha256 = $2,
+                latest_provider_source_occurred_at = CASE
+                    WHEN $3 THEN $4
+                    ELSE latest_provider_source_occurred_at
+                END,
+                latest_provider_source_observation_sha256 = CASE
+                    WHEN $3 THEN $5
+                    ELSE latest_provider_source_observation_sha256
+                END,
                 updated = now()
-            WHERE product_listing_raw_stream_id = $3
+            WHERE product_listing_raw_stream_id = $6
             "#,
         )
         .bind(revision_as_i64)
         .bind(write.input_sha256.as_bytes().as_slice())
+        .bind(advances_provider_source_order)
+        .bind(advanced_source_occurred_at)
+        .bind(advanced_source_evidence_sha256)
         .bind(stream.product_listing_raw_stream_id)
         .execute(&mut *self.connection)
         .await
@@ -187,6 +394,29 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             ),
             revision,
         })
+    }
+}
+
+fn latest_provider_source_order(
+    stream: &RawStreamHeadRow,
+    expected_evidence_sha256_length: usize,
+) -> Result<Option<(OffsetDateTime, &[u8])>, ProductListingRawCaptureWriteError> {
+    match (
+        stream.latest_provider_source_occurred_at,
+        stream.latest_provider_source_observation_sha256.as_deref(),
+    ) {
+        (None, None) => Ok(None),
+        (Some(source_occurred_at), Some(source_evidence_sha256))
+            if source_evidence_sha256.len() == expected_evidence_sha256_length =>
+        {
+            Ok(Some((source_occurred_at, source_evidence_sha256)))
+        }
+        (Some(_), Some(_)) => Err(invalid_capture_state(
+            "raw stream provider source evidence hash is invalid",
+        )),
+        _ => Err(invalid_capture_state(
+            "raw stream provider source ordering state is invalid",
+        )),
     }
 }
 

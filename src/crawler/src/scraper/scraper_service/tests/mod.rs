@@ -5,6 +5,7 @@ mod cached_schema_selection;
 mod fresh_schema_generation;
 mod happy_path;
 mod hash_skip;
+mod image_evidence;
 mod redirect_guard;
 mod removed_page;
 mod richest_schema_selection;
@@ -35,7 +36,7 @@ use crate::scraper::scraper_service::ScraperService;
 use crate::scraper::scraper_service::service::{
     DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE, FetchedHtml, MockHtmlFetcher, ScraperServiceImpl,
 };
-use crate::spider::classification::url_metadata::CrawlerDisposition;
+use crate::spider::classification::url_metadata::{CrawlerDisposition, CrawlerUrlWriteOutcome};
 use localization::Language;
 use localization::Localized;
 use product_listing_core::listing_availability::ListingAvailability;

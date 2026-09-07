@@ -40,7 +40,7 @@
 - `admin-overview.md` — administrator overview source and count semantics.
 - `party-and-listing-source.md` — Party, ListingSource, and Partnership contract.
 - `product-listing.md` — canonical ProductListing domain contract.
-- `product-listing-raw-normalization-runbook.md` — raw capture, normalization, backlog, and crawler operator checks.
+- `product-listing-raw-normalization-runbook.md` — raw capture, one-page recovery cursor, shutdown, backlog, and crawler operator checks.
 - `product-listing-inventory.md` — ProductListing rewrite scope and final scan checklist.
 - `listing-source-partnership-rewrite-inventory.md` — ListingSource and Partnership rewrite completion checklist.
 - `storage.md` — canonical storage contracts.

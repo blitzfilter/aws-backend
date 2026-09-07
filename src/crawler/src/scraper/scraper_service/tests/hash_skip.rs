@@ -29,11 +29,17 @@ async fn should_skip_fetching_and_return_none_when_hashes_match() {
             Box::pin(async move { Ok(Some(schema)) })
         });
     let norm_svc = MockProductListingNormalizationService::new();
+    let expected_raw_input_sha256 = vec![5; 32];
+    let expected_raw_input_sha256_for_mock = expected_raw_input_sha256.clone();
     let mut cand_svc = MockScraperCandidateService::new();
     cand_svc
         .expect_touch_scraped()
         .once()
-        .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
+        .withf(move |_, _, _, _, actual_raw_input_sha256| {
+            actual_raw_input_sha256.as_deref()
+                == Some(expected_raw_input_sha256_for_mock.as_slice())
+        })
+        .returning(|_, _, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
 
     let service = ScraperServiceImpl::new_with_schema_seed_pages(
         Box::new(fetcher),
@@ -51,6 +57,7 @@ async fn should_skip_fetching_and_return_none_when_hashes_match() {
             None,
             Some(&matching_hash),
             Some(&schema_fingerprint),
+            Some(expected_raw_input_sha256.as_slice()),
         )
         .await
         .unwrap();

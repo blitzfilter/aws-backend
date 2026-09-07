@@ -14,6 +14,8 @@ use tower_http::trace::TraceLayer;
 pub(crate) const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) const CORRELATION_ID_HEADER: HeaderName = HeaderName::from_static("x-correlation-id");
 
+const WOOCOMMERCE_DELIVERY_ID_HEADER: HeaderName =
+    HeaderName::from_static("x-wc-webhook-delivery-id");
 const MAX_CORRELATION_ID_LENGTH: usize = 128;
 const MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -58,6 +60,7 @@ pub(crate) fn with_transport_middleware(router: Router) -> Router {
                     header::CONTENT_TYPE,
                     HeaderName::from_static("x-wc-webhook-topic"),
                     HeaderName::from_static("x-wc-webhook-signature"),
+                    WOOCOMMERCE_DELIVERY_ID_HEADER,
                     CORRELATION_ID_HEADER,
                 ])
                 .expose_headers([REQUEST_ID_HEADER, CORRELATION_ID_HEADER]),
@@ -183,6 +186,38 @@ mod tests {
                 .unwrap()
                 .contains(REQUEST_ID_HEADER.as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn should_allow_woocommerce_delivery_id_for_cors_preflight() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/")
+                    .header(header::ORIGIN, "https://example.test")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, Method::POST.as_str())
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        WOOCOMMERCE_DELIVERY_ID_HEADER.as_str(),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(StatusCode::OK, response.status());
+        let allowed_headers = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(allowed_headers.split(',').any(|value| {
+            value
+                .trim()
+                .eq_ignore_ascii_case(WOOCOMMERCE_DELIVERY_ID_HEADER.as_str())
+        }));
     }
 
     #[tokio::test]

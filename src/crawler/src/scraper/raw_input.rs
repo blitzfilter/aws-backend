@@ -14,10 +14,12 @@ use url::Url;
 
 /// Builds the complete V1 input retained by the operational raw-revision stream.
 ///
-/// This mapping intentionally retains source strings without applying typed field normalization.
-/// The worker is the sole canonical normalization authority.
+/// Source payload keeps the untouched extraction. Generic raw values use the
+/// crawler-validated image projection; the worker remains the sole canonical
+/// normalization authority.
 pub(crate) fn crawler_raw_input(
     raw: &RawExtractedProduct,
+    validated_image_urls: &[String],
     candidate_url: &Url,
     default_currency: Option<Currency>,
 ) -> Result<ProductListingNormalizationInput, NormalizationInputError> {
@@ -43,7 +45,7 @@ pub(crate) fn crawler_raw_input(
         price_estimate_max: patch(raw.price_estimate_max.clone()),
         availability: ProductListingRawValuesPatch::Set(raw.state.clone()),
         url: ProductListingRawValuesPatch::Set(candidate_url.to_string()),
-        images: ProductListingRawValuesPatch::Set(raw.images.clone()),
+        images: ProductListingRawValuesPatch::Set(validated_image_urls.to_vec()),
         auction_start: patch(raw.auction_start.clone()),
         auction_end: patch(raw.auction_end.clone()),
         attributes,
@@ -109,6 +111,7 @@ fn patch(value: Option<String>) -> ProductListingRawValuesPatch<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scraper::css_selector::rule::IMAGE_CANDIDATE_SEPARATOR;
 
     fn raw() -> RawExtractedProduct {
         RawExtractedProduct {
@@ -131,7 +134,8 @@ mod tests {
     {
         let url = Url::parse("https://example.com/products/1")
             .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
-        let input = crawler_raw_input(&raw(), &url, Some(Currency::Eur))?;
+        let extracted = raw();
+        let input = crawler_raw_input(&extracted, &extracted.images, &url, Some(Currency::Eur))?;
 
         assert_eq!(
             Some(&serde_json::Value::String("100 EUR".to_owned())),
@@ -149,15 +153,66 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_image_groups_in_source_payload_and_use_validated_image_projection()
+    -> Result<(), NormalizationInputError> {
+        let url = Url::parse("https://example.com/products/1")
+            .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
+        let mut extracted = raw();
+        extracted.images = vec![
+            format!("/images/primary.jpg{IMAGE_CANDIDATE_SEPARATOR}/images/fallback-800x600.jpg"),
+            format!(
+                "/images/second.jpg{IMAGE_CANDIDATE_SEPARATOR}/images/second-fallback-640x480.jpg"
+            ),
+            format!("/images/primary.jpg{IMAGE_CANDIDATE_SEPARATOR}/images/fallback-800x600.jpg"),
+        ];
+        let validated_image_urls = vec![
+            "https://example.com/images/fallback-800x600.jpg".to_owned(),
+            "https://example.com/images/second-fallback-640x480.jpg".to_owned(),
+        ];
+
+        let input =
+            crawler_raw_input(&extracted, &validated_image_urls, &url, Some(Currency::Eur))?;
+
+        assert_eq!(
+            input.source_payload().value().get("images"),
+            Some(&serde_json::json!([
+                format!(
+                    "/images/primary.jpg{IMAGE_CANDIDATE_SEPARATOR}/images/fallback-800x600.jpg"
+                ),
+                format!(
+                    "/images/second.jpg{IMAGE_CANDIDATE_SEPARATOR}/images/second-fallback-640x480.jpg"
+                ),
+                format!(
+                    "/images/primary.jpg{IMAGE_CANDIDATE_SEPARATOR}/images/fallback-800x600.jpg"
+                ),
+            ]))
+        );
+        assert_eq!(
+            input.raw_values().value().get("images"),
+            Some(&serde_json::json!({
+                "action": "SET",
+                "value": [
+                    "https://example.com/images/fallback-800x600.jpg",
+                    "https://example.com/images/second-fallback-640x480.jpg",
+                ],
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn should_hash_dynamic_raw_attribute_changes() -> Result<(), NormalizationInputError> {
         let url = Url::parse("https://example.com/products/1")
             .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
-        let first = crawler_raw_input(&raw(), &url, Some(Currency::Eur))?.hash()?;
+        let extracted = raw();
+        let first =
+            crawler_raw_input(&extracted, &extracted.images, &url, Some(Currency::Eur))?.hash()?;
         let mut changed = raw();
         changed
             .raw_attributes
             .insert("rawMaterial".to_owned(), vec!["Oak".to_owned()]);
-        let second = crawler_raw_input(&changed, &url, Some(Currency::Eur))?.hash()?;
+        let second =
+            crawler_raw_input(&changed, &changed.images, &url, Some(Currency::Eur))?.hash()?;
         assert_ne!(first, second);
         Ok(())
     }

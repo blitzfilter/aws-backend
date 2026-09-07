@@ -77,6 +77,24 @@ impl SourcePayload {
     pub const fn value(&self) -> &Value {
         self.0.value()
     }
+
+    /// Returns the key-order-stable SHA-256 digest of source payload evidence only.
+    pub fn canonical_sha256(&self) -> Result<SourcePayloadHash, NormalizationInputError> {
+        let canonical_json = canonical_json(self.value())?;
+        Ok(SourcePayloadHash(
+            Sha256::digest(canonical_json.as_bytes()).into(),
+        ))
+    }
+}
+
+/// SHA-256 digest of canonical source payload evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SourcePayloadHash([u8; NORMALIZATION_INPUT_HASH_BYTES]);
+
+impl SourcePayloadHash {
+    pub const fn as_bytes(&self) -> &[u8; NORMALIZATION_INPUT_HASH_BYTES] {
+        &self.0
+    }
 }
 
 /// Provider-neutral values needed by deterministic normalization, such as a base URL.
@@ -251,6 +269,8 @@ pub enum SchemaVersionField {
 pub enum NormalizationInputError {
     #[error("raw product listing JSON field must be an object")]
     JsonNotObject { field: JsonField },
+    #[error("raw product listing JSON field contains an embedded NUL")]
+    JsonEmbeddedNul { field: JsonField },
     #[error("raw product listing JSON field exceeds its byte limit")]
     JsonTooLarge {
         field: JsonField,
@@ -294,6 +314,9 @@ impl JsonObject {
                 max: MAX_JSON_NESTING_DEPTH,
             });
         }
+        if json_contains_embedded_nul(&value) {
+            return Err(NormalizationInputError::JsonEmbeddedNul { field });
+        }
         Ok(Self(value))
     }
 
@@ -307,6 +330,17 @@ fn json_depth(value: &Value) -> usize {
         Value::Array(values) => 1 + values.iter().map(json_depth).max().unwrap_or(0),
         Value::Object(values) => 1 + values.values().map(json_depth).max().unwrap_or(0),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 1,
+    }
+}
+
+fn json_contains_embedded_nul(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(json_contains_embedded_nul),
+        Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| key.contains('\0') || json_contains_embedded_nul(value)),
+        Value::String(value) => value.contains('\0'),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
     }
 }
 
@@ -376,6 +410,32 @@ mod tests {
     }
 
     #[test]
+    fn should_return_equal_source_payload_hashes_when_object_key_order_differs()
+    -> Result<(), NormalizationInputError> {
+        let first = SourcePayload::new(json!({
+            "event": {"metadata": {"b": 2, "a": 1}, "id": "event-1"}
+        }))?;
+        let second = SourcePayload::new(json!({
+            "event": {"id": "event-1", "metadata": {"a": 1, "b": 2}}
+        }))?;
+
+        let first_hash = first.canonical_sha256()?;
+        assert_eq!(first_hash, second.canonical_sha256()?);
+        assert_eq!(first_hash.as_bytes().len(), NORMALIZATION_INPUT_HASH_BYTES);
+        Ok(())
+    }
+
+    #[test]
+    fn should_return_different_source_payload_hashes_when_evidence_differs()
+    -> Result<(), NormalizationInputError> {
+        let first = SourcePayload::new(json!({"event": {"id": "event-1", "amount": 10}}))?;
+        let second = SourcePayload::new(json!({"event": {"id": "event-1", "amount": 11}}))?;
+
+        assert_ne!(first.canonical_sha256()?, second.canonical_sha256()?);
+        Ok(())
+    }
+
+    #[test]
     fn should_hash_equally_when_object_key_order_differs() -> Result<(), NormalizationInputError> {
         let first = input(
             json!({"unknown": {"b": 2, "a": 1}}),
@@ -387,7 +447,33 @@ mod tests {
             json!({"title": "Vase"}),
             json!({}),
         )?;
+
         assert_eq!(first.hash()?, second.hash()?);
+        Ok(())
+    }
+
+    #[test]
+    fn should_hash_only_source_payload_when_other_observation_fields_differ()
+    -> Result<(), NormalizationInputError> {
+        let first = input(
+            json!({"event": {"id": "event-1", "status": "published"}}),
+            json!({"title": "Vase"}),
+            json!({"fallbackCurrency": "EUR"}),
+        )?;
+        let second = input(
+            json!({"event": {"id": "event-1", "status": "published"}}),
+            json!({"title": "Bowl"}),
+            json!({"fallbackCurrency": "USD"}),
+        )?;
+        let first_provenance = RawProductListingProvenance::new(json!({"deliveryId": "one"}))?;
+        let second_provenance = RawProductListingProvenance::new(json!({"deliveryId": "two"}))?;
+
+        assert_ne!(first.hash()?, second.hash()?);
+        assert_ne!(first_provenance.value(), second_provenance.value());
+        assert_eq!(
+            first.source_payload().canonical_sha256()?,
+            second.source_payload().canonical_sha256()?
+        );
         Ok(())
     }
 
@@ -400,9 +486,29 @@ mod tests {
     }
 
     #[test]
-    fn should_hash_unknown_source_payload_keys() -> Result<(), NormalizationInputError> {
-        let first = input(json!({"unknown": "one"}), json!({}), json!({}))?;
-        let second = input(json!({"unknown": "two"}), json!({}), json!({}))?;
+    fn should_preserve_and_hash_unknown_nested_source_payload_fields()
+    -> Result<(), NormalizationInputError> {
+        let first_payload = json!({
+            "unknownSourceField": {
+                "unknownNestedKey": [
+                    {"unknownLeafKey": "one"},
+                    "retained source evidence"
+                ]
+            }
+        });
+        let second_payload = json!({
+            "unknownSourceField": {
+                "unknownNestedKey": [
+                    {"unknownLeafKey": "two"},
+                    "retained source evidence"
+                ]
+            }
+        });
+        let first = input(first_payload.clone(), json!({}), json!({}))?;
+        let second = input(second_payload.clone(), json!({}), json!({}))?;
+
+        assert_eq!(&first_payload, first.source_payload().value());
+        assert_eq!(&second_payload, second.source_payload().value());
         assert_ne!(first.hash()?, second.hash()?);
         Ok(())
     }
@@ -447,6 +553,42 @@ mod tests {
         assert_ne!(first.value(), second.value());
         assert_eq!(input.hash()?, input.hash()?);
         Ok(())
+    }
+
+    #[test]
+    fn should_reject_embedded_nul_in_json_object_keys_and_nested_strings() {
+        assert_json_embedded_nul(
+            SourcePayload::new(json!({"unknown": {"nested\0key": "value"}})),
+            JsonField::SourcePayload,
+        );
+        assert_json_embedded_nul(
+            SourcePayload::new(json!({"unknown": {"nested": ["bad\0value"]}})),
+            JsonField::SourcePayload,
+        );
+        assert_json_embedded_nul(
+            RawProductListingValues::new(json!({"unknown": {"nested\0key": "value"}})),
+            JsonField::RawValues,
+        );
+        assert_json_embedded_nul(
+            RawProductListingValues::new(json!({"unknown": {"nested": ["bad\0value"]}})),
+            JsonField::RawValues,
+        );
+        assert_json_embedded_nul(
+            NormalizationContext::new(json!({"unknown": {"nested\0key": "value"}})),
+            JsonField::NormalizationContext,
+        );
+        assert_json_embedded_nul(
+            NormalizationContext::new(json!({"unknown": {"nested": ["bad\0value"]}})),
+            JsonField::NormalizationContext,
+        );
+        assert_json_embedded_nul(
+            RawProductListingProvenance::new(json!({"unknown": {"nested\0key": "value"}})),
+            JsonField::Provenance,
+        );
+        assert_json_embedded_nul(
+            RawProductListingProvenance::new(json!({"unknown": {"nested": ["bad\0value"]}})),
+            JsonField::Provenance,
+        );
     }
 
     #[test]
@@ -502,5 +644,13 @@ mod tests {
             NORMALIZATION_INPUT_HASH_BYTES
         );
         Ok(())
+    }
+
+    fn assert_json_embedded_nul<T>(result: Result<T, NormalizationInputError>, field: JsonField) {
+        assert!(matches!(
+            result,
+            Err(NormalizationInputError::JsonEmbeddedNul { field: actual_field })
+                if actual_field == field
+        ));
     }
 }

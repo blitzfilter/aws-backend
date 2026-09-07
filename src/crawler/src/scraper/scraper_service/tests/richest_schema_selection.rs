@@ -71,7 +71,10 @@ async fn should_select_richer_schema_even_when_it_is_later_in_order() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some(), "richer later schema should win");
 }
 
@@ -131,7 +134,10 @@ async fn should_pick_earlier_schema_when_it_extracts_more_data() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some(), "earlier richer schema should still win");
 }
 
@@ -213,7 +219,10 @@ async fn should_generate_fresh_schema_when_no_cached_schema_applies() {
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(
         result.is_some(),
         "fresh schema should rescue when none applies"
@@ -307,7 +316,10 @@ async fn should_generate_fresh_schema_when_richer_candidate_normalization_fails_
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    let result = service.scrape(&id, &url, None, None, None).await.unwrap();
+    let result = service
+        .scrape(&id, &url, None, None, None, None)
+        .await
+        .unwrap();
     assert!(result.is_some());
 }
 
@@ -371,7 +383,7 @@ async fn should_not_persist_generated_schema_when_normalization_keeps_failing_fi
     );
 
     let err = service
-        .scrape(&id, &url, None, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap_err();
     assert!(

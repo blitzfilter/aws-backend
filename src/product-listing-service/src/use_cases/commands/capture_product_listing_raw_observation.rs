@@ -3,7 +3,7 @@ use crate::ports::{
     PartnerProductListingAuthorizerFactory, ProductListingRawCaptureWrite,
     ProductListingRawCaptureWriteError, ProductListingRawCaptureWriteOutcome,
     ProductListingRawCaptureWriter, ProductListingRawCaptureWriterFactory,
-    ProductListingRawIngestionMethod, SourceRecordKeySha256,
+    ProductListingRawIngestionMethod, ProductListingRawProviderReceipt, SourceRecordKeySha256,
 };
 use application::error::{BoxError, box_error};
 use application::operation_context::{
@@ -30,6 +30,7 @@ pub struct CaptureProductListingRawObservationCommand {
     pub provenance: RawProductListingProvenance,
     pub source_event_id: Option<String>,
     pub source_occurred_at: Option<OffsetDateTime>,
+    pub provider_receipt: Option<ProductListingRawProviderReceipt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +41,14 @@ pub enum CaptureProductListingRawObservationResult {
         revision: u64,
     },
     Unchanged {
+        product_listing_raw_stream_id: crate::ports::ProductListingRawStreamId,
+        latest_revision: u64,
+    },
+    Duplicate {
+        product_listing_raw_stream_id: crate::ports::ProductListingRawStreamId,
+        latest_revision: u64,
+    },
+    Stale {
         product_listing_raw_stream_id: crate::ports::ProductListingRawStreamId,
         latest_revision: u64,
     },
@@ -74,6 +83,10 @@ pub enum CaptureProductListingRawObservationError {
     },
     #[error("raw product listing source-record key hash collision")]
     SourceRecordKeyHashCollision,
+    #[error("provider receipt conflicts with existing source evidence")]
+    ProviderReceiptDigestConflict,
+    #[error("provider source order conflicts with existing source evidence")]
+    ProviderSourceOrderConflict,
     #[error("failed to begin raw product listing capture transaction")]
     BeginTransactionFailed,
     #[error("raw product listing capture failed")]
@@ -157,6 +170,7 @@ where
                 provenance: command.provenance,
                 source_event_id: command.source_event_id,
                 source_occurred_at: command.source_occurred_at,
+                provider_receipt: command.provider_receipt,
             })
             .await
             .map_err(CaptureProductListingRawObservationError::from)?;
@@ -179,6 +193,20 @@ where
                 product_listing_raw_stream_id,
                 latest_revision,
             } => CaptureProductListingRawObservationResult::Unchanged {
+                product_listing_raw_stream_id,
+                latest_revision,
+            },
+            ProductListingRawCaptureWriteOutcome::Duplicate {
+                product_listing_raw_stream_id,
+                latest_revision,
+            } => CaptureProductListingRawObservationResult::Duplicate {
+                product_listing_raw_stream_id,
+                latest_revision,
+            },
+            ProductListingRawCaptureWriteOutcome::Stale {
+                product_listing_raw_stream_id,
+                latest_revision,
+            } => CaptureProductListingRawObservationResult::Stale {
                 product_listing_raw_stream_id,
                 latest_revision,
             },
@@ -244,6 +272,8 @@ where
                 raw_capture_attempts = 1_u64,
                 raw_revision_inserts = 1_u64,
                 unchanged_captures = 0_u64,
+                duplicate_captures = 0_u64,
+                stale_captures = 0_u64,
                 capture_latency_ms = started.elapsed().as_millis() as u64,
                 source_payload_bytes,
                 raw_values_bytes,
@@ -264,6 +294,8 @@ where
                 raw_capture_attempts = 1_u64,
                 raw_revision_inserts = 0_u64,
                 unchanged_captures = 1_u64,
+                duplicate_captures = 0_u64,
+                stale_captures = 0_u64,
                 capture_latency_ms = started.elapsed().as_millis() as u64,
                 source_payload_bytes,
                 raw_values_bytes,
@@ -276,11 +308,57 @@ where
                 outcome = "unchanged",
                 "raw product listing capture metric"
             ),
+            Ok(CaptureProductListingRawObservationResult::Duplicate {
+                product_listing_raw_stream_id,
+                latest_revision,
+            }) => tracing::info!(
+                metric = "product_listing_raw_capture",
+                raw_capture_attempts = 1_u64,
+                raw_revision_inserts = 0_u64,
+                unchanged_captures = 0_u64,
+                duplicate_captures = 1_u64,
+                stale_captures = 0_u64,
+                capture_latency_ms = started.elapsed().as_millis() as u64,
+                source_payload_bytes,
+                raw_values_bytes,
+                normalization_context_bytes,
+                provenance_bytes,
+                listing_source_id = %listing_source_id,
+                ingestion_method,
+                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                revision = latest_revision,
+                outcome = "duplicate",
+                "raw product listing capture metric"
+            ),
+            Ok(CaptureProductListingRawObservationResult::Stale {
+                product_listing_raw_stream_id,
+                latest_revision,
+            }) => tracing::info!(
+                metric = "product_listing_raw_capture",
+                raw_capture_attempts = 1_u64,
+                raw_revision_inserts = 0_u64,
+                unchanged_captures = 0_u64,
+                duplicate_captures = 0_u64,
+                stale_captures = 1_u64,
+                capture_latency_ms = started.elapsed().as_millis() as u64,
+                source_payload_bytes,
+                raw_values_bytes,
+                normalization_context_bytes,
+                provenance_bytes,
+                listing_source_id = %listing_source_id,
+                ingestion_method,
+                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                revision = latest_revision,
+                outcome = "stale",
+                "raw product listing capture metric"
+            ),
             Err(error) => tracing::warn!(
                 metric = "product_listing_raw_capture",
                 raw_capture_attempts = 1_u64,
                 raw_revision_inserts = 0_u64,
                 unchanged_captures = 0_u64,
+                duplicate_captures = 0_u64,
+                stale_captures = 0_u64,
                 capture_latency_ms = started.elapsed().as_millis() as u64,
                 source_payload_bytes,
                 raw_values_bytes,
@@ -339,6 +417,12 @@ fn capture_error_code(error: &CaptureProductListingRawObservationError) -> &'sta
         }
         CaptureProductListingRawObservationError::SourceRecordKeyHashCollision => {
             "SOURCE_RECORD_KEY_HASH_COLLISION"
+        }
+        CaptureProductListingRawObservationError::ProviderReceiptDigestConflict => {
+            "PROVIDER_RECEIPT_DIGEST_CONFLICT"
+        }
+        CaptureProductListingRawObservationError::ProviderSourceOrderConflict => {
+            "PROVIDER_SOURCE_ORDER_CONFLICT"
         }
         CaptureProductListingRawObservationError::BeginTransactionFailed => {
             "BEGIN_TRANSACTION_FAILED"
@@ -400,6 +484,12 @@ impl From<ProductListingRawCaptureWriteError> for CaptureProductListingRawObserv
             ProductListingRawCaptureWriteError::SourceRecordKeyHashCollision => {
                 Self::SourceRecordKeyHashCollision
             }
+            ProductListingRawCaptureWriteError::ProviderReceiptDigestConflict => {
+                Self::ProviderReceiptDigestConflict
+            }
+            ProductListingRawCaptureWriteError::ProviderSourceOrderConflict => {
+                Self::ProviderSourceOrderConflict
+            }
             ProductListingRawCaptureWriteError::CaptureFailed { source } => {
                 Self::CaptureFailed { source }
             }
@@ -422,9 +512,14 @@ mod tests {
     async fn should_capture_and_commit_for_system_principal() {
         let committed = Arc::new(Mutex::new(false));
         let writes = Arc::new(Mutex::new(0_usize));
+        let provider_receipts = Arc::new(Mutex::new(Vec::new()));
         let handler = CaptureProductListingRawObservationHandler::new(
             TestUnitOfWork(Arc::clone(&committed)),
-            TestWriterFactory(Arc::clone(&writes)),
+            TestWriterFactory {
+                writes: Arc::clone(&writes),
+                provider_receipts: Arc::clone(&provider_receipts),
+                outcome: TestCaptureOutcome::Changed,
+            },
             TestAuthorizerFactory,
         );
 
@@ -436,14 +531,82 @@ mod tests {
         ));
         assert!(*lock(&committed));
         assert_eq!(1, *lock(&writes));
+        assert_eq!(1, lock(&provider_receipts).len());
+        assert!(lock(&provider_receipts)[0].is_none());
+    }
+
+    #[tokio::test]
+    async fn should_map_duplicate_and_stale_raw_capture_outcomes() {
+        let duplicate = execute_with_outcome(TestCaptureOutcome::Duplicate).await;
+        assert!(matches!(
+            duplicate,
+            Ok(CaptureProductListingRawObservationResult::Duplicate {
+                latest_revision: 1,
+                ..
+            })
+        ));
+
+        let stale = execute_with_outcome(TestCaptureOutcome::Stale).await;
+        assert!(matches!(
+            stale,
+            Ok(CaptureProductListingRawObservationResult::Stale {
+                latest_revision: 1,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn should_reject_embedded_nul_source_record_key() {
+    fn should_map_provider_receipt_conflicts_to_stable_capture_errors() {
+        let digest_conflict = CaptureProductListingRawObservationError::from(
+            ProductListingRawCaptureWriteError::ProviderReceiptDigestConflict,
+        );
+        assert_eq!(
+            "PROVIDER_RECEIPT_DIGEST_CONFLICT",
+            capture_error_code(&digest_conflict)
+        );
         assert!(matches!(
-            validate_source_record_key("valid\0invalid"),
+            digest_conflict,
+            CaptureProductListingRawObservationError::ProviderReceiptDigestConflict
+        ));
+
+        let source_order_conflict = CaptureProductListingRawObservationError::from(
+            ProductListingRawCaptureWriteError::ProviderSourceOrderConflict,
+        );
+        assert_eq!(
+            "PROVIDER_SOURCE_ORDER_CONFLICT",
+            capture_error_code(&source_order_conflict)
+        );
+        assert!(matches!(
+            source_order_conflict,
+            CaptureProductListingRawObservationError::ProviderSourceOrderConflict
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_not_invoke_writer_when_source_record_key_contains_embedded_nul() {
+        let committed = Arc::new(Mutex::new(false));
+        let writes = Arc::new(Mutex::new(0_usize));
+        let handler = CaptureProductListingRawObservationHandler::new(
+            TestUnitOfWork(Arc::clone(&committed)),
+            TestWriterFactory {
+                writes: Arc::clone(&writes),
+                provider_receipts: Arc::new(Mutex::new(Vec::new())),
+                outcome: TestCaptureOutcome::Changed,
+            },
+            TestAuthorizerFactory,
+        );
+        let mut invalid_command = command();
+        invalid_command.source_record_key = "valid\0invalid".to_owned();
+
+        let result = handler.execute(&system_context(), invalid_command).await;
+
+        assert!(matches!(
+            result,
             Err(CaptureProductListingRawObservationError::SourceRecordKeyEmbeddedNul)
         ));
+        assert!(!*lock(&committed));
+        assert_eq!(0, *lock(&writes));
     }
 
     #[test]
@@ -485,6 +648,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("provenance: {error}")),
             source_event_id: Some("one".to_owned()),
             source_occurred_at: None,
+            provider_receipt: None,
         }
     }
 
@@ -494,6 +658,23 @@ mod tests {
             request_id: RequestId::new("request"),
             correlation_id: CorrelationId::new("correlation"),
         }
+    }
+
+    async fn execute_with_outcome(
+        outcome: TestCaptureOutcome,
+    ) -> Result<CaptureProductListingRawObservationResult, CaptureProductListingRawObservationError>
+    {
+        let handler = CaptureProductListingRawObservationHandler::new(
+            TestUnitOfWork(Arc::new(Mutex::new(false))),
+            TestWriterFactory {
+                writes: Arc::new(Mutex::new(0)),
+                provider_receipts: Arc::new(Mutex::new(Vec::new())),
+                outcome,
+            },
+            TestAuthorizerFactory,
+        );
+
+        handler.execute(&system_context(), command()).await
     }
 
     fn lock<T>(value: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -523,16 +704,35 @@ mod tests {
         }
     }
 
-    struct TestWriterFactory(Arc<Mutex<usize>>);
+    #[derive(Debug, Clone, Copy)]
+    enum TestCaptureOutcome {
+        Changed,
+        Duplicate,
+        Stale,
+    }
 
-    struct TestWriter<'a>(&'a Mutex<usize>);
+    struct TestWriterFactory {
+        writes: Arc<Mutex<usize>>,
+        provider_receipts: Arc<Mutex<Vec<Option<ProductListingRawProviderReceipt>>>>,
+        outcome: TestCaptureOutcome,
+    }
+
+    struct TestWriter<'a> {
+        writes: &'a Mutex<usize>,
+        provider_receipts: &'a Mutex<Vec<Option<ProductListingRawProviderReceipt>>>,
+        outcome: TestCaptureOutcome,
+    }
 
     impl ProductListingRawCaptureWriterFactory<TestTransaction> for TestWriterFactory {
         fn in_transaction<'tx>(
             &'tx self,
             _: &'tx mut TestTransaction,
         ) -> impl ProductListingRawCaptureWriter + 'tx {
-            TestWriter(&self.0)
+            TestWriter {
+                writes: &self.writes,
+                provider_receipts: &self.provider_receipts,
+                outcome: self.outcome,
+            }
         }
     }
 
@@ -540,17 +740,29 @@ mod tests {
     impl ProductListingRawCaptureWriter for TestWriter<'_> {
         async fn capture(
             &mut self,
-            _: ProductListingRawCaptureWrite,
+            write: ProductListingRawCaptureWrite,
         ) -> Result<ProductListingRawCaptureWriteOutcome, ProductListingRawCaptureWriteError>
         {
-            *lock(self.0) += 1;
-            Ok(ProductListingRawCaptureWriteOutcome::Changed {
-                product_listing_raw_stream_id: crate::ports::ProductListingRawStreamId::from_uuid(
-                    uuid::Uuid::new_v4(),
-                ),
-                product_listing_raw_revision_id:
-                    crate::ports::ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4()),
-                revision: 1,
+            *lock(self.writes) += 1;
+            lock(self.provider_receipts).push(write.provider_receipt);
+            let product_listing_raw_stream_id =
+                crate::ports::ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
+
+            Ok(match self.outcome {
+                TestCaptureOutcome::Changed => ProductListingRawCaptureWriteOutcome::Changed {
+                    product_listing_raw_stream_id,
+                    product_listing_raw_revision_id:
+                        crate::ports::ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4()),
+                    revision: 1,
+                },
+                TestCaptureOutcome::Duplicate => ProductListingRawCaptureWriteOutcome::Duplicate {
+                    product_listing_raw_stream_id,
+                    latest_revision: 1,
+                },
+                TestCaptureOutcome::Stale => ProductListingRawCaptureWriteOutcome::Stale {
+                    product_listing_raw_stream_id,
+                    latest_revision: 1,
+                },
             })
         }
     }

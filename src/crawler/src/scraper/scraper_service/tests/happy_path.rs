@@ -58,7 +58,7 @@ async fn should_return_raw_capture_and_availability_when_schema_exists_and_appli
     );
 
     let result = service
-        .scrape(&id, &url, None, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap()
         .unwrap();
@@ -139,7 +139,7 @@ async fn should_retain_selected_raw_fields_without_canonical_product_preview() {
     );
 
     let result = service
-        .scrape(&id, &url, None, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap()
         .unwrap();
@@ -158,7 +158,8 @@ async fn should_retain_selected_raw_fields_without_canonical_product_preview() {
 }
 
 #[tokio::test]
-async fn should_filter_invalid_thumbnail_images_before_normalization() {
+async fn should_preserve_raw_image_evidence_while_filtering_invalid_thumbnail_before_normalization()
+{
     let id = listing_source_id();
     let url = product_url();
     let html = r#"<!DOCTYPE html>
@@ -218,7 +219,7 @@ async fn should_filter_invalid_thumbnail_images_before_normalization() {
     );
 
     let result = service
-        .scrape(&id, &url, None, None, None)
+        .scrape(&id, &url, None, None, None, None)
         .await
         .unwrap()
         .unwrap();
@@ -226,7 +227,17 @@ async fn should_filter_invalid_thumbnail_images_before_normalization() {
     assert_eq!(
         result.raw_input.source_payload().value().get("images"),
         Some(&serde_json::json!([
-            "https://example.com/image-800x600.jpg"
+            "/image-100x100.jpg",
+            "/image-800x600.jpg",
         ]))
+    );
+    assert_eq!(
+        result.raw_input.raw_values().value().get("images"),
+        Some(&serde_json::json!({
+            "action": "SET",
+            "value": [
+                "https://example.com/image-800x600.jpg",
+            ],
+        }))
     );
 }

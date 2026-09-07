@@ -1,12 +1,13 @@
 use listing_source_service::ports::ShopifySource;
 use product_listing_normalization::{
     NormalizationContext, NormalizationInputError, ProductListingNormalizationContextV1,
-    ProductListingNormalizationInput, ProductListingRawValuesPatch, ProductListingRawValuesV1,
-    RawProductListingOperation, RawProductListingPayloadFormat, RawProductListingValues,
-    SourcePayload,
+    ProductListingNormalizationInput, ProductListingRawValuesPatch,
+    ProductListingRawValuesPriceFormat, ProductListingRawValuesV2, RawProductListingOperation,
+    RawProductListingPayloadFormat, RawProductListingValues, SourcePayload,
 };
 use serde::Deserialize;
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const PAYLOAD_SCHEMA_VERSION: u16 = 1;
 
@@ -24,6 +25,8 @@ pub struct ShopifyEventMetadata {
     pub shop_domain: String,
     #[serde(rename = "X-Shopify-Event-Id", default)]
     pub event_id: Option<String>,
+    #[serde(rename = "X-Shopify-Webhook-Id", default)]
+    pub webhook_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +40,8 @@ pub struct ShopifyProductPayload {
     pub handle: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     #[serde(default)]
     pub variants: Vec<ShopifyVariantPayload>,
     #[serde(default)]
@@ -75,6 +80,7 @@ pub enum ShopifyListingAction {
 pub struct ShopifyRawObservation {
     pub source_record_key: String,
     pub input: ProductListingNormalizationInput,
+    pub source_occurred_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,6 +93,10 @@ pub enum ShopifyProductEventError {
     MissingTitle,
     #[error("Shopify product handle is missing")]
     MissingHandle,
+    #[error("Shopify listing source currency is missing for a nonblank product price")]
+    MissingListingSourceCurrency,
+    #[error("Shopify product updated_at is invalid")]
+    InvalidUpdatedAt(#[source] time::error::Parse),
 }
 
 impl ShopifyProductEventKind {
@@ -128,18 +138,33 @@ impl ShopifyProductEventKind {
             operation,
             RawProductListingPayloadFormat::ShopifyProduct,
             PAYLOAD_SCHEMA_VERSION,
-            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
             source_payload,
             raw_values,
             context,
         )
         .map_err(ShopifyProductEventError::InvalidSourcePayload)?;
+        let source_occurred_at = product_source_occurred_at(&product)?;
 
         Ok(ShopifyListingAction::Capture(ShopifyRawObservation {
             source_record_key,
             input,
+            source_occurred_at,
         }))
     }
+}
+
+fn product_source_occurred_at(
+    product: &ShopifyProductPayload,
+) -> Result<Option<OffsetDateTime>, ShopifyProductEventError> {
+    product
+        .updated_at
+        .as_deref()
+        .map(|updated_at| {
+            OffsetDateTime::parse(updated_at, &Rfc3339)
+                .map_err(ShopifyProductEventError::InvalidUpdatedAt)
+        })
+        .transpose()
 }
 
 fn active_raw_values(
@@ -156,7 +181,16 @@ fn active_raw_values(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or(ShopifyProductEventError::MissingHandle)?;
-    let raw_values = ProductListingRawValuesV1 {
+    let price = patch(
+        product
+            .variants
+            .first()
+            .and_then(|variant| variant.price.clone()),
+    );
+    if source.currency.is_none() && matches!(&price, ProductListingRawValuesPatch::Set(_)) {
+        return Err(ShopifyProductEventError::MissingListingSourceCurrency);
+    }
+    let raw_values = ProductListingRawValuesV2 {
         source_listing_id: product.id.to_string(),
         title: ProductListingRawValuesPatch::Set(title.to_owned()),
         description: match product.body_html.as_deref() {
@@ -165,12 +199,8 @@ fn active_raw_values(
             }
             None => ProductListingRawValuesPatch::Clear,
         },
-        price: patch(
-            product
-                .variants
-                .first()
-                .and_then(|variant| variant.price.clone()),
-        ),
+        price_format: ProductListingRawValuesPriceFormat::MachineDecimal,
+        price,
         price_estimate_min: ProductListingRawValuesPatch::Unchanged,
         price_estimate_max: ProductListingRawValuesPatch::Unchanged,
         availability: product_availability(product),
@@ -210,10 +240,10 @@ fn normalization_context(
 }
 
 fn patch(value: Option<String>) -> ProductListingRawValuesPatch<String> {
-    match value {
-        Some(value) => ProductListingRawValuesPatch::Set(value),
-        None => ProductListingRawValuesPatch::Clear,
-    }
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(ProductListingRawValuesPatch::Set)
+        .unwrap_or(ProductListingRawValuesPatch::Clear)
 }
 
 pub fn fallbacked_html_to_markdown(html: &str) -> String {
@@ -284,6 +314,14 @@ mod tests {
             RawProductListingOperation::Upsert
         );
         assert_eq!(
+            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            observation.input.raw_values_schema_version()
+        );
+        assert_eq!(
+            observation.input.raw_values().value()["priceFormat"],
+            json!("MACHINE_DECIMAL")
+        );
+        assert_eq!(
             observation.input.raw_values().value()["availability"],
             json!({"action": "SET", "value": "in stock"})
         );
@@ -315,20 +353,52 @@ mod tests {
                 action,
                 ShopifyListingAction::Capture(ShopifyRawObservation { input, .. })
                     if input.operation() == RawProductListingOperation::Delete
+                        && input.raw_values_schema_version()
+                            == product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2
             ));
         }
     }
 
     #[test]
-    fn should_ignore_missing_or_unsupported_status_without_capture() {
+    fn should_ignore_missing_or_unsupported_status_with_invalid_updated_at() {
+        for status in [None, Some("published")] {
+            let mut ignored_payload = payload(status);
+            ignored_payload["updated_at"] = json!("not-a-timestamp");
+
+            assert!(matches!(
+                ShopifyProductEventKind::Update.listing_action(&source(), ignored_payload),
+                Ok(ShopifyListingAction::Ignore)
+            ));
+        }
+    }
+
+    #[test]
+    fn should_reject_nonblank_provider_price_when_listing_source_currency_is_missing() {
+        let mut product = payload(Some("active"));
+        product["variants"] = json!([{"price": "42.00"}]);
+
         assert!(matches!(
-            ShopifyProductEventKind::Update.listing_action(&source(), payload(None)),
-            Ok(ShopifyListingAction::Ignore)
+            ShopifyProductEventKind::Create.listing_action(&source_without_currency(), product),
+            Err(ShopifyProductEventError::MissingListingSourceCurrency)
         ));
-        assert!(matches!(
-            ShopifyProductEventKind::Update.listing_action(&source(), payload(Some("published"))),
-            Ok(ShopifyListingAction::Ignore)
-        ));
+    }
+
+    #[test]
+    fn should_capture_blank_provider_price_as_clear_when_listing_source_currency_is_missing() {
+        let mut product = payload(Some("active"));
+        product["variants"] = json!([{"price": " \t "}]);
+
+        let action = ShopifyProductEventKind::Create
+            .listing_action(&source_without_currency(), product)
+            .unwrap_or_else(|error| panic!("mapping failed: {error}"));
+
+        let ShopifyListingAction::Capture(observation) = action else {
+            panic!("blank-price product must capture");
+        };
+        assert_eq!(
+            json!({"action": "CLEAR"}),
+            observation.input.raw_values().value()["price"]
+        );
     }
 
     #[test]
@@ -361,6 +431,12 @@ mod tests {
         }
     }
 
+    fn source_without_currency() -> ShopifySource {
+        let mut source = source();
+        source.currency = None;
+        source
+    }
+
     fn payload(status: Option<&str>) -> Value {
         json!({
             "id": 42,
@@ -382,6 +458,7 @@ mod tests {
             body_html: None,
             handle: Some("cabinet".to_owned()),
             status: Some("active".to_owned()),
+            updated_at: None,
             variants: vec![ShopifyVariantPayload {
                 price: None,
                 inventory_quantity,

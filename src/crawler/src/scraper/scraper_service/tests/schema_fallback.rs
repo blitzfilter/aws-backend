@@ -46,7 +46,7 @@ async fn scrape_with_schema_service(
         DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE,
     );
 
-    service.scrape(&id, &url, None, None, None).await
+    service.scrape(&id, &url, None, None, None, None).await
 }
 
 #[tokio::test]

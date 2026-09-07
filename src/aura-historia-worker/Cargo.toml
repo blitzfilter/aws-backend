@@ -60,3 +60,4 @@ search-filter-core = { workspace = true }
 indexmap = { workspace = true }
 serial_test = { workspace = true }
 test-api = { workspace = true, features = ["opensearch", "postgres", "sequin", "ses"] }
+tokio = { workspace = true, features = ["test-util"] }

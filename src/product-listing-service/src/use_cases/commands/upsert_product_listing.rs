@@ -995,13 +995,6 @@ mod tests {
         ) -> Result<Option<VersionedProductListing>, ProductListingRepositoryError> {
             Ok(test_lock(&self.0).finds.pop_front().flatten())
         }
-        async fn find_by_listing_source_and_url(
-            &mut self,
-            _: listing_source_core::ListingSourceId,
-            _: &url::Url,
-        ) -> Result<Vec<VersionedProductListing>, ProductListingRepositoryError> {
-            Ok(vec![])
-        }
         async fn insert(
             &mut self,
             listing: &ProductListing,

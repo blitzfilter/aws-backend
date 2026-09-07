@@ -11,7 +11,9 @@ use time::OffsetDateTime;
 use url::Url;
 
 use crate::scraper::scraper_service::DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE;
-use crate::spider::classification::url_metadata::{CrawlerDisposition, UrlClass};
+use crate::spider::classification::url_metadata::{
+    CrawlerDisposition, CrawlerUrlWriteOutcome, UrlClass,
+};
 
 // ---------------------------------------------------------------------------
 // ScraperCandidate
@@ -60,6 +62,7 @@ pub trait ScraperCandidateService: Send + Sync {
         exclude_url: &Url,
         limit: i64,
     ) -> Result<Vec<Url>, sqlx::Error>;
+    #[allow(clippy::too_many_arguments)]
     async fn mark_as_scraped(
         &self,
         listing_source_id: &ListingSourceId,
@@ -68,7 +71,8 @@ pub trait ScraperCandidateService: Send + Sync {
         schema_fingerprint: &str,
         raw_input_sha256: &[u8],
         disposition: CrawlerDisposition,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
     /// Touch a page/schema fast-path scrape without changing the raw input or disposition.
     async fn touch_scraped(
         &self,
@@ -76,19 +80,23 @@ pub trait ScraperCandidateService: Send + Sync {
         url: &Url,
         hash: &str,
         schema_fingerprint: &str,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
     async fn set_disposition(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
         disposition: CrawlerDisposition,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
     async fn set_class(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
         url_class: UrlClass,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
+    #[allow(clippy::too_many_arguments)]
     async fn mark_fetch_failure(
         &self,
         listing_source_id: &ListingSourceId,
@@ -97,7 +105,8 @@ pub trait ScraperCandidateService: Send + Sync {
         error_message: &str,
         status_code: Option<i32>,
         next_retry_at: OffsetDateTime,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
 
     /// Record a non-HTTP scraper failure (schema error, normalization error, etc.).
     ///
@@ -110,7 +119,8 @@ pub trait ScraperCandidateService: Send + Sync {
         url: &Url,
         error_kind: &str,
         error_message: &str,
-    ) -> Result<(), sqlx::Error>;
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
 
     /// Increment per-ListingSource LLM call counter used by schema generation flows.
     async fn increment_listing_source_llm_calls(
@@ -320,11 +330,12 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         schema_fingerprint: &str,
         raw_input_sha256: &[u8],
         disposition: CrawlerDisposition,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET last_scraped = NOW(),
                  last_scraped_hash = $3,
@@ -337,7 +348,11 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                  last_status_code = NULL,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $7::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
@@ -345,10 +360,15 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         .bind(schema_fingerprint)
         .bind(raw_input_sha256)
         .bind(disposition.as_str())
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn touch_scraped(
@@ -357,11 +377,12 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         url: &Url,
         hash: &str,
         schema_fingerprint: &str,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET last_scraped = NOW(),
                  last_scraped_hash = $3,
@@ -372,16 +393,25 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                  last_status_code = NULL,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $5::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(hash)
         .bind(schema_fingerprint)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn set_disposition(
@@ -389,23 +419,33 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         disposition: CrawlerDisposition,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET crawler_disposition = $3,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(disposition.as_str())
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn set_class(
@@ -413,25 +453,34 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         url_class: UrlClass,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
         let url_class_str = url_class.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET url_class = $3,
                  next_retry_at = NULL,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(url_class_str)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn mark_fetch_failure(
@@ -442,11 +491,12 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         error_message: &str,
         status_code: Option<i32>,
         next_retry_at: OffsetDateTime,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET failure_count = failure_count + 1,
                  last_error_kind = $3,
@@ -454,7 +504,11 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                  last_status_code = $5,
                  next_retry_at = $6,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $7::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
@@ -462,10 +516,15 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         .bind(error_message)
         .bind(status_code)
         .bind(next_retry_at)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn mark_scraper_failure(
@@ -474,25 +533,35 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         url: &Url,
         error_kind: &str,
         error_message: &str,
-    ) -> Result<(), sqlx::Error> {
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
         let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
         let url_str = url.to_string();
 
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE listing_source_urls
              SET last_error_kind = $3,
                  last_error_message = $4,
                  updated = NOW()
-             WHERE listing_source_id = $1 AND url = $2 AND url_class = 'product'",
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition = 'ACTIVE'
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $5::bytea",
         )
         .bind(listing_source_id_uuid)
         .bind(url_str)
         .bind(error_kind)
         .bind(error_message)
+        .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
     }
 
     async fn increment_listing_source_llm_calls(

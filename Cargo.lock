@@ -232,7 +232,6 @@ dependencies = [
  "fxrate-core",
  "fxrate-postgres",
  "google-cloud-auth",
- "html-to-markdown-rs",
  "http 1.5.0",
  "httpdate",
  "indexmap 2.14.1",
@@ -264,6 +263,7 @@ dependencies = [
  "product-listing-opensearch",
  "product-listing-postgres",
  "product-listing-service",
+ "product-service",
  "reqwest 0.12.28",
  "rstest",
  "search-filter-core",
@@ -291,6 +291,7 @@ dependencies = [
  "watchlist-core",
  "watchlist-postgres",
  "watchlist-service",
+ "woocommerce-service",
 ]
 
 [[package]]
@@ -9055,6 +9056,29 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "woocommerce-service"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "html-to-markdown-rs",
+ "listing-source-core",
+ "listing-source-service",
+ "localization",
+ "money",
+ "product-listing-normalization",
+ "product-listing-service",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "user-core",
+ "uuid",
+]
 
 [[package]]
 name = "writeable"

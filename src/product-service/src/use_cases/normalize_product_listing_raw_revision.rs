@@ -1,15 +1,18 @@
 use crate::ports::{
+    PendingProductListingRawStreamCursor, PendingProductListingRawStreamPageRequest,
     PendingProductListingRawStreamReader, ProductListingRawNormalizationCompletion,
     ProductListingRawNormalizationHead, ProductListingRawNormalizationOutcome,
     ProductListingRawNormalizationPortError, ProductListingRawNormalizationWriter,
     ProductListingRawNormalizationWriterFactory, ProductListingRawRevisionReader,
 };
 use application::patch_field::PatchField;
-use application::transaction::{Transaction, UnitOfWork};
+use application::transaction::{Transaction, TransactionError, UnitOfWork};
 use domain_primitives::change_outcome::ChangeOutcome;
 use indexmap::IndexSet;
+use product_listing_normalization::error::NormalizationFailureScope;
 use product_listing_normalization::{
-    ListingAvailabilityQuickCheck, ProductListingRawValuesNormalizationError,
+    ListingAvailabilityQuickCheck, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+    PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2, ProductListingRawValuesNormalizationError,
     ProductListingRawValuesNormalizationOutcome, ProductListingRawValuesNormalizer,
     ProductListingRawValuesPatch, ProductListingRawValuesResolved,
 };
@@ -23,7 +26,7 @@ use product_listing_service::ports::{
 use std::time::Instant;
 use time::OffsetDateTime;
 
-pub const NORMALIZER_VERSION: u16 = 1;
+pub const NORMALIZER_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizeProductListingRawRevisionMode {
@@ -33,7 +36,17 @@ pub enum NormalizeProductListingRawRevisionMode {
         product_listing_raw_revision_id: ProductListingRawRevisionId,
         revision: u64,
     },
+    /// Starts a bounded reconciliation traversal from its oldest pending stream.
     Reconcile,
+    /// Continues a bounded reconciliation traversal from a result cursor. A result without a
+    /// cursor has reached the end and the next run should use `Reconcile` to wrap safely.
+    ReconcileFromCursor {
+        pending_stream_cursor: PendingProductListingRawStreamCursor,
+    },
+    /// Drains one worker-local recovery continuation without reading or moving the page cursor.
+    ReconcileContinuation {
+        product_listing_raw_stream_id: ProductListingRawStreamId,
+    },
 }
 
 /// A wake-up is scoped to one stream; reconciliation uses the same handler and drains streams.
@@ -51,13 +64,26 @@ pub struct NormalizedRawRevisionResult {
     pub outcome: ProductListingRawNormalizationOutcome,
 }
 
+/// Safe metadata for a reconciliation stream that remains pending after a retryable failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductListingRawNormalizationStreamFailure {
+    pub product_listing_raw_stream_id: ProductListingRawStreamId,
+    pub error_code: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NormalizeProductListingRawRevisionResult {
     pub revisions: Vec<NormalizedRawRevisionResult>,
+    /// Per-stream reconciliation failures. Source errors remain internal to the handler.
+    pub stream_failures: Vec<ProductListingRawNormalizationStreamFailure>,
     /// Present for bounded reconciliation only; it is the scanned page, not an unbounded count.
     pub pending_stream_page_count: Option<usize>,
     /// Age of the oldest stream in the bounded reconciliation page.
     pub oldest_pending_age_seconds: Option<u64>,
+    /// Non-durable cursor for the next reconciliation page. `None` safely resets the traversal.
+    pub next_pending_stream_cursor: Option<PendingProductListingRawStreamCursor>,
+    /// Streams that need a later worker-local recovery turn after a clean capped drain.
+    pub continuation_stream_ids: Vec<ProductListingRawStreamId>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,19 +91,71 @@ pub enum NormalizeProductListingRawRevisionError {
     #[error("normalization work limit must be greater than zero")]
     InvalidLimit,
     #[error("failed to read pending raw product listing streams")]
-    PendingStreamReadFailed,
+    PendingStreamReadFailed {
+        #[source]
+        source: ProductListingRawNormalizationPortError,
+    },
     #[error("failed to begin raw product listing normalization transaction")]
-    BeginTransactionFailed,
+    BeginTransactionFailed {
+        #[source]
+        source: TransactionError,
+    },
     #[error("raw product listing normalization storage failed")]
-    PersistenceFailed,
+    PersistenceFailed {
+        #[source]
+        source: ProductListingRawNormalizationPortError,
+    },
     #[error("raw product listing normalization stored state is invalid")]
-    InvalidPersistedState,
+    InvalidPersistedState {
+        #[source]
+        source: ProductListingRawNormalizationPortError,
+    },
     #[error("raw product listing schema version is unsupported")]
     UnsupportedStoredSchemaVersion,
+    #[error("raw product listing normalizer configuration is invalid")]
+    NormalizationConfigurationFailed {
+        #[source]
+        source: ProductListingRawValuesNormalizationError,
+    },
     #[error("raw product listing normalization failed")]
-    CanonicalWriteFailed,
+    CanonicalWriteFailed {
+        #[source]
+        source: CanonicalProductListingWriteError,
+    },
     #[error("failed to commit raw product listing normalization transaction")]
-    CommitTransactionFailed,
+    CommitTransactionFailed {
+        #[source]
+        source: TransactionError,
+    },
+}
+
+#[derive(Debug)]
+struct StreamDrainResult {
+    revisions: Vec<NormalizedRawRevisionResult>,
+    error: Option<NormalizeProductListingRawRevisionError>,
+}
+
+impl StreamDrainResult {
+    fn completed(revisions: Vec<NormalizedRawRevisionResult>) -> Self {
+        Self {
+            revisions,
+            error: None,
+        }
+    }
+
+    fn failed(
+        revisions: Vec<NormalizedRawRevisionResult>,
+        error: NormalizeProductListingRawRevisionError,
+    ) -> Self {
+        Self {
+            revisions,
+            error: Some(error),
+        }
+    }
+
+    fn requires_continuation(&self, max_revisions: u32) -> bool {
+        self.error.is_none() && u32::try_from(self.revisions.len()) == Ok(max_revisions)
+    }
 }
 
 #[async_trait::async_trait]
@@ -128,57 +206,84 @@ where
         &self,
         product_listing_raw_stream_id: ProductListingRawStreamId,
         max_revisions: u32,
-    ) -> Result<Vec<NormalizedRawRevisionResult>, NormalizeProductListingRawRevisionError> {
+    ) -> StreamDrainResult {
         let mut results = Vec::new();
         for _ in 0..max_revisions {
-            let Some(candidate) = self
+            let candidate = match self
                 .pending_streams
                 .find_next_revision(product_listing_raw_stream_id)
                 .await
-                .map_err(map_port_error)?
-            else {
-                return Ok(results);
+            {
+                Ok(candidate) => candidate,
+                Err(error) => return StreamDrainResult::failed(results, map_port_error(error)),
             };
-            validate_stored_schema(&candidate.input)?;
-            let normalized = self.normalizer.normalize(&candidate.input);
-            let mut tx = self
-                .unit_of_work
-                .begin()
-                .await
-                .map_err(|_| NormalizeProductListingRawRevisionError::BeginTransactionFailed)?;
-            let work = self
+            let Some(candidate) = candidate else {
+                return StreamDrainResult::completed(results);
+            };
+            if let Err(error) = validate_stored_schema(&candidate.input) {
+                return StreamDrainResult::failed(results, error);
+            }
+            let normalized = match require_terminal_normalization_outcome(
+                self.normalizer.normalize(&candidate.input),
+            ) {
+                Ok(normalized) => normalized,
+                Err(error) => return StreamDrainResult::failed(results, error),
+            };
+            let mut tx = match self.unit_of_work.begin().await {
+                Ok(tx) => tx,
+                Err(source) => {
+                    return StreamDrainResult::failed(
+                        results,
+                        NormalizeProductListingRawRevisionError::BeginTransactionFailed { source },
+                    );
+                }
+            };
+            let work = match self
                 .raw_normalizations
                 .in_transaction(&mut tx)
                 .lock_next(product_listing_raw_stream_id)
                 .await
-                .map_err(map_port_error)?;
+            {
+                Ok(work) => work,
+                Err(error) => return StreamDrainResult::failed(results, map_port_error(error)),
+            };
             let Some(revision) = work.next_revision else {
-                return Ok(results);
+                return StreamDrainResult::completed(results);
             };
             if revision.product_listing_raw_revision_id != candidate.product_listing_raw_revision_id
                 || revision.revision != candidate.revision
             {
                 continue;
             }
-            let completion = self
+            let completion = match self
                 .complete_work_in_transaction(&mut tx, work.head, revision, &normalized)
-                .await?;
+                .await
+            {
+                Ok(completion) => completion,
+                Err(error) => return StreamDrainResult::failed(results, error),
+            };
             let result = NormalizedRawRevisionResult {
                 product_listing_raw_stream_id,
                 revision: completion.revision,
                 outcome: completion.outcome,
             };
-            self.raw_normalizations
+            if let Err(error) = self
+                .raw_normalizations
                 .in_transaction(&mut tx)
                 .complete(completion)
                 .await
-                .map_err(map_port_error)?;
-            tx.commit()
-                .await
-                .map_err(|_| NormalizeProductListingRawRevisionError::CommitTransactionFailed)?;
+            {
+                return StreamDrainResult::failed(results, map_port_error(error));
+            }
+            if let Err(source) = tx.commit().await {
+                return StreamDrainResult::failed(
+                    results,
+                    NormalizeProductListingRawRevisionError::CommitTransactionFailed { source },
+                );
+            }
             results.push(result);
         }
-        Ok(results)
+        StreamDrainResult::completed(results)
     }
 
     async fn complete_work_in_transaction(
@@ -228,8 +333,12 @@ where
                             Some("CANONICAL_PRODUCT_LISTING_INVALID"),
                         ));
                     }
-                    Err(_) => {
-                        return Err(NormalizeProductListingRawRevisionError::CanonicalWriteFailed);
+                    Err(source) => {
+                        return Err(
+                            NormalizeProductListingRawRevisionError::CanonicalWriteFailed {
+                                source,
+                            },
+                        );
                     }
                 };
                 Ok(completion(
@@ -279,8 +388,12 @@ where
                             Some("CANONICAL_PRODUCT_LISTING_INVALID"),
                         ));
                     }
-                    Err(_) => {
-                        return Err(NormalizeProductListingRawRevisionError::CanonicalWriteFailed);
+                    Err(source) => {
+                        return Err(
+                            NormalizeProductListingRawRevisionError::CanonicalWriteFailed {
+                                source,
+                            },
+                        );
                     }
                 };
                 let mut completion = completion(
@@ -319,47 +432,109 @@ where
         if command.max_revisions_per_stream == 0 || command.pending_stream_limit == 0 {
             return Err(NormalizeProductListingRawRevisionError::InvalidLimit);
         }
-        let (streams, pending_stream_page_count, oldest_pending_age_seconds) = match command.mode {
+        let max_revisions_per_stream = command.max_revisions_per_stream;
+        let pending_stream_limit = command.pending_stream_limit;
+        let cursor = match command.mode {
             NormalizeProductListingRawRevisionMode::RawRevision {
                 product_listing_raw_stream_id,
                 product_listing_raw_revision_id: _,
                 revision: _,
-            } => (vec![product_listing_raw_stream_id], None, None),
-            NormalizeProductListingRawRevisionMode::Reconcile => {
-                let pending = self
-                    .pending_streams
-                    .list_pending_streams(command.pending_stream_limit)
-                    .await
-                    .map_err(|_| {
-                        NormalizeProductListingRawRevisionError::PendingStreamReadFailed
-                    })?;
-                let oldest_pending_age_seconds = pending
-                    .iter()
-                    .map(|stream| stream.oldest_pending_at)
-                    .min()
-                    .and_then(pending_age_seconds);
-                let pending_stream_page_count = Some(pending.len());
-                let streams = pending
-                    .into_iter()
-                    .map(|stream| stream.product_listing_raw_stream_id)
-                    .collect();
-                (
-                    streams,
-                    pending_stream_page_count,
-                    oldest_pending_age_seconds,
-                )
+            } => {
+                let StreamDrainResult { revisions, error } = self
+                    .drain_stream(product_listing_raw_stream_id, max_revisions_per_stream)
+                    .await;
+                if let Some(error) = error {
+                    return Err(error);
+                }
+                return Ok(NormalizeProductListingRawRevisionResult {
+                    revisions,
+                    stream_failures: Vec::new(),
+                    pending_stream_page_count: None,
+                    oldest_pending_age_seconds: None,
+                    next_pending_stream_cursor: None,
+                    continuation_stream_ids: Vec::new(),
+                });
             }
+            NormalizeProductListingRawRevisionMode::ReconcileContinuation {
+                product_listing_raw_stream_id,
+            } => {
+                let drain = self
+                    .drain_stream(product_listing_raw_stream_id, max_revisions_per_stream)
+                    .await;
+                let requires_continuation = drain.requires_continuation(max_revisions_per_stream);
+                let StreamDrainResult { revisions, error } = drain;
+                let stream_failures = error
+                    .into_iter()
+                    .map(|error| ProductListingRawNormalizationStreamFailure {
+                        product_listing_raw_stream_id,
+                        error_code: normalization_failure_code(&error),
+                    })
+                    .collect();
+                return Ok(NormalizeProductListingRawRevisionResult {
+                    revisions,
+                    stream_failures,
+                    pending_stream_page_count: None,
+                    oldest_pending_age_seconds: None,
+                    next_pending_stream_cursor: None,
+                    continuation_stream_ids: if requires_continuation {
+                        vec![product_listing_raw_stream_id]
+                    } else {
+                        Vec::new()
+                    },
+                });
+            }
+            NormalizeProductListingRawRevisionMode::Reconcile => None,
+            NormalizeProductListingRawRevisionMode::ReconcileFromCursor {
+                pending_stream_cursor,
+            } => Some(pending_stream_cursor),
         };
+        let pending_page =
+            self.pending_streams
+                .list_pending_stream_page(PendingProductListingRawStreamPageRequest {
+                    limit: pending_stream_limit,
+                    cursor,
+                })
+                .await
+                .map_err(|source| {
+                    NormalizeProductListingRawRevisionError::PendingStreamReadFailed { source }
+                })?;
+        let oldest_pending_age_seconds = pending_page
+            .streams
+            .iter()
+            .map(|stream| stream.oldest_pending_at)
+            .min()
+            .and_then(pending_age_seconds);
         let mut result = NormalizeProductListingRawRevisionResult {
             revisions: Vec::new(),
-            pending_stream_page_count,
+            stream_failures: Vec::new(),
+            pending_stream_page_count: Some(pending_page.streams.len()),
             oldest_pending_age_seconds,
+            next_pending_stream_cursor: pending_page.next_cursor,
+            continuation_stream_ids: Vec::new(),
         };
-        for stream in streams {
-            result.revisions.extend(
-                self.drain_stream(stream, command.max_revisions_per_stream)
-                    .await?,
-            );
+        for stream in pending_page.streams {
+            let drain = self
+                .drain_stream(
+                    stream.product_listing_raw_stream_id,
+                    max_revisions_per_stream,
+                )
+                .await;
+            let requires_continuation = drain.requires_continuation(max_revisions_per_stream);
+            let StreamDrainResult { revisions, error } = drain;
+            result.revisions.extend(revisions);
+            if requires_continuation {
+                result
+                    .continuation_stream_ids
+                    .push(stream.product_listing_raw_stream_id);
+            }
+            if let Some(error) = error {
+                result
+                    .stream_failures
+                    .push(ProductListingRawNormalizationStreamFailure {
+                        product_listing_raw_stream_id: stream.product_listing_raw_stream_id,
+                        error_code: normalization_failure_code(&error),
+                    });
+            }
         }
         Ok(result)
     }
@@ -386,6 +561,18 @@ where
 
         match &result {
             Ok(result) => {
+                for failure in &result.stream_failures {
+                    tracing::warn!(
+                        metric = "product_listing_raw_normalization",
+                        normalization_revisions = 0_u64,
+                        normalization_failures = 1_u64,
+                        normalization_batch_latency_ms = started.elapsed().as_millis() as u64,
+                        product_listing_raw_stream_id = %failure.product_listing_raw_stream_id.as_uuid(),
+                        outcome = "stream_failure",
+                        error_code = failure.error_code,
+                        "raw product listing reconciliation stream failed"
+                    );
+                }
                 for revision in &result.revisions {
                     tracing::info!(
                         metric = "product_listing_raw_normalization",
@@ -403,6 +590,8 @@ where
                         metric = "product_listing_raw_normalization_backlog",
                         pending_stream_page_count,
                         oldest_pending_age_seconds = result.oldest_pending_age_seconds,
+                        reconciliation_continuation_stream_count =
+                            result.continuation_stream_ids.len(),
                         reconciliation_runs = 1_u64,
                         "raw product listing normalization backlog metric"
                     );
@@ -431,19 +620,26 @@ fn pending_age_seconds(oldest_pending_at: OffsetDateTime) -> Option<u64> {
 fn normalization_failure_code(error: &NormalizeProductListingRawRevisionError) -> &'static str {
     match error {
         NormalizeProductListingRawRevisionError::InvalidLimit => "INVALID_LIMIT",
-        NormalizeProductListingRawRevisionError::PendingStreamReadFailed => {
+        NormalizeProductListingRawRevisionError::PendingStreamReadFailed { .. } => {
             "PENDING_STREAM_READ_FAILED"
         }
-        NormalizeProductListingRawRevisionError::BeginTransactionFailed => {
+        NormalizeProductListingRawRevisionError::BeginTransactionFailed { .. } => {
             "BEGIN_TRANSACTION_FAILED"
         }
-        NormalizeProductListingRawRevisionError::PersistenceFailed => "PERSISTENCE_FAILED",
-        NormalizeProductListingRawRevisionError::InvalidPersistedState => "INVALID_PERSISTED_STATE",
+        NormalizeProductListingRawRevisionError::PersistenceFailed { .. } => "PERSISTENCE_FAILED",
+        NormalizeProductListingRawRevisionError::InvalidPersistedState { .. } => {
+            "INVALID_PERSISTED_STATE"
+        }
         NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion => {
             "UNSUPPORTED_STORED_SCHEMA_VERSION"
         }
-        NormalizeProductListingRawRevisionError::CanonicalWriteFailed => "CANONICAL_WRITE_FAILED",
-        NormalizeProductListingRawRevisionError::CommitTransactionFailed => {
+        NormalizeProductListingRawRevisionError::NormalizationConfigurationFailed { .. } => {
+            "NORMALIZATION_CONFIGURATION_FAILED"
+        }
+        NormalizeProductListingRawRevisionError::CanonicalWriteFailed { .. } => {
+            "CANONICAL_WRITE_FAILED"
+        }
+        NormalizeProductListingRawRevisionError::CommitTransactionFailed { .. } => {
             "COMMIT_TRANSACTION_FAILED"
         }
     }
@@ -502,7 +698,13 @@ fn availability_patch(
 fn validate_stored_schema(
     input: &product_listing_normalization::ProductListingNormalizationInput,
 ) -> Result<(), NormalizeProductListingRawRevisionError> {
-    if input.payload_schema_version() != 1 || input.raw_values_schema_version() != 1 {
+    if input.payload_schema_version() != 1
+        || !matches!(
+            input.raw_values_schema_version(),
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1
+                | PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2
+        )
+    {
         return Err(NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion);
     }
     Ok(())
@@ -530,9 +732,27 @@ fn completion(
     }
 }
 
+fn require_terminal_normalization_outcome(
+    outcome: ProductListingRawValuesNormalizationOutcome,
+) -> Result<ProductListingRawValuesNormalizationOutcome, NormalizeProductListingRawRevisionError> {
+    match outcome {
+        ProductListingRawValuesNormalizationOutcome::Invalid(error)
+            if error.failure_scope() == NormalizationFailureScope::System =>
+        {
+            Err(
+                NormalizeProductListingRawRevisionError::NormalizationConfigurationFailed {
+                    source: error,
+                },
+            )
+        }
+        outcome => Ok(outcome),
+    }
+}
+
 fn normalization_error_code(error: &ProductListingRawValuesNormalizationError) -> &'static str {
     match error {
-        ProductListingRawValuesNormalizationError::InvalidRawValuesV1(_) => "RAW_VALUES_INVALID",
+        ProductListingRawValuesNormalizationError::InvalidRawValuesV1(_)
+        | ProductListingRawValuesNormalizationError::InvalidRawValuesV2(_) => "RAW_VALUES_INVALID",
         ProductListingRawValuesNormalizationError::InvalidNormalizationContextV1(_) => {
             "NORMALIZATION_CONTEXT_INVALID"
         }
@@ -540,6 +760,9 @@ fn normalization_error_code(error: &ProductListingRawValuesNormalizationError) -
             "NORMALIZATION_BASE_URL_INVALID"
         }
         ProductListingRawValuesNormalizationError::InvalidUrl(_) => "LISTING_URL_INVALID",
+        ProductListingRawValuesNormalizationError::MachineDecimalFallbackCurrencyRequired => {
+            "MACHINE_DECIMAL_FALLBACK_CURRENCY_REQUIRED"
+        }
         ProductListingRawValuesNormalizationError::UnsupportedFallbackCurrency => {
             "FALLBACK_CURRENCY_UNSUPPORTED"
         }
@@ -563,11 +786,11 @@ fn map_port_error(
     error: ProductListingRawNormalizationPortError,
 ) -> NormalizeProductListingRawRevisionError {
     match error {
-        ProductListingRawNormalizationPortError::Persistence { .. } => {
-            NormalizeProductListingRawRevisionError::PersistenceFailed
+        error @ ProductListingRawNormalizationPortError::Persistence { .. } => {
+            NormalizeProductListingRawRevisionError::PersistenceFailed { source: error }
         }
-        ProductListingRawNormalizationPortError::InvalidPersistedState { .. } => {
-            NormalizeProductListingRawRevisionError::InvalidPersistedState
+        error @ ProductListingRawNormalizationPortError::InvalidPersistedState { .. } => {
+            NormalizeProductListingRawRevisionError::InvalidPersistedState { source: error }
         }
     }
 }
@@ -601,6 +824,41 @@ mod tests {
     struct TestEvents;
     struct TestEventAppender;
     struct TestRevisionReader(Arc<Mutex<TestRawState>>);
+    struct FailingFirstPendingReader {
+        state: Arc<Mutex<TestRawState>>,
+        blocked_stream_id: ProductListingRawStreamId,
+        healthy_stream_id: ProductListingRawStreamId,
+        fail_after_healthy_completion: bool,
+    }
+    struct FailingPendingListReader;
+    struct CappedContinuationRawFactory(Arc<Mutex<CappedContinuationState>>);
+    struct CappedContinuationRawWriter<'a>(&'a Arc<Mutex<CappedContinuationState>>);
+    struct CappedContinuationReader(Arc<Mutex<CappedContinuationState>>);
+    struct CappedContinuationState {
+        product_listing_raw_stream_id: ProductListingRawStreamId,
+        next_revision: u64,
+        last_revision: u64,
+        input: ProductListingNormalizationInput,
+        completions: Vec<ProductListingRawNormalizationCompletion>,
+    }
+
+    fn input_with_schema_versions(
+        payload_schema_version: u16,
+        raw_values_schema_version: u16,
+    ) -> Result<
+        ProductListingNormalizationInput,
+        product_listing_normalization::NormalizationInputError,
+    > {
+        ProductListingNormalizationInput::new(
+            RawProductListingOperation::Delete,
+            RawProductListingPayloadFormat::CrawlerExtractedProduct,
+            payload_schema_version,
+            raw_values_schema_version,
+            SourcePayload::new(serde_json::json!({}))?,
+            RawProductListingValues::new(serde_json::json!({}))?,
+            NormalizationContext::new(serde_json::json!({}))?,
+        )
+    }
 
     #[async_trait::async_trait]
     impl Transaction for TestTx {
@@ -671,6 +929,65 @@ mod tests {
     }
 
     #[async_trait::async_trait]
+    impl ProductListingRawNormalizationWriter for CappedContinuationRawWriter<'_> {
+        async fn lock_next(
+            &mut self,
+            product_listing_raw_stream_id: ProductListingRawStreamId,
+        ) -> Result<
+            crate::ports::ProductListingRawNormalizationWork,
+            ProductListingRawNormalizationPortError,
+        > {
+            let state = self
+                .0
+                .lock()
+                .map_err(|_| capped_continuation_port_error("test lock poisoned"))?;
+            if product_listing_raw_stream_id != state.product_listing_raw_stream_id {
+                return Err(capped_continuation_port_error("unexpected raw stream"));
+            }
+            Ok(crate::ports::ProductListingRawNormalizationWork {
+                head: ProductListingRawNormalizationHead {
+                    product_listing_raw_stream_id,
+                    listing_source_id: ListingSourceId::from(uuid::Uuid::nil()),
+                    last_processed_revision: state.next_revision.saturating_sub(1),
+                    product_listing_id: None,
+                    source_listing_id: None,
+                },
+                next_revision: capped_continuation_revision(&state),
+            })
+        }
+
+        async fn complete(
+            &mut self,
+            completion: ProductListingRawNormalizationCompletion,
+        ) -> Result<(), ProductListingRawNormalizationPortError> {
+            let mut state = self
+                .0
+                .lock()
+                .map_err(|_| capped_continuation_port_error("test lock poisoned"))?;
+            if completion.product_listing_raw_stream_id != state.product_listing_raw_stream_id
+                || completion.revision != state.next_revision
+            {
+                return Err(capped_continuation_port_error("unexpected raw completion"));
+            }
+            state.next_revision = state
+                .next_revision
+                .checked_add(1)
+                .ok_or_else(|| capped_continuation_port_error("test revision overflow"))?;
+            state.completions.push(completion);
+            Ok(())
+        }
+    }
+
+    impl ProductListingRawNormalizationWriterFactory<TestTx> for CappedContinuationRawFactory {
+        fn in_transaction<'tx>(
+            &'tx self,
+            _: &'tx mut TestTx,
+        ) -> impl ProductListingRawNormalizationWriter + 'tx {
+            CappedContinuationRawWriter(&self.0)
+        }
+    }
+
+    #[async_trait::async_trait]
     impl ProductListingRepository for TestProductRepository {
         async fn find_by_id(
             &mut self,
@@ -690,16 +1007,7 @@ mod tests {
         > {
             Ok(None)
         }
-        async fn find_by_listing_source_and_url(
-            &mut self,
-            _: listing_source_core::ListingSourceId,
-            _: &url::Url,
-        ) -> Result<
-            Vec<product_listing_service::ports::VersionedProductListing>,
-            ProductListingRepositoryError,
-        > {
-            Ok(vec![])
-        }
+
         async fn insert(
             &mut self,
             _: &product_listing_core::product_listing::ProductListing,
@@ -777,26 +1085,213 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PendingProductListingRawStreamReader for TestRevisionReader {
-        async fn list_pending_streams(
+        async fn list_pending_stream_page(
             &self,
-            _: u32,
+            _: crate::ports::PendingProductListingRawStreamPageRequest,
         ) -> Result<
-            Vec<crate::ports::PendingProductListingRawStream>,
+            crate::ports::PendingProductListingRawStreamPage,
             ProductListingRawNormalizationPortError,
         > {
-            Ok(vec![])
+            Ok(crate::ports::PendingProductListingRawStreamPage::default())
         }
     }
 
+    #[async_trait::async_trait]
+    impl ProductListingRawRevisionReader for CappedContinuationReader {
+        async fn find_next_revision(
+            &self,
+            product_listing_raw_stream_id: ProductListingRawStreamId,
+        ) -> Result<
+            Option<crate::ports::ProductListingRawRevision>,
+            ProductListingRawNormalizationPortError,
+        > {
+            let state = self
+                .0
+                .lock()
+                .map_err(|_| capped_continuation_port_error("test lock poisoned"))?;
+            if product_listing_raw_stream_id != state.product_listing_raw_stream_id {
+                return Err(capped_continuation_port_error("unexpected raw stream"));
+            }
+            Ok(capped_continuation_revision(&state))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PendingProductListingRawStreamReader for CappedContinuationReader {
+        async fn list_pending_stream_page(
+            &self,
+            _: crate::ports::PendingProductListingRawStreamPageRequest,
+        ) -> Result<
+            crate::ports::PendingProductListingRawStreamPage,
+            ProductListingRawNormalizationPortError,
+        > {
+            let state = self
+                .0
+                .lock()
+                .map_err(|_| capped_continuation_port_error("test lock poisoned"))?;
+            Ok(crate::ports::PendingProductListingRawStreamPage {
+                streams: vec![crate::ports::PendingProductListingRawStream {
+                    product_listing_raw_stream_id: state.product_listing_raw_stream_id,
+                    oldest_pending_at: OffsetDateTime::UNIX_EPOCH,
+                }],
+                next_cursor: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingRawRevisionReader for FailingFirstPendingReader {
+        async fn find_next_revision(
+            &self,
+            product_listing_raw_stream_id: ProductListingRawStreamId,
+        ) -> Result<
+            Option<crate::ports::ProductListingRawRevision>,
+            ProductListingRawNormalizationPortError,
+        > {
+            if product_listing_raw_stream_id == self.blocked_stream_id {
+                return Err(ProductListingRawNormalizationPortError::Persistence {
+                    source: application::error::box_error(std::io::Error::other(
+                        "transient test failure",
+                    )),
+                });
+            }
+            if product_listing_raw_stream_id != self.healthy_stream_id {
+                return Ok(None);
+            }
+            let state = self.state.lock().map_err(|_| {
+                ProductListingRawNormalizationPortError::InvalidPersistedState {
+                    source: application::error::box_error(std::io::Error::other(
+                        "test lock poisoned",
+                    )),
+                }
+            })?;
+            let next_revision = state
+                .work
+                .as_ref()
+                .and_then(|work| work.next_revision.clone());
+            if next_revision.is_none() && self.fail_after_healthy_completion {
+                return Err(ProductListingRawNormalizationPortError::Persistence {
+                    source: application::error::box_error(std::io::Error::other(
+                        "transient test failure after commit",
+                    )),
+                });
+            }
+            Ok(next_revision)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PendingProductListingRawStreamReader for FailingFirstPendingReader {
+        async fn list_pending_stream_page(
+            &self,
+            _: crate::ports::PendingProductListingRawStreamPageRequest,
+        ) -> Result<
+            crate::ports::PendingProductListingRawStreamPage,
+            ProductListingRawNormalizationPortError,
+        > {
+            let now = OffsetDateTime::now_utc();
+            Ok(crate::ports::PendingProductListingRawStreamPage {
+                streams: vec![
+                    crate::ports::PendingProductListingRawStream {
+                        product_listing_raw_stream_id: self.blocked_stream_id,
+                        oldest_pending_at: now - time::Duration::seconds(1),
+                    },
+                    crate::ports::PendingProductListingRawStream {
+                        product_listing_raw_stream_id: self.healthy_stream_id,
+                        oldest_pending_at: now,
+                    },
+                ],
+                next_cursor: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingRawRevisionReader for FailingPendingListReader {
+        async fn find_next_revision(
+            &self,
+            _: ProductListingRawStreamId,
+        ) -> Result<
+            Option<crate::ports::ProductListingRawRevision>,
+            ProductListingRawNormalizationPortError,
+        > {
+            Ok(None)
+        }
+    }
+
+    fn capped_continuation_revision(
+        state: &CappedContinuationState,
+    ) -> Option<crate::ports::ProductListingRawRevision> {
+        (state.next_revision <= state.last_revision).then(|| {
+            crate::ports::ProductListingRawRevision {
+                product_listing_raw_revision_id: ProductListingRawRevisionId::from_uuid(
+                    uuid::Uuid::from_u128(u128::from(state.next_revision)),
+                ),
+                product_listing_raw_stream_id: state.product_listing_raw_stream_id,
+                revision: state.next_revision,
+                input: state.input.clone(),
+            }
+        })
+    }
+
+    fn capped_continuation_port_error(
+        message: &'static str,
+    ) -> ProductListingRawNormalizationPortError {
+        ProductListingRawNormalizationPortError::InvalidPersistedState {
+            source: application::error::box_error(std::io::Error::other(message)),
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PendingProductListingRawStreamReader for FailingPendingListReader {
+        async fn list_pending_stream_page(
+            &self,
+            _: crate::ports::PendingProductListingRawStreamPageRequest,
+        ) -> Result<
+            crate::ports::PendingProductListingRawStreamPage,
+            ProductListingRawNormalizationPortError,
+        > {
+            Err(ProductListingRawNormalizationPortError::Persistence {
+                source: application::error::box_error(std::io::Error::other(
+                    "pending stream list failed",
+                )),
+            })
+        }
+    }
+
+    #[test]
+    fn should_return_retryable_configuration_error_for_system_normalization_failure() {
+        let result = require_terminal_normalization_outcome(
+            ProductListingRawValuesNormalizationOutcome::Invalid(
+                ProductListingRawValuesNormalizationError::Availability(
+                    product_listing_normalization::NormalizationError::AvailabilityRegexSetCompilationFailed,
+                ),
+            ),
+        );
+
+        assert!(matches!(
+            result,
+            Err(
+                NormalizeProductListingRawRevisionError::NormalizationConfigurationFailed {
+                    source:
+                        ProductListingRawValuesNormalizationError::Availability(
+                            product_listing_normalization::NormalizationError::AvailabilityRegexSetCompilationFailed
+                        ),
+                }
+            )
+        ));
+    }
+
     #[tokio::test]
-    async fn should_reject_invalid_raw_values_and_advance_stream_head() {
+    async fn should_reject_invalid_v2_raw_values_from_the_revision_reader_and_advance_stream_head()
+    {
         let stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
         let revision_id = ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4());
         let input = ProductListingNormalizationInput::new(
             RawProductListingOperation::Upsert,
             RawProductListingPayloadFormat::ShopifyProduct,
             1,
-            1,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
             SourcePayload::new(serde_json::json!({}))
                 .unwrap_or_else(|error| panic!("input: {error}")),
             RawProductListingValues::new(serde_json::json!({"sourceListingId": "only-id"}))
@@ -860,11 +1355,232 @@ mod tests {
         assert!(matches!(
             state.completions.as_slice(),
             [ProductListingRawNormalizationCompletion {
+                normalizer_version: NORMALIZER_VERSION,
                 outcome: ProductListingRawNormalizationOutcome::Rejected,
                 error_code: Some("RAW_VALUES_INVALID"),
                 ..
             }]
         ));
+    }
+
+    #[tokio::test]
+    async fn should_report_stream_failures_without_fifo_continuations_when_reconciliation_continues()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let blocked_stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
+        let healthy_stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
+        let healthy_revision_id = ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4());
+        let input = ProductListingNormalizationInput::new(
+            RawProductListingOperation::Upsert,
+            RawProductListingPayloadFormat::ShopifyProduct,
+            1,
+            1,
+            SourcePayload::new(serde_json::json!({}))?,
+            RawProductListingValues::new(serde_json::json!({"sourceListingId": "only-id"}))?,
+            NormalizationContext::new(serde_json::json!({}))?,
+        )?;
+        let state = Arc::new(Mutex::new(TestRawState {
+            work: Some(crate::ports::ProductListingRawNormalizationWork {
+                head: ProductListingRawNormalizationHead {
+                    product_listing_raw_stream_id: healthy_stream_id,
+                    listing_source_id: ListingSourceId::from(uuid::Uuid::new_v4()),
+                    last_processed_revision: 0,
+                    product_listing_id: None,
+                    source_listing_id: None,
+                },
+                next_revision: Some(crate::ports::ProductListingRawRevision {
+                    product_listing_raw_revision_id: healthy_revision_id,
+                    product_listing_raw_stream_id: healthy_stream_id,
+                    revision: 1,
+                    input,
+                }),
+            }),
+            completions: vec![],
+        }));
+        let committed = Arc::new(Mutex::new(false));
+        let handler = NormalizeProductListingRawRevisionHandler::new(
+            TestUnitOfWork(Arc::clone(&committed)),
+            TestRawFactory(Arc::clone(&state)),
+            TestProducts,
+            TestEvents,
+            FailingFirstPendingReader {
+                state: Arc::clone(&state),
+                blocked_stream_id,
+                healthy_stream_id,
+                fail_after_healthy_completion: true,
+            },
+        );
+
+        let result = handler
+            .execute(NormalizeProductListingRawRevisionCommand {
+                mode: NormalizeProductListingRawRevisionMode::Reconcile,
+                max_revisions_per_stream: 2,
+                pending_stream_limit: 2,
+            })
+            .await?;
+
+        assert_eq!(
+            [NormalizedRawRevisionResult {
+                product_listing_raw_stream_id: healthy_stream_id,
+                revision: 1,
+                outcome: ProductListingRawNormalizationOutcome::Rejected,
+            }],
+            result.revisions.as_slice()
+        );
+        assert_eq!(
+            [
+                ProductListingRawNormalizationStreamFailure {
+                    product_listing_raw_stream_id: blocked_stream_id,
+                    error_code: "PERSISTENCE_FAILED",
+                },
+                ProductListingRawNormalizationStreamFailure {
+                    product_listing_raw_stream_id: healthy_stream_id,
+                    error_code: "PERSISTENCE_FAILED",
+                },
+            ],
+            result.stream_failures.as_slice()
+        );
+        assert_eq!(Some(2), result.pending_stream_page_count);
+        assert_eq!(None, result.next_pending_stream_cursor);
+        assert!(result.continuation_stream_ids.is_empty());
+        assert!(matches!(committed.lock(), Ok(committed) if *committed));
+        assert!(matches!(
+            state.lock(),
+            Ok(state) if matches!(
+                state.completions.as_slice(),
+                [ProductListingRawNormalizationCompletion {
+                    product_listing_raw_stream_id,
+                    revision: 1,
+                    outcome: ProductListingRawNormalizationOutcome::Rejected,
+                    ..
+                }] if *product_listing_raw_stream_id == healthy_stream_id
+            )
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_capped_reconciliation_stream_as_worker_continuation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let product_listing_raw_stream_id =
+            ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
+        let state = Arc::new(Mutex::new(CappedContinuationState {
+            product_listing_raw_stream_id,
+            next_revision: 1,
+            last_revision: 3,
+            input: input_with_schema_versions(1, 1)?,
+            completions: Vec::new(),
+        }));
+        let committed = Arc::new(Mutex::new(false));
+        let handler = NormalizeProductListingRawRevisionHandler::new(
+            TestUnitOfWork(Arc::clone(&committed)),
+            CappedContinuationRawFactory(Arc::clone(&state)),
+            TestProducts,
+            TestEvents,
+            CappedContinuationReader(Arc::clone(&state)),
+        );
+
+        let first = handler
+            .execute(NormalizeProductListingRawRevisionCommand {
+                mode: NormalizeProductListingRawRevisionMode::Reconcile,
+                max_revisions_per_stream: 2,
+                pending_stream_limit: 1,
+            })
+            .await?;
+
+        assert_eq!(
+            [1, 2],
+            first
+                .revisions
+                .iter()
+                .map(|revision| revision.revision)
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        assert_eq!(
+            [product_listing_raw_stream_id],
+            first.continuation_stream_ids.as_slice()
+        );
+
+        let continuation = handler
+            .execute(NormalizeProductListingRawRevisionCommand {
+                mode: NormalizeProductListingRawRevisionMode::ReconcileContinuation {
+                    product_listing_raw_stream_id,
+                },
+                max_revisions_per_stream: 2,
+                pending_stream_limit: 1,
+            })
+            .await?;
+
+        assert_eq!(
+            [3],
+            continuation
+                .revisions
+                .iter()
+                .map(|revision| revision.revision)
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        assert!(continuation.continuation_stream_ids.is_empty());
+        assert!(matches!(committed.lock(), Ok(committed) if *committed));
+        assert!(matches!(state.lock(), Ok(state) if state.completions.len() == 3));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_pending_list_failure_as_overall_error() {
+        let state = Arc::new(Mutex::new(TestRawState {
+            work: None,
+            completions: vec![],
+        }));
+        let committed = Arc::new(Mutex::new(false));
+        let handler = NormalizeProductListingRawRevisionHandler::new(
+            TestUnitOfWork(Arc::clone(&committed)),
+            TestRawFactory(state),
+            TestProducts,
+            TestEvents,
+            FailingPendingListReader,
+        );
+
+        let result = handler
+            .execute(NormalizeProductListingRawRevisionCommand {
+                mode: NormalizeProductListingRawRevisionMode::Reconcile,
+                max_revisions_per_stream: 1,
+                pending_stream_limit: 1,
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(
+                NormalizeProductListingRawRevisionError::PendingStreamReadFailed {
+                    source: ProductListingRawNormalizationPortError::Persistence { .. },
+                }
+            )
+        ));
+        assert!(matches!(committed.lock(), Ok(committed) if !*committed));
+    }
+
+    #[test]
+    fn should_accept_v1_and_v2_stored_raw_values_schema_versions()
+    -> Result<(), product_listing_normalization::NormalizationInputError> {
+        for raw_values_schema_version in [
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+        ] {
+            let input = input_with_schema_versions(1, raw_values_schema_version)?;
+            assert!(validate_stored_schema(&input).is_ok());
+        }
+
+        for (payload_schema_version, raw_values_schema_version) in [(2, 1), (1, 3)] {
+            let input =
+                input_with_schema_versions(payload_schema_version, raw_values_schema_version)?;
+            assert!(matches!(
+                validate_stored_schema(&input),
+                Err(NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion)
+            ));
+        }
+        assert_eq!(2, NORMALIZER_VERSION);
+        Ok(())
     }
 
     #[test]
@@ -887,9 +1603,21 @@ mod tests {
             )
         );
         assert_eq!(
+            "NORMALIZATION_CONFIGURATION_FAILED",
+            normalization_failure_code(
+                &NormalizeProductListingRawRevisionError::NormalizationConfigurationFailed {
+                    source: ProductListingRawValuesNormalizationError::Availability(
+                        product_listing_normalization::NormalizationError::AvailabilityRegexSetCompilationFailed,
+                    ),
+                }
+            )
+        );
+        assert_eq!(
             "CANONICAL_WRITE_FAILED",
             normalization_failure_code(
-                &NormalizeProductListingRawRevisionError::CanonicalWriteFailed
+                &NormalizeProductListingRawRevisionError::CanonicalWriteFailed {
+                    source: CanonicalProductListingWriteError::BoundProductListingNotFound,
+                }
             )
         );
     }

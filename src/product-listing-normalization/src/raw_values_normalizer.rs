@@ -1,3 +1,5 @@
+use crate::error::NormalizationFailureScope;
+use crate::price::normalize_machine_decimal_price;
 use crate::text::{detect_description_language, localize_normalized_title};
 use crate::{
     AvailabilityNormalizationError, DateTimeField, DateTimeNormalizationError,
@@ -13,12 +15,51 @@ use product_listing_core::{
     description::Description, product_listing_image::ProductListingImage,
     source_listing_id::SourceListingId, title::Title,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::collections::BTreeMap;
+use strum::IntoEnumIterator;
 use time::OffsetDateTime;
 use url::Url;
 
 pub const PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1: u16 = 1;
+pub const PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2: u16 = 2;
+
+/// Stable provider-neutral encoding for raw price patch values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::EnumIter)]
+pub enum ProductListingRawValuesPriceFormat {
+    DisplayText,
+    MachineDecimal,
+}
+
+impl ProductListingRawValuesPriceFormat {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DisplayText => "DISPLAY_TEXT",
+            Self::MachineDecimal => "MACHINE_DECIMAL",
+        }
+    }
+}
+
+impl Serialize for ProductListingRawValuesPriceFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProductListingRawValuesPriceFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let code = String::deserialize(deserializer)?;
+        Self::iter()
+            .find(|format| format.as_str() == code.as_str())
+            .ok_or_else(|| D::Error::custom("raw price format is unsupported"))
+    }
+}
 
 /// Provider-neutral protocol for one raw field update.
 ///
@@ -32,12 +73,12 @@ pub enum ProductListingRawValuesPatch<T> {
     Unchanged,
 }
 
-/// Provider-neutral raw values for an UPSERT normalization input at schema version 1.
+/// Frozen provider-neutral raw values for an UPSERT normalization input at schema version 1.
 ///
-/// Source adapters map provider payloads to this contract before constructing
-/// [`ProductListingNormalizationInput`]. Each mutable listing field carries the generic
-/// set/clear/unchanged protocol. Dynamic attributes use source-selected names and do not
-/// introduce provider-specific fields into this contract.
+/// V1 price patches always use display-text parsing. Source adapters map provider payloads to
+/// this contract before constructing [`ProductListingNormalizationInput`]. Each mutable listing
+/// field carries the generic set/clear/unchanged protocol. Dynamic attributes use source-selected
+/// names and do not introduce provider-specific fields into this contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProductListingRawValuesV1 {
@@ -54,6 +95,88 @@ pub struct ProductListingRawValuesV1 {
     pub auction_end: ProductListingRawValuesPatch<String>,
     #[serde(default)]
     pub attributes: BTreeMap<String, ProductListingRawValuesPatch<Vec<String>>>,
+}
+
+/// Provider-neutral raw values for an UPSERT normalization input at schema version 2.
+///
+/// `priceFormat` is required and applies to the main and estimate price patches. `DISPLAY_TEXT`
+/// keeps V1 display parsing, while `MACHINE_DECIMAL` uses strict unsigned ASCII decimal parsing
+/// with the normalization-context fallback currency for nonblank `SET` values. Blank `SET` values
+/// normalize to `CLEAR`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProductListingRawValuesV2 {
+    pub source_listing_id: String,
+    pub title: ProductListingRawValuesPatch<String>,
+    pub description: ProductListingRawValuesPatch<Vec<String>>,
+    pub price_format: ProductListingRawValuesPriceFormat,
+    pub price: ProductListingRawValuesPatch<String>,
+    pub price_estimate_min: ProductListingRawValuesPatch<String>,
+    pub price_estimate_max: ProductListingRawValuesPatch<String>,
+    pub availability: ProductListingRawValuesPatch<String>,
+    pub url: ProductListingRawValuesPatch<String>,
+    pub images: ProductListingRawValuesPatch<Vec<String>>,
+    pub auction_start: ProductListingRawValuesPatch<String>,
+    pub auction_end: ProductListingRawValuesPatch<String>,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, ProductListingRawValuesPatch<Vec<String>>>,
+}
+
+#[derive(Debug)]
+struct RawValuesForNormalization {
+    source_listing_id: String,
+    title: ProductListingRawValuesPatch<String>,
+    description: ProductListingRawValuesPatch<Vec<String>>,
+    price_format: ProductListingRawValuesPriceFormat,
+    price: ProductListingRawValuesPatch<String>,
+    price_estimate_min: ProductListingRawValuesPatch<String>,
+    price_estimate_max: ProductListingRawValuesPatch<String>,
+    availability: ProductListingRawValuesPatch<String>,
+    url: ProductListingRawValuesPatch<String>,
+    images: ProductListingRawValuesPatch<Vec<String>>,
+    auction_start: ProductListingRawValuesPatch<String>,
+    auction_end: ProductListingRawValuesPatch<String>,
+    attributes: BTreeMap<String, ProductListingRawValuesPatch<Vec<String>>>,
+}
+
+impl From<ProductListingRawValuesV1> for RawValuesForNormalization {
+    fn from(raw: ProductListingRawValuesV1) -> Self {
+        Self {
+            source_listing_id: raw.source_listing_id,
+            title: raw.title,
+            description: raw.description,
+            price_format: ProductListingRawValuesPriceFormat::DisplayText,
+            price: raw.price,
+            price_estimate_min: raw.price_estimate_min,
+            price_estimate_max: raw.price_estimate_max,
+            availability: raw.availability,
+            url: raw.url,
+            images: raw.images,
+            auction_start: raw.auction_start,
+            auction_end: raw.auction_end,
+            attributes: raw.attributes,
+        }
+    }
+}
+
+impl From<ProductListingRawValuesV2> for RawValuesForNormalization {
+    fn from(raw: ProductListingRawValuesV2) -> Self {
+        Self {
+            source_listing_id: raw.source_listing_id,
+            title: raw.title,
+            description: raw.description,
+            price_format: raw.price_format,
+            price: raw.price,
+            price_estimate_min: raw.price_estimate_min,
+            price_estimate_max: raw.price_estimate_max,
+            availability: raw.availability,
+            url: raw.url,
+            images: raw.images,
+            auction_start: raw.auction_start,
+            auction_end: raw.auction_end,
+            attributes: raw.attributes,
+        }
+    }
 }
 
 /// Generic normalization inputs that are not provider payload fields.
@@ -99,12 +222,18 @@ pub enum ProductListingRawValuesNormalizationError {
     UnsupportedRawValuesSchemaVersion { version: u16 },
     #[error("raw values do not match the V1 contract")]
     InvalidRawValuesV1(#[source] serde_json::Error),
+    #[error("raw values do not match the V2 contract")]
+    InvalidRawValuesV2(#[source] serde_json::Error),
     #[error("normalization context does not match the V1 contract")]
     InvalidNormalizationContextV1(#[source] serde_json::Error),
     #[error("normalization context base URL is invalid")]
     InvalidBaseUrl(#[source] url::ParseError),
     #[error("listing URL is invalid")]
     InvalidUrl(#[source] url::ParseError),
+    #[error(
+        "normalization context fallback currency is required for nonblank machine-decimal prices"
+    )]
+    MachineDecimalFallbackCurrencyRequired,
     #[error("normalization context fallback currency is unsupported")]
     UnsupportedFallbackCurrency,
     #[error("normalization context fallback language is unsupported")]
@@ -121,10 +250,24 @@ pub enum ProductListingRawValuesNormalizationError {
     Availability(#[source] NormalizationError),
 }
 
-/// Pure V1 raw-values normalizer.
+impl ProductListingRawValuesNormalizationError {
+    /// Distinguishes terminal candidate data from fail-closed normalizer system failures.
+    pub const fn failure_scope(&self) -> NormalizationFailureScope {
+        match self {
+            Self::Text(error)
+            | Self::Price(error)
+            | Self::ImageUrl(error)
+            | Self::DateTime(error)
+            | Self::Availability(error) => error.failure_scope(),
+            _ => NormalizationFailureScope::CandidateData,
+        }
+    }
+}
+
+/// Pure raw-values normalizer for supported schema versions.
 ///
-/// DELETE inputs deliberately bypass V1 decoding and field normalization. Their source record
-/// identity belongs to the capture input, not an UPSERT field projection.
+/// DELETE inputs deliberately bypass raw-values decoding and field normalization. Their source
+/// record identity belongs to the capture input, not an UPSERT field projection.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProductListingRawValuesNormalizer;
 
@@ -153,17 +296,29 @@ impl ProductListingRawValuesNormalizer {
         &self,
         input: &ProductListingNormalizationInput,
     ) -> Result<ProductListingRawValuesResolved, ProductListingRawValuesNormalizationError> {
-        if input.raw_values_schema_version() != PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1 {
-            return Err(
-                ProductListingRawValuesNormalizationError::UnsupportedRawValuesSchemaVersion {
-                    version: input.raw_values_schema_version(),
-                },
-            );
-        }
-
-        let raw: ProductListingRawValuesV1 =
-            serde_json::from_value(input.raw_values().value().clone())
-                .map_err(ProductListingRawValuesNormalizationError::InvalidRawValuesV1)?;
+        let raw: RawValuesForNormalization = match input.raw_values_schema_version() {
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1 => {
+                serde_json::from_value::<ProductListingRawValuesV1>(
+                    input.raw_values().value().clone(),
+                )
+                .map(RawValuesForNormalization::from)
+                .map_err(ProductListingRawValuesNormalizationError::InvalidRawValuesV1)?
+            }
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2 => {
+                serde_json::from_value::<ProductListingRawValuesV2>(
+                    input.raw_values().value().clone(),
+                )
+                .map(RawValuesForNormalization::from)
+                .map_err(ProductListingRawValuesNormalizationError::InvalidRawValuesV2)?
+            }
+            version => {
+                return Err(
+                    ProductListingRawValuesNormalizationError::UnsupportedRawValuesSchemaVersion {
+                        version,
+                    },
+                );
+            }
+        };
         let context: ProductListingNormalizationContextV1 = serde_json::from_value(
             input.normalization_context().value().clone(),
         )
@@ -178,6 +333,7 @@ impl ProductListingRawValuesNormalizer {
                     .ok_or(ProductListingRawValuesNormalizationError::UnsupportedFallbackCurrency)
             })
             .transpose()?;
+        let price_format = raw.price_format;
         let fallback_language = context
             .fallback_language
             .as_deref()
@@ -205,15 +361,22 @@ impl ProductListingRawValuesNormalizer {
             raw.description,
             title_language(&title).or(fallback_language),
         )?;
-        let price = normalize_price_patch(raw.price, fallback_currency, PriceField::Price)?;
+        let price = normalize_price_patch(
+            raw.price,
+            fallback_currency,
+            price_format,
+            PriceField::Price,
+        )?;
         let price_estimate_min = normalize_price_patch(
             raw.price_estimate_min,
             fallback_currency,
+            price_format,
             PriceField::EstimateMin,
         )?;
         let price_estimate_max = normalize_price_patch(
             raw.price_estimate_max,
             fallback_currency,
+            price_format,
             PriceField::EstimateMax,
         )?;
         let availability = normalize_availability_patch(raw.availability)?;
@@ -292,17 +455,31 @@ fn normalize_description_patch(
 fn normalize_price_patch(
     patch: ProductListingRawValuesPatch<String>,
     fallback_currency: Option<Currency>,
+    price_format: ProductListingRawValuesPriceFormat,
     field: PriceField,
 ) -> Result<ProductListingRawValuesPatch<Price>, ProductListingRawValuesNormalizationError> {
     match patch {
-        ProductListingRawValuesPatch::Set(raw) => {
-            normalize_price(Some(raw.as_str()), fallback_currency)
-                .map(|price| match price {
-                    Some(price) => ProductListingRawValuesPatch::Set(price),
-                    None => ProductListingRawValuesPatch::Clear,
-                })
-                .map_err(|error| map_price_error(error, field))
+        ProductListingRawValuesPatch::Set(raw) if raw.trim().is_empty() => {
+            Ok(ProductListingRawValuesPatch::Clear)
         }
+        ProductListingRawValuesPatch::Set(raw) => match price_format {
+            ProductListingRawValuesPriceFormat::DisplayText => {
+                normalize_price(Some(raw.as_str()), fallback_currency)
+                    .map(|price| match price {
+                        Some(price) => ProductListingRawValuesPatch::Set(price),
+                        None => ProductListingRawValuesPatch::Clear,
+                    })
+                    .map_err(|error| map_price_error(error, field))
+            }
+            ProductListingRawValuesPriceFormat::MachineDecimal => {
+                let currency = fallback_currency.ok_or(
+                    ProductListingRawValuesNormalizationError::MachineDecimalFallbackCurrencyRequired,
+                )?;
+                normalize_machine_decimal_price(raw.as_str(), currency)
+                    .map(ProductListingRawValuesPatch::Set)
+                    .map_err(|error| map_price_error(error, field))
+            }
+        },
         ProductListingRawValuesPatch::Clear => Ok(ProductListingRawValuesPatch::Clear),
         ProductListingRawValuesPatch::Unchanged => Ok(ProductListingRawValuesPatch::Unchanged),
     }
@@ -411,6 +588,9 @@ fn map_availability_error(
         AvailabilityNormalizationError::EmbeddedNul => {
             NormalizationError::AvailabilityTextEmbeddedNul
         }
+        AvailabilityNormalizationError::RegexSetCompilationFailed => {
+            NormalizationError::AvailabilityRegexSetCompilationFailed
+        }
     };
     ProductListingRawValuesNormalizationError::Availability(error)
 }
@@ -422,7 +602,9 @@ mod tests {
         NormalizationContext, RawProductListingPayloadFormat, RawProductListingValues,
         SourcePayload,
     };
+    use rstest::rstest;
     use serde_json::json;
+    use strum::IntoEnumIterator;
 
     fn input(
         operation: RawProductListingOperation,
@@ -481,6 +663,12 @@ mod tests {
         })
     }
 
+    fn v2_upsert_values(price_format: &str) -> serde_json::Value {
+        let mut values = upsert_values();
+        values["priceFormat"] = json!(price_format);
+        values
+    }
+
     #[test]
     fn should_serialize_v1_raw_values_with_explicit_patch_protocol_and_dynamic_attributes()
     -> Result<(), serde_json::Error> {
@@ -506,10 +694,80 @@ mod tests {
         assert_eq!(json["title"]["action"], "SET");
         assert_eq!(json["description"]["action"], "CLEAR");
         assert_eq!(json["price"]["action"], "UNCHANGED");
+        assert!(json.get("priceFormat").is_none());
         assert_eq!(json["attributes"]["condition"]["value"][0], "restored");
         assert_eq!(
             serde_json::from_value::<ProductListingRawValuesV1>(json)?,
             values
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_price_format_when_raw_values_schema_is_v1()
+    -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = upsert_values();
+        raw_values["priceFormat"] = json!("DISPLAY_TEXT");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            raw_values,
+            context(),
+        )?;
+
+        assert!(matches!(
+            ProductListingRawValuesNormalizer::new().normalize(&input),
+            ProductListingRawValuesNormalizationOutcome::Invalid(
+                ProductListingRawValuesNormalizationError::InvalidRawValuesV1(_)
+            )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn should_use_exact_v2_price_format_codes() -> Result<(), serde_json::Error> {
+        let codes = ProductListingRawValuesPriceFormat::iter()
+            .map(ProductListingRawValuesPriceFormat::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(codes, ["DISPLAY_TEXT", "MACHINE_DECIMAL"]);
+        assert_eq!(
+            codes.len(),
+            codes
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        );
+
+        for price_format in ProductListingRawValuesPriceFormat::iter() {
+            let encoded = serde_json::to_value(price_format)?;
+            assert_eq!(json!(price_format.as_str()), encoded);
+            assert_eq!(
+                price_format,
+                serde_json::from_value::<ProductListingRawValuesPriceFormat>(encoded)?
+            );
+        }
+        assert!(
+            serde_json::from_value::<ProductListingRawValuesPriceFormat>(json!("machine_decimal"))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_serialize_v2_raw_values_with_required_explicit_price_format()
+    -> Result<(), serde_json::Error> {
+        let values: ProductListingRawValuesV2 =
+            serde_json::from_value(v2_upsert_values("MACHINE_DECIMAL"))?;
+        assert_eq!(
+            ProductListingRawValuesPriceFormat::MachineDecimal,
+            values.price_format
+        );
+
+        let json = serde_json::to_value(&values)?;
+        assert_eq!(json["priceFormat"], "MACHINE_DECIMAL");
+        assert_eq!(
+            values,
+            serde_json::from_value::<ProductListingRawValuesV2>(json)?
         );
         Ok(())
     }
@@ -564,6 +822,176 @@ mod tests {
         Ok(())
     }
 
+    #[rstest]
+    #[case("£8,800", Currency::Gbp, 880_000_u64)]
+    #[case("1.234,56", Currency::Eur, 123_456_u64)]
+    fn should_preserve_v1_crawler_display_price_parsing(
+        #[case] raw_price: &str,
+        #[case] expected_currency: Currency,
+        #[case] expected_minor_units: u64,
+    ) -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = upsert_values();
+        raw_values["price"] = set(raw_price);
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            raw_values,
+            context(),
+        )?;
+
+        let outcome = ProductListingRawValuesNormalizer::new().normalize(&input);
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) = outcome else {
+            panic!("V1 crawler display price should resolve");
+        };
+        assert_eq!(
+            ProductListingRawValuesPatch::Set(Price::new(
+                expected_minor_units.into(),
+                expected_currency
+            )),
+            resolved.price
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_resolve_v2_display_text_with_the_display_parser()
+    -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = v2_upsert_values("DISPLAY_TEXT");
+        raw_values["price"] = set("1.234,56");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            raw_values,
+            context(),
+        )?;
+
+        let outcome = ProductListingRawValuesNormalizer::new().normalize(&input);
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) = outcome else {
+            panic!("V2 display text should resolve");
+        };
+        assert_eq!(
+            ProductListingRawValuesPatch::Set(Price::new(123_456_u64.into(), Currency::Eur)),
+            resolved.price
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_resolve_v2_machine_decimals_to_exact_minor_units()
+    -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = v2_upsert_values("MACHINE_DECIMAL");
+        raw_values["price"] = set("42.000");
+        raw_values["priceEstimateMin"] = set("42.5");
+        raw_values["priceEstimateMax"] = set("0");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            raw_values,
+            context(),
+        )?;
+
+        let outcome = ProductListingRawValuesNormalizer::new().normalize(&input);
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) = outcome else {
+            panic!("V2 machine decimals should resolve");
+        };
+        assert_eq!(
+            ProductListingRawValuesPatch::Set(Price::new(4_200_u64.into(), Currency::Eur)),
+            resolved.price
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Set(Price::new(4_250_u64.into(), Currency::Eur)),
+            resolved.price_estimate_min
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Set(Price::new(0_u64.into(), Currency::Eur)),
+            resolved.price_estimate_max
+        );
+        Ok(())
+    }
+
+    #[rstest]
+    #[case("price")]
+    #[case("priceEstimateMin")]
+    #[case("priceEstimateMax")]
+    fn should_require_v2_machine_decimal_fallback_currency_when_any_price_patch_is_nonblank(
+        #[case] field: &str,
+    ) -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = v2_upsert_values("MACHINE_DECIMAL");
+        raw_values["price"] = clear();
+        raw_values["priceEstimateMin"] = clear();
+        raw_values["priceEstimateMax"] = clear();
+        raw_values[field] = set("42.00");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            raw_values,
+            json!({"baseUrl": "https://example.test/catalogue/"}),
+        )?;
+
+        assert!(matches!(
+            ProductListingRawValuesNormalizer::new().normalize(&input),
+            ProductListingRawValuesNormalizationOutcome::Invalid(
+                ProductListingRawValuesNormalizationError::MachineDecimalFallbackCurrencyRequired
+            )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn should_clear_blank_v2_machine_decimal_price_patches_when_fallback_currency_is_absent()
+    -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = v2_upsert_values("MACHINE_DECIMAL");
+        raw_values["price"] = set(" ");
+        raw_values["priceEstimateMin"] = set("");
+        raw_values["priceEstimateMax"] = set("\t");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            raw_values,
+            json!({"baseUrl": "https://example.test/catalogue/"}),
+        )?;
+
+        let outcome = ProductListingRawValuesNormalizer::new().normalize(&input);
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) = outcome else {
+            panic!("blank V2 machine-decimal prices should resolve");
+        };
+        assert_eq!(ProductListingRawValuesPatch::Clear, resolved.price);
+        assert_eq!(
+            ProductListingRawValuesPatch::Clear,
+            resolved.price_estimate_min
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Clear,
+            resolved.price_estimate_max
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_v2_machine_decimal_with_nonzero_excess_precision()
+    -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = v2_upsert_values("MACHINE_DECIMAL");
+        raw_values["price"] = set("42.001");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            raw_values,
+            context(),
+        )?;
+
+        assert!(matches!(
+            ProductListingRawValuesNormalizer::new().normalize(&input),
+            ProductListingRawValuesNormalizationOutcome::Invalid(
+                ProductListingRawValuesNormalizationError::Price(
+                    NormalizationError::PriceParseError {
+                        field: PriceField::Price
+                    }
+                )
+            )
+        ));
+        Ok(())
+    }
+
     #[test]
     fn should_preserve_clear_and_unchanged_without_normalizing_them()
     -> Result<(), crate::NormalizationInputError> {
@@ -599,6 +1027,32 @@ mod tests {
             ProductListingRawValuesPatch::Unchanged
         );
         Ok(())
+    }
+
+    #[test]
+    fn should_classify_availability_regex_configuration_failure_as_system() {
+        let error =
+            map_availability_error(AvailabilityNormalizationError::RegexSetCompilationFailed);
+
+        assert_eq!(
+            crate::error::NormalizationFailureScope::System,
+            error.failure_scope()
+        );
+        assert!(matches!(
+            error,
+            ProductListingRawValuesNormalizationError::Availability(
+                NormalizationError::AvailabilityRegexSetCompilationFailed
+            )
+        ));
+    }
+
+    #[test]
+    fn should_classify_invalid_candidate_data_as_candidate_data() {
+        assert_eq!(
+            crate::error::NormalizationFailureScope::CandidateData,
+            ProductListingRawValuesNormalizationError::Text(NormalizationError::TitleEmpty)
+                .failure_scope()
+        );
     }
 
     #[test]
@@ -648,6 +1102,25 @@ mod tests {
     }
 
     #[test]
+    fn should_return_typed_invalid_outcome_for_v2_without_explicit_price_format()
+    -> Result<(), crate::NormalizationInputError> {
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            upsert_values(),
+            context(),
+        )?;
+
+        assert!(matches!(
+            ProductListingRawValuesNormalizer::new().normalize(&input),
+            ProductListingRawValuesNormalizationOutcome::Invalid(
+                ProductListingRawValuesNormalizationError::InvalidRawValuesV2(_)
+            )
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn should_return_typed_invalid_outcome_for_invalid_normalization_context()
     -> Result<(), crate::NormalizationInputError> {
         let input = input(
@@ -671,7 +1144,7 @@ mod tests {
     -> Result<(), crate::NormalizationInputError> {
         let input = input(
             RawProductListingOperation::Upsert,
-            2,
+            3,
             upsert_values(),
             context(),
         )?;
@@ -680,7 +1153,7 @@ mod tests {
             ProductListingRawValuesNormalizer::new().normalize(&input),
             ProductListingRawValuesNormalizationOutcome::Invalid(
                 ProductListingRawValuesNormalizationError::UnsupportedRawValuesSchemaVersion {
-                    version: 2
+                    version: 3
                 }
             )
         ));

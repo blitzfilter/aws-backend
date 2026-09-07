@@ -97,12 +97,8 @@ pub(crate) async fn filter_valid_image_urls(
 
             let resolved = match Url::parse(trimmed).or_else(|_| base_url.join(trimmed)) {
                 Ok(url) => url,
-                Err(err) => {
-                    tracing::debug!(
-                        raw = trimmed,
-                        error = ?err,
-                        "Discarding invalid image URL candidate"
-                    );
+                Err(_) => {
+                    tracing::debug!("Discarding invalid image URL candidate");
                     invalid_count += 1;
                     continue;
                 }
@@ -192,7 +188,7 @@ async fn probe_image_dimensions(url: &Url) -> ImageValidation {
         let client = match public_http_client(&current_url, IMAGE_PROBE_TIMEOUT, true).await {
             Ok(client) => client,
             Err(error) => {
-                tracing::debug!(url = %current_url, error = %error, "Image dimension probe rejected target");
+                tracing::debug!("Image dimension probe rejected target");
                 return image_validation_for_target_error(error);
             }
         };
@@ -205,9 +201,7 @@ async fn probe_image_dimensions(url: &Url) -> ImageValidation {
             Ok(response) => response,
             Err(err) => {
                 tracing::debug!(
-                    url = %current_url,
                     kind = ?classify_reqwest_error(&err),
-                    error = ?err,
                     "Image dimension probe failed"
                 );
                 return ImageValidation::Unknown;
@@ -219,7 +213,7 @@ async fn probe_image_dimensions(url: &Url) -> ImageValidation {
         let next_url = match redirect_target(&current_url, &response) {
             Ok(url) => url,
             Err(error) => {
-                tracing::debug!(url = %current_url, error = %error, "Image dimension probe rejected redirect");
+                tracing::debug!("Image dimension probe rejected redirect");
                 return image_validation_for_target_error(error);
             }
         };
@@ -234,9 +228,7 @@ async fn probe_image_dimensions(url: &Url) -> ImageValidation {
         Ok(response) => response,
         Err(err) => {
             tracing::debug!(
-                url = %current_url,
                 kind = ?classify_reqwest_error(&err),
-                error = ?err,
                 "Image dimension probe returned non-success status"
             );
             return ImageValidation::Unknown;
@@ -247,9 +239,7 @@ async fn probe_image_dimensions(url: &Url) -> ImageValidation {
         Ok(bytes) => bytes,
         Err(err) => {
             tracing::debug!(
-                url = %current_url,
                 kind = ?classify_reqwest_error(&err),
-                error = ?err,
                 "Image dimension probe body read failed"
             );
             return ImageValidation::Unknown;
@@ -258,12 +248,8 @@ async fn probe_image_dimensions(url: &Url) -> ImageValidation {
 
     match imagesize::blob_size(&bytes) {
         Ok(size) => validation_for_dimensions(size.width, size.height),
-        Err(err) => {
-            tracing::debug!(
-                url = %url,
-                error = ?err,
-                "Image dimension parser could not read probed bytes"
-            );
+        Err(_) => {
+            tracing::debug!("Image dimension parser could not read probed bytes");
             ImageValidation::Unknown
         }
     }

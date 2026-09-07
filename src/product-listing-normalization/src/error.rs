@@ -3,6 +3,7 @@ use product_listing_core::source_listing_id::InvalidSourceListingId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NormalizationFailureScope {
     CandidateData,
+    System,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,8 @@ pub enum NormalizationError {
     AvailabilityTextTooLong { len: usize, max: usize },
     #[error("availability input contains an embedded NUL")]
     AvailabilityTextEmbeddedNul,
+    #[error("availability regex set configuration is invalid")]
+    AvailabilityRegexSetCompilationFailed,
 }
 
 impl NormalizationError {
@@ -82,10 +85,16 @@ impl NormalizationError {
             } => "auction_end_parse_error",
             Self::AvailabilityTextTooLong { .. } => "state_text_too_long",
             Self::AvailabilityTextEmbeddedNul => "state_text_embedded_nul",
+            Self::AvailabilityRegexSetCompilationFailed => {
+                "availability_regex_set_compilation_failed"
+            }
         }
     }
 
     pub const fn failure_scope(&self) -> NormalizationFailureScope {
-        NormalizationFailureScope::CandidateData
+        match self {
+            Self::AvailabilityRegexSetCompilationFailed => NormalizationFailureScope::System,
+            _ => NormalizationFailureScope::CandidateData,
+        }
     }
 }

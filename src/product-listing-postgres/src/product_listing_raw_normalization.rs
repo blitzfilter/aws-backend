@@ -8,7 +8,8 @@ use product_listing_normalization::{
 };
 use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
 use product_service::ports::{
-    PendingProductListingRawStream, PendingProductListingRawStreamReader,
+    PendingProductListingRawStream, PendingProductListingRawStreamPage,
+    PendingProductListingRawStreamPageRequest, PendingProductListingRawStreamReader,
     ProductListingRawNormalizationCompletion, ProductListingRawNormalizationHead,
     ProductListingRawNormalizationPortError, ProductListingRawNormalizationWork,
     ProductListingRawNormalizationWriter, ProductListingRawNormalizationWriterFactory,
@@ -258,33 +259,50 @@ impl ProductListingRawRevisionReader for SqlxPendingProductListingRawStreamReade
 
 #[async_trait::async_trait]
 impl PendingProductListingRawStreamReader for SqlxPendingProductListingRawStreamReader {
-    async fn list_pending_streams(
+    async fn list_pending_stream_page(
         &self,
-        limit: u32,
-    ) -> Result<Vec<PendingProductListingRawStream>, ProductListingRawNormalizationPortError> {
-        let limit = i64::from(limit);
-        let rows = sqlx::query_as::<_, PendingRawStreamRow>(
+        request: PendingProductListingRawStreamPageRequest,
+    ) -> Result<PendingProductListingRawStreamPage, ProductListingRawNormalizationPortError> {
+        let limit = usize::try_from(request.limit)
+            .map_err(|_| invalid_state("raw pending page limit exceeds memory range"))?;
+        if limit == 0 {
+            return Err(invalid_state(
+                "raw pending page limit must be greater than zero",
+            ));
+        }
+        let cursor = request.cursor;
+        let mut rows = sqlx::query_as::<_, PendingRawStreamRow>(
             r#"
-            SELECT
-                stream.product_listing_raw_stream_id,
-                MIN(revision.captured_at) AS oldest_pending_at
-            FROM product_listing_raw_streams AS stream
-            LEFT JOIN product_listing_raw_normalization_heads AS head
-              ON head.product_listing_raw_stream_id = stream.product_listing_raw_stream_id
-            JOIN product_listing_raw_revisions AS revision
-              ON revision.product_listing_raw_stream_id = stream.product_listing_raw_stream_id
-             AND revision.revision > COALESCE(head.last_processed_revision, 0)
-            WHERE stream.latest_revision > COALESCE(head.last_processed_revision, 0)
-            GROUP BY stream.product_listing_raw_stream_id
-            ORDER BY oldest_pending_at, stream.product_listing_raw_stream_id
+            WITH pending_streams AS (
+                SELECT
+                    stream.product_listing_raw_stream_id,
+                    MIN(revision.captured_at) AS oldest_pending_at
+                FROM product_listing_raw_streams AS stream
+                LEFT JOIN product_listing_raw_normalization_heads AS head
+                  ON head.product_listing_raw_stream_id = stream.product_listing_raw_stream_id
+                JOIN product_listing_raw_revisions AS revision
+                  ON revision.product_listing_raw_stream_id = stream.product_listing_raw_stream_id
+                 AND revision.revision > COALESCE(head.last_processed_revision, 0)
+                WHERE stream.latest_revision > COALESCE(head.last_processed_revision, 0)
+                GROUP BY stream.product_listing_raw_stream_id
+            )
+            SELECT product_listing_raw_stream_id, oldest_pending_at
+            FROM pending_streams
+            WHERE $2::timestamptz IS NULL
+               OR (oldest_pending_at, product_listing_raw_stream_id) > ($2, $3::uuid)
+            ORDER BY oldest_pending_at, product_listing_raw_stream_id
             LIMIT $1
             "#,
         )
-        .bind(limit)
+        .bind(i64::from(request.limit) + 1)
+        .bind(cursor.map(|cursor| cursor.oldest_pending_at))
+        .bind(cursor.map(|cursor| cursor.product_listing_raw_stream_id.as_uuid()))
         .fetch_all(&self.pool)
         .await
         .map_err(persistence)?;
-        Ok(rows
+        let has_next_page = rows.len() > limit;
+        rows.truncate(limit);
+        let streams = rows
             .into_iter()
             .map(|row| PendingProductListingRawStream {
                 product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
@@ -292,7 +310,14 @@ impl PendingProductListingRawStreamReader for SqlxPendingProductListingRawStream
                 ),
                 oldest_pending_at: row.oldest_pending_at,
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let next_cursor = has_next_page
+            .then(|| streams.last().map(|stream| stream.cursor()))
+            .flatten();
+        Ok(PendingProductListingRawStreamPage {
+            streams,
+            next_cursor,
+        })
     }
 }
 

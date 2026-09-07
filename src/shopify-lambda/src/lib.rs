@@ -13,8 +13,12 @@ use aws_lambda_events::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
 use lambda_runtime::LambdaEvent;
 use listing_source_core::Domain;
 use listing_source_service::ports::{ListingSourceReadError, ShopifySourceReader};
-use product_listing_normalization::RawProductListingProvenance;
-use product_listing_service::ports::ProductListingRawIngestionMethod;
+use product_listing_normalization::{RawProductListingProvenance, SourcePayload};
+use product_listing_service::ports::{
+    ProductListingRawIngestionMethod, ProductListingRawProviderReceipt,
+    ProviderReceiptDeliveryIdError, ProviderReceiptScope, ProviderReceiptScopeError,
+    SourceEvidenceSha256,
+};
 use product_listing_service::use_cases::{
     CaptureProductListingRawObservationCommand, CaptureProductListingRawObservationError,
     CaptureProductListingRawObservationUseCase,
@@ -26,6 +30,9 @@ pub const SHOPIFY_TOPIC_PRODUCTS_CREATE: &str = "products/create";
 pub const SHOPIFY_TOPIC_PRODUCTS_UPDATE: &str = "products/update";
 pub const SHOPIFY_TOPIC_PRODUCTS_DELETE: &str = "products/delete";
 
+const SHOPIFY_WEBHOOK_RECEIPT_DELIVERY_ID_PREFIX: &str = "shopify-webhook:";
+const EVENTBRIDGE_RECEIPT_DELIVERY_ID_PREFIX: &str = "eventbridge:";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MessageOutcome {
     Acknowledged,
@@ -36,7 +43,18 @@ enum MessageOutcome {
 pub struct ShopifyEventProvenance {
     pub topic: String,
     pub shopify_event_id: Option<String>,
+    pub webhook_id: Option<String>,
     pub event_bridge_event_id: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ShopifyProviderReceiptError {
+    #[error("Shopify provider receipt scope is invalid")]
+    Scope(#[source] ProviderReceiptScopeError),
+    #[error("Shopify provider receipt delivery ID is invalid")]
+    DeliveryId(#[source] ProviderReceiptDeliveryIdError),
+    #[error("Shopify provider receipt source payload is invalid")]
+    SourcePayload(#[source] product_listing_normalization::NormalizationInputError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +63,8 @@ pub enum ShopifyProductListingProcessingError {
     InvalidPayload(#[source] ShopifyProductEventError),
     #[error("Shopify raw product provenance is invalid")]
     InvalidProvenance(#[source] product_listing_normalization::NormalizationInputError),
+    #[error("Shopify provider receipt is invalid")]
+    InvalidProviderReceipt(#[source] ShopifyProviderReceiptError),
     #[error("Listing source lookup failed")]
     ListingSourceLookup(#[source] ListingSourceReadError),
     #[error("Shopify raw product capture failed")]
@@ -102,10 +122,18 @@ where
         else {
             return Ok(());
         };
+        let provider_receipt = shopify_provider_receipt(
+            provenance.topic.as_str(),
+            provenance.webhook_id.as_deref(),
+            provenance.event_bridge_event_id.as_deref(),
+            observation.input.source_payload(),
+        )
+        .map_err(ShopifyProductListingProcessingError::InvalidProviderReceipt)?;
         let raw_provenance = RawProductListingProvenance::new(json!({
-            "topic": provenance.topic,
-            "shopifyEventId": provenance.shopify_event_id,
-            "eventBridgeEventId": provenance.event_bridge_event_id,
+            "topic": &provenance.topic,
+            "shopifyEventId": &provenance.shopify_event_id,
+            "shopifyWebhookId": &provenance.webhook_id,
+            "eventBridgeEventId": &provenance.event_bridge_event_id,
         }))
         .map_err(ShopifyProductListingProcessingError::InvalidProvenance)?;
 
@@ -119,7 +147,8 @@ where
                     input: observation.input,
                     provenance: raw_provenance,
                     source_event_id: provenance.shopify_event_id,
-                    source_occurred_at: None,
+                    source_occurred_at: observation.source_occurred_at,
+                    provider_receipt,
                 },
             )
             .await
@@ -133,6 +162,7 @@ where
     fields(
         event_bridge_event_id = tracing::field::Empty,
         shopify_event_id = tracing::field::Empty,
+        shopify_webhook_id = tracing::field::Empty,
         shopify_topic = tracing::field::Empty,
         shopify_domain = tracing::field::Empty,
     )
@@ -157,6 +187,9 @@ async fn process_event(
     if let Some(event_id) = detail.metadata.event_id.as_deref() {
         span.record("shopify_event_id", event_id);
     }
+    if let Some(webhook_id) = detail.metadata.webhook_id.as_deref() {
+        span.record("shopify_webhook_id", webhook_id);
+    }
     span.record("shopify_topic", detail.metadata.topic.as_str());
     span.record("shopify_domain", detail.metadata.shop_domain.as_str());
 
@@ -176,6 +209,7 @@ async fn process_event(
     let provenance = ShopifyEventProvenance {
         topic: detail.metadata.topic,
         shopify_event_id: detail.metadata.event_id,
+        webhook_id: detail.metadata.webhook_id,
         event_bridge_event_id,
     };
     match processor
@@ -197,7 +231,8 @@ async fn process_event(
 fn should_retry(error: &ShopifyProductListingProcessingError) -> bool {
     match error {
         ShopifyProductListingProcessingError::InvalidPayload(_)
-        | ShopifyProductListingProcessingError::InvalidProvenance(_) => false,
+        | ShopifyProductListingProcessingError::InvalidProvenance(_)
+        | ShopifyProductListingProcessingError::InvalidProviderReceipt(_) => false,
         ShopifyProductListingProcessingError::ListingSourceLookup(_) => true,
         ShopifyProductListingProcessingError::Capture(error) => !matches!(
             error,
@@ -208,8 +243,56 @@ fn should_retry(error: &ShopifyProductListingProcessingError) -> bool {
                 | CaptureProductListingRawObservationError::InvalidInput { .. }
                 | CaptureProductListingRawObservationError::ListingSourceNotFound
                 | CaptureProductListingRawObservationError::SourceRecordKeyHashCollision
+                | CaptureProductListingRawObservationError::ProviderReceiptDigestConflict
+                | CaptureProductListingRawObservationError::ProviderSourceOrderConflict
         ),
     }
+}
+
+fn shopify_provider_receipt(
+    topic: &str,
+    webhook_id: Option<&str>,
+    event_bridge_event_id: Option<&str>,
+    source_payload: &SourcePayload,
+) -> Result<Option<ProductListingRawProviderReceipt>, ShopifyProviderReceiptError> {
+    let Some(delivery_id) = shopify_receipt_delivery_identity(webhook_id, event_bridge_event_id)
+        .map_err(ShopifyProviderReceiptError::DeliveryId)?
+    else {
+        return Ok(None);
+    };
+    let scope =
+        ProviderReceiptScope::new(topic.to_owned()).map_err(ShopifyProviderReceiptError::Scope)?;
+    let source_evidence_sha256 = source_payload
+        .canonical_sha256()
+        .map_err(ShopifyProviderReceiptError::SourcePayload)?;
+    ProductListingRawProviderReceipt::new(
+        scope,
+        delivery_id,
+        SourceEvidenceSha256::new(*source_evidence_sha256.as_bytes()),
+    )
+    .map(Some)
+    .map_err(ShopifyProviderReceiptError::DeliveryId)
+}
+
+fn shopify_receipt_delivery_identity(
+    webhook_id: Option<&str>,
+    event_bridge_event_id: Option<&str>,
+) -> Result<Option<String>, ProviderReceiptDeliveryIdError> {
+    let (prefix, delivery_id) = match webhook_id {
+        Some(webhook_id) => (SHOPIFY_WEBHOOK_RECEIPT_DELIVERY_ID_PREFIX, webhook_id),
+        None => match event_bridge_event_id {
+            Some(event_bridge_event_id) => (
+                EVENTBRIDGE_RECEIPT_DELIVERY_ID_PREFIX,
+                event_bridge_event_id,
+            ),
+            None => return Ok(None),
+        },
+    };
+    if delivery_id.is_empty() {
+        return Err(ProviderReceiptDeliveryIdError::Empty);
+    }
+
+    Ok(Some(format!("{prefix}{delivery_id}")))
 }
 
 #[tracing::instrument(skip(event, processor), fields(request_id = %event.context.request_id))]
@@ -295,6 +378,41 @@ mod tests {
             .unwrap_or_else(|error| panic!("handler failed: {error}"));
 
         assert_eq!(vec!["msg-1"], identifiers(result));
+    }
+
+    #[test]
+    fn should_not_retry_provider_receipt_conflicts() {
+        for error in [
+            CaptureProductListingRawObservationError::ProviderReceiptDigestConflict,
+            CaptureProductListingRawObservationError::ProviderSourceOrderConflict,
+        ] {
+            assert!(!should_retry(
+                &ShopifyProductListingProcessingError::Capture(error)
+            ));
+        }
+    }
+
+    #[test]
+    fn should_namespace_receipt_delivery_identity_by_origin() {
+        let webhook_identity =
+            shopify_receipt_delivery_identity(Some("same-delivery-id"), Some("same-delivery-id"))
+                .unwrap_or_else(|error| panic!("webhook identity failed: {error}"));
+        let eventbridge_identity =
+            shopify_receipt_delivery_identity(None, Some("same-delivery-id"))
+                .unwrap_or_else(|error| panic!("EventBridge identity failed: {error}"));
+
+        assert_eq!(
+            Some("shopify-webhook:same-delivery-id".to_owned()),
+            webhook_identity
+        );
+        assert_eq!(
+            Some("eventbridge:same-delivery-id".to_owned()),
+            eventbridge_identity
+        );
+        assert!(matches!(
+            shopify_receipt_delivery_identity(Some(""), None),
+            Err(ProviderReceiptDeliveryIdError::Empty)
+        ));
     }
 
     #[tokio::test]

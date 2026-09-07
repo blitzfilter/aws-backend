@@ -77,6 +77,13 @@ impl CrawlerDisposition {
     }
 }
 
+/// Result of a conditional crawler-local URL write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrawlerUrlWriteOutcome {
+    Applied,
+    NoopStale,
+}
+
 impl std::fmt::Display for CrawlerDisposition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())

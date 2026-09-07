@@ -10,6 +10,7 @@ use crate::scraper::scraper_service::util::hash::{
     fingerprint_schema_set, hash_html, hash_main_fragment,
 };
 use crate::scraper::scraper_service::util::html::extract_main_fragment;
+use crate::spider::classification::url_metadata::CrawlerUrlWriteOutcome;
 use crate::spider::utils::url::CrawledUrl;
 use listing_source_core::ListingSourceId;
 use regex::Regex;
@@ -53,22 +54,36 @@ fn is_homepage(url: &Url) -> bool {
 }
 
 impl ScraperServiceImpl {
-    #[tracing::instrument(skip(self), fields(listing_source_id = %listing_source_id, url = %url))]
+    #[tracing::instrument(
+        skip(self, expected_last_captured_raw_input_sha256),
+        fields(listing_source_id = %listing_source_id, url = %url)
+    )]
     pub(crate) async fn mark_url_other_best_effort(
         &self,
         listing_source_id: &ListingSourceId,
         url: &Url,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) {
-        if let Err(err) = self
+        match self
             .candidate_service
             .set_class(
                 listing_source_id,
                 url,
                 crate::spider::classification::url_metadata::UrlClass::Other,
+                expected_last_captured_raw_input_sha256,
             )
             .await
         {
-            warn!(error = ?err, "Failed to mark URL as other");
+            Ok(CrawlerUrlWriteOutcome::Applied) => {}
+            Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                debug!(
+                    crawler_url_write_outcome = "stale_noop",
+                    "Skipped stale crawler URL classification"
+                );
+            }
+            Err(error) => {
+                warn!(error = %error, "Failed to mark URL as other");
+            }
         }
     }
 
@@ -107,7 +122,7 @@ impl ScraperServiceImpl {
 
 #[async_trait::async_trait]
 impl ScraperService for ScraperServiceImpl {
-    #[tracing::instrument(skip(self, last_scraped_hash, last_scraped_schema_fingerprint), fields(listing_source_id = %listing_source_id, url = %url))]
+    #[tracing::instrument(skip(self, last_scraped_hash, last_scraped_schema_fingerprint, expected_last_captured_raw_input_sha256), fields(listing_source_id = %listing_source_id, url = %url))]
     async fn scrape(
         &self,
         listing_source_id: &ListingSourceId,
@@ -115,6 +130,7 @@ impl ScraperService for ScraperServiceImpl {
         product_url_pattern: Option<&str>,
         last_scraped_hash: Option<&str>,
         last_scraped_schema_fingerprint: Option<&str>,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<Option<ScrapedProduct>, ScraperError> {
         let domain = url
             .host_str()
@@ -196,17 +212,24 @@ impl ScraperService for ScraperServiceImpl {
             && last_scraped_schema_fingerprint == Some(stored_schema_fingerprint.as_str())
         {
             debug!("Page and schema fingerprints match; skipping extraction.");
-            if let Err(error) = self
+            match self
                 .candidate_service
                 .touch_scraped(
                     listing_source_id,
                     url,
                     &current_hash,
                     &stored_schema_fingerprint,
+                    expected_last_captured_raw_input_sha256,
                 )
                 .await
             {
-                warn!(error = %error, "Failed to touch URL after page/schema fast-path skip");
+                Ok(CrawlerUrlWriteOutcome::Applied) => {}
+                Ok(CrawlerUrlWriteOutcome::NoopStale) => {
+                    debug!("Skipped stale page/schema fast-path completion");
+                }
+                Err(error) => {
+                    warn!(error = %error, "Failed to touch URL after page/schema fast-path skip");
+                }
             }
             return Ok(None);
         }
@@ -235,6 +258,7 @@ impl ScraperService for ScraperServiceImpl {
                     url,
                     html: &html,
                     existing_schemas: &listing_source_product_schemas.product_schemas,
+                    expected_last_captured_raw_input_sha256,
                 })
                 .await?
             }
@@ -246,8 +270,13 @@ impl ScraperService for ScraperServiceImpl {
         }
         let schema_fingerprint =
             fingerprint_schema_set(&effective_schemas).map_err(ScraperError::SchemaFingerprint)?;
-        let raw_input = crawler_raw_input(&selection.raw, url, selection.default_currency)
-            .map_err(ScraperError::RawNormalizationInput)?;
+        let raw_input = crawler_raw_input(
+            &selection.raw,
+            &selection.validated_image_urls,
+            url,
+            selection.default_currency,
+        )
+        .map_err(ScraperError::RawNormalizationInput)?;
         let raw_input_sha256 = raw_input
             .hash()
             .map_err(ScraperError::RawNormalizationInput)?

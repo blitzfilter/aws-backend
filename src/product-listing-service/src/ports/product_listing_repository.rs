@@ -46,11 +46,6 @@ pub enum ProductListingRepositoryError {
         #[source]
         source: BoxError,
     },
-    #[error("product lookup by listing source and URL failed")]
-    ProductListingLookupBySourceUrlFailed {
-        #[source]
-        source: BoxError,
-    },
     #[error("product insert failed")]
     ProductListingInsertFailed,
     #[error("product update failed")]
@@ -99,14 +94,6 @@ pub trait ProductListingRepository: Send {
         &mut self,
         key: &ProductListingKey,
     ) -> Result<Option<VersionedProductListing>, ProductListingRepositoryError>;
-
-    /// Returns at most two aggregate candidates for an exact ListingSource and URL lookup.
-    /// Two entries let the caller reject an ambiguous URL rather than withdrawing arbitrarily.
-    async fn find_by_listing_source_and_url(
-        &mut self,
-        listing_source_id: listing_source_core::ListingSourceId,
-        url: &url::Url,
-    ) -> Result<Vec<VersionedProductListing>, ProductListingRepositoryError>;
 
     async fn insert(
         &mut self,

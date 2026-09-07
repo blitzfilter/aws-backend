@@ -35,6 +35,7 @@ members = [
     "src/product-listing-normalization",
     "src/product-service",
     "src/product-listing-service",
+    "src/woocommerce-service",
     "src/product-listing-translation-llm",
     "src/product-listing-postgres",
     "src/platform-observability",
@@ -142,6 +143,7 @@ product-listing-core = { path = "src/product-listing-core" }
 product-listing-normalization = { path = "src/product-listing-normalization" }
 product-service = { path = "src/product-service" }
 product-listing-service = { path = "src/product-listing-service" }
+woocommerce-service = { path = "src/woocommerce-service" }
 product-listing-translation-llm = { path = "src/product-listing-translation-llm" }
 product-listing-postgres = { path = "src/product-listing-postgres" }
 fxrate-core = { path = "src/fxrate-core" }

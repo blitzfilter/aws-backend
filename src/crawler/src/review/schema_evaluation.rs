@@ -3,6 +3,7 @@ use crate::review::model::{
     SchemaReviewPageInput, SelectorFieldEvaluation,
 };
 use crate::scraper::css_selector::product_schema::{ProductCssSelectorSchema, RawExtractedProduct};
+use crate::scraper::scraper_service::extraction::engine::apply_schema_to_document;
 use scraper::{Html, Selector};
 
 pub(crate) fn evaluate_schema_matrix_for_live_review_pages(
@@ -114,7 +115,7 @@ fn evaluate_schema_page(
     raw_html: &str,
 ) -> SchemaPageEvaluation {
     let html = Html::parse_document(raw_html);
-    let apply_result = schema.apply(&html);
+    let apply_result = apply_schema_to_document(schema, &html);
     let fields = evaluate_schema_fields(schema, raw_html);
 
     match apply_result {
@@ -390,6 +391,37 @@ mod tests {
 
         assert!(schema_matrix_has_required_coverage(&matrix));
         assert_eq!(unused_schema_indices(&matrix), vec![1]);
+    }
+
+    #[test]
+    fn should_preserve_image_candidate_groups_in_review_extraction() {
+        let schema = ProductCssSelectorSchema {
+            images: ExtractionRule {
+                selector: CssSelector::from("img"),
+                additional_selectors: Vec::new(),
+                extract: ExtractionKind::ImageUrl,
+                cardinality: ExtractionCardinality::All,
+            },
+            ..schema("h1")
+        };
+        let pages = vec![SchemaReviewPageInput {
+            url: "https://example.com/product".to_string(),
+            role: PAGE_ROLE_PRIMARY.to_string(),
+            raw_html: "<html><body><span id=\"product-id\">SKU</span><h1>Title</h1><span id=\"state\">Available</span><img data-large_image=\"/images/primary.jpg\" src=\"/images/fallback-800x600.jpg\"><img data-large_image=\"/images/primary.jpg\" src=\"/images/fallback-800x600.jpg\"></body></html>".to_string(),
+        }];
+
+        let matrix = evaluate_schema_matrix_for_inputs(&[schema], &pages);
+
+        assert_eq!(
+            matrix.candidates[0].pages[0]
+                .extracted
+                .as_ref()
+                .map(|raw| raw.images.clone()),
+            Some(vec![
+                "/images/primary.jpg\u{1f}/images/fallback-800x600.jpg".to_string(),
+                "/images/primary.jpg\u{1f}/images/fallback-800x600.jpg".to_string(),
+            ])
+        );
     }
 
     #[test]

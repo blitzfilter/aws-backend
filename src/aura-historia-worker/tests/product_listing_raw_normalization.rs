@@ -30,12 +30,17 @@ use test_api::{
     IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
     get_sequin_worker_webhook_bind_addr,
 };
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{
+    sync::{oneshot, watch},
+    task::JoinHandle,
+};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
+const DIRECT_CDC_POLL_ATTEMPTS: usize = 20;
+const DIRECT_CDC_TIMEOUT: Duration = Duration::from_secs(4);
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
 async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_idempotently() {
@@ -95,8 +100,72 @@ async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_id
     }
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let listing_source_id = seed_listing_source(&pool, "raw-normalization-direct-cdc").await?;
+        let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+        let capture_writer = SqlxProductListingRawCaptureWriterFactory::new();
+        let barrier = capture(
+            &unit_of_work,
+            &capture_writer,
+            raw_write(listing_source_id, "direct-cdc-barrier", 1, "EUR 100"),
+        )
+        .await?;
+        let (_, barrier_revision_id, _) = changed_parts(barrier)?;
+
+        let worker = RawNormalizationWorker::start(pool.clone()).await?;
+        let work_result: Result<(), Box<dyn std::error::Error>> = async {
+            wait_for_normalization(&pool, barrier_revision_id.as_uuid(), 1).await?;
+
+            let captured = capture(
+                &unit_of_work,
+                &capture_writer,
+                raw_write(listing_source_id, "direct-cdc", 2, "EUR 120"),
+            )
+            .await?;
+            let (stream_id, revision_id, revision) = changed_parts(captured)?;
+
+            // The barrier completed before this distinct row existed. Its explicit CDC delivery
+            // must normalize within four seconds, well below the 30-second reconciliation cadence.
+            redeliver_raw_revision(stream_id.as_uuid(), revision_id.as_uuid(), revision).await?;
+            tokio::time::timeout(
+                DIRECT_CDC_TIMEOUT,
+                wait_for_normalization_with_attempts(
+                    &pool,
+                    revision_id.as_uuid(),
+                    1,
+                    DIRECT_CDC_POLL_ATTEMPTS,
+                ),
+            )
+            .await
+            .map_err(|_| "direct CDC wake-up did not normalize within four seconds")??;
+
+            redeliver_raw_revision(stream_id.as_uuid(), revision_id.as_uuid(), revision).await?;
+            tokio::time::sleep(POLL_INTERVAL).await;
+            let normalization_count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM product_listing_raw_normalizations WHERE product_listing_raw_revision_id = $1",
+            )
+            .bind(revision_id.as_uuid())
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(1, normalization_count);
+            Ok(())
+        }
+        .await;
+        worker.finish(work_result).await
+    }
+    .await;
+
+    if let Err(error) = result {
+        panic!("raw normalization direct CDC worker test failed: {error}");
+    }
+}
+
 struct RawNormalizationWorker {
     shutdown_tx: oneshot::Sender<()>,
+    consumer_shutdown: watch::Sender<bool>,
     server: JoinHandle<Result<(), WorkerRunError>>,
     consumer: JoinHandle<()>,
 }
@@ -116,8 +185,11 @@ impl RawNormalizationWorker {
             QueueConfig::new(16),
         )?;
         let (runtime, receiver) = composition.into_parts();
+        let (consumer_shutdown, consumer_shutdown_rx) = watch::channel(false);
         let consumer = tokio::spawn(consume_product_listing_raw_normalization_queue(
-            receiver, handler,
+            receiver,
+            handler,
+            consumer_shutdown_rx,
         ));
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -126,6 +198,7 @@ impl RawNormalizationWorker {
         }));
         Ok(Self {
             shutdown_tx,
+            consumer_shutdown,
             server,
             consumer,
         })
@@ -135,10 +208,11 @@ impl RawNormalizationWorker {
         self,
         result: Result<(), Box<dyn std::error::Error>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.shutdown_tx.send(());
-        self.server.await??;
-        self.consumer.abort();
-        let _ = self.consumer.await;
+        let _send_result = self.shutdown_tx.send(());
+        let _previous_shutdown = self.consumer_shutdown.send_replace(true);
+        let server_result = self.server.await;
+        self.consumer.await?;
+        server_result??;
         result
     }
 }
@@ -173,7 +247,16 @@ async fn wait_for_normalization(
     revision_id: uuid::Uuid,
     expected_count: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..POLL_ATTEMPTS {
+    wait_for_normalization_with_attempts(pool, revision_id, expected_count, POLL_ATTEMPTS).await
+}
+
+async fn wait_for_normalization_with_attempts(
+    pool: &sqlx::PgPool,
+    revision_id: uuid::Uuid,
+    expected_count: i64,
+    attempts: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..attempts {
         let actual_count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM product_listing_raw_normalizations WHERE product_listing_raw_revision_id = $1",
         )
@@ -237,6 +320,7 @@ fn raw_write(
             .unwrap_or_else(|error| panic!("provenance: {error}")),
         source_event_id: Some(record_key.to_owned()),
         source_occurred_at: None,
+        provider_receipt: None,
     }
 }
 
@@ -271,7 +355,9 @@ fn changed_parts(
             product_listing_raw_revision_id,
             revision,
         )),
-        ProductListingRawCaptureWriteOutcome::Unchanged { .. } => {
+        ProductListingRawCaptureWriteOutcome::Unchanged { .. }
+        | ProductListingRawCaptureWriteOutcome::Duplicate { .. }
+        | ProductListingRawCaptureWriteOutcome::Stale { .. } => {
             Err("test input must create a raw revision".into())
         }
     }

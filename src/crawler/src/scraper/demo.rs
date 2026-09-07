@@ -152,7 +152,7 @@ async fn main() {
                 url = %url
             );
             match service
-                .scrape(&listing_source_id, &url, None, None, None)
+                .scrape(&listing_source_id, &url, None, None, None, None)
                 .instrument(scrape_span)
                 .await
             {

@@ -133,6 +133,68 @@ pub fn normalize_price(
         .map(|(amount, currency)| Some(Price::new(amount, currency)))
 }
 
+/// Parses one machine-supplied decimal with no display-text interpretation.
+///
+/// The full value must be an unsigned ASCII decimal (`digits` or `digits.digits`). Extra
+/// fractional precision is accepted only when it is trailing zero padding, so no nonzero value is
+/// silently truncated.
+pub(crate) fn normalize_machine_decimal_price(
+    raw: &str,
+    currency: Currency,
+) -> Result<Price, PriceNormalizationError> {
+    let (integer, fraction) = match raw.split_once('.') {
+        Some((integer, fraction)) if !fraction.is_empty() && !fraction.contains('.') => {
+            (integer, fraction)
+        }
+        Some(_) => return Err(PriceNormalizationError::ParseFailure),
+        None => (raw, ""),
+    };
+    if integer.is_empty()
+        || !integer.bytes().all(|digit| digit.is_ascii_digit())
+        || !fraction.bytes().all(|digit| digit.is_ascii_digit())
+    {
+        return Err(PriceNormalizationError::ParseFailure);
+    }
+
+    let exponent = minor_unit_exponent(&currency) as usize;
+    if fraction.len() > exponent && fraction[exponent..].bytes().any(|digit| digit != b'0') {
+        return Err(PriceNormalizationError::ParseFailure);
+    }
+
+    let major = parse_machine_decimal_digits(integer)?;
+    let minor_factor = 10_u64
+        .checked_pow(exponent as u32)
+        .ok_or(PriceNormalizationError::ParseFailure)?;
+    let retained_fraction = &fraction[..fraction.len().min(exponent)];
+    let fraction_digits = parse_machine_decimal_digits(retained_fraction)?;
+    let fraction_scale = 10_u64
+        .checked_pow((exponent - retained_fraction.len()) as u32)
+        .ok_or(PriceNormalizationError::ParseFailure)?;
+    let minor = major
+        .checked_mul(minor_factor)
+        .and_then(|amount| {
+            fraction_digits
+                .checked_mul(fraction_scale)
+                .and_then(|fraction| amount.checked_add(fraction))
+        })
+        .ok_or(PriceNormalizationError::ParseFailure)?;
+
+    Ok(Price::new(MonetaryAmount::from(minor), currency))
+}
+
+fn parse_machine_decimal_digits(digits: &str) -> Result<u64, PriceNormalizationError> {
+    digits.bytes().try_fold(0_u64, |value, digit| {
+        let digit = digit
+            .checked_sub(b'0')
+            .filter(|digit| *digit <= 9)
+            .ok_or(PriceNormalizationError::ParseFailure)?;
+        value
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(u64::from(digit)))
+            .ok_or(PriceNormalizationError::ParseFailure)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -450,7 +512,7 @@ mod tests {
 
     use super::{
         PriceError, detect_currency, extract_price_number_candidate, is_price_on_request_marker,
-        normalise_fraction, parse_price, split_decimal,
+        normalise_fraction, normalize_machine_decimal_price, parse_price, split_decimal,
     };
 
     // -----------------------------------------------------------------------
@@ -594,6 +656,68 @@ mod tests {
         let (amount, currency) = parse_price(raw, Some(fallback)).unwrap();
         assert_eq!(*amount, expected_amount, "amount mismatch for '{}'", raw);
         assert_eq!(currency, fallback, "currency mismatch for '{}'", raw);
+    }
+
+    #[rstest]
+    #[case("42.000", Currency::Eur, 4_200_u64)]
+    #[case("42.5", Currency::Eur, 4_250_u64)]
+    #[case("42.50", Currency::Eur, 4_250_u64)]
+    #[case("0", Currency::Eur, 0_u64)]
+    #[case("42.050", Currency::Eur, 4_205_u64)]
+    #[case("42.000", Currency::Jpy, 42_u64)]
+    fn should_parse_machine_decimal_to_exact_minor_units(
+        #[case] raw: &str,
+        #[case] currency: Currency,
+        #[case] expected_amount: u64,
+    ) {
+        let price = normalize_machine_decimal_price(raw, currency)
+            .unwrap_or_else(|error| panic!("machine decimal should parse: {error:?}"));
+
+        assert_eq!(currency, price.currency);
+        assert_eq!(expected_amount, *price.monetary_amount);
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("42.")]
+    #[case(".42")]
+    #[case("+42")]
+    #[case("-42")]
+    #[case("42,00")]
+    #[case("1,000")]
+    #[case("1_000")]
+    #[case("EUR 42")]
+    #[case("42 EUR")]
+    #[case("€42")]
+    #[case("42e0")]
+    #[case("42.001")]
+    #[case(" 42")]
+    #[case("42 ")]
+    #[case("４２")]
+    fn should_reject_noncanonical_machine_decimal_text(#[case] raw: &str) {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_machine_decimal_price(raw, Currency::Eur)
+        );
+    }
+
+    #[test]
+    fn should_reject_machine_decimal_nonzero_precision_for_zero_minor_unit_currency() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_machine_decimal_price("42.5", Currency::Jpy)
+        );
+    }
+
+    #[test]
+    fn should_check_machine_decimal_minor_unit_overflow() {
+        let maximum = normalize_machine_decimal_price("184467440737095516.15", Currency::Eur)
+            .unwrap_or_else(|error| panic!("maximum minor unit value should parse: {error:?}"));
+        assert_eq!(u64::MAX, *maximum.monetary_amount);
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_machine_decimal_price("184467440737095516.16", Currency::Eur)
+        );
     }
 
     #[rstest]

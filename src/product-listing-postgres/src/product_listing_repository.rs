@@ -152,36 +152,6 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         row.map(TryInto::try_into).transpose()
     }
 
-    async fn find_by_listing_source_and_url(
-        &mut self,
-        listing_source_id: ListingSourceId,
-        url: &Url,
-    ) -> Result<Vec<VersionedProductListing>, ProductListingRepositoryError> {
-        let rows = sqlx::query_as::<_, ProductListingRow>(
-            r#"
-            SELECT
-                product_listing_id, product_listing_title_slug_id, version, current_event_id, listing_source_id, source_listing_id,
-                title_text, title_language, description_text, description_language,
-                price_amount, price_currency, price_estimate_min_amount,
-                price_estimate_min_currency, price_estimate_max_amount,
-                price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url,
-                product_images, embedding, auction_start, auction_end, created, updated
-            FROM product_listings
-            WHERE listing_source_id = $1
-              AND url = $2
-            ORDER BY product_listing_id
-            LIMIT 2
-            "#,
-        )
-        .bind(uuid::Uuid::from(listing_source_id))
-        .bind(url.as_str())
-        .fetch_all(&mut *self.connection)
-        .await
-        .map_err(ProductListingLookupBySourceUrlSqlxError)?;
-
-        rows.into_iter().map(TryInto::try_into).collect()
-    }
-
     async fn insert(
         &mut self,
         product: &ProductListing,
@@ -569,9 +539,6 @@ struct ProductListingLookupByIdSqlxError(sqlx::Error);
 #[derive(Debug, thiserror::Error)]
 #[error("product lookup by listing-source identity query failed")]
 struct ProductListingLookupByKeySqlxError(#[source] sqlx::Error);
-#[derive(Debug, thiserror::Error)]
-#[error("product lookup by listing source and URL query failed")]
-struct ProductListingLookupBySourceUrlSqlxError(#[source] sqlx::Error);
 struct ProductListingInsertSqlxError(sqlx::Error);
 struct ProductListingUpdateSqlxError(sqlx::Error);
 
@@ -585,14 +552,6 @@ impl From<ProductListingLookupByIdSqlxError> for ProductListingRepositoryError {
 impl From<ProductListingLookupByKeySqlxError> for ProductListingRepositoryError {
     fn from(error: ProductListingLookupByKeySqlxError) -> Self {
         Self::ProductListingLookupByKeyFailed {
-            source: box_error(error),
-        }
-    }
-}
-
-impl From<ProductListingLookupBySourceUrlSqlxError> for ProductListingRepositoryError {
-    fn from(error: ProductListingLookupBySourceUrlSqlxError) -> Self {
-        Self::ProductListingLookupBySourceUrlFailed {
             source: box_error(error),
         }
     }

@@ -179,6 +179,9 @@ fn map_availability_error(error: AvailabilityNormalizationError) -> Normalizatio
         AvailabilityNormalizationError::EmbeddedNul => {
             NormalizationError::AvailabilityTextEmbeddedNul
         }
+        AvailabilityNormalizationError::RegexSetCompilationFailed => {
+            NormalizationError::AvailabilityRegexSetCompilationFailed
+        }
     }
 }
 
@@ -201,6 +204,21 @@ mod tests {
             auction_end: None,
             raw_attributes: Default::default(),
         }
+    }
+
+    #[test]
+    fn should_map_invalid_availability_regex_sets_to_a_system_failure() {
+        let error =
+            map_availability_error(AvailabilityNormalizationError::RegexSetCompilationFailed);
+
+        assert_eq!(
+            error.failure_reason(),
+            "availability_regex_set_compilation_failed"
+        );
+        assert_eq!(
+            error.failure_scope(),
+            product_listing_normalization::error::NormalizationFailureScope::System
+        );
     }
 
     #[tokio::test]

@@ -4,19 +4,27 @@
 
 `product_listing_raw_revisions` is immutable source evidence. Only the `product-listing-normalization` worker subscription consumes its `INSERT` rows. Raw source JSON, webhook bytes, signatures, headers, and provenance values must not be copied into logs, dashboards, tickets, or ad-hoc query output.
 
-The worker repairs a missed CDC wake-up with bounded startup and periodic reconciliation. Restarting the worker is safe; do not delete raw revisions to repair backlog.
+Startup repairs a missed CDC wake-up with one bounded global reconciliation page. Later periodic reconciliation turns alternate one worker-local FIFO continuation and one global cursor page when a continuation exists. Only a clean capped drain enters that non-durable FIFO, which holds at most two global pages of stream IDs (currently 200). Blocked or transient stream errors are reported, remain pending, and are revisited on a later global traversal; they never enter the FIFO. Every global page is limited to available FIFO capacity. When a full FIFO continuation is popped, its vacated slot is reserved for the next global page; its immediate capped hint is suppressed only until authoritative traversal reoffers it. That bounded page adopts all of its continuations and advances the worker-local pending-stream cursor, so later global pages remain reachable. A successful terminal global page clears the cursor; retry exhaustion retains it. Direct CDC wake-ups never move or cancel cursor/FIFO state, even when their stream reaches the per-stream cap. Missed timer ticks skip rather than create a burst. Once a reconciliation turn is due, at most one ready CDC job runs before it; after a global page, one ready CDC job gets a turn before another due reconciliation turn. Restarting safely loses cursor and FIFO state and begins a new authoritative traversal; do not delete raw revisions to repair backlog.
+
+Graceful shutdown finishes active work, then exits without draining queued raw wake-ups or FIFO continuations. Those in-memory items retain the documented post-ack loss risk; authoritative reconciliation repairs normalization progress on the next run.
+
+## Provider receipt and intake retention
+
+Shopify and WooCommerce provider receipts are bounded operational idempotency state, not replay history. They are created or reused only for provider observations that map to raw capture. An authorized ignored WooCommerce create/update status event returns before receipt construction and persists no receipt, even when it carries a delivery ID. Each `(raw stream, provider scope, delivery ID)` receipt stores only a canonical source-evidence digest, never source evidence or JSON, for a 90-day logical window. Capture logically expires a matching receipt by deleting it in the capture transaction before lookup/reuse; asynchronous `pg_ttl_index` cleanup only reclaims physical rows. Raw revisions independently retain optional `source_event_id` and provenance after receipt expiry. Expiry does not reset source ordering or alter raw revisions. No delivery identity or source timestamp is required for accepted intake.
+
+For Shopify intake, EventBridge uses its default target delivery policy (up to 24 hours and 185 retries) with no custom retry policy or EventBridge DLQ override. The primary SQS queue uses the default 4-day retention and its DLQ retains messages for 14 days. Manual redrive must begin while the message remains retained by the applicable SQS queue; it cannot recover an expired message.
 
 ## Signals
 
 Structured metric events are safe to count by their fixed fields:
 
 - `product_listing_raw_capture`: `ingestion_method`, `outcome`, attempt/insert/unchanged counters, byte sizes, and latency.
-- `product_listing_raw_normalization`: terminal `outcome` (`APPLIED`, `NO_CHANGE`, `IGNORED`, `REJECTED`) and latency.
+- `product_listing_raw_normalization`: terminal `outcome` (`APPLIED`, `NO_CHANGE`, `IGNORED`, `REJECTED`) and latency; retryable `failure` or `stream_failure` records carry a stable `error_code`.
 - `product_listing_raw_normalization_backlog`: bounded reconciliation-page count and oldest age.
-- `product_listing_raw_normalization_reconciliation`: reconciliation runs, processed revisions, and failures.
+- `product_listing_raw_normalization_reconciliation`: reconciliation runs, processed revisions, failures, bounded page count, page kind, cursor presence, FIFO depth, deferred-continuation count, and suppressed-continuation count.
 - `crawler_disposition_transition`: successful transitions to `DORMANT_SOLD` or `DORMANT_REMOVED`.
 
-Alert on sustained backlog age, repeated worker failures, or a rising `REJECTED` count. Payload size is an early warning only; capture limits remain authoritative.
+`NORMALIZATION_CONFIGURATION_FAILED` is a retryable normalizer configuration failure, such as availability-regex compilation, not `REJECTED`; its raw revision and stream head stay pending. Alert on sustained backlog age, repeated worker failures, or a rising `REJECTED` count. Payload size is an early warning only; capture limits remain authoritative.
 
 ## Safe operational queries
 

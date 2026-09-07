@@ -33,7 +33,6 @@ use crate::state::{
     SearchFiltersState, UsersState, WatchlistState, WebhooksState,
 };
 use crate::transport::with_transport_middleware;
-use crate::webhooks::woocommerce_intake::WoocommerceWebhookIntake;
 use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
 use admin_overview_service::GetAdminOverviewHandler;
 use axum::Router;
@@ -76,6 +75,7 @@ use opensearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
 };
 use platform_postgres::{PostgresConnectError, PostgresPoolConfig, SqlxUnitOfWork};
+use woocommerce_service::WoocommerceWebhookIntake;
 
 use listing_source_postgres::{
     SqlxListingSourceReaders, SqlxListingSourceRepositoryFactory,
@@ -130,10 +130,10 @@ use product_listing_postgres::{
     SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use product_listing_service::use_cases::{
-    CaptureProductListingRawObservationHandler, CreateProductListingHandler,
-    GetProductListingHandler, GetProductListingHistoryHandler, GetSimilarProductListingsHandler,
-    SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
-    WithdrawProductListingHandler,
+    AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
+    CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
+    GetSimilarProductListingsHandler, SearchProductListingsHandler, UpdateProductListingHandler,
+    UpsertProductListingHandler, WithdrawProductListingHandler,
 };
 use search_filter_postgres::{
     SqlxSearchFilterMatchRepositoryFactory, SqlxSearchFilterQuotaReaderFactory,
@@ -906,10 +906,15 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxProductListingRawCaptureWriterFactory::new(),
         SqlxPartnerProductListingAuthorizerFactory::new(),
     );
+    let authorize_woocommerce_product = AuthorizeProductListingRawCaptureHandler::new(
+        unit_of_work.clone(),
+        SqlxPartnerProductListingAuthorizerFactory::new(),
+    );
     let intake_woocommerce_product = WoocommerceWebhookIntake::new(
         SqlxListingSourceReaders::new(pool.clone()),
         SqlxListingSourceReaders::new(pool.clone()),
         capture_woocommerce_product,
+        authorize_woocommerce_product,
     );
     let list_watchlist = ListWatchlistHandler::new(
         unit_of_work.clone(),

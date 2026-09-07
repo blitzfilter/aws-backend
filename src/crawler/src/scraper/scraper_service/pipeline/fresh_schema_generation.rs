@@ -21,6 +21,7 @@ pub(crate) struct FreshSchemaGenerationContext<'a> {
     pub(crate) url: &'a Url,
     pub(crate) html: &'a str,
     pub(crate) existing_schemas: &'a [ProductCssSelectorSchema],
+    pub(crate) expected_last_captured_raw_input_sha256: Option<&'a [u8]>,
 }
 
 impl ScraperServiceImpl {
@@ -37,35 +38,38 @@ impl ScraperServiceImpl {
         &self,
         ctx: FreshSchemaGenerationContext<'_>,
     ) -> Result<PreparedSchemaSelection, ScraperError> {
-        let (generated_schema, mut reapplied, evaluation) = self
-            .generate_single_schema_for_page(ctx.listing_source_id, ctx.url, ctx.html)
+        let (generated_schema, reapplied, evaluation) = self
+            .generate_single_schema_for_page(
+                ctx.listing_source_id,
+                ctx.url,
+                ctx.html,
+                ctx.expected_last_captured_raw_input_sha256,
+            )
             .await?;
 
-        reapplied.images = match filter_valid_image_urls(
-            reapplied.images,
-            ctx.url,
-            &*self.image_validator,
-        )
-        .await
-        {
-            Ok(images) => images,
-            Err(NormalizationError::NoValidImages { .. }) => Vec::new(),
-            Err(norm_err)
-                if norm_err.failure_scope() == NormalizationFailureScope::CandidateData =>
-            {
-                return Err(ScraperError::FreshSchemaNormalizationFailed {
-                    url: ctx.url.clone(),
-                    attempts: 1,
-                    last_norm_error: Box::new(norm_err),
-                });
-            }
-            Err(norm_err) => return Err(ScraperError::NormalizationError(norm_err)),
-        };
+        let mut validated_raw = reapplied.clone();
+        let images = std::mem::take(&mut validated_raw.images);
+        validated_raw.images =
+            match filter_valid_image_urls(images, ctx.url, &*self.image_validator).await {
+                Ok(images) => images,
+                Err(NormalizationError::NoValidImages { .. }) => Vec::new(),
+                Err(norm_err)
+                    if norm_err.failure_scope() == NormalizationFailureScope::CandidateData =>
+                {
+                    return Err(ScraperError::FreshSchemaNormalizationFailed {
+                        url: ctx.url.clone(),
+                        attempts: 1,
+                        last_norm_error: Box::new(norm_err),
+                    });
+                }
+                Err(norm_err) => return Err(ScraperError::NormalizationError(norm_err)),
+            };
+        let validated_image_urls = validated_raw.images.clone();
 
         match self
             .normalization_service
             .normalize(
-                reapplied.clone(),
+                validated_raw,
                 ctx.url.clone(),
                 generated_schema.default_currency.map(money::Currency::from),
             )
@@ -100,6 +104,7 @@ impl ScraperServiceImpl {
                         Ok(PreparedSchemaSelection {
                             prepared,
                             raw: reapplied,
+                            validated_image_urls,
                             default_currency: generated_schema
                                 .default_currency
                                 .map(money::Currency::from),

@@ -42,6 +42,7 @@ impl ProductListingRawCaptureItem {
                 provenance,
                 source_event_id: None,
                 source_occurred_at: None,
+                provider_receipt: None,
             },
         }
     }
@@ -114,7 +115,9 @@ impl ProductListingRawCaptureService for ProductListingRawCaptureServiceImpl {
                     let listing_source_id = observation.command.listing_source_id;
                     let succeeded = match capture_observation.execute(&context, observation.command).await {
                         Ok(CaptureProductListingRawObservationResult::Changed { .. })
-                        | Ok(CaptureProductListingRawObservationResult::Unchanged { .. }) => true,
+                        | Ok(CaptureProductListingRawObservationResult::Unchanged { .. })
+                        | Ok(CaptureProductListingRawObservationResult::Duplicate { .. })
+                        | Ok(CaptureProductListingRawObservationResult::Stale { .. }) => true,
                         Err(error) => {
                             warn!(
                                 error = %error,
@@ -256,10 +259,19 @@ mod tests {
     };
     use std::sync::{Arc, Mutex};
 
+    #[derive(Debug, Clone, Copy, Default)]
+    enum FakeCaptureOutcome {
+        #[default]
+        Unchanged,
+        Duplicate,
+        Stale,
+    }
+
     #[derive(Default)]
     struct FakeCaptureUseCase {
         commands: Arc<Mutex<Vec<CaptureProductListingRawObservationCommand>>>,
         fail: bool,
+        outcome: FakeCaptureOutcome,
     }
 
     #[async_trait]
@@ -279,12 +291,27 @@ mod tests {
             if self.fail {
                 return Err(product_listing_service::use_cases::CaptureProductListingRawObservationError::ListingSourceNotFound);
             }
-            Ok(CaptureProductListingRawObservationResult::Unchanged {
-                product_listing_raw_stream_id:
-                    product_listing_service::ports::ProductListingRawStreamId::from_uuid(
-                        uuid::Uuid::new_v4(),
-                    ),
-                latest_revision: 1,
+            let product_listing_raw_stream_id =
+                product_listing_service::ports::ProductListingRawStreamId::from_uuid(
+                    uuid::Uuid::new_v4(),
+                );
+            Ok(match self.outcome {
+                FakeCaptureOutcome::Unchanged => {
+                    CaptureProductListingRawObservationResult::Unchanged {
+                        product_listing_raw_stream_id,
+                        latest_revision: 1,
+                    }
+                }
+                FakeCaptureOutcome::Duplicate => {
+                    CaptureProductListingRawObservationResult::Duplicate {
+                        product_listing_raw_stream_id,
+                        latest_revision: 1,
+                    }
+                }
+                FakeCaptureOutcome::Stale => CaptureProductListingRawObservationResult::Stale {
+                    product_listing_raw_stream_id,
+                    latest_revision: 1,
+                },
             })
         }
     }
@@ -337,6 +364,31 @@ mod tests {
             "https://example.test/products/two",
             commands[1].source_record_key
         );
+        assert!(commands[0].provider_receipt.is_none());
+        assert!(commands[1].provider_receipt.is_none());
+    }
+
+    #[tokio::test]
+    async fn should_accept_duplicate_and_stale_capture_outcomes() {
+        for outcome in [FakeCaptureOutcome::Duplicate, FakeCaptureOutcome::Stale] {
+            let service = ProductListingRawCaptureServiceImpl::new(
+                Arc::new(FakeCaptureUseCase {
+                    outcome,
+                    ..Default::default()
+                }),
+                1,
+            );
+
+            assert_eq!(
+                vec![true],
+                service
+                    .capture(vec![item(
+                        ListingSourceId::new(),
+                        "https://example.test/products/one"
+                    )])
+                    .await
+            );
+        }
     }
 
     #[tokio::test]

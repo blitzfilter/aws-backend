@@ -52,6 +52,11 @@ pub use commands::withdraw_product_listing::{
     WithdrawProductListingError, WithdrawProductListingHandler, WithdrawProductListingResult,
     WithdrawProductListingUseCase,
 };
+pub use queries::authorize_product_listing_raw_capture::{
+    AuthorizeProductListingRawCaptureError, AuthorizeProductListingRawCaptureHandler,
+    AuthorizeProductListingRawCaptureRequest, AuthorizeProductListingRawCaptureResult,
+    AuthorizeProductListingRawCaptureUseCase,
+};
 pub use queries::get_product_listing::{
     DisplayProductListingPricing, GetProductListingError, GetProductListingHandler,
     GetProductListingRequest, GetProductListingUseCase, PersonalizedProductListingDetailsView,

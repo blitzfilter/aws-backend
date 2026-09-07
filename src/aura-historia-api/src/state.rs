@@ -1,5 +1,4 @@
 use crate::auth::TokenAuthenticator;
-use crate::webhooks::woocommerce_intake::WoocommerceWebhookIntakeUseCase;
 use admin_overview_service::GetAdminOverviewUseCase;
 use async_trait::async_trait;
 use billing_service::use_cases::{
@@ -57,6 +56,7 @@ use search_filter_service::use_cases::{
     ListOwnedSearchFiltersUseCase, ListSearchFilterMatchesUseCase, UpdateOwnedSearchFilterUseCase,
     UpdateSearchFilterMatchFeedbackUseCase,
 };
+use woocommerce_service::WoocommerceWebhookIntakeUseCase;
 
 use std::sync::Arc;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleUseCase;

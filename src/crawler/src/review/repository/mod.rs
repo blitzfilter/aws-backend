@@ -793,7 +793,8 @@ impl CrawlerReviewRepository {
                      SET next_retry_at = NULL, last_error_kind = NULL, \
                          last_error_message = NULL, updated = NOW() \
                      WHERE listing_source_id = $1 \
-                       AND last_error_kind = 'PendingSchemaReview'",
+                       AND last_error_kind = 'PendingSchemaReview' \
+                       AND crawler_disposition = 'ACTIVE'",
                 )
                 .bind(uuid::Uuid::from(listing_source_id))
                 .execute(&mut *transaction)

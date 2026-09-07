@@ -94,10 +94,13 @@ pub use product_listing_percolation::{
 };
 pub use product_listing_price_filter_plan::{NativePriceRange, ProductListingPriceFilterPlan};
 pub use product_listing_raw_capture_writer::{
+    MAX_PROVIDER_RECEIPT_DELIVERY_ID_UTF8_BYTES, MAX_PROVIDER_RECEIPT_SCOPE_UTF8_BYTES,
     ProductListingRawCaptureWrite, ProductListingRawCaptureWriteError,
     ProductListingRawCaptureWriteOutcome, ProductListingRawCaptureWriter,
     ProductListingRawCaptureWriterFactory, ProductListingRawIngestionMethod,
-    ProductListingRawRevisionId, ProductListingRawStreamId, SourceRecordKeySha256,
+    ProductListingRawProviderReceipt, ProductListingRawRevisionId, ProductListingRawStreamId,
+    ProviderReceiptDeliveryIdError, ProviderReceiptScope, ProviderReceiptScopeError,
+    SourceEvidenceSha256, SourceRecordKeySha256,
 };
 pub use product_listing_repository::{
     ProductListingRepository, ProductListingRepositoryError, ProductListingRepositoryFactory,

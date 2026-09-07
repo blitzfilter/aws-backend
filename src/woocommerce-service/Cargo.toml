@@ -1,0 +1,25 @@
+[package]
+name = "woocommerce-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+application = { workspace = true }
+async-trait = { workspace = true }
+html-to-markdown-rs = { workspace = true }
+listing-source-core = { workspace = true }
+listing-source-service = { workspace = true }
+product-listing-normalization = { workspace = true }
+product-listing-service = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true, features = ["parsing"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+localization = { workspace = true }
+money = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+user-core = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }

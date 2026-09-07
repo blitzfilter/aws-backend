@@ -13,7 +13,6 @@ use aura_historia_api::state::{
     PartnershipApplicationsState, PartnershipsState, ProductListingsState, SearchFiltersState,
     UsersState, WatchlistState, WebhooksState,
 };
-use aura_historia_api::webhooks::woocommerce_intake::WoocommerceWebhookIntake;
 use aura_historia_api::{app, state};
 use billing_service::ports::{
     CreateStripeCheckoutSessionRequest, CreateStripeCustomerRequest,
@@ -114,12 +113,13 @@ use product_listing_postgres::{
 };
 use user_core::stripe_customer_id::StripeCustomerId;
 use user_core::user_id::UserId;
+use woocommerce_service::WoocommerceWebhookIntake;
 
 use product_listing_service::use_cases::{
-    CaptureProductListingRawObservationHandler, CreateProductListingHandler,
-    GetProductListingHandler, GetProductListingHistoryHandler, GetSimilarProductListingsHandler,
-    SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
-    WithdrawProductListingHandler,
+    AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
+    CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
+    GetSimilarProductListingsHandler, SearchProductListingsHandler, UpdateProductListingHandler,
+    UpsertProductListingHandler, WithdrawProductListingHandler,
 };
 use search_filter_postgres::{
     SqlxSearchFilterMatchRepositoryFactory, SqlxSearchFilterQuotaReaderFactory,
@@ -1086,6 +1086,10 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             CaptureProductListingRawObservationHandler::new(
                 unit_of_work.clone(),
                 SqlxProductListingRawCaptureWriterFactory::new(),
+                SqlxPartnerProductListingAuthorizerFactory::new(),
+            ),
+            AuthorizeProductListingRawCaptureHandler::new(
+                unit_of_work.clone(),
                 SqlxPartnerProductListingAuthorizerFactory::new(),
             ),
         )),

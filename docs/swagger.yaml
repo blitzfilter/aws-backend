@@ -33,8 +33,8 @@ info:
     \ only when it is a 1–128-character ASCII value containing letters, digits, `.`, `_`, or `-`; invalid values are replaced.\
     \ Both headers are CORS-exposed.\n- Requests are limited to 1 MiB and time out after 30 seconds.\n- `GET /health` is a\
     \ process liveness check. `GET /ready` returns `204` only when the configured PostgreSQL and OpenSearch dependencies are\
-    \ reachable; it otherwise returns `503`.\n- WooCommerce webhook ingestion responds with **`204 No Content`** only after\
-    \ signed validation and durable raw ProductListing input capture; canonical normalization is asynchronous, while partner Product batch writes remain synchronous\n\n## Environment\
+    \ reachable; it otherwise returns `503`.\n- WooCommerce webhook ingestion responds with **`204 No Content`** after\
+    \ signed validation. Events that map to raw capture are durably captured; `product.created` and `product.updated` events with missing or unsupported status are acknowledged as ignored. A capture `204` acknowledges a changed, unchanged, duplicate, or stale outcome—not necessarily a new raw revision; canonical normalization is asynchronous, while partner Product batch writes remain synchronous\n\n## Environment\
     \ endpoints\n\n- **Development:** `https://api.dev.aura-historia.com`\n- **Production:** `https://api.aura-historia.com`\n\
     \n## Notes for integrators\n\n- Treat Aura Historia identifiers such as `listingSourceId`, `productListingId`, `eventId`,\
     \ `userSearchFilterId`,\n  and `partnershipApplicationId` as opaque values\n- For partner product ingestion, `sourceListingId`\
@@ -750,21 +750,44 @@ paths:
 
         - the WooCommerce topic in `x-wc-webhook-topic`, and
 
-        - the base64-encoded HMAC-SHA256 signature of the raw request body in `x-wc-webhook-signature`.
+        - the base64-encoded HMAC-SHA256 signature of the raw request body in `x-wc-webhook-signature`, and
+
+        - optionally, the WooCommerce delivery identifier in `x-wc-webhook-delivery-id`.
+
+
+        A supplied delivery identifier applies only when an event maps to raw capture. Its provider receipt retains only a
+
+        canonical semantic source-payload SHA-256 evidence digest for 90 days. A captured-observation retry with the same
+
+        digest receives `204`; reuse with different evidence returns `409 WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT`.
+
+        Logical receipt expiry permits a new receipt but never removes or rewrites a captured raw revision or its provenance.
+
+        Authorized ignored create/update events persist no receipt, even when they include a delivery identifier.
 
 
         Topic-specific payload requirements:
 
-        - `product.created` and `product.updated` require `id`, `name`, and `permalink`
+        - every topic requires `id`
 
-        - `product.deleted` requires only `id`
+        - `product.created` and `product.updated` with `status: publish` capture an UPSERT and require nonblank
+
+        `name` and `permalink`
+
+        - `product.created` and `product.updated` with `status: trash`, `draft`, `pending`, or `private` capture a
+
+        DELETE and require only `id`; missing or unsupported statuses are authorized ignored events and also require
+
+        only `id`
+
+        - `product.deleted` captures a DELETE and requires only `id`
 
 
         The listing source identified by `listingSourceId` must have a stored `woocommerceWebhookSecret`
 
         and a configured `woocommerceLanguage`.
 
-        If a non-empty `price` is sent, the listing source must also have `woocommerceCurrency` configured.
+        A nonblank `price` maps to a `SET` and requires the listing source to have `woocommerceCurrency` configured.
 
         "
       operationId: postWoocommerceWebhook
@@ -810,19 +833,28 @@ paths:
           schema:
             type: string
           example: wqW/6B0S9myGxVQ8l3PPX2f6s4HWtY6q9KAr4m+Jv3E=
+        - name: x-wc-webhook-delivery-id
+          in: header
+          required: false
+          description: "Optional WooCommerce delivery identifier. For an event that maps to raw capture, its receipt retains only a canonical semantic source-payload SHA-256 evidence digest for 90 days and deduplicates retries. Reusing the identifier with a different digest returns `409 WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT`. Logical receipt expiry permits a new receipt but never removes or rewrites a captured raw revision or its provenance. Authorized ignored create/update status events persist no receipt and receive no receipt-based retry-deduplication, even when this header is supplied. When absent, no provider receipt or receipt-based retry-deduplication guarantee is made."
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+          example: 4d1f0a18-ec5e-4e97-8cf8-ff4edc8b2e31
       requestBody:
         required: true
         description: "Topic-specific WooCommerce product payload.
 
-          For `product.created` and `product.updated`, `id`, `name`, and `permalink` are required.
+          Every topic requires `id`. For `product.created` and `product.updated`, `status: publish` captures an UPSERT and requires nonblank `name` and `permalink`; `status: trash`, `draft`, `pending`, or `private` captures a DELETE and requires only `id`. Missing or unsupported create/update statuses are authorized ignored events and require only `id`. `product.deleted` captures a DELETE and requires only `id`; its other fields are optional and ignored when absent.
 
-          For `product.deleted`, only `id` is required; all other fields are optional and ignored when absent.
+          When present on an event that maps to raw capture, WooCommerce `date_modified_gmt` is the source ordering timestamp. It accepts a no-offset GMT value interpreted as UTC, RFC3339 `Z`, or RFC3339 `+00:00`; malformed or nonzero-offset values return `400 BAD_BODY_VALUE`. `product.created` and `product.updated` events with missing or unsupported status are ignored only after capability and source authorization, then acknowledge `204` without parsing `date_modified_gmt` or constructing a provider receipt; a denied ignored event returns `403 FORBIDDEN`. An authorized ignored event persists no provider receipt even if a delivery ID is supplied. Omit it when source order is unavailable; an omitted timestamp provides no source-ordering guarantee.
 
           "
         content:
           application/json:
             schema:
-              oneOf:
+              anyOf:
                 - $ref: "#/components/schemas/WoocommerceProductWebhookUpsertData"
                 - $ref: "#/components/schemas/WoocommerceProductWebhookDeleteData"
             examples:
@@ -867,7 +899,7 @@ paths:
       responses:
         "204":
           description:
-            "Webhook signature and partner authorization are validated, then the semantic WooCommerce product input is durably captured. Canonical ProductListing normalization runs asynchronously. The backend returns no response body on success.
+            "Webhook capability, signature, and source authorization are validated. A `204` acknowledges an authorized ignored create/update event with missing or unsupported status, or a durably captured changed, unchanged, duplicate, or stale outcome; it does not mean a new raw revision was written. Ignored events do not parse `date_modified_gmt` or construct a provider receipt. A provider receipt exists only for an event that maps to raw capture and carries a delivery ID; authorized ignored events persist no receipt even when a delivery ID is supplied. Source ordering is evaluated only for an event that maps to raw capture with a valid `date_modified_gmt`. When a delivery ID or source timestamp is omitted, no corresponding receipt or source-ordering guarantee is made. Canonical ProductListing normalization runs asynchronously. The backend returns no response body on success.
 
             "
           headers:
@@ -880,7 +912,7 @@ paths:
           description:
             "Bad request — invalid or missing listing source ID, missing body, malformed JSON, unsupported
 
-            WooCommerce topic, or a payload that does not satisfy the selected topic's requirements.
+            WooCommerce topic, an invalid `date_modified_gmt` source timestamp (including a nonzero offset) for an event that maps to raw capture, or a missing field required by the selected capture operation.
 
             "
           content:
@@ -933,9 +965,9 @@ paths:
                       sourceType: header
         "401":
           description:
-            "Unauthorized — the bearer token is missing or invalid, the Aura Historia access token
+            "Unauthorized — missing or invalid bearer credentials use `INVALID_CREDENTIALS`. A missing or invalid
 
-            is unknown, or the WooCommerce signature header is missing/invalid.
+            WooCommerce signature uses `BAD_HEADER_VALUE`.
 
             "
           content:
@@ -948,16 +980,16 @@ paths:
                   value:
                     status: 401
                     title: Unauthorized
-                    error: UNAUTHORIZED
+                    error: INVALID_CREDENTIALS
                     source:
                       field: Authorization
                       sourceType: header
-                access_token_not_found:
+                invalid_access_token:
                   summary: Aura Historia access token is unknown or expired
                   value:
                     status: 401
                     title: Unauthorized
-                    error: ACCESS_TOKEN_NOT_FOUND
+                    error: INVALID_CREDENTIALS
                 missing_signature:
                   summary: WooCommerce signature header is missing
                   value:
@@ -979,7 +1011,7 @@ paths:
                       sourceType: header
                     detail: WooCommerce signature is invalid.
         "403":
-          description: Forbidden — the authenticated caller is not linked to the requested partnership
+          description: Forbidden — the caller lacks the required ProductListing write capability or exact source partnership grant, including for ignored status events
           content:
             application/problem+json:
               schema:
@@ -998,28 +1030,75 @@ paths:
                 status: 404
                 title: Not Found
                 error: LISTING_SOURCE_NOT_FOUND
+        "409":
+          description: Conflict — a delivery receipt conflicts with its retained evidence digest (`WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT`), or distinct evidence has the same `date_modified_gmt` timestamp (`WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT`)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                receipt_digest_conflict:
+                  summary: Delivery ID conflicts with its retained evidence digest
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: WOOCOMMERCE_PROVIDER_RECEIPT_DIGEST_CONFLICT
+                source_order_conflict:
+                  summary: Source timestamp conflicts with distinct prior evidence
+                  value:
+                    status: 409
+                    title: Conflict
+                    error: WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT
         "503":
-          description: Service unavailable — signed webhook validation or durable raw ProductListing capture is temporarily unavailable
+          description: Service unavailable — this route emits only `AUTH_TEMPORARILY_UNAVAILABLE`, `LISTING_SOURCE_TEMPORARILY_UNAVAILABLE`, or `PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              example:
-                status: 503
-                title: Service Unavailable
-                error: SERVICE_UNAVAILABLE
+              examples:
+                auth_temporarily_unavailable:
+                  summary: Authentication is temporarily unavailable
+                  value:
+                    status: 503
+                    title: Service Unavailable
+                    error: AUTH_TEMPORARILY_UNAVAILABLE
+                listing_source_temporarily_unavailable:
+                  summary: ListingSource access is temporarily unavailable
+                  value:
+                    status: 503
+                    title: Service Unavailable
+                    error: LISTING_SOURCE_TEMPORARILY_UNAVAILABLE
+                product_listing_temporarily_unavailable:
+                  summary: Raw ProductListing capture is temporarily unavailable
+                  value:
+                    status: 503
+                    title: Service Unavailable
+                    error: PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE
         "500":
-          description:
-            Internal server error — WooCommerce listing source integration configuration is incomplete or another
-            unexpected failure occurred
+          description: Internal server error — this route emits only `AUTH_INTERNAL_ERROR`, `LISTING_SOURCE_INTERNAL_ERROR`, or `PRODUCT_LISTING_INTERNAL_ERROR`.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-              example:
-                status: 500
-                title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
+              examples:
+                auth_internal_error:
+                  summary: Authentication failed internally
+                  value:
+                    status: 500
+                    title: Internal Server Error
+                    error: AUTH_INTERNAL_ERROR
+                listing_source_internal_error:
+                  summary: ListingSource access failed internally
+                  value:
+                    status: 500
+                    title: Internal Server Error
+                    error: LISTING_SOURCE_INTERNAL_ERROR
+                product_listing_internal_error:
+                  summary: Raw ProductListing capture failed internally
+                  value:
+                    status: 500
+                    title: Internal Server Error
+                    error: PRODUCT_LISTING_INTERNAL_ERROR
   /api/v1/product-listings/by-slug/{productListingTitleSlugId}:
     get:
       summary: Get a single product by title slug
@@ -13940,13 +14019,15 @@ components:
       description:
         "WooCommerce product payload accepted for `product.created` and `product.updated`.
 
-        The backend requires `id`, `name`, and `permalink` for these topics.
+        Every event requires `id`. `status: publish` captures an UPSERT and requires nonblank `name` and `permalink`.
+
+        `status: trash`, `draft`, `pending`, or `private` captures a DELETE and requires only `id`; missing or
+
+        unsupported status is authorized ignored input and also requires only `id`.
 
         "
       required:
         - id
-        - name
-        - permalink
       properties:
         id:
           type: integer
@@ -13956,12 +14037,12 @@ components:
           example: 17
         name:
           type: string
-          description: Product title from WooCommerce.
+          description: "Nonblank product title required only when `status: publish` captures an UPSERT."
           example: Test Produkt Titel
         permalink:
           type: string
           format: uri
-          description: Public URL of the WooCommerce product.
+          description: "Public URL required only when `status: publish` captures an UPSERT."
           example: http://aura-historia-test.local/product/test-produkt-titel/
         description:
           type: string
@@ -13980,13 +14061,19 @@ components:
         price:
           type: string
           nullable: true
-          description: "Optional decimal price string from WooCommerce.
+          pattern: '^(?:[0-9]+(?:\.[0-9]+)?|)$'
+          description:
+            "Optional WooCommerce price string for a captured `status: publish` UPSERT.
 
-            The backend accepts ASCII digits with an optional fractional part, trims whitespace,
+            Intake writes raw-values V2 `MACHINE_DECIMAL`. A nonblank value must be an untrimmed unsigned ASCII decimal
 
-            and truncates the fractional part to at most two digits before storing the amount in
+            (`digits` or `digits.digits`): no whitespace, signs, grouping separators, or currency symbols. A nonblank
 
-            the listing source's configured `woocommerceCurrency`.
+            `SET` requires the listing source's configured `woocommerceCurrency`. Fractional digits beyond the configured
+
+            currency minor-unit scale are accepted only when every excess digit is `0`; a nonzero excess digit is
+
+            rejected rather than truncated. A blank source string maps to `CLEAR`.
 
             "
           example: "42.69"
@@ -13995,9 +14082,11 @@ components:
           nullable: true
           description: "Optional WooCommerce product status string.
 
-            `publish` may restore or upsert a listing. `draft`, `pending`, `private`, and `trash`
+            `publish` captures an UPSERT and requires nonblank `name` and `permalink`. `draft`, `pending`,
 
-            withdraw an existing listing and never create one. Unsupported or missing status causes no destructive write.
+            `private`, and `trash` capture a DELETE and require only `id`. Unsupported or missing status is
+
+            authorized ignored input: it causes no destructive write and does not require `name` or `permalink`.
 
             "
           example: publish
@@ -14012,6 +14101,11 @@ components:
 
             "
           example: instock
+        date_modified_gmt:
+          type: string
+          nullable: true
+          description: Optional WooCommerce product modification timestamp. When the topic/status maps to raw capture, accepted forms are no-offset GMT interpreted as UTC, RFC3339 `Z`, and RFC3339 `+00:00`; malformed or nonzero-offset values are rejected. A valid value establishes provider source order; omit it when no source-ordering guarantee is available.
+          example: "2026-09-06T12:34:56"
         images:
           type: array
           description: Optional list of WooCommerce product images. Missing payload fields are treated as an empty list.
@@ -14036,6 +14130,11 @@ components:
           minimum: 0
           description: WooCommerce product identifier. It is converted to the internal `sourceListingId`.
           example: 17
+        date_modified_gmt:
+          type: string
+          nullable: true
+          description: Optional WooCommerce product modification timestamp. Accepted forms are no-offset GMT interpreted as UTC, RFC3339 `Z`, and RFC3339 `+00:00`; nonzero offsets are rejected. A valid value establishes provider source order; omit it when no source-ordering guarantee is available.
+          example: "2026-09-06T12:34:56"
 
     AdminOverviewData:
       type: object

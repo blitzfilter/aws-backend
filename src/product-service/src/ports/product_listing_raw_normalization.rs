@@ -117,11 +117,43 @@ pub struct PendingProductListingRawStream {
     pub oldest_pending_at: OffsetDateTime,
 }
 
-/// Bounded recovery query. It returns stream IDs and oldest pending time only.
+impl PendingProductListingRawStream {
+    pub fn cursor(self) -> PendingProductListingRawStreamCursor {
+        PendingProductListingRawStreamCursor {
+            oldest_pending_at: self.oldest_pending_at,
+            product_listing_raw_stream_id: self.product_listing_raw_stream_id,
+        }
+    }
+}
+
+/// Non-durable keyset position in the stable pending-stream ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingProductListingRawStreamCursor {
+    pub oldest_pending_at: OffsetDateTime,
+    pub product_listing_raw_stream_id: ProductListingRawStreamId,
+}
+
+/// Bounded recovery page request. A missing cursor starts or safely wraps the global traversal;
+/// capped streams return through the use-case result for worker-local continuation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingProductListingRawStreamPageRequest {
+    pub limit: u32,
+    pub cursor: Option<PendingProductListingRawStreamCursor>,
+}
+
+/// One keyset page of pending streams. No cursor means the global traversal safely wraps on its
+/// next run; it does not represent worker-local stream continuations.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PendingProductListingRawStreamPage {
+    pub streams: Vec<PendingProductListingRawStream>,
+    pub next_cursor: Option<PendingProductListingRawStreamCursor>,
+}
+
+/// Bounded recovery query over oldest-pending time then stream ID.
 #[async_trait]
 pub trait PendingProductListingRawStreamReader: Send + Sync {
-    async fn list_pending_streams(
+    async fn list_pending_stream_page(
         &self,
-        limit: u32,
-    ) -> Result<Vec<PendingProductListingRawStream>, ProductListingRawNormalizationPortError>;
+        request: PendingProductListingRawStreamPageRequest,
+    ) -> Result<PendingProductListingRawStreamPage, ProductListingRawNormalizationPortError>;
 }

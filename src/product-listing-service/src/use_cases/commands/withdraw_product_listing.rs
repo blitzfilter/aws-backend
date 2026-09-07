@@ -11,9 +11,7 @@ use application::operation_context::{
 };
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::change_outcome::ChangeOutcome;
-use listing_source_core::ListingSourceId;
 use product_listing_core::product_listing_id::{ProductListingId, ProductListingKey};
-use url::Url;
 use user_core::user_id::UserId;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,8 +40,6 @@ pub enum WithdrawProductListingError {
     },
     #[error("product listing not found")]
     NotFound,
-    #[error("multiple product listings match one listing source URL")]
-    AmbiguousSourceUrl,
     #[error("product listing persistence failed")]
     PersistenceFailed,
     #[error("product listing event storage failed")]
@@ -69,12 +65,6 @@ pub trait WithdrawProductListingUseCase: Send + Sync {
         context: &OperationContext,
         product_key: ProductListingKey,
     ) -> Result<WithdrawProductListingResult, WithdrawProductListingError>;
-    async fn execute_by_source_url(
-        &self,
-        context: &OperationContext,
-        listing_source_id: ListingSourceId,
-        url: Url,
-    ) -> Result<WithdrawProductListingResult, WithdrawProductListingError>;
 }
 
 pub struct WithdrawProductListingHandler<U, R, E, A> {
@@ -97,10 +87,6 @@ impl<U, R, E, A> WithdrawProductListingHandler<U, R, E, A> {
 enum WithdrawTarget {
     Id(ProductListingId),
     Key(ProductListingKey),
-    SourceUrl {
-        listing_source_id: ListingSourceId,
-        url: Url,
-    },
 }
 
 impl<U, R, E, A> WithdrawProductListingHandler<U, R, E, A>
@@ -156,27 +142,6 @@ where
                     .find_by_key(&key)
                     .await?
                     .ok_or(WithdrawProductListingError::NotFound)?
-            }
-            WithdrawTarget::SourceUrl {
-                listing_source_id,
-                url,
-            } => {
-                if let Some(actor_id) = partner_actor(&context.principal) {
-                    self.authorizer
-                        .in_transaction(&mut tx)
-                        .authorize(actor_id, listing_source_id)
-                        .await?;
-                }
-                let mut matches = self
-                    .products
-                    .in_transaction(&mut tx)
-                    .find_by_listing_source_and_url(listing_source_id, &url)
-                    .await?;
-                match matches.len() {
-                    0 => return Err(WithdrawProductListingError::NotFound),
-                    1 => matches.pop().ok_or(WithdrawProductListingError::NotFound)?,
-                    _ => return Err(WithdrawProductListingError::AmbiguousSourceUrl),
-                }
             }
         };
         let expected_version = loaded.version;
@@ -236,23 +201,6 @@ where
         self.withdraw(context, WithdrawTarget::Key(product_key))
             .await
     }
-
-    #[tracing::instrument(name = "withdraw_product_listing_by_source_url", skip_all, fields(listing_source_id = %listing_source_id, url = %url, principal_type = context.principal.kind(), actor_id = tracing::field::Empty, request_id = %context.request_id, correlation_id = %context.correlation_id))]
-    async fn execute_by_source_url(
-        &self,
-        context: &OperationContext,
-        listing_source_id: ListingSourceId,
-        url: Url,
-    ) -> Result<WithdrawProductListingResult, WithdrawProductListingError> {
-        self.withdraw(
-            context,
-            WithdrawTarget::SourceUrl {
-                listing_source_id,
-                url,
-            },
-        )
-        .await
-    }
 }
 
 fn partner_actor(principal: &Principal) -> Option<UserId> {
@@ -293,7 +241,6 @@ impl From<ProductListingRepositoryError> for WithdrawProductListingError {
         match error {
             ProductListingRepositoryError::ProductListingLookupByIdFailed
             | ProductListingRepositoryError::ProductListingLookupByKeyFailed { .. }
-            | ProductListingRepositoryError::ProductListingLookupBySourceUrlFailed { .. }
             | ProductListingRepositoryError::ProductListingInsertFailed
             | ProductListingRepositoryError::ProductListingUpdateFailed
             | ProductListingRepositoryError::ConcurrencyConflict

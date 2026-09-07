@@ -2,8 +2,6 @@ use product_listing_core::product_listing_image::ProductListingImage;
 use std::collections::BTreeSet;
 use url::Url;
 
-const IMAGE_CANDIDATE_SEPARATOR: char = '\u{1f}';
-
 #[derive(Debug, thiserror::Error)]
 pub enum ImageUrlNormalizationError {
     #[error("image URL is invalid")]
@@ -11,9 +9,6 @@ pub enum ImageUrlNormalizationError {
 }
 
 /// Parses, resolves, preserves first-seen order, and de-duplicates image URLs.
-///
-/// A unit-separator grouped value is accepted for compatibility with crawler image
-/// extraction. It is a generic candidate encoding, not a provider DTO format.
 pub fn normalize_image_urls(
     raw_values: impl IntoIterator<Item = String>,
     base_url: &Url,
@@ -22,13 +17,14 @@ pub fn normalize_image_urls(
     let mut images = Vec::new();
 
     for raw in raw_values {
-        let candidate = raw
-            .split(IMAGE_CANDIDATE_SEPARATOR)
-            .find(|candidate| !candidate.trim().is_empty())
-            .unwrap_or_default()
-            .trim();
+        let candidate = raw.trim();
         if candidate.is_empty() {
             continue;
+        }
+        if candidate.chars().any(|character| character.is_control()) {
+            return Err(ImageUrlNormalizationError::InvalidUrl(
+                url::ParseError::InvalidDomainCharacter,
+            ));
         }
         let url = Url::parse(candidate)
             .or_else(|_| base_url.join(candidate))
@@ -88,6 +84,17 @@ mod tests {
     fn should_reject_invalid_url() {
         assert!(matches!(
             normalize_image_urls(vec!["//".into()], &base_url()),
+            Err(ImageUrlNormalizationError::InvalidUrl(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_grouped_image_candidates_when_raw_value_contains_unit_separator() {
+        assert!(matches!(
+            normalize_image_urls(
+                vec!["https://cdn.example.com/one.jpg\u{1f}https://cdn.example.com/two.jpg".into()],
+                &base_url(),
+            ),
             Err(ImageUrlNormalizationError::InvalidUrl(_))
         ));
     }
