@@ -19,6 +19,7 @@
 
 - Keep skill descriptions specific so agent loads them only when useful.
 - Update skills when repo workflow, infra wiring, docs contract, or test flow changes.
+- Projection skill follows durable SQS publication-before-ACK, complete-only delete, retention-bounded replay, and persistent deletion fences. Effective operational values live in `docs/durable-worker-runbook.md`; verify code and external deployment handoffs, never assume rollout.
 
 ## Work Guidance
 
@@ -33,7 +34,7 @@
 
 - `skills/aura-rust-enum/SKILL.md` — enum design, canonical machine identifiers, iteration, and persisted enum evolution.
 - `skills/aura-rust-api-endpoint/SKILL.md` — API route, controller, DTO, auth, error mapping.
-- `skills/aura-rust-projection/SKILL.md` — CDC, Sequin, projections, replay/rebuild.
+- `skills/aura-rust-projection/SKILL.md` — CDC, durable SQS/Sequin acknowledgment, deletion fences, replay/rebuild.
 - `skills/aura-rust-reader/SKILL.md` — readers, read models, hydration.
 - `skills/aura-rust-repository/SKILL.md` — aggregate repositories, Postgres mapping, versions.
 - `skills/aura-rust-review-architecture/SKILL.md` — final/review architecture gate.

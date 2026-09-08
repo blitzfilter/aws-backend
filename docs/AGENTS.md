@@ -9,6 +9,7 @@
 - `swagger.yaml` be public REST contract.
 - `CHANGELOG.md` tell API change by pull request.
 - `storage.md` owns storage migration and repository conventions.
+- `durable-worker-runbook.md` owns SQS runtime limits, external handoff, cutover, DLQ recovery, and projection-fence rollout. Runtime code and CDK remain the source for effective values; docs do not prove deployment.
 - Child doc can own deeper subsystem docs when folder become durable boundary.
 
 ## Ownership
@@ -40,7 +41,8 @@
 - `admin-overview.md` — administrator overview source and count semantics.
 - `party-and-listing-source.md` — Party, ListingSource, and Partnership contract.
 - `product-listing.md` — canonical ProductListing domain contract.
-- `product-listing-raw-normalization-runbook.md` — raw capture, one-page recovery cursor, shutdown, backlog, and crawler operator checks.
+- `product-listing-raw-normalization-runbook.md` — raw capture, durable wake-ups, reconstructible reconciliation cursor/FIFO, shutdown, backlog, and crawler checks.
+- `durable-worker-runbook.md` — durable SQS settings, identity/Sequin handoff, safe operations, tombstones, and notification recovery.
 - `product-listing-inventory.md` — ProductListing rewrite scope and final scan checklist.
 - `listing-source-partnership-rewrite-inventory.md` — ListingSource and Partnership rewrite completion checklist.
 - `storage.md` — canonical storage contracts.

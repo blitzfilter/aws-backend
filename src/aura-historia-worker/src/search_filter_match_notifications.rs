@@ -1,222 +1,116 @@
 use crate::{
-    InMemoryQueueReceiver,
+    WorkerScope,
     cdc::{DomainJob, DomainJobPayload},
-    retry::{InMemoryDeadLetterQueue, RetryConfig, run_with_retry},
+    queue::{JobOutcome, WorkerQueueReceiver},
 };
-use application::error::{BoxError, box_error};
-use domain_primitives::event_id::EventId;
-use product_listing_core::product_listing_id::ProductListingId;
-use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use search_filter_service::use_cases::{
-    GenerateSearchFilterMatchNotificationCommand, GenerateSearchFilterMatchNotificationResult,
-    GenerateSearchFilterMatchNotificationUseCase,
+    GenerateSearchFilterMatchNotificationCommand, GenerateSearchFilterMatchNotificationError,
+    GenerateSearchFilterMatchNotificationResult, GenerateSearchFilterMatchNotificationUseCase,
 };
 use std::sync::Arc;
-use tracing::{Span, error, info};
-use user_core::user_id::UserId;
 
 pub async fn consume_search_filter_match_notification_queue(
-    mut receiver: InMemoryQueueReceiver<DomainJob>,
+    receiver: impl Into<WorkerQueueReceiver>,
     use_case: Arc<dyn GenerateSearchFilterMatchNotificationUseCase>,
 ) {
-    let dead_letters = InMemoryDeadLetterQueue::new();
-
-    while let Some(job) = receiver.recv().await {
-        let idempotency_key = job.idempotency_key.as_str().to_owned();
-        let ordering_key = job.ordering_key.as_str().to_owned();
-        let identity = match_job_identity(&job);
-        let use_case_for_retry = Arc::clone(&use_case);
-        let result = run_with_retry(job, RetryConfig::default(), &dead_letters, move |job| {
-            let use_case = Arc::clone(&use_case_for_retry);
-            async move { execute_job(use_case, job).await }
+    receiver
+        .into()
+        .run(WorkerScope::SearchFilterMatchNotification, move |job| {
+            execute_job(use_case.clone(), job)
         })
         .await;
-
-        match result {
-            Ok(()) => info!(
-                job_type = "search_filter_match_notification",
-                %idempotency_key,
-                %ordering_key,
-                user_id = %identity.user_id,
-                search_filter_id = %identity.search_filter_id,
-                product_listing_id = %identity.product_listing_id,
-                origin_event_id = %identity.origin_event_id,
-                outcome = "applied",
-                "search filter match notification job completed"
-            ),
-            Err(error) => error!(
-                job_type = "search_filter_match_notification",
-                %idempotency_key,
-                %ordering_key,
-                user_id = %identity.user_id,
-                search_filter_id = %identity.search_filter_id,
-                product_listing_id = %identity.product_listing_id,
-                origin_event_id = %identity.origin_event_id,
-                error = %error,
-                outcome = "dead_lettered_in_memory",
-                "search filter match notification job failed"
-            ),
-        }
-    }
 }
-
-#[tracing::instrument(
-    name = "process_search_filter_match_notification_job",
-    skip(use_case, job),
-    fields(
-        user_id = tracing::field::Empty,
-        search_filter_id = tracing::field::Empty,
-        product_listing_id = tracing::field::Empty,
-        origin_event_id = tracing::field::Empty,
-    )
-)]
 async fn execute_job(
     use_case: Arc<dyn GenerateSearchFilterMatchNotificationUseCase>,
     job: DomainJob,
-) -> Result<(), BoxError> {
-    let command = command_from_job(job).map_err(box_error)?;
-    let span = Span::current();
-    span.record("user_id", tracing::field::display(command.user_id));
-    span.record(
-        "search_filter_id",
-        tracing::field::display(command.search_filter_id),
-    );
-    span.record(
-        "product_listing_id",
-        tracing::field::display(command.product_listing_id),
-    );
-    span.record(
-        "origin_event_id",
-        tracing::field::display(command.origin_event_id),
-    );
-    let result = use_case.execute(command).await.map_err(box_error)?;
-    let notification_outcome = notification_outcome(result);
-    info!(
-        job_type = "search_filter_match_notification",
-        notification_outcome, "search filter match notification write completed"
-    );
-    Ok(())
-}
-
-fn notification_outcome(result: GenerateSearchFilterMatchNotificationResult) -> &'static str {
-    match result {
-        GenerateSearchFilterMatchNotificationResult::Created => "inserted",
-        GenerateSearchFilterMatchNotificationResult::AlreadyExists => "deduplicated",
-        GenerateSearchFilterMatchNotificationResult::SuppressedByQuota => "suppressed_by_quota",
-        GenerateSearchFilterMatchNotificationResult::SuppressedForMissingUser => {
-            "suppressed_for_missing_user"
-        }
-        GenerateSearchFilterMatchNotificationResult::SuppressedForMissingMatch => {
-            "suppressed_for_missing_match"
-        }
-        GenerateSearchFilterMatchNotificationResult::SuppressedForStaleMatch => {
-            "suppressed_for_stale_match"
-        }
-        GenerateSearchFilterMatchNotificationResult::SuppressedForMissingProductListing => {
-            "suppressed_for_missing_product"
-        }
-        GenerateSearchFilterMatchNotificationResult::SuppressedForWithdrawnProductListing => {
-            "suppressed_for_withdrawn_product"
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct SearchFilterMatchNotificationJobIdentity {
-    user_id: String,
-    search_filter_id: String,
-    product_listing_id: String,
-    origin_event_id: String,
-}
-
-fn match_job_identity(job: &DomainJob) -> SearchFilterMatchNotificationJobIdentity {
-    let DomainJobPayload::SearchFilterMatchCreated(change) = &job.payload else {
-        return SearchFilterMatchNotificationJobIdentity::default();
+) -> JobOutcome {
+    let Ok(command) = command_from_job(job) else {
+        return JobOutcome::Invalid("match_metadata_invalid");
     };
-
-    SearchFilterMatchNotificationJobIdentity {
-        user_id: change.user_id.clone(),
-        search_filter_id: change.user_search_filter_id.clone(),
-        product_listing_id: change.product_listing_id.clone(),
-        origin_event_id: change.origin_event_id.clone(),
+    match use_case.execute(command).await {
+        Ok(result) => notification_outcome(result),
+        Err(error) => {
+            use GenerateSearchFilterMatchNotificationError as E;
+            match error {
+                E::MatchSourceStateInvalid { .. }
+                | E::ProductListingSourceStateInvalid { .. }
+                | E::ProductListingSourceMismatch
+                | E::ContentAssessmentStateInvalid { .. } => {
+                    JobOutcome::Invalid("match_notification_state_invalid")
+                }
+                _ => JobOutcome::DependencyUnavailable("match_notification_unavailable"),
+            }
+        }
     }
 }
-
+fn notification_outcome(result: GenerateSearchFilterMatchNotificationResult) -> JobOutcome {
+    use GenerateSearchFilterMatchNotificationResult as R;
+    match result {
+        R::Created => JobOutcome::Complete("inserted"),
+        R::AlreadyExists => JobOutcome::Complete("duplicate"),
+        R::SuppressedByQuota => JobOutcome::Complete("suppressed_by_quota"),
+        // User deletion is a terminal recipient suppression, not missing historical business truth.
+        R::SuppressedForMissingUser => JobOutcome::Complete("missing_user"),
+        R::SuppressedForWithdrawnProductListing => JobOutcome::Complete("withdrawn"),
+        R::SuppressedForStaleMatch => JobOutcome::Complete("stale_match"),
+        R::SuppressedForMissingMatch => JobOutcome::Retry("missing_match"),
+        R::SuppressedForMissingProductListing => JobOutcome::Retry("missing_product"),
+    }
+}
 fn command_from_job(
     job: DomainJob,
-) -> Result<GenerateSearchFilterMatchNotificationCommand, SearchFilterMatchNotificationWorkerError>
-{
+) -> Result<GenerateSearchFilterMatchNotificationCommand, crate::jobs::InvalidJob> {
     let DomainJobPayload::SearchFilterMatchCreated(change) = job.payload else {
-        return Err(SearchFilterMatchNotificationWorkerError::UnexpectedJobPayload);
+        return Err(crate::jobs::InvalidJob);
     };
-    let user_id = UserId::try_from(change.user_id.as_str()).map_err(|source| {
-        SearchFilterMatchNotificationWorkerError::InvalidUserId {
-            source: box_error(source),
-        }
-    })?;
-    let search_filter_id = UserSearchFilterId::try_from(change.user_search_filter_id.as_str())
-        .map_err(
-            |source| SearchFilterMatchNotificationWorkerError::InvalidSearchFilterId {
-                source: box_error(source),
-            },
-        )?;
-    let product_listing_id = ProductListingId::try_from(change.product_listing_id.as_str())
-        .map_err(
-            |source| SearchFilterMatchNotificationWorkerError::InvalidProductListingId {
-                source: box_error(source),
-            },
-        )?;
-    let origin_event_id = EventId::try_from(change.origin_event_id.as_str()).map_err(|source| {
-        SearchFilterMatchNotificationWorkerError::InvalidOriginEventId {
-            source: box_error(source),
-        }
-    })?;
-
     Ok(GenerateSearchFilterMatchNotificationCommand {
-        user_id,
-        search_filter_id,
-        product_listing_id,
-        origin_event_id,
+        user_id: change
+            .user_id
+            .as_str()
+            .try_into()
+            .map_err(|_| crate::jobs::InvalidJob)?,
+        search_filter_id: change
+            .user_search_filter_id
+            .as_str()
+            .try_into()
+            .map_err(|_| crate::jobs::InvalidJob)?,
+        product_listing_id: change
+            .product_listing_id
+            .as_str()
+            .try_into()
+            .map_err(|_| crate::jobs::InvalidJob)?,
+        origin_event_id: change
+            .origin_event_id
+            .as_str()
+            .try_into()
+            .map_err(|_| crate::jobs::InvalidJob)?,
     })
-}
-
-#[derive(Debug, thiserror::Error)]
-enum SearchFilterMatchNotificationWorkerError {
-    #[error("search filter match notification queue received an unexpected job payload")]
-    UnexpectedJobPayload,
-    #[error("search filter match notification job has an invalid user id")]
-    InvalidUserId {
-        #[source]
-        source: BoxError,
-    },
-    #[error("search filter match notification job has an invalid search filter id")]
-    InvalidSearchFilterId {
-        #[source]
-        source: BoxError,
-    },
-    #[error("search filter match notification job has an invalid product id")]
-    InvalidProductListingId {
-        #[source]
-        source: BoxError,
-    },
-    #[error("search filter match notification job has an invalid origin event id")]
-    InvalidOriginEventId {
-        #[source]
-        source: BoxError,
-    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn should_report_withdrawn_product_suppression() {
-        assert_eq!(
-            "suppressed_for_withdrawn_product",
-            notification_outcome(
-                GenerateSearchFilterMatchNotificationResult::SuppressedForWithdrawnProductListing,
-            )
-        );
+    fn should_retain_missing_historical_facts_and_complete_semantic_suppression() {
+        use GenerateSearchFilterMatchNotificationResult as R;
+        for result in [
+            R::SuppressedForMissingMatch,
+            R::SuppressedForMissingProductListing,
+        ] {
+            assert!(matches!(notification_outcome(result), JobOutcome::Retry(_)));
+        }
+        for result in [
+            R::Created,
+            R::AlreadyExists,
+            R::SuppressedByQuota,
+            R::SuppressedForMissingUser,
+            R::SuppressedForWithdrawnProductListing,
+            R::SuppressedForStaleMatch,
+        ] {
+            assert!(matches!(
+                notification_outcome(result),
+                JobOutcome::Complete(_)
+            ));
+        }
     }
 }

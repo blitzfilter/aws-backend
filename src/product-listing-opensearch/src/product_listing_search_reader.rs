@@ -546,7 +546,8 @@ pub(crate) fn build_product_index_filter_clauses(
     search: &ProductListingSearch,
     price_filter: &ProductListingPriceFilterPlan,
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), serde_json::Error> {
-    let (must_not, mut filter) = build_common_filter_clauses(search)?;
+    let (mut must_not, mut filter) = build_common_filter_clauses(search)?;
+    must_not.push(json!({"term": {"projectionDeleted": true}}));
     if let Some(price_clause) = build_product_index_price_clause(price_filter) {
         filter.push(price_clause);
     }

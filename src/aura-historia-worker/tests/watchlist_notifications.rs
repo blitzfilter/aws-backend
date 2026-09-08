@@ -1,6 +1,5 @@
-use aura_historia_worker::cdc::WorkerQueue;
 use aura_historia_worker::watchlist_notifications::consume_watchlist_notification_queue;
-use aura_historia_worker::{QueueConfig, WorkerRunError, WorkerRuntime, serve_with_runtime};
+use aura_historia_worker::{WorkerRunError, WorkerScope, serve_with_runtime};
 
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::event_id::EventId;
@@ -37,13 +36,17 @@ use user_core::user_id::UserId;
 use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::WatchlistNotification;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_NOTIFICATION_OBSERVATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_lock_product_listing_through_watchlist_source_read() {
+    let worker = WatchlistWorker::start().await.expect("start SQS worker");
     let pool = get_postgres_client().await;
     let event_id = EventId::new();
     let mut setup = pool
@@ -129,10 +132,12 @@ async fn should_lock_product_listing_through_watchlist_source_read() {
             .await
             .unwrap_or_else(|error| panic!("read withdrawn lifecycle: {error}"));
     assert_eq!("WITHDRAWN", lifecycle);
+    worker.finish(Ok(())).await.expect("worker cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_suppress_watchlist_notification_when_withdrawal_commits_first() {
+    let worker = WatchlistWorker::start().await.expect("start SQS worker");
     let pool = get_postgres_client().await;
     let historical_event_id = EventId::new();
     let later_event_id = EventId::new();
@@ -207,9 +212,10 @@ async fn should_suppress_watchlist_notification_when_withdrawal_commits_first() 
         .await
         .unwrap_or_else(|error| panic!("count notifications: {error}"));
     assert_eq!(0, notification_count);
+    worker.finish(Ok(())).await.expect("worker cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_notify_historical_change_after_later_active_product_event() {
     let result = notify_historical_change_after_later_active_product_event().await;
 
@@ -298,7 +304,7 @@ async fn notify_historical_change_after_later_active_product_event()
     worker.finish(result).await
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_create_availability_notification_from_committed_product_event() {
     let result = create_availability_notification_from_committed_product_event().await;
 
@@ -308,7 +314,7 @@ async fn should_create_availability_notification_from_committed_product_event() 
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_create_price_notifications_only_for_active_watchers() {
     let result = create_price_notifications_only_for_active_watchers().await;
 
@@ -318,7 +324,7 @@ async fn should_create_price_notifications_only_for_active_watchers() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_notify_watcher_created_after_product_event() {
     let result = no_notification_for_watcher_created_after_product_event().await;
 
@@ -328,7 +334,7 @@ async fn should_not_notify_watcher_created_after_product_event() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_one_notification_when_product_event_delivery_is_retried() {
     let result = preserve_one_notification_when_product_event_delivery_is_retried().await;
 
@@ -338,7 +344,7 @@ async fn should_preserve_one_notification_when_product_event_delivery_is_retried
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_notify_for_rolled_back_or_unrouted_product_listing_events() {
     let result = not_notify_for_rolled_back_or_unrouted_product_listing_events().await;
 
@@ -628,6 +634,45 @@ async fn not_notify_for_rolled_back_or_unrouted_product_listing_events()
     worker.finish(result).await
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+async fn should_preserve_each_historical_notification_and_intent_after_reversed_duplicate_sqs_events()
+ {
+    let result: support::TestResult = async {
+        let worker = WatchlistWorker::start().await?;
+        let result = async {
+            let user = seed_user(&worker.pool, "reversed-events").await?;
+            let first = EventId::new();
+            let second = EventId::new();
+            let mut tx = worker.pool.begin().await?;
+            let listing = seed_product(&mut tx, first).await?;
+            seed_watchlist(&mut tx, user, listing, true, "ACTIVE").await?;
+            let when = OffsetDateTime::now_utc() + time::Duration::seconds(5);
+            insert_product_event_at(&mut tx, first, listing, "PRODUCT_LISTING_CHANGED", json!({"availability": {"previous": null, "current": "AVAILABLE"}}), when).await?;
+            insert_product_event_at(&mut tx, second, listing, "PRODUCT_LISTING_CHANGED", json!({"availability": {"previous": "AVAILABLE", "current": "SOLD_OUT"}}), when + time::Duration::seconds(1)).await?;
+            sqlx::query("UPDATE product_listings SET current_event_id = $1 WHERE product_listing_id = $2")
+                .bind(uuid::Uuid::from(second)).bind(uuid::Uuid::from(listing)).execute(&mut *tx).await?;
+            tx.commit().await?;
+            wait_for_notifications(&worker.pool, user, 2).await?;
+            for event in [second, first, second, first] {
+                support::redeliver_product_event(&worker.pool, uuid::Uuid::from(event)).await?;
+            }
+            support::wait_until_empty(SCOPE).await?;
+            let rows = notifications_for_user(&worker.pool, user).await?;
+            assert_eq!(2, rows.len());
+            let first_row = rows.iter().find(|row| row.origin_event_id == uuid::Uuid::from(first)).ok_or("missing first historical event")?;
+            let second_row = rows.iter().find(|row| row.origin_event_id == uuid::Uuid::from(second)).ok_or("missing second historical event")?;
+            assert_availability_change(first_row, None, Some("AVAILABLE"))?;
+            assert_availability_change(second_row, Some("AVAILABLE"), Some("SOLD_OUT"))?;
+            let intents: i64 = sqlx::query_scalar("SELECT count(*) FROM notification_deliveries d JOIN notifications n USING (notification_id) WHERE n.user_id = $1")
+                .bind(uuid::Uuid::from(user)).fetch_one(&worker.pool).await?;
+            assert_eq!(2, intents);
+            Ok(())
+        }.await;
+        worker.finish(result).await
+    }.await;
+    result.expect("historical SQS uniqueness acceptance and cleanup");
+}
+
 struct WatchlistWorker {
     pool: sqlx::PgPool,
     consumer: JoinHandle<()>,
@@ -649,12 +694,11 @@ impl WatchlistWorker {
                     SqlxNotificationDeliveryIntentRepositoryFactory::new(),
                 ),
             ));
-        let (runtime, mut receivers) =
-            WorkerRuntime::with_watchlist_notification_queue(QueueConfig::new(16))?;
-        let receiver = receivers
-            .take(WorkerQueue::WatchlistNotification)
-            .ok_or_else(|| std::io::Error::other("watchlist notification queue is missing"))?;
-        let consumer = tokio::spawn(consume_watchlist_notification_queue(receiver, handler));
+        let (runtime, receiver) = support::composition(SCOPE).await?.into_parts();
+        let consumer = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_watchlist_notification_queue(receiver, handler.clone())
+        })
+        .await?;
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
@@ -673,8 +717,14 @@ impl WatchlistWorker {
         self,
         result: Result<(), Box<dyn std::error::Error>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let drain = if result.is_ok() {
+            support::wait_until_empty(SCOPE).await
+        } else {
+            Ok(())
+        };
         let shutdown = self.shutdown().await;
         result?;
+        drain?;
         shutdown
     }
 

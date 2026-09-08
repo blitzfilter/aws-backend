@@ -48,7 +48,7 @@ pub use serial_test::serial;
 #[cfg(feature = "ses")]
 pub use ses::*;
 #[cfg(feature = "sqs")]
-pub use sqs::{Sqs, SqsBuilder, SqsBuilderError, get_sqs_client};
+pub use sqs::{Sqs, SqsBuilder, SqsBuilderError, SqsQueuePair, WorkerSqs, get_sqs_client};
 pub use test_api_macros::aura_integration_test;
 pub use tokio;
 pub use tracing;

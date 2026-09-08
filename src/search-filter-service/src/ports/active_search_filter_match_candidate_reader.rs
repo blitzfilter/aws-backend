@@ -1,4 +1,5 @@
 use application::error::BoxError;
+use product_listing_core::product_listing_search::ProductListingSearch;
 use search_filter_core::PriceMatchValuation;
 use search_filter_core::enhanced_match_reason::EnhancedMatchReason;
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
@@ -9,6 +10,8 @@ use user_core::user_id::UserId;
 pub struct SearchFilterMatchCandidate {
     pub user_id: UserId,
     pub search_filter_id: UserSearchFilterId,
+    pub expected_search: ProductListingSearch,
+    pub expected_embedding: Option<Vec<f32>>,
     pub price_match_valuation: Option<PriceMatchValuation>,
     pub enhanced_match_reason: Option<EnhancedMatchReason>,
 }
@@ -38,6 +41,8 @@ pub enum ActiveSearchFilterMatchCandidateReadError {
 
 #[async_trait::async_trait]
 pub trait ActiveSearchFilterMatchCandidateReader: Send {
+    /// Lock active filters through match commit and retain only the exact evaluated search inputs.
+    /// Index views have no storage revision; unrelated name/notification changes remain eligible.
     async fn find_active(
         &mut self,
         candidates: &[SearchFilterMatchCandidate],

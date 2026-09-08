@@ -1,5 +1,8 @@
+mod support;
+
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::event_id::EventId;
+use std::time::Duration;
 
 use platform_postgres::SqlxUnitOfWork;
 const EMBEDDING_DIMENSIONS: usize = 768;
@@ -95,6 +98,103 @@ async fn should_report_duplicate_and_stale_without_second_embedding_event() {
         result.is_ok(),
         "embedding duplicate/stale acceptance failed: {result:?}"
     );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_keep_first_embedding_when_duplicate_completions_overlap() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let (product_id, source_event_id) = insert_product_with_created_event(&pool).await?;
+        let first_write = new_write(product_id, source_event_id, EventId::new());
+        let mut duplicate_write = new_write(product_id, source_event_id, EventId::new());
+        duplicate_write.embedding = vec![0.75; EMBEDDING_DIMENSIONS];
+        let mut first = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(first.connection()).await?;
+        assert_eq!(ProductListingEmbeddingWriteOutcome::Applied,
+            SqlxProductListingEmbeddingWriterFactory::new().in_transaction(&mut first)
+                .apply(&first_write).await?);
+        let duplicate = apply(&pool, &duplicate_write);
+        tokio::pin!(duplicate);
+        support::assert_blocked(&pool, blocker_pid, 1, duplicate.as_mut()).await?;
+        first.commit().await?;
+        assert_eq!(ProductListingEmbeddingWriteOutcome::Duplicate,
+            tokio::time::timeout(Duration::from_secs(10), duplicate).await??);
+        let stored: (Vec<f32>, uuid::Uuid, i64, i64) = sqlx::query_as(
+            "SELECT embedding, current_event_id, version, projection_version FROM product_listings WHERE product_listing_id = $1"
+        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        assert_eq!((first_write.embedding, uuid::Uuid::from(first_write.enrichment_event_id), 1, 2), stored);
+        let events: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT event_id FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_EMBEDDED'"
+        ).bind(uuid::Uuid::from(product_id)).fetch_all(&pool).await?;
+        assert_eq!(vec![uuid::Uuid::from(first_write.enrichment_event_id)], events);
+        Ok(())
+    }.await;
+    assert!(
+        result.is_ok(),
+        "concurrent embedding completion: {result:?}"
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_reject_late_embedding_completion_after_new_image_revision_commits() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let (product_id, old_source) = insert_product_with_created_event(&pool).await?;
+        let old_write = new_write(product_id, old_source, EventId::new());
+        advance_product_current_event(&pool, product_id).await?;
+        let new_source: uuid::Uuid = sqlx::query_scalar(
+            "SELECT embedding_source_event_id FROM product_listings WHERE product_listing_id = $1"
+        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        let new_write = new_write(product_id, new_source.into(), EventId::new());
+        let mut newer = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(newer.connection()).await?;
+        SqlxProductListingEmbeddingWriterFactory::new().in_transaction(&mut newer)
+            .apply(&new_write).await?;
+        let late = apply(&pool, &old_write);
+        tokio::pin!(late);
+        support::assert_blocked(&pool, blocker_pid, 1, late.as_mut()).await?;
+        newer.commit().await?;
+        assert_eq!(ProductListingEmbeddingWriteOutcome::Stale,
+            tokio::time::timeout(Duration::from_secs(10), late).await??);
+        let stored: (Vec<f32>, uuid::Uuid, i64) = sqlx::query_as(
+            "SELECT embedding, current_event_id, projection_version FROM product_listings WHERE product_listing_id = $1"
+        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        assert_eq!((new_write.embedding, uuid::Uuid::from(new_write.enrichment_event_id), 3), stored);
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_EMBEDDED'"
+        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        assert_eq!(1, count);
+        Ok(())
+    }.await;
+    assert!(result.is_ok(), "reversed embedding completion: {result:?}");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_apply_embedding_after_unrelated_newer_event_without_invalidating_image_source() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let (product_id, source) = insert_product_with_created_event(&pool).await?;
+        let mut update = pool.begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *update).await?;
+        let unrelated = EventId::new();
+        sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
+            .bind(uuid::Uuid::from(unrelated)).bind(uuid::Uuid::from(product_id))
+            .bind(serde_json::json!({"availability": {"previous": "AVAILABLE", "current": "RESERVED"}})).execute(&mut *update).await?;
+        sqlx::query("UPDATE product_listings SET current_event_id = $1, availability = 'RESERVED', version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
+            .bind(uuid::Uuid::from(unrelated)).bind(uuid::Uuid::from(product_id)).execute(&mut *update).await?;
+        let write = new_write(product_id, source, EventId::new());
+        let completion = apply(&pool, &write);
+        tokio::pin!(completion);
+        support::assert_blocked(&pool, blocker_pid, 1, completion.as_mut()).await?;
+        update.commit().await?;
+        assert_eq!(ProductListingEmbeddingWriteOutcome::Applied,
+            tokio::time::timeout(Duration::from_secs(10), completion).await??);
+        Ok(())
+    }.await;
+    assert!(result.is_ok(), "independent image source: {result:?}");
 }
 
 async fn apply(

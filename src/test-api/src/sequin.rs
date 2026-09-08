@@ -40,6 +40,8 @@ const PRODUCT_LISTING_RAW_REVISIONS_TABLE: &str = "public.product_listing_raw_re
 
 static WORKER_WEBHOOK_SEQUIN: OnceCell<RunningSequin> = OnceCell::const_new();
 static WORKER_WEBHOOK_PORT: OnceLock<u16> = OnceLock::new();
+static SECONDARY_WORKER_WEBHOOK_PORT: OnceLock<u16> = OnceLock::new();
+static WORKER_WEBHOOK_TOPOLOGY: OnceLock<Sequin> = OnceLock::new();
 
 fn redis_container_name() -> String {
     format!("{REDIS_CONTAINER_NAME_PREFIX}-{}", std::process::id())
@@ -74,12 +76,33 @@ fn install_cleanup() {
 }
 
 /// Process-lived Sequin fixture that delivers the worker's CDC tables to its local webhook.
-#[derive(Debug, Clone, Copy)]
-pub struct Sequin;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sequin {
+    primary_tables: Option<&'static [&'static str]>,
+    secondary_tables: &'static [&'static str],
+}
 
 impl Sequin {
     pub const fn worker_webhook() -> Self {
-        Self
+        Self {
+            primary_tables: None,
+            secondary_tables: &[],
+        }
+    }
+
+    pub const fn worker_webhook_for_tables(tables: &'static [&'static str]) -> Self {
+        Self::worker_webhooks(tables, &[])
+    }
+
+    /// Table-scoped destinations for two independently composed worker runtimes.
+    pub const fn worker_webhooks(
+        primary: &'static [&'static str],
+        secondary: &'static [&'static str],
+    ) -> Self {
+        Self {
+            primary_tables: Some(primary),
+            secondary_tables: secondary,
+        }
     }
 }
 
@@ -90,7 +113,12 @@ impl IntegrationTestService for Sequin {
     }
 
     async fn set_up(&self) {
-        get_or_start_worker_webhook_sequin().await;
+        assert_eq!(
+            self,
+            WORKER_WEBHOOK_TOPOLOGY.get_or_init(|| *self),
+            "Sequin topology must stay fixed within one test process"
+        );
+        get_or_start_worker_webhook_sequin(*self).await;
     }
 }
 
@@ -105,7 +133,14 @@ pub fn get_sequin_worker_webhook_bind_addr() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], worker_webhook_port()))
 }
 
-async fn get_or_start_worker_webhook_sequin() -> &'static RunningSequin {
+pub fn get_sequin_secondary_worker_webhook_bind_addr() -> SocketAddr {
+    SocketAddr::from((
+        [0, 0, 0, 0],
+        *SECONDARY_WORKER_WEBHOOK_PORT.get_or_init(find_free_port),
+    ))
+}
+
+async fn get_or_start_worker_webhook_sequin(topology: Sequin) -> &'static RunningSequin {
     WORKER_WEBHOOK_SEQUIN
         .get_or_init(|| async {
             let webhook_url = format!(
@@ -114,7 +149,7 @@ async fn get_or_start_worker_webhook_sequin() -> &'static RunningSequin {
             );
 
             retry_sequin_start(SEQUIN_START_RETRY_DELAY, || {
-                start_worker_webhook_sequin(&webhook_url)
+                start_worker_webhook_sequin(&webhook_url, topology)
             })
             .await
             .unwrap_or_else(|error| panic!("Sequin test fixture did not start: {error}"))
@@ -145,7 +180,10 @@ where
     unreachable!("Sequin startup loop always returns or fails")
 }
 
-async fn start_worker_webhook_sequin(webhook_url: &str) -> Result<RunningSequin, String> {
+async fn start_worker_webhook_sequin(
+    webhook_url: &str,
+    topology: Sequin,
+) -> Result<RunningSequin, String> {
     install_cleanup();
 
     let suffix = std::process::id().to_string();
@@ -173,7 +211,12 @@ async fn start_worker_webhook_sequin(webhook_url: &str) -> Result<RunningSequin,
         "Sequin Redis container ready."
     );
 
-    let config_yaml = sequin_config_yaml(webhook_url, &suffix);
+    let config_yaml = match topology.primary_tables {
+        Some(primary) => {
+            scoped_sequin_config_yaml(webhook_url, &suffix, primary, topology.secondary_tables)
+        }
+        None => sequin_config_yaml(webhook_url, &suffix),
+    };
     let config_yaml_base64 = STANDARD.encode(config_yaml);
     let redis_url = format!("redis://host.docker.internal:{redis_port}");
     let sequin_state_pg_url = get_postgres_host_gateway_connection_string(&state_database);
@@ -291,6 +334,62 @@ fn sequin_config_yaml(webhook_url: &str, suffix: &str) -> String {
             .replace('\n', "\n  ")
     ));
 
+    config
+}
+
+fn scoped_sequin_config_yaml(
+    webhook_url: &str,
+    suffix: &str,
+    primary: &[&str],
+    secondary: &[&str],
+) -> String {
+    let tables: Vec<_> = primary.iter().chain(secondary).copied().collect();
+    assert!(!tables.is_empty(), "Sequin needs at least one source table");
+    for table in &tables {
+        assert!(
+            WORKER_WEBHOOK_TABLES.contains(table)
+                || [
+                    NOTIFICATION_DELIVERY_TABLE,
+                    PRODUCT_LISTING_RAW_REVISIONS_TABLE
+                ]
+                .contains(table),
+            "unsupported fixture CDC table"
+        );
+    }
+    let mut config = include_str!("sequin/base.yaml")
+        .replace("__SUFFIX__", suffix)
+        .replace("__POSTGRES_PORT__", &get_postgres_host_port().to_string())
+        .replace("__PUBLICATION_TABLES__", &tables.join(", "));
+    let mut endpoints = vec![serde_json::json!({"name": "worker", "url": webhook_url})];
+    if !secondary.is_empty() {
+        endpoints.push(serde_json::json!({
+            "name": "secondary-worker",
+            "url": format!("http://host.docker.internal:{}/cdc/sequin", get_sequin_secondary_worker_webhook_bind_addr().port()),
+        }));
+    }
+    let mut sinks = Vec::new();
+    for (endpoint, tables) in [("worker", primary), ("secondary-worker", secondary)] {
+        for table in tables {
+            let actions = if *table == "public.search_filters" {
+                vec!["insert", "update", "delete"]
+            } else {
+                vec!["insert"]
+            };
+            sinks.push(serde_json::json!({
+                "name": format!("{endpoint}-{}", table.replace('.', "-")),
+                "database": format!("aura-historia-business-{suffix}"),
+                "source": {"include_tables": [table]},
+                "actions": actions,
+                "batch_size": 1,
+                "destination": {"type": "webhook", "http_endpoint": endpoint, "batch": false},
+            }));
+        }
+    }
+    config.push_str(&format!(
+        "http_endpoints: {}\nsinks: {}\n",
+        serde_json::json!(endpoints),
+        serde_json::json!(sinks)
+    ));
     config
 }
 
@@ -415,6 +514,22 @@ mod tests {
             ))
         );
         assert_eq!(attempts, SEQUIN_START_ATTEMPTS);
+    }
+
+    #[test]
+    fn should_keep_scoped_webhook_topology_explicit() {
+        let single = super::Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
+        let paired = super::Sequin::worker_webhooks(
+            &["public.product_listing_events"],
+            &["public.search_filter_matches"],
+        );
+        assert_ne!(single, paired);
+        assert_eq!(
+            Some(&["public.product_listing_events"][..]),
+            paired.primary_tables
+        );
+        assert_eq!(&["public.search_filter_matches"], paired.secondary_tables);
+        assert_eq!(None, super::Sequin::worker_webhook().primary_tables);
     }
 
     #[test]

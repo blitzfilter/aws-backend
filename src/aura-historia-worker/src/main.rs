@@ -9,7 +9,7 @@ use aura_historia_worker::search_filter_percolator::consume_search_filter_percol
 use aura_historia_worker::search_filter_projection::consume_search_filter_projection_queue;
 use aura_historia_worker::watchlist_notifications::consume_watchlist_notification_queue;
 use aura_historia_worker::{
-    QueueConfig, WorkerOpenSearchConfig, WorkerRunError, WorkerRuntimeComposition, WorkerScope,
+    WorkerOpenSearchConfig, WorkerRunError, WorkerRuntimeComposition, WorkerScope,
     WorkerStartupConfig, WorkerStartupConfigError, WorkerVertexAiConfig,
     run_until_shutdown_with_runtime,
 };
@@ -88,7 +88,21 @@ use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
 const GOOGLE_CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 
 #[tokio::main]
-async fn main() -> Result<(), MainError> {
+async fn main() {
+    std::panic::set_hook(Box::new(|_| {
+        tracing::error!(outcome = "worker_panic", "worker task panicked")
+    }));
+    if run().await.is_err() {
+        // Provider SDK/error bodies can contain secrets. Do not print MainError's source chain.
+        tracing::error!(
+            outcome = "worker_stopped",
+            "worker startup or supervision failed"
+        );
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), MainError> {
     init(LoggingConfig::new(
         std::env::var("LOG_LEVEL")
             .ok()
@@ -99,12 +113,13 @@ async fn main() -> Result<(), MainError> {
     let startup = WorkerStartupConfig::from_env()?;
     let scope = startup.scope();
     let worker_config = startup.worker().clone();
+    let queue = aura_historia_worker::queue::SqsQueue::from_config(startup.queue().clone()).await?;
     let pool = startup
         .postgres()
         .connect()
         .await
         .map_err(PostgresConnectError::Connect)?;
-    let composition = WorkerRuntimeComposition::build(scope, QueueConfig::new(1024))?;
+    let composition = WorkerRuntimeComposition::from_sqs_queue(queue);
 
     match scope {
         WorkerScope::SearchFilterProjection => {
@@ -397,16 +412,9 @@ async fn finish_raw_normalization_runtime(
     task: tokio::task::JoinHandle<()>,
     consumer_shutdown: watch::Sender<bool>,
 ) -> Result<(), MainError> {
-    let shutdown_for_signal = consumer_shutdown.clone();
-    let result = run_until_shutdown_with_runtime(config, runtime, async move {
-        shutdown_signal().await;
-        let _previous_shutdown = shutdown_for_signal.send_replace(true);
-    })
-    .await;
-    let _previous_shutdown = consumer_shutdown.send_replace(true);
-    task.await.map_err(MainError::RawNormalizationConsumer)?;
-    result?;
-    Ok(())
+    let result = finish_runtime(config, runtime, task).await;
+    consumer_shutdown.send_replace(true);
+    result
 }
 
 async fn finish_runtime(
@@ -414,11 +422,55 @@ async fn finish_runtime(
     runtime: aura_historia_worker::WorkerRuntime,
     task: tokio::task::JoinHandle<()>,
 ) -> Result<(), MainError> {
-    let result = run_until_shutdown_with_runtime(config, runtime, shutdown_signal()).await;
-    task.abort();
-    let _ = task.await;
-    result?;
-    Ok(())
+    let mut consumer = SupervisedConsumer(task);
+    let (stop_http, stopped) = tokio::sync::oneshot::channel();
+    let server = run_until_shutdown_with_runtime(config, runtime.clone(), async move {
+        let _closed = stopped.await;
+    });
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut consumer.0 => {
+            runtime.shutdown();
+            let _closed = stop_http.send(());
+            server.await?;
+            let _joined = result;
+            Err(MainError::ConsumerStopped)
+        }
+        result = &mut server => {
+            runtime.shutdown();
+            consumer.drain().await?;
+            result?;
+            Ok(())
+        }
+        () = shutdown_signal() => {
+            runtime.shutdown();
+            let _closed = stop_http.send(());
+            let (server_result, consumer_result) = tokio::join!(server, consumer.drain());
+            consumer_result?;
+            server_result?;
+            Ok(())
+        }
+    }
+}
+
+struct SupervisedConsumer(tokio::task::JoinHandle<()>);
+impl Drop for SupervisedConsumer {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+impl SupervisedConsumer {
+    async fn drain(&mut self) -> Result<(), MainError> {
+        match tokio::time::timeout(std::time::Duration::from_secs(270), &mut self.0).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(MainError::ConsumerStopped),
+            Err(_) => {
+                self.0.abort();
+                let _cancelled = (&mut self.0).await;
+                Err(MainError::ConsumerStopped)
+            }
+        }
+    }
 }
 
 fn vertex_ai_large_language_model(
@@ -463,8 +515,20 @@ fn opensearch_client(config: &WorkerOpenSearchConfig) -> Result<OpenSearch, Main
 }
 
 async fn shutdown_signal() {
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::error!(%error, "failed to listen for shutdown signal");
+    let Ok(mut terminate) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    else {
+        tracing::error!(
+            outcome = "signal_setup_failed",
+            "failed to listen for SIGTERM"
+        );
+        return;
+    };
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if result.is_err() { tracing::error!(outcome = "signal_setup_failed", "failed to listen for SIGINT"); }
+        }
+        _ = terminate.recv() => {}
     }
 }
 
@@ -475,7 +539,7 @@ enum MainError {
     #[error(transparent)]
     Postgres(#[from] PostgresConnectError),
     #[error(transparent)]
-    QueueConfig(#[from] aura_historia_worker::QueueConfigError),
+    QueueConfig(#[from] aura_historia_worker::queue::QueueError),
     #[error("missing validated configuration for {scope:?} worker scope")]
     MissingScopeConfig { scope: WorkerScope },
 
@@ -495,8 +559,8 @@ enum MainError {
     NotificationDispatch(
         #[from] notification_service::ports::notification_channel_sender::NotificationDeliveryDispatchError,
     ),
-    #[error("raw normalization consumer task stopped unexpectedly")]
-    RawNormalizationConsumer(#[source] tokio::task::JoinError),
+    #[error("worker consumer stopped unexpectedly or exceeded shutdown budget")]
+    ConsumerStopped,
     #[error(transparent)]
     Run(#[from] WorkerRunError),
 }

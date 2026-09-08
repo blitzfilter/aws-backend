@@ -1,3 +1,5 @@
+mod support;
+
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::event_id::EventId;
 use platform_postgres::SqlxUnitOfWork;
@@ -7,6 +9,7 @@ use product_listing_service::ports::{
     ProductListingCurrentEventCheck, ProductListingCurrentEventGuard,
     ProductListingCurrentEventGuardFactory, ProductListingCurrentEventRef,
 };
+use std::time::Duration;
 use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 use tokio::sync::oneshot;
 
@@ -84,6 +87,104 @@ async fn current_event_guard_lock_flow() -> Result<(), Box<dyn std::error::Error
     let update_result: Result<sqlx::postgres::PgQueryResult, sqlx::Error> = update.await?;
     update_result?;
     Ok(())
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_recheck_current_event_after_waiting_for_concurrent_product_commit() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let (product_id, original) = seed_product(&pool).await?;
+        let newer = EventId::new();
+        let mut update = pool.begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *update).await?;
+        sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
+            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id))
+            .bind(serde_json::json!({"availability": {"previous": "AVAILABLE", "current": "SOLD_OUT"}}))
+            .execute(&mut *update).await?;
+        sqlx::query("UPDATE product_listings SET current_event_id = $1, availability = 'SOLD_OUT', version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
+            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id))
+            .execute(&mut *update).await?;
+        let final_guard = async {
+            let mut tx = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+            let result = SqlxProductListingCurrentEventGuardFactory::new().in_transaction(&mut tx)
+                .lock_and_check(product_id, original).await?;
+            tx.commit().await?;
+            Ok::<_, Box<dyn std::error::Error>>(result)
+        };
+        tokio::pin!(final_guard);
+        support::assert_blocked(&pool, blocker_pid, 1, final_guard.as_mut()).await?;
+        update.commit().await?;
+        assert_eq!(ProductListingCurrentEventCheck::Stale,
+            tokio::time::timeout(Duration::from_secs(10), final_guard).await??);
+        Ok(())
+    }.await;
+    assert!(
+        result.is_ok(),
+        "final current-event revalidation: {result:?}"
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_read_reversed_historical_watchlist_and_match_facts_after_newer_event() {
+    use product_listing_postgres::{
+        SqlxProductListingSearchFilterMatchSourceReaderFactory,
+        SqlxProductListingWatchlistNotificationSourceReaderFactory,
+    };
+    use product_listing_service::ports::{
+        ProductListingSearchFilterMatchSourceReader,
+        ProductListingSearchFilterMatchSourceReaderFactory,
+        ProductListingWatchlistNotificationSourceReadOutcome,
+        ProductListingWatchlistNotificationSourceReader,
+        ProductListingWatchlistNotificationSourceReaderFactory,
+    };
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let (product_id, discovery) = seed_product(&pool).await?;
+        let first = EventId::new();
+        let second = EventId::new();
+        for (event, previous, current) in [(first, "AVAILABLE", "RESERVED"), (second, "RESERVED", "SOLD_OUT")] {
+            sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
+                .bind(uuid::Uuid::from(event)).bind(uuid::Uuid::from(product_id))
+                .bind(serde_json::json!({"availability": {"previous": previous, "current": current}}))
+                .execute(&pool).await?;
+        }
+        let newer = EventId::new();
+        let mut update = pool.begin().await?;
+        sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'ENRICHMENT_EMBEDDED', 'ENRICHMENT', 1, $3, now())")
+            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id))
+            .bind(serde_json::json!({"sourceEventId": discovery.to_string()})).execute(&mut *update).await?;
+        sqlx::query("UPDATE product_listings SET current_event_id = $1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
+            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id)).execute(&mut *update).await?;
+        update.commit().await?;
+        let mut tx = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(tx.connection()).await?;
+        for event in [second, first, first] {
+            let source = SqlxProductListingWatchlistNotificationSourceReaderFactory::new().in_transaction(&mut tx)
+                .find_source(event, product_id).await?;
+            let ProductListingWatchlistNotificationSourceReadOutcome::Found(source) = source else {
+                return Err(std::io::Error::other("historical watchlist fact suppressed").into());
+            };
+            assert_eq!(event, source.event_id);
+            assert_eq!(1, source.changes.len());
+            let match_source = SqlxProductListingSearchFilterMatchSourceReaderFactory::new().in_transaction(&mut tx)
+                .find_source(event, product_id).await?.ok_or_else(|| std::io::Error::other("historical match product source suppressed"))?;
+            assert_eq!(event, match_source.event_id);
+            assert_eq!(newer, match_source.current_event_id);
+        }
+        let withdraw = sqlx::query("UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL WHERE product_listing_id = $1")
+            .bind(uuid::Uuid::from(product_id)).execute(&pool);
+        tokio::pin!(withdraw);
+        support::assert_blocked(&pool, blocker_pid, 1, withdraw.as_mut()).await?;
+        tx.commit().await?;
+        tokio::time::timeout(Duration::from_secs(10), withdraw).await??;
+        Ok(())
+    }.await;
+    assert!(
+        result.is_ok(),
+        "historical facts and lifecycle lock: {result:?}"
+    );
 }
 
 async fn seed_product(pool: &sqlx::PgPool) -> Result<(ProductListingId, EventId), sqlx::Error> {

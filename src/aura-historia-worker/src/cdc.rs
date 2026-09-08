@@ -27,7 +27,7 @@ pub struct CdcBatch {
     pub delivery_id: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
-    #[serde(default, alias = "events", alias = "records")]
+    #[serde(alias = "events", alias = "records")]
     pub changes: Vec<CdcChange>,
 }
 
@@ -64,21 +64,12 @@ pub enum CdcOperation {
     Delete,
 }
 
-impl WorkerQueue {
-    pub const ALL: [Self; 11] = [
-        Self::ProductListingOpenSearch,
-        Self::ProductListingRawNormalization,
-        Self::WatchlistNotification,
-        Self::SearchFilterPercolator,
-        Self::SearchFilterMatchNotification,
-        Self::ProductListingContentAssessment,
-        Self::ProductListingEmbed,
-        Self::ProductListingTranslate,
-        Self::SearchFilterOpenSearch,
-        Self::UserTierEnforcement,
-        Self::NotificationDelivery,
-    ];
-}
+pub use crate::jobs::*;
+
+pub const MAX_CDC_BODY_BYTES: usize = 1024 * 1024;
+pub const MAX_CDC_CHANGES: usize = 100;
+pub const MAX_CDC_JOBS: usize = 500;
+pub const PUBLICATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 impl Display for CdcOperation {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
@@ -119,109 +110,32 @@ where
     CdcOperation::from_str(&value).map_err(serde::de::Error::custom)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DomainJob {
-    pub target_queue: WorkerQueue,
-    pub idempotency_key: IdempotencyKey,
-    pub ordering_key: OrderingKey,
-    pub payload: DomainJobPayload,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WorkerQueue {
-    ProductListingOpenSearch,
-    ProductListingRawNormalization,
-    WatchlistNotification,
-    SearchFilterPercolator,
-    SearchFilterMatchNotification,
-    ProductListingContentAssessment,
-    ProductListingEmbed,
-    ProductListingTranslate,
-    SearchFilterOpenSearch,
-    UserTierEnforcement,
-    NotificationDelivery,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct IdempotencyKey(String);
-
-impl IdempotencyKey {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OrderingKey(String);
-
-impl OrderingKey {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DomainJobPayload {
-    ProductListingEvent(ProductListingEventJob),
-    ProductListingRawRevision(ProductListingRawRevisionJob),
-    SearchFilterChanged(SearchFilterChangedJob),
-    SearchFilterMatchCreated(SearchFilterMatchCreatedJob),
-    UserTierChanged(UserTierChangedJob),
-    NotificationDeliveryCreated(NotificationDeliveryCreatedJob),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProductListingEventJob {
-    pub event_id: EventId,
-    pub product_listing_id: ProductListingId,
-}
-
-/// Compact wake-up metadata. The normalizer rereads the immutable revision from PostgreSQL.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProductListingRawRevisionJob {
-    pub product_listing_raw_stream_id: ProductListingRawStreamId,
-    pub product_listing_raw_revision_id: ProductListingRawRevisionId,
-    pub revision: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchFilterChangedJob {
-    pub user_id: String,
-    pub user_search_filter_id: String,
-    pub version: i64,
-    pub operation: CdcOperation,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchFilterMatchCreatedJob {
-    pub user_id: String,
-    pub user_search_filter_id: String,
-    pub product_listing_id: String,
-    pub origin_event_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UserTierChangedJob {
-    pub user_id: String,
-    pub version: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NotificationDeliveryCreatedJob {
-    pub notification_delivery_id: String,
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct WorkerQueueRegistry {
-    queues: HashMap<WorkerQueue, InMemoryQueueSender<DomainJob>>,
+    queues: HashMap<WorkerQueue, Destination>,
+}
+
+#[derive(Debug, Clone)]
+enum Destination {
+    Memory(InMemoryQueueSender<DomainJob>),
+    Sqs(Box<crate::queue::SqsQueue>),
+}
+
+enum PreparedPublication<'a> {
+    Memory(&'a InMemoryQueueSender<DomainJob>, DomainJob),
+    Sqs(&'a crate::queue::SqsQueue, String),
+}
+
+impl PreparedPublication<'_> {
+    async fn publish(self) -> Result<(), CdcFanoutError> {
+        match self {
+            Self::Memory(sender, job) => sender.enqueue(job).await.map_err(Into::into),
+            Self::Sqs(queue, body) => queue
+                .publish(&body)
+                .await
+                .map_err(|_| CdcFanoutError::PublicationFailed),
+        }
+    }
 }
 
 impl WorkerQueueRegistry {
@@ -249,18 +163,39 @@ impl WorkerQueueRegistry {
         queue: WorkerQueue,
         sender: InMemoryQueueSender<DomainJob>,
     ) -> Self {
-        self.queues.insert(queue, sender);
+        self.queues.insert(queue, Destination::Memory(sender));
         self
     }
 
-    async fn enqueue(&self, job: DomainJob) -> Result<(), CdcFanoutError> {
-        let Some(sender) = self.queues.get(&job.target_queue) else {
-            return Err(CdcFanoutError::MissingQueue(job.target_queue));
-        };
-        sender
-            .enqueue(job)
-            .await
-            .map_err(|error| CdcFanoutError::QueueClosed(error.0.target_queue))
+    pub fn with_sqs_queue(mut self, queue: crate::queue::SqsQueue) -> Self {
+        self.queues.insert(
+            queue.config().scope().consumer_queue(),
+            Destination::Sqs(Box::new(queue)),
+        );
+        self
+    }
+
+    fn prepare(&self, job: DomainJob) -> Result<PreparedPublication<'_>, CdcIngestError> {
+        job.validate().map_err(|_| CdcIngestError::InvalidJob)?;
+        let destination = self
+            .queues
+            .get(&job.target_queue)
+            .ok_or(CdcFanoutError::MissingQueue(job.target_queue))?;
+        match destination {
+            Destination::Memory(sender) => {
+                if sender.sender.is_closed() {
+                    return Err(CdcFanoutError::QueueClosed(job.target_queue).into());
+                }
+                Ok(PreparedPublication::Memory(sender, job))
+            }
+            Destination::Sqs(queue) => {
+                if job.target_queue != queue.config().scope().consumer_queue() {
+                    return Err(CdcIngestError::InvalidJob);
+                }
+                let body = crate::wire::encode(&job).map_err(|_| CdcIngestError::InvalidJob)?;
+                Ok(PreparedPublication::Sqs(queue, body))
+            }
+        }
     }
 }
 
@@ -321,6 +256,28 @@ enum CdcFanoutScope {
 }
 
 impl CdcFanout {
+    pub fn for_scope(scope: crate::WorkerScope, registry: WorkerQueueRegistry) -> Self {
+        use crate::WorkerScope;
+        match scope {
+            WorkerScope::SearchFilterProjection => Self::search_filter_projection(registry),
+            WorkerScope::SearchFilterPercolator => Self::search_filter_percolator(registry),
+            WorkerScope::SearchFilterMatchNotification => {
+                Self::search_filter_match_notification(registry)
+            }
+            WorkerScope::WatchlistNotification => Self::watchlist_notification(registry),
+            WorkerScope::ProductListingContentAssessment => {
+                Self::product_content_assessment(registry)
+            }
+            WorkerScope::ProductListingTranslation => Self::product_translation(registry),
+            WorkerScope::ProductListingEmbedding => Self::product_embedding(registry),
+            WorkerScope::ProductListingOpenSearch => Self::product_listing_opensearch(registry),
+            WorkerScope::ProductListingRawNormalization => {
+                Self::product_listing_raw_normalization(registry)
+            }
+            WorkerScope::NotificationDelivery => Self::notification_delivery(registry),
+        }
+    }
+
     pub fn new(registry: WorkerQueueRegistry) -> Self {
         Self {
             registry,
@@ -399,23 +356,47 @@ impl CdcFanout {
     }
 
     pub async fn ingest_json(&self, body: &str) -> Result<usize, CdcIngestError> {
+        if body.len() > MAX_CDC_BODY_BYTES {
+            return Err(CdcIngestError::LimitExceeded);
+        }
         let batch = parse_cdc_batch(body).map_err(CdcIngestError::InvalidJson)?;
         self.ingest_batch(&batch).await
     }
 
     pub async fn ingest_batch(&self, batch: &CdcBatch) -> Result<usize, CdcIngestError> {
-        let mut enqueued = 0;
-
+        if batch.changes.len() > MAX_CDC_CHANGES {
+            return Err(CdcIngestError::LimitExceeded);
+        }
+        let mut publications = Vec::new();
         for change in &batch.changes {
+            if change
+                .schema
+                .as_deref()
+                .is_some_and(|schema| schema != "public")
+            {
+                return Err(CdcIngestError::InvalidJob);
+            }
             for job in self.route_change(change)? {
-                self.registry.enqueue(job).await?;
-                enqueued += 1;
+                if publications.len() == MAX_CDC_JOBS {
+                    return Err(CdcIngestError::LimitExceeded);
+                }
+                publications.push(self.registry.prepare(job)?);
             }
         }
-
+        // Nothing has been published yet. Invalid later changes or missing destinations cannot
+        // create a partial fanout. Network failures still can; redelivery is intentionally safe.
+        let enqueued = publications.len();
+        tokio::time::timeout(PUBLICATION_TIMEOUT, async {
+            for publication in publications {
+                publication.publish().await?;
+            }
+            Ok::<_, CdcFanoutError>(())
+        })
+        .await
+        .map_err(|_| CdcFanoutError::PublicationDeadline)??;
         debug!(
             changes = batch.changes.len(),
-            enqueued, "CDC batch fanned out"
+            enqueued, "CDC batch durably published or explicitly test-enqueued"
         );
         Ok(enqueued)
     }
@@ -689,14 +670,13 @@ pub fn route_change(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError>
             search_filter_match_created_job(change)
         }
         (CdcTable::SearchFilterMatches, _) => Ok(Vec::new()),
-        (CdcTable::Users, CdcOperation::Update) => user_tier_changed_job(change),
         (CdcTable::Users, _) => Ok(Vec::new()),
         (CdcTable::NotificationDeliveries, CdcOperation::Insert) => {
             notification_delivery_created_job(change)
         }
         (CdcTable::NotificationDeliveries, _) => Ok(Vec::new()),
-        (CdcTable::Unknown(table), _) => {
-            warn!(%table, operation = %change.operation, "ignoring unregistered CDC table");
+        (CdcTable::Unknown(_), _) => {
+            warn!(operation = %change.operation, "ignoring unregistered CDC table");
             Ok(Vec::new())
         }
         (CdcTable::ProductListings | CdcTable::ProductListingWatchlist, _) => Ok(Vec::new()),
@@ -1503,23 +1483,6 @@ fn notification_delivery_created_job(change: &CdcChange) -> Result<Vec<DomainJob
     )])
 }
 
-fn user_tier_changed_job(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError> {
-    if !has_tier_change(change) {
-        return Ok(Vec::new());
-    }
-
-    let row = required_row(change)?;
-    let user_id = required_string(row, "user_id")?;
-    let version = integer_field(row, "version").unwrap_or(0);
-
-    Ok(vec![domain_job(
-        WorkerQueue::UserTierEnforcement,
-        IdempotencyKey::new(format!("user-tier:{user_id}:{version}")),
-        OrderingKey::new(format!("user:{user_id}")),
-        DomainJobPayload::UserTierChanged(UserTierChangedJob { user_id, version }),
-    )])
-}
-
 fn domain_job(
     target_queue: WorkerQueue,
     idempotency_key: IdempotencyKey,
@@ -1566,23 +1529,12 @@ fn required_integer(row: &Value, field: &'static str) -> Result<i64, CdcRouteErr
     integer_field(row, field).ok_or(CdcRouteError::MissingColumn(field))
 }
 
-fn has_tier_change(change: &CdcChange) -> bool {
-    if !change.changed_columns.is_empty() {
-        return change.changed_columns.iter().any(|column| column == "tier");
-    }
-
-    let Some(new) = &change.record else {
-        return false;
-    };
-    let Some(old) = &change.old_record else {
-        return true;
-    };
-
-    string_field(new, "tier") != string_field(old, "tier")
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum CdcIngestError {
+    #[error("CDC batch exceeds bounded ingress limits")]
+    LimitExceeded,
+    #[error("CDC job metadata is invalid")]
+    InvalidJob,
     #[error("invalid CDC JSON")]
     InvalidJson(#[source] serde_json::Error),
     #[error(transparent)]
@@ -1632,6 +1584,10 @@ pub enum CdcRouteError {
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum CdcFanoutError {
+    #[error("SQS publication failed")]
+    PublicationFailed,
+    #[error("CDC publication deadline exceeded")]
+    PublicationDeadline,
     #[error("worker queue is not registered: {0:?}")]
     MissingQueue(WorkerQueue),
     #[error("worker queue closed before fanout: {0:?}")]
@@ -2679,7 +2635,8 @@ mod tests {
     }
 
     #[test]
-    fn should_route_user_tier_change() -> Result<(), Box<dyn std::error::Error>> {
+    fn should_not_route_user_tier_change_without_a_production_consumer()
+    -> Result<(), Box<dyn std::error::Error>> {
         let jobs = route_change(&CdcChange {
             schema: Some("public".to_owned()),
             table: "users".to_owned(),
@@ -2700,12 +2657,7 @@ mod tests {
             commit_timestamp: None,
         })?;
 
-        assert_eq!(1, jobs.len());
-        assert_eq!(WorkerQueue::UserTierEnforcement, jobs[0].target_queue);
-        assert_eq!(
-            "user-tier:10000000-0000-0000-0000-000000000001:4",
-            jobs[0].idempotency_key.as_str()
-        );
+        assert!(jobs.is_empty());
         Ok(())
     }
 
@@ -2725,6 +2677,49 @@ mod tests {
 
         assert!(jobs.is_empty());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_register_exactly_ten_scopes_and_publish_the_maximum_discovery_fanout() {
+        use strum::IntoEnumIterator;
+        let scopes: Vec<_> = crate::WorkerScope::iter().collect();
+        let queues: std::collections::HashSet<_> = WorkerQueue::ALL.into_iter().collect();
+        assert_eq!(10, scopes.len());
+        assert_eq!(10, queues.len());
+        assert!(!queues.contains(&WorkerQueue::UserTierEnforcement));
+        assert_eq!(
+            queues,
+            scopes.iter().map(|scope| scope.consumer_queue()).collect()
+        );
+        let (registry, mut receivers) =
+            WorkerQueueRegistry::with_all_queues(QueueConfig::new(MAX_CDC_CHANGES)).unwrap();
+        let fanout = CdcFanout::new(registry);
+        let change = product_event_change("PRODUCT_LISTING_DISCOVERED", "DOMAIN");
+        let expected = route_change(&change).unwrap();
+        assert_eq!(5, expected.len());
+        let batch = CdcBatch {
+            delivery_id: None,
+            source: None,
+            changes: vec![change; MAX_CDC_CHANGES],
+        };
+        assert_eq!(MAX_CDC_JOBS, fanout.ingest_batch(&batch).await.unwrap());
+        for queue in WorkerQueue::ALL {
+            let mut receiver = receivers.take(queue).unwrap();
+            let mut count = 0;
+            while let Ok(job) = receiver.receiver.try_recv() {
+                assert_eq!(queue, job.target_queue);
+                assert!(job.validate().is_ok());
+                count += 1;
+            }
+            assert_eq!(
+                if expected.iter().any(|job| job.target_queue == queue) {
+                    MAX_CDC_CHANGES
+                } else {
+                    0
+                },
+                count
+            );
+        }
     }
 
     #[tokio::test]
@@ -2762,7 +2757,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_not_ack_partial_product_event_fanout_after_some_jobs_enqueue()
+    async fn should_publish_nothing_when_any_destination_is_missing()
     -> Result<(), Box<dyn std::error::Error>> {
         let (product_sender, mut product_receiver) = in_memory_queue(QueueConfig::new(1))?;
         let (percolator_sender, mut percolator_receiver) = in_memory_queue(QueueConfig::new(1))?;
@@ -2785,13 +2780,19 @@ mod tests {
                 WorkerQueue::ProductListingContentAssessment
             )))
         ));
-        assert!(product_receiver.recv().await.is_some());
-        assert!(percolator_receiver.recv().await.is_some());
+        assert!(matches!(
+            product_receiver.receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            percolator_receiver.receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
         Ok(())
     }
 
     #[tokio::test]
-    async fn should_enqueue_all_discovery_jobs_after_redelivery_of_partial_fanout()
+    async fn should_enqueue_all_discovery_jobs_after_missing_destinations_are_repaired()
     -> Result<(), Box<dyn std::error::Error>> {
         let (product_sender, mut product_receiver) = in_memory_queue(QueueConfig::new(2))?;
         let (percolator_sender, mut percolator_receiver) = in_memory_queue(QueueConfig::new(2))?;
@@ -2836,24 +2837,22 @@ mod tests {
         ));
         assert_eq!(5, retry_fanout.ingest_batch(&batch).await?);
 
-        let first_product_job = product_receiver
-            .recv()
-            .await
-            .ok_or("product queue stopped")?;
-        let retried_product_job = product_receiver
-            .recv()
-            .await
-            .ok_or("product queue stopped")?;
-        let first_percolator_job = percolator_receiver
-            .recv()
-            .await
-            .ok_or("percolator queue stopped")?;
-        let retried_percolator_job = percolator_receiver
-            .recv()
-            .await
-            .ok_or("percolator queue stopped")?;
-        assert_eq!(first_product_job, retried_product_job);
-        assert_eq!(first_percolator_job, retried_percolator_job);
+        assert_eq!(
+            Some(WorkerQueue::ProductListingOpenSearch),
+            product_receiver.recv().await.map(|job| job.target_queue)
+        );
+        assert_eq!(
+            Some(WorkerQueue::SearchFilterPercolator),
+            percolator_receiver.recv().await.map(|job| job.target_queue)
+        );
+        assert!(matches!(
+            product_receiver.receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            percolator_receiver.receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
         assert_eq!(
             Some(WorkerQueue::ProductListingContentAssessment),
             assessment_receiver.recv().await.map(|job| job.target_queue)
