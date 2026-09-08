@@ -1717,8 +1717,8 @@ PostgreSQL commit
     -> logical replication
     -> Sequin
     -> CDC router
-    -> bounded worker queues
-    -> projection handlers
+    -> scoped Standard SQS source queues / DLQs
+    -> service handlers and projection adapters
 ```
 
 ### 12.1 Storage ownership
@@ -1799,41 +1799,25 @@ source change
     -> matching job
 ```
 
-The router MUST:
+The router MUST fully prevalidate the batch before publishing anything: source/schema/table/operation, typed payloads, stable domain keys, every destination, and serialized job bounds. Invalid later changes MUST NOT cause partial publication.
 
-* validate the change shape;
-* derive stable job identifiers;
-* enqueue all required jobs;
-* apply bounded backpressure;
-* acknowledge or reject the Sequin delivery.
+Return Sequin `202` only after SQS confirms publication of **every** required job for this scoped delivery. Validation, publication failure, timeout, or ambiguous send outcome MUST NOT acknowledge. Network failure can still leave partial fanout; Sequin redelivery intentionally republishes the same logical jobs. Valid scope-irrelevant events may produce zero jobs and acknowledge normally.
 
-The delivery is acknowledged only after all required jobs have been added to their bounded in-memory queues.
+Ingress is bounded: 1 MiB body, 100 changes, 500 derived jobs, 8s total publication deadline inside a 10s HTTP request deadline. Sequin's operational delivery timeout MUST exceed 10s (15s recommended), with batches at most 100 and within byte limits. Deployment configuration belongs to the external Sequin owner, not the repository's test fixtures. Socket/header limits and exact configuration are in the [durable-worker runbook](durable-worker-runbook.md).
 
-If any enqueue fails, the delivery MUST NOT be acknowledged.
+### 12.4 Durable delivery guarantee
 
-A redelivery may therefore create duplicate jobs. All handlers MUST be idempotent.
+Production composition uses ten separate Standard SQS source/DLQ pairs, one per worker scope, with no user-tier scope or tier dimension. There is no worker inbox, processed-job table, or worker-owned PostgreSQL DLQ. In-memory queue helpers are test composition only; the normalizer's bounded cursor/continuation FIFO is reconstructible scheduling state, not acknowledged job custody.
 
-### 12.4 MVP delivery guarantee
+Delivery is **durable at-least-once within retention**, not exactly-once or ordered processing:
 
-The MVP has no durable worker inbox, job queue, dead-letter table, or processed-job table.
+- Before Sequin acknowledgment, unconfirmed delivery stays with Sequin for retry.
+- After acknowledgment, SQS retains jobs across worker death until confirmed completion/delete, native DLQ transfer, or expiry.
+- Source retention is 7 days; DLQ retention is 14 days. Standard source-to-DLQ transfer retains the original enqueue timestamp: DLQ arrival does not start a fresh 14-day window, and these are not additive 21-day guarantees.
+- Only `Complete` outcomes permit SQS deletion. Nonterminal claims, invalid jobs, handler failure/panic, execution/heartbeat timeout, and unconfirmed effects remain unacknowledged. Delete failure also permits redelivery; do not rerun a side effect merely to retry deletion.
+- Standard SQS can duplicate and reorder. Domain idempotency, authoritative state guards, and target-side version fences remain mandatory. External email acceptance cannot be atomic with PostgreSQL finalization; a crash can still duplicate an accepted email.
 
-After Sequin acknowledgment, jobs exist only in memory until processing completes unless a scope has a documented authoritative-source reconciliation path.
-
-If the worker process dies after acknowledgment, queued jobs may be lost unless that scope reconciles its authoritative source.
-
-The current guarantee is therefore:
-
-```text
-before acknowledgment:
-    retryable delivery
-
-after acknowledgment:
-    best-effort in-memory processing
-```
-
-The system MUST NOT claim exactly-once or durable at-least-once processing.
-
-This is an explicit MVP trade-off, tracked by #1558, and MUST remain documented until durable worker delivery is introduced. A scope-specific reconciliation loop may repair its own missed wake-ups from authoritative PostgreSQL state, but it does not make the shared in-memory queue durable or change the guarantee for other scopes.
+The consumer deliberately has one execution slot per process, no prefetch, bounded execution and visibility heartbeats. Dependency circuits pause consumption without blocking durable ingress. Cutover MUST account for legacy in-memory queues and DLQs before stopping old workers; SQS cannot recover previously lost jobs. See the runbook for retention, rollout, and recovery limits.
 
 ### 12.5 Idempotency and ordering
 
@@ -1866,9 +1850,13 @@ Projection records SHOULD store the latest applied source version.
 
 An older or equal version MUST NOT overwrite a newer projection state.
 
-Idempotency SHOULD be enforced in the target write through conditional updates, unique constraints, or version checks rather than through in-memory checks.
+Idempotency SHOULD be enforced in the target write through conditional updates, unique constraints, or version checks rather than through in-memory checks. SQS message IDs, receipt handles, receive counts, and redrive timestamps are transport metadata, never business identity.
+
+Deletion fences MUST outlive delayed remote writes. ProductListing withdrawal and search-filter deletion replace the full OpenSearch document with a content-free `projectionDeleted: true` tombstone using external source versioning. Physical DELETE version memory expires after `index.gc_deletes`; cancellation is not a remote fence. Tombstones MUST NOT expire or be physically deleted by routine cleanup. All readers exclude true before pagination/KNN/percolation; a missing marker remains live for additive compatibility. Deploy mappings and **all** readers before writers, and retire/fence old physical-DELETE writers, including in-flight requests.
 
 Current-state invalidation consumers that rebuild output from an authoritative row MUST compare the trigger's source revision with the row's current revision before processing. When they differ, the trigger is stale and MUST be skipped; the consumer MUST NOT evaluate current state while retaining the stale trigger ID. If a current trigger later persists an idempotent row, it MUST recheck and lock that authoritative revision in its final PostgreSQL write transaction through commit, so a stale trigger cannot claim the unique row across external work. Historical notification consumers instead use their exact persisted event or match as the immutable fact and are not invalidated by unrelated later ProductListing events. They require current `ACTIVE` lifecycle while holding a shared ProductListing row lock through notification and delivery-intent commit. ProductListing event decoders and CDC routers MUST reject malformed or unsupported type/group/version/payload contracts; invalid CDC input MUST remain unacknowledged for retry. For ProductListing events, `product_listings.current_event_id` is the current event revision and is separate from the numeric aggregate storage version used for optimistic concurrency. Processed, duplicate, stale, missing-source, withdrawn, and ignored-event outcomes are operationally distinct.
+
+ProductListing-event matching also locks final active search-filter candidates through match commit and compares the exact evaluated semantic search plus embedding, not a whole-row version. Changed matching inputs or inactive/deleted filters cannot claim match rows; unrelated name or notification-preference edits remain eligible.
 
 ### 12.6 Building projections
 
@@ -1909,17 +1897,19 @@ Every rebuildable projection MUST document:
 
 Search indexes SHOULD use versioned indexes and an atomic alias or equivalent cutover.
 
-Existing projections MUST NOT be treated as the recovery source for authoritative data.
+Existing projections MUST NOT be treated as the recovery source for authoritative data. Rebuilds MUST fence old writers from the new generation, catch up committed changes, and verify IDs, source versions, visibility, and deletion fences before activation. Index reset, unversioned writes, or ID/version reuse MUST NOT erase protection against delayed writes.
+
+Current PostgreSQL includes withdrawn ProductListings and their projection versions, so withdrawal fences can be backfilled. Hard-deleted search filters are absent from current rows; their deletion IDs/versions require retained delete facts or an externally fenced generation rebuild. Neither missing history nor expired jobs can be reconstructed by installing SQS. No automated general rebuild/backfill deployment is implied; the [runbook](durable-worker-runbook.md#projection-fences-and-rebuild) records the handoff.
 
 ### 12.8 Schema evolution
 
 Database migrations affecting CDC consumers MUST use expand-and-contract changes where practical:
 
-1. add new fields;
-2. deploy producers;
-3. deploy consumers;
-4. rebuild or migrate projections;
-5. remove old fields.
+1. add compatible storage fields/mappings;
+2. deploy compatible consumers/readers;
+3. enable producers/writers;
+4. rebuild or migrate projections with source-version fencing;
+5. remove old fields only after retained jobs, DLQs, replay sources, and rollback binaries no longer need them.
 
 Tables or columns consumed by CDC MUST NOT be renamed or removed without reviewing:
 
@@ -1929,17 +1919,19 @@ Tables or columns consumed by CDC MUST NOT be renamed or removed without reviewi
 * projection handlers;
 * replay and rebuild procedures.
 
-Unknown additive fields SHOULD be tolerated. Missing required fields MUST fail explicitly.
+The current SQS envelope explicitly requires `schema_version = 1`, exact scope/job discriminators, canonical IDs, and validated idempotency/ordering keys; jobs are at most 16 KiB and contain compact identifiers, never raw source rows. Unknown additive envelope/payload fields are deliberately tolerated. Missing required fields, unsupported versions/types, wrong scope, and mismatched keys fail explicitly without deletion. This compatibility rule does not relax strict ProductListing CDC event-payload validation.
+
+Notification completion adds `completed_lease_token` and `completed_at` through the root migration rail. Exact finalization retries reuse the original token, result/receipt/error, and completion timestamp; an exact persisted completion receipt confirms a lost response without another send or write. Preserve these columns and fencing semantics across rollback.
 
 ### 12.9 Failure handling
 
-Transient failures SHOULD be retried with bounded backoff.
+Transient failures use bounded 30–900s exponential visibility backoff with jitter; source queues use native `maxReceiveCount = 5` redrive. Invalid SQS wire jobs also remain undeleted for the DLQ. Malformed upstream CDC never reaches SQS: it stays unacknowledged in Sequin and needs source/subscription/schema diagnosis, not DLQ redrive.
 
-Structurally invalid or permanently unprocessable changes MUST NOT be silently discarded.
+Operators MUST repair the cause before small controlled native redrive under a separately approved operator role. Runtime roles have no DLQ message, purge, or redrive powers. Never purge to clear an alarm. Recovery/archive needs retained evidence and privacy approval, not raw-body logging or invented lost history.
 
-Because the MVP has no durable dead-letter storage, poison changes require operator intervention, code or data correction, and replay.
+Notification active leases defer until the actual persisted expiry plus 5s; a reclaimable claim/status race defers 1s. Neither is completion. SES acceptance ambiguity retains the five-minute lease; the four-minute attempt budget includes claim, send, finalization, and backoff. SES SDK sends use one attempt; retry only finalization after a captured provider result. See the runbook for unavoidable crash-after-provider-acceptance duplicates.
 
-Logs MUST contain safe identifiers and error categories, not complete source rows, credentials, tokens, or sensitive payloads.
+Logs MUST contain safe identifiers and error categories, not complete source rows, credentials, tokens, provider receipts, or sensitive payloads.
 
 ### 12.10 Observability
 
@@ -1950,13 +1942,15 @@ Monitor at least:
 * Sequin delivery lag and retries;
 * unacknowledged change age;
 * router failures;
-* queue depth and saturation;
+* source queue depth/oldest age and DLQ depth;
 * handler failures and latency;
 * duplicate and stale-version rejections;
 * projection freshness;
 * projection rebuild status.
 
-Structured logs SHOULD include:
+CDK currently defines prod-only source oldest-age >= 900s and DLQ visible-count >= 1 alarms (Maximum, one 5-minute period, missing data not breaching). Worker attempt, circuit, settlement, and normalization signals are structured logs, not automatically provisioned custom metrics or dashboards. Deployment and broader monitoring coverage require operator verification.
+
+Structured logs SHOULD include, where available:
 
 ```text
 source
@@ -1979,26 +1973,27 @@ CDC tests SHOULD cover:
 * duplicate delivery;
 * concurrent delivery;
 * stale changes;
-* partial enqueue followed by redelivery;
-* queue saturation;
-* projection version checks;
+* full prevalidation and partial publication followed by redelivery;
+* ingress bounds, ambiguous publication, and dependency pauses;
+* complete-only deletion, visibility failure, and native DLQ handling;
+* projection version checks, including tombstones beyond physical-delete GC;
 * replay;
 * full projection rebuild.
 
-The accepted crash-after-ack loss window MUST remain covered by documentation or an operational test.
+Test acknowledged jobs surviving worker restart, duplicates after completion/delete response loss, schema compatibility, and notification lease/finalization ambiguity. Real AWS smoke is opt-in, never credential-required CI; mutations require an explicitly isolated sandbox account/stage and unique resources. Do not claim acceptance or deployment verification without executing it.
 
 ### 12.12 Non-negotiable rules
 
 1. Every dataset has one operational owner.
 2. Only committed PostgreSQL changes are propagated.
 3. Projection stores are never part of PostgreSQL transactions.
-4. Sequin is acknowledged only after all required jobs are enqueued.
-5. All jobs and projection writes are idempotent.
+4. Sequin is acknowledged only after full prevalidation and confirmed publication of all required jobs.
+5. Handlers tolerate duplicates; target writes enforce idempotency, and external sends retain their documented ambiguity.
 6. Older source versions cannot overwrite newer projections.
 7. Projections are rebuildable from authoritative truth.
 8. Poison changes are never silently discarded.
 9. CDC lag, queue pressure, failures, and freshness are observable.
-10. The current post-ack in-memory loss risk is an explicit MVP limitation unless a scope documents an authoritative-source reconciliation path.
+10. Durable at-least-once delivery is retention-bounded; only complete jobs are deleted, and deletion fences survive delayed writes.
 
 
 ## 13. Error boundaries
