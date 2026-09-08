@@ -1,3 +1,5 @@
+mod support;
+
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::event_id::EventId;
 use fxrate_core::FxRateId;
@@ -17,14 +19,25 @@ use search_filter_core::{
     NewSearchFilter, PriceMatchValuation, SearchFilter, SearchFilterProductListingMatch,
 };
 use search_filter_postgres::{
+    SqlxActiveSearchFilterMatchCandidateReaderFactory,
+    SqlxSearchFilterMatchNotificationSourceReaderFactory, SqlxSearchFilterMatchWriterFactory,
+};
+use search_filter_postgres::{
     SqlxSearchFilterIndexReader, SqlxSearchFilterMatchRepositoryFactory,
     SqlxSearchFilterQuotaReaderFactory, SqlxSearchFilterReader, SqlxSearchFilterRepositoryFactory,
+};
+use search_filter_service::ports::{
+    ActiveSearchFilterMatchCandidateReader, ActiveSearchFilterMatchCandidateReaderFactory,
+    SearchFilterMatchCandidate, SearchFilterMatchNotificationSourceReader,
+    SearchFilterMatchNotificationSourceReaderFactory, SearchFilterMatchPersistOutcome,
+    SearchFilterMatchWriter, SearchFilterMatchWriterFactory,
 };
 use search_filter_service::ports::{
     SearchFilterIndexReader, SearchFilterMatchRepository, SearchFilterMatchRepositoryFactory,
     SearchFilterQuotaReader, SearchFilterQuotaReaderFactory, SearchFilterReader,
     SearchFilterRepository, SearchFilterRepositoryFactory,
 };
+use std::time::Duration;
 use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 use user_core::user_id::UserId;
 
@@ -231,6 +244,289 @@ async fn should_insert_find_and_update_search_filter_match() {
     assert_eq!(inserted.created, updated.created);
     assert!(updated.updated >= inserted.updated);
     commit(tx).await;
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_reject_evaluated_candidates_when_filter_changes_before_final_lock() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let unit = SqlxUnitOfWork::new(pool.clone());
+        let product_id = seed_product(&pool, "candidate-race-product").await;
+        let event_id = seed_product_event(&pool, product_id).await;
+        for change in ["search", "embedding", "inactive"] {
+            let user_id = seed_user(&pool, &format!("candidate-{change}@example.test")).await;
+            let mut filter = sample_filter(user_id, change);
+            let mut tx = unit.begin().await?;
+            let persisted = SqlxSearchFilterRepositoryFactory
+                .in_transaction(&mut tx)
+                .insert(&filter)
+                .await?;
+            tx.commit().await?;
+            let evaluated = match_candidate(&filter);
+
+            // External work used the old inputs; an API write is now in flight.
+            let mut editing = unit.begin().await?;
+            let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(editing.connection())
+                .await?;
+            match change {
+                "search" => {
+                    filter.replace_search(
+                        ProductListingSearch::new(Language::De, Currency::Eur),
+                        None,
+                    );
+                }
+                "embedding" => {
+                    filter.replace_search(filter.search().clone(), Some(vec![0.5; 768]));
+                }
+                _ => {
+                    filter.change_state(SearchFilterState::InactiveByUser);
+                }
+            }
+            SqlxSearchFilterRepositoryFactory
+                .in_transaction(&mut editing)
+                .update(&filter, persisted.version)
+                .await?;
+            let final_write = persist_candidate(&pool, evaluated, product_id, event_id);
+            tokio::pin!(final_write);
+            support::assert_blocked(&pool, blocker_pid, 1, final_write.as_mut()).await?;
+            editing.commit().await?;
+            assert_eq!(
+                None,
+                tokio::time::timeout(Duration::from_secs(10), final_write).await??,
+                "stale {change} evaluation claimed the permanent match row"
+            );
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM search_filter_matches WHERE user_search_filter_id = $1",
+            )
+            .bind(uuid::Uuid::try_from(filter.id().to_string())?)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(0, count);
+            if change != "inactive" {
+                assert_eq!(
+                    Some(SearchFilterMatchPersistOutcome::Inserted),
+                    persist_candidate(&pool, match_candidate(&filter), product_id, event_id)
+                        .await?
+                );
+            }
+        }
+        Ok(())
+    }
+    .await;
+    assert!(result.is_ok(), "candidate revalidation race: {result:?}");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_hold_filter_lock_through_match_commit_and_allow_unrelated_filter_edits() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let unit = SqlxUnitOfWork::new(pool.clone());
+        let user_id = seed_user(&pool, "candidate-lock@example.test").await;
+        let mut filter = sample_filter(user_id, "before rename");
+        let product_id = seed_product(&pool, "candidate-lock-product").await;
+        let event_id = seed_product_event(&pool, product_id).await;
+        let evaluated = match_candidate(&filter);
+        let mut tx = unit.begin().await?;
+        let stored = SqlxSearchFilterRepositoryFactory.in_transaction(&mut tx).insert(&filter).await?;
+        filter.rename(UserSearchFilterName::from("after rename"));
+        filter.change_notifications(false);
+        SqlxSearchFilterRepositoryFactory.in_transaction(&mut tx).update(&filter, stored.version).await?;
+        tx.commit().await?;
+
+        let mut final_tx = unit.begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(final_tx.connection()).await?;
+        let candidates = SqlxActiveSearchFilterMatchCandidateReaderFactory.in_transaction(&mut final_tx)
+            .find_active(&[evaluated]).await?;
+        assert_eq!(1, candidates.len());
+        assert_eq!(filter.name(), &candidates[0].search_filter_name);
+        let deactivate = async {
+            sqlx::query("UPDATE search_filters SET state = 'INACTIVE_BY_USER', version = version + 1 WHERE user_search_filter_id = $1")
+                .bind(uuid::Uuid::try_from(filter.id().to_string())?).execute(&pool).await?;
+            Ok::<_, Box<dyn std::error::Error>>(())
+        };
+        tokio::pin!(deactivate);
+        support::assert_blocked(&pool, blocker_pid, 1, deactivate.as_mut()).await?;
+        assert_eq!(SearchFilterMatchPersistOutcome::Inserted,
+            SqlxSearchFilterMatchWriterFactory.in_transaction(&mut final_tx)
+                .insert_if_absent(&product_match(&filter, product_id, event_id)).await?);
+        final_tx.commit().await?;
+        tokio::time::timeout(Duration::from_secs(10), deactivate).await??;
+        Ok(())
+    }.await;
+    assert!(result.is_ok(), "candidate lock through commit: {result:?}");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_persist_one_match_when_single_and_batch_completions_overlap() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let unit = SqlxUnitOfWork::new(pool.clone());
+        let user_id = seed_user(&pool, "match-duplicate@example.test").await;
+        let filter = sample_filter(user_id, "duplicate match");
+        let product_id = seed_product(&pool, "duplicate-match-product").await;
+        let event_id = seed_product_event(&pool, product_id).await;
+        let matched = product_match(&filter, product_id, event_id);
+        let mut setup = unit.begin().await?;
+        SqlxSearchFilterRepositoryFactory
+            .in_transaction(&mut setup)
+            .insert(&filter)
+            .await?;
+        setup.commit().await?;
+        let mut first = unit.begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(first.connection())
+            .await?;
+        assert_eq!(
+            SearchFilterMatchPersistOutcome::Inserted,
+            SqlxSearchFilterMatchWriterFactory
+                .in_transaction(&mut first)
+                .insert_if_absent(&matched)
+                .await?
+        );
+        let duplicate = async {
+            let mut tx = unit.begin().await?;
+            let mut different_result = matched.clone();
+            different_result.enhanced_match_reason = Some("later evaluation".into());
+            let outcome = SqlxSearchFilterMatchWriterFactory
+                .in_transaction(&mut tx)
+                .insert_all_if_absent(&[different_result])
+                .await?;
+            tx.commit().await?;
+            Ok::<_, Box<dyn std::error::Error>>(outcome)
+        };
+        tokio::pin!(duplicate);
+        support::assert_blocked(&pool, blocker_pid, 1, duplicate.as_mut()).await?;
+        first.commit().await?;
+        let outcome = tokio::time::timeout(Duration::from_secs(10), duplicate).await??;
+        assert_eq!((0, 1), (outcome.inserted, outcome.already_exists));
+        let mut tx = unit.begin().await?;
+        let stored = SqlxSearchFilterMatchRepositoryFactory
+            .in_transaction(&mut tx)
+            .find_by_filter_and_product(filter.id(), product_id)
+            .await?;
+        assert_eq!(
+            Some(matched.clone()),
+            stored.map(|stored| stored.product_match)
+        );
+        tx.commit().await?;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM search_filter_matches")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(1, count);
+        Ok(())
+    }
+    .await;
+    assert!(result.is_ok(), "concurrent match completion: {result:?}");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_keep_exact_historical_match_source_after_unrelated_newer_product_event() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let unit = SqlxUnitOfWork::new(pool.clone());
+        let user_id = seed_user(&pool, "historical-match@example.test").await;
+        let filter = sample_filter(user_id, "historical match");
+        let product_id = seed_product(&pool, "historical-match-product").await;
+        let original = seed_product_event(&pool, product_id).await;
+        let mut tx = unit.begin().await?;
+        SqlxSearchFilterRepositoryFactory
+            .in_transaction(&mut tx)
+            .insert(&filter)
+            .await?;
+        SqlxSearchFilterMatchWriterFactory
+            .in_transaction(&mut tx)
+            .insert_if_absent(&product_match(&filter, product_id, original))
+            .await?;
+        tx.commit().await?;
+        let newer = seed_product_event(&pool, product_id).await;
+        let mut tx = unit.begin().await?;
+        let source = SqlxSearchFilterMatchNotificationSourceReaderFactory
+            .in_transaction(&mut tx)
+            .find_source(user_id, filter.id(), product_id, original)
+            .await?;
+        assert_eq!(Some(original), source.map(|source| source.origin_event_id));
+        assert!(
+            SqlxSearchFilterMatchNotificationSourceReaderFactory
+                .in_transaction(&mut tx)
+                .find_source(user_id, filter.id(), product_id, newer)
+                .await?
+                .is_none()
+        );
+        assert_eq!(
+            SearchFilterMatchPersistOutcome::AlreadyExists,
+            SqlxSearchFilterMatchWriterFactory
+                .in_transaction(&mut tx)
+                .insert_if_absent(&product_match(&filter, product_id, newer))
+                .await?
+        );
+        tx.commit().await?;
+        Ok(())
+    }
+    .await;
+    assert!(result.is_ok(), "historical match source: {result:?}");
+}
+
+fn match_candidate(filter: &SearchFilter) -> SearchFilterMatchCandidate {
+    SearchFilterMatchCandidate {
+        user_id: filter.user_id(),
+        search_filter_id: filter.id(),
+        expected_search: filter.search().clone(),
+        expected_embedding: filter.embedding().cloned(),
+        price_match_valuation: None,
+        enhanced_match_reason: None,
+    }
+}
+
+fn product_match(
+    filter: &SearchFilter,
+    product_listing_id: ProductListingId,
+    origin_event_id: EventId,
+) -> SearchFilterProductListingMatch {
+    SearchFilterProductListingMatch {
+        user_id: filter.user_id(),
+        user_search_filter_id: filter.id(),
+        user_search_filter_name: Some(filter.name().clone()),
+        product_listing_id,
+        origin_event_id,
+        price_match_valuation: None,
+        enhanced_match_reason: None,
+        feedback: None,
+    }
+}
+
+async fn persist_candidate(
+    pool: &sqlx::PgPool,
+    candidate: SearchFilterMatchCandidate,
+    product_listing_id: ProductListingId,
+    origin_event_id: EventId,
+) -> Result<Option<SearchFilterMatchPersistOutcome>, Box<dyn std::error::Error>> {
+    let mut tx = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+    let active = SqlxActiveSearchFilterMatchCandidateReaderFactory
+        .in_transaction(&mut tx)
+        .find_active(&[candidate])
+        .await?;
+    let mut outcome = None;
+    for candidate in active {
+        outcome = Some(
+            SqlxSearchFilterMatchWriterFactory
+                .in_transaction(&mut tx)
+                .insert_if_absent(&SearchFilterProductListingMatch {
+                    user_id: candidate.user_id,
+                    user_search_filter_id: candidate.search_filter_id,
+                    user_search_filter_name: Some(candidate.search_filter_name),
+                    product_listing_id,
+                    origin_event_id,
+                    price_match_valuation: candidate.price_match_valuation,
+                    enhanced_match_reason: candidate.enhanced_match_reason,
+                    feedback: None,
+                })
+                .await?,
+        );
+    }
+    tx.commit().await?;
+    Ok(outcome)
 }
 
 fn sample_filter(user_id: UserId, name: &str) -> SearchFilter {

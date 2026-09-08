@@ -140,6 +140,8 @@ oauth-postgres = { path = "src/oauth-postgres" }
 futures = { version = "0.3.32", default-features = false }
 http = "1.4.2"
 httpdate = "1.0.3"
+hyper = "1.11.0"
+hyper-util = "0.1.20"
 product-listing-core = { path = "src/product-listing-core" }
 product-listing-normalization = { path = "src/product-listing-normalization" }
 product-service = { path = "src/product-service" }

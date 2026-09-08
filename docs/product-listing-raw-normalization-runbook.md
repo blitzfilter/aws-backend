@@ -4,9 +4,15 @@
 
 `product_listing_raw_revisions` is immutable source evidence. Only the `product-listing-normalization` worker subscription consumes its `INSERT` rows. Raw source JSON, webhook bytes, signatures, headers, and provenance values must not be copied into logs, dashboards, tickets, or ad-hoc query output.
 
-Startup repairs a missed CDC wake-up with one bounded global reconciliation page. Later periodic reconciliation turns alternate one worker-local FIFO continuation and one global cursor page when a continuation exists. Only a clean capped drain enters that non-durable FIFO, which holds at most two global pages of stream IDs (currently 200). Blocked or transient stream errors are reported, remain pending, and are revisited on a later global traversal; they never enter the FIFO. Every global page is limited to available FIFO capacity. When a full FIFO continuation is popped, its vacated slot is reserved for the next global page; its immediate capped hint is suppressed only until authoritative traversal reoffers it. That bounded page adopts all of its continuations and advances the worker-local pending-stream cursor, so later global pages remain reachable. A successful terminal global page clears the cursor; retry exhaustion retains it. Direct CDC wake-ups never move or cancel cursor/FIFO state, even when their stream reaches the per-stream cap. Missed timer ticks skip rather than create a burst. Once a reconciliation turn is due, at most one ready CDC job runs before it; after a global page, one ready CDC job gets a turn before another due reconciliation turn. Restarting safely loses cursor and FIFO state and begins a new authoritative traversal; do not delete raw revisions to repair backlog.
+CDC wake-ups use scoped **Standard SQS**: full prevalidation and confirmed publication precede Sequin `202`; only a completed stream drain permits receipt deletion. A capped direct drain remains retryable (`normalization_continuation`); stream errors also retain the receipt. Source7d/DLQ14d retention is bounded by original enqueue age on transfer, not a fresh 14 days in the DLQ. See the [durable-worker runbook](durable-worker-runbook.md) for configuration, IAM, alarms, cutover, and safe redrive.
 
-Graceful shutdown finishes active work, then exits without draining queued raw wake-ups or FIFO continuations. Those in-memory items retain the documented post-ack loss risk; authoritative reconciliation repairs normalization progress on the next run.
+Reconciliation is an additional authoritative repair path, not SQS job custody:
+
+- Startup runs one bounded global page; later 30s timer turns alternate a continuation and a global cursor page when available. Each turn has a 240s budget; failed turns retain the cursor and retry on a later interval. Missed ticks skip, not burst.
+- Only clean capped drains enter the reconstructible worker-local FIFO (at most 200 stream IDs). Reported blocked/transient streams remain pending for later global traversal. Global pages use available FIFO capacity; popping a full FIFO reserves its slot for the next global page and suppresses the immediate capped hint until traversal reoffers it. Successful pages adopt bounded continuations and advance the cursor; a terminal page clears it.
+- Direct CDC wake-ups never move/cancel cursor or FIFO state. Due reconciliation gets a turn after at most one ready CDC job; a ready CDC job gets a turn after a global page. Restart safely resets cursor/FIFO and begins another authoritative traversal. Never delete raw revisions to repair backlog.
+
+Graceful shutdown stops ingress/polling and allows active work up to the runtime's 270s drain deadline; it does not drain queued wake-ups or FIFO continuations. Unsettled SQS jobs survive within retention and reappear after visibility expiry. Only local scheduling hints are lost; PostgreSQL reconciliation reconstructs them. This does not recover previously lost work for other scopes.
 
 ## Provider receipt and intake retention
 
@@ -20,7 +26,7 @@ For Shopify intake, EventBridge uses its default target delivery policy (up to 2
 
 ## Signals
 
-Structured metric events are safe to count by their fixed fields:
+Structured log events are safe to count by their fixed fields; their `metric` names do not imply provisioned CloudWatch custom metrics or dashboards:
 
 - `product_listing_raw_capture`: `ingestion_method`, `outcome`, attempt/insert/unchanged counters, byte sizes, and latency.
 - `product_listing_raw_normalization`: terminal `outcome` (`APPLIED`, `NO_CHANGE`, `IGNORED`, `REJECTED`) and latency; retryable `failure` or `stream_failure` records carry a stable `error_code`.
@@ -113,7 +119,9 @@ The normalization worker must run with:
 AURA_HISTORIA_WORKER_SCOPE=product-listing-normalization
 ```
 
-Its Sequin subscription must contain only `product_listing_raw_revisions` `INSERT` operations. A raw revision must not appear in any ProductListing event, OpenSearch, notification, translation, embedding, assessment, or matching subscription.
+Also set the matching source `AURA_HISTORIA_WORKER_QUEUE_URL`, `AWS_REGION`, `STAGE`, and `POSTGRES_*`; no in-memory production fallback. Effective consumer concurrency is deliberately 1, poll 20s, visibility 300s, budget 240s, retry 30–900s with jitter, max receives 5.
+
+Its Sequin subscription must contain only `product_listing_raw_revisions` `INSERT` operations. A raw revision must not appear in any ProductListing event, OpenSearch, notification, translation, embedding, assessment, or matching subscription. The external Sequin owner must set delivery timeout >10s (15s recommended), batch <=100, and body <=1 MiB; only test fixtures exist in this repo, not a deployed Sequin configuration. Malformed upstream CDC stays unacknowledged in Sequin and never reaches the worker DLQ.
 
 ## Candidate-query check
 

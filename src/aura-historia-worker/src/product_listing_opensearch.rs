@@ -1,72 +1,78 @@
 use crate::{
-    InMemoryQueueReceiver,
+    WorkerScope,
     cdc::{DomainJob, DomainJobPayload},
-    retry::{InMemoryDeadLetterQueue, RetryConfig, run_with_retry},
+    queue::{JobOutcome, WorkerQueueReceiver},
 };
-use application::error::{BoxError, box_error};
 use product_listing_service::use_cases::{
-    ProjectProductListingCommand, ProjectProductListingOutcome, ProjectProductListingUseCase,
+    ProjectProductListingCommand, ProjectProductListingError, ProjectProductListingOutcome,
+    ProjectProductListingUseCase,
 };
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info};
 
 pub async fn consume_product_listing_opensearch_queue(
-    mut receiver: InMemoryQueueReceiver<DomainJob>,
+    receiver: impl Into<WorkerQueueReceiver>,
     use_case: Arc<dyn ProjectProductListingUseCase>,
 ) {
-    let dead_letters = InMemoryDeadLetterQueue::new();
-    while let Some(job) = receiver.recv().await {
-        let idempotency_key = job.idempotency_key.as_str().to_owned();
-        let ordering_key = job.ordering_key.as_str().to_owned();
-        let use_case_for_retry = Arc::clone(&use_case);
-        let outcome = Arc::new(Mutex::new(None));
-        let outcome_for_retry = Arc::clone(&outcome);
-        let result = run_with_retry(job, RetryConfig::default(), &dead_letters, move |job| {
-            let use_case = Arc::clone(&use_case_for_retry);
-            let outcome = Arc::clone(&outcome_for_retry);
-            async move { execute_job(use_case, job, outcome).await }
+    receiver
+        .into()
+        .run(WorkerScope::ProductListingOpenSearch, move |job| {
+            execute_job(use_case.clone(), job)
         })
         .await;
-        match (result, outcome.lock().await.take()) {
-            (Ok(()), Some(outcome)) => {
-                info!(job_type = "product_listing_opensearch", %idempotency_key, %ordering_key, ?outcome, "ProductListing OpenSearch projection job completed")
-            }
-            (Ok(()), None) => {
-                error!(job_type = "product_listing_opensearch", %idempotency_key, %ordering_key, outcome = "missing", "ProductListing OpenSearch projection job completed without an outcome")
-            }
-            (Err(error), _) => {
-                error!(job_type = "product_listing_opensearch", %idempotency_key, %ordering_key, error = %error, outcome = "dead_lettered_in_memory", "ProductListing OpenSearch projection job failed")
-            }
-        }
-    }
 }
 
 async fn execute_job(
     use_case: Arc<dyn ProjectProductListingUseCase>,
     job: DomainJob,
-    outcome: Arc<Mutex<Option<ProjectProductListingOutcome>>>,
-) -> Result<(), BoxError> {
-    let command = command_from_job(job).map_err(box_error)?;
-    let result = use_case.execute(command).await.map_err(box_error)?;
-    *outcome.lock().await = Some(result.outcome);
-    Ok(())
-}
-
-fn command_from_job(
-    job: DomainJob,
-) -> Result<ProjectProductListingCommand, ProductListingOpenSearchWorkerError> {
+) -> JobOutcome {
     let DomainJobPayload::ProductListingEvent(event) = job.payload else {
-        return Err(ProductListingOpenSearchWorkerError::UnexpectedJobPayload);
+        return JobOutcome::Invalid("unexpected_payload");
     };
-    Ok(ProjectProductListingCommand {
-        event_id: event.event_id,
-        product_listing_id: event.product_listing_id,
-    })
+    match use_case
+        .execute(ProjectProductListingCommand {
+            event_id: event.event_id,
+            product_listing_id: event.product_listing_id,
+        })
+        .await
+    {
+        Ok(result) => projection_outcome(result.outcome),
+        Err(ProjectProductListingError::SaleObservationFxSnapshotMissing) => {
+            JobOutcome::Retry("sale_snapshot_missing")
+        }
+        Err(ProjectProductListingError::SaleObservationFxSnapshotInvalid { .. }) => {
+            JobOutcome::Invalid("sale_snapshot_invalid")
+        }
+        Err(_) => JobOutcome::DependencyUnavailable("projection_unavailable"),
+    }
+}
+fn projection_outcome(outcome: ProjectProductListingOutcome) -> JobOutcome {
+    match outcome {
+        ProjectProductListingOutcome::Applied => JobOutcome::Complete("applied"),
+        ProjectProductListingOutcome::Deleted => JobOutcome::Complete("deleted"),
+        ProjectProductListingOutcome::Stale => JobOutcome::Complete("stale"),
+        // Absence of the committed event/source is not evidence that its projection was removed.
+        ProjectProductListingOutcome::MissingSource => JobOutcome::Retry("missing_source"),
+    }
 }
 
-#[derive(Debug, thiserror::Error)]
-enum ProductListingOpenSearchWorkerError {
-    #[error("ProductListing OpenSearch queue received an unexpected job payload")]
-    UnexpectedJobPayload,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn should_retain_missing_source_but_complete_guarded_projection_outcomes() {
+        assert_eq!(
+            JobOutcome::Retry("missing_source"),
+            projection_outcome(ProjectProductListingOutcome::MissingSource)
+        );
+        for outcome in [
+            ProjectProductListingOutcome::Applied,
+            ProjectProductListingOutcome::Deleted,
+            ProjectProductListingOutcome::Stale,
+        ] {
+            assert!(matches!(
+                projection_outcome(outcome),
+                JobOutcome::Complete(_)
+            ));
+        }
+    }
 }

@@ -5,10 +5,12 @@ edition = "2024"
 
 [dependencies]
 async-trait = { workspace = true }
+axum = { workspace = true }
 application = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-sdk-sesv2 = { workspace = true }
+aws-sdk-sqs = { workspace = true }
 aws-smithy-types = { workspace = true }
 
 domain-primitives = { workspace = true }
@@ -19,6 +21,8 @@ large-language-model = { workspace = true }
 localization = { workspace = true }
 money = { workspace = true }
 google-cloud-auth = { workspace = true }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "service"] }
 indexmap = { workspace = true }
 notification-core = { workspace = true }
 notification-email-aws = { workspace = true }
@@ -43,6 +47,8 @@ user-core = { workspace = true }
 user-postgres = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
 time = { workspace = true, features = ["formatting", "parsing"] }
 uuid = { workspace = true }
 
@@ -59,5 +65,5 @@ product-listing-normalization = { workspace = true }
 search-filter-core = { workspace = true }
 indexmap = { workspace = true }
 serial_test = { workspace = true }
-test-api = { workspace = true, features = ["opensearch", "postgres", "sequin", "ses"] }
+test-api = { workspace = true, features = ["opensearch", "postgres", "sequin", "ses", "sqs"] }
 tokio = { workspace = true, features = ["test-util"] }

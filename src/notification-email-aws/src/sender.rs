@@ -1,5 +1,5 @@
 use crate::{
-    provider_failure::{classify_ses_send, provider_error},
+    provider_failure::SesSendFailed,
     template_mapping::{
         EmailLanguage, ses_template_tag_value, subject, template_data, template_type,
     },
@@ -9,6 +9,8 @@ use application::error::box_error;
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_sesv2::{
     Client as SesClient,
+    config::retry::RetryConfig,
+    operation::send_email::SendEmailOutput,
     types::{Body, Content, Destination, EmailContent, Message, MessageTag},
 };
 use notification_core::notification_delivery::NotificationDeliveryChannel;
@@ -62,6 +64,14 @@ impl SesNotificationChannelSender {
         config: EmailDeliveryConfig,
         targets: Arc<dyn EmailDeliveryTargetReader>,
     ) -> Self {
+        // SendEmail has no idempotency token. SDK retries can send again after an
+        // accepted request loses its response, before service sees the ambiguity.
+        let ses = SesClient::from_conf(
+            ses.config()
+                .to_builder()
+                .retry_config(RetryConfig::disabled())
+                .build(),
+        );
         Self {
             ses,
             from_email_address: config.from_email_address,
@@ -160,43 +170,26 @@ impl NotificationChannelSender for SesNotificationChannelSender {
             .email_tags(email_tag)
             .send()
             .await
-            .map_err(|source| {
-                let (throttled, permanently_rejected) = source
-                    .as_service_error()
-                    .map(|error| {
-                        (
-                            error.is_limit_exceeded_exception()
-                                || error.is_too_many_requests_exception(),
-                            error.is_bad_request_exception()
-                                || error.is_message_rejected()
-                                || error.is_account_suspended_exception()
-                                || error.is_mail_from_domain_not_verified_exception()
-                                || error.is_not_found_exception()
-                                || error.is_sending_paused_exception(),
-                        )
-                    })
-                    .unwrap_or_default();
-                let status_code = source
-                    .raw_response()
-                    .map(|response| response.status().as_u16());
-                provider_error(
-                    classify_ses_send(throttled, permanently_rejected, status_code),
-                    box_error(source),
-                )
-            })?;
-        let provider_message_id =
-            response
-                .message_id()
-                .ok_or_else(|| NotificationChannelSendError::Retryable {
-                    code: "SES_MESSAGE_ID_MISSING",
-                    source: box_error(std::io::Error::other(
-                        "SES response did not include a message ID",
-                    )),
-                })?;
-        Ok(SentNotificationDelivery {
-            provider_message_id: provider_message_id.to_owned(),
-        })
+            .map_err(SesSendFailed)?;
+        sent_delivery(response)
     }
+}
+
+fn sent_delivery(
+    response: SendEmailOutput,
+) -> Result<SentNotificationDelivery, NotificationChannelSendError> {
+    let provider_message_id = response
+        .message_id()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| NotificationChannelSendError::Ambiguous {
+            code: "SES_MESSAGE_ID_MISSING",
+            source: box_error(std::io::Error::other(
+                "SES response did not include a nonempty message ID",
+            )),
+        })?;
+    Ok(SentNotificationDelivery {
+        provider_message_id: provider_message_id.to_owned(),
+    })
 }
 
 fn target_error(error: EmailDeliveryTargetReadError) -> NotificationChannelSendError {
@@ -213,5 +206,116 @@ fn target_error(error: EmailDeliveryTargetReadError) -> NotificationChannelSendE
                 source,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notification_core::notification_delivery::NotificationDeliveryTargetKey;
+    use notification_email::EmailDeliveryTarget;
+    use rstest::rstest;
+    use user_core::user_id::UserId;
+
+    struct NoEmailTarget;
+
+    #[async_trait::async_trait]
+    impl EmailDeliveryTargetReader for NoEmailTarget {
+        async fn find_email_target(
+            &self,
+            _: UserId,
+            _: &NotificationDeliveryTargetKey,
+        ) -> Result<Option<EmailDeliveryTarget>, EmailDeliveryTargetReadError> {
+            Ok(None)
+        }
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(3)]
+    #[case(7)]
+    fn should_disable_ses_sdk_resends_even_when_injected_client_retries(#[case] attempts: u32) {
+        let ses = SesClient::from_conf(
+            aws_sdk_sesv2::Config::builder()
+                .behavior_version_latest()
+                .region(aws_sdk_sesv2::config::Region::new("eu-west-1"))
+                .retry_config(RetryConfig::standard().with_max_attempts(attempts))
+                .build(),
+        );
+        let s3 = S3Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version_latest()
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .build(),
+        );
+        let sender = SesNotificationChannelSender::new(
+            s3,
+            ses.clone(),
+            EmailDeliveryConfig::new(
+                "test-templates",
+                "from@example.test",
+                "reply@example.test",
+                "test",
+                "test-commit",
+            ),
+            Arc::new(NoEmailTarget),
+        );
+        assert_eq!(
+            Some(1),
+            sender
+                .ses
+                .config()
+                .retry_config()
+                .map(RetryConfig::max_attempts)
+        );
+        assert_eq!(
+            Some(attempts),
+            ses.config().retry_config().map(RetryConfig::max_attempts)
+        );
+        assert_eq!(ses.config().region(), sender.ses.config().region());
+    }
+
+    #[rstest]
+    #[case(None)]
+    #[case(Some(""))]
+    #[case(Some(" \t\n"))]
+    fn should_report_ambiguous_acceptance_when_success_response_has_no_usable_receipt(
+        #[case] receipt: Option<&str>,
+    ) {
+        let result = sent_delivery(
+            SendEmailOutput::builder()
+                .set_message_id(receipt.map(str::to_owned))
+                .build(),
+        );
+        assert!(
+            matches!(result, Err(NotificationChannelSendError::Ambiguous { code: "SES_MESSAGE_ID_MISSING", source }) if source.downcast_ref::<std::io::Error>().is_some())
+        );
+    }
+
+    #[test]
+    fn should_preserve_original_provider_receipt_on_success()
+    -> Result<(), NotificationChannelSendError> {
+        let receipt = "provider-receipt-123";
+        assert_eq!(
+            SentNotificationDelivery {
+                provider_message_id: receipt.to_owned()
+            },
+            sent_delivery(SendEmailOutput::builder().message_id(receipt).build())?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_keep_pre_send_target_lookup_failure_retryable_with_safe_source() {
+        let error = target_error(EmailDeliveryTargetReadError::ReadFailed {
+            source: box_error(std::io::Error::other("private lookup payload")),
+        });
+        assert_eq!(
+            "notification channel send failed temporarily: EMAIL_TARGET_READ_FAILED",
+            error.to_string()
+        );
+        assert!(
+            matches!(error, NotificationChannelSendError::Retryable { source, .. } if source.downcast_ref::<std::io::Error>().is_some())
+        );
     }
 }

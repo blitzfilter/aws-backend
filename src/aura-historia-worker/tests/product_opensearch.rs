@@ -1,5 +1,5 @@
 use aura_historia_worker::{
-    QueueConfig, WorkerRunError, WorkerRuntime, cdc::WorkerQueue,
+    WorkerRunError, WorkerScope,
     product_listing_opensearch::consume_product_listing_opensearch_queue, serve_with_runtime,
 };
 use domain_primitives::event_id::EventId;
@@ -21,13 +21,16 @@ use test_api::{
 use tokio::{sync::oneshot, task::JoinHandle};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::ProductListingOpenSearch;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const PRODUCT_LISTINGS_INDEX: &str = "product-listings";
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_PROJECTION_OBSERVATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_committed_active_product_with_native_source_price_and_no_estimates() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -79,7 +82,7 @@ async fn should_project_committed_active_product_with_native_source_price_and_no
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_project_rolled_back_product_event() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -95,7 +98,7 @@ async fn should_not_project_rolled_back_product_event() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_keep_product_projection_unchanged_when_event_is_redelivered() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -125,7 +128,7 @@ async fn should_keep_product_projection_unchanged_when_event_is_redelivered() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_stale_product_event_trigger() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -162,7 +165,7 @@ async fn should_skip_stale_product_event_trigger() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_delete_withdrawn_listing_then_reproject_restored_listing_without_stale_removal() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -171,8 +174,14 @@ async fn should_delete_withdrawn_listing_then_reproject_restored_listing_without
         assert_eq!(Some(15), response.get("_version").and_then(Value::as_i64));
 
         let withdrawn_event_id = withdraw_product_listing(&worker.pool, fixture.product_listing_id).await?;
-        wait_for_product_deletion(fixture.product_listing_id).await?;
-        assert_no_product_projection(fixture.product_listing_id, NO_PROJECTION_OBSERVATION).await?;
+        let tombstone = wait_for_product_tombstone(fixture.product_listing_id, 16).await?;
+        assert_product_readers_empty().await?;
+        for event_id in [withdrawn_event_id, fixture.event_id, withdrawn_event_id, fixture.event_id] {
+            support::redeliver_product_event(&worker.pool, uuid::Uuid::from(event_id)).await?;
+        }
+        support::wait_until_empty(SCOPE).await?;
+        assert_product_response_unchanged_for(fixture.product_listing_id, &tombstone, NO_PROJECTION_OBSERVATION).await?;
+        assert_product_readers_empty().await?;
 
         let restored_event_id = restore_product_listing(&worker.pool, fixture.product_listing_id).await?;
         let restored = wait_for_product_event(fixture.product_listing_id, restored_event_id).await?;
@@ -235,7 +244,7 @@ async fn should_delete_withdrawn_listing_then_reproject_restored_listing_without
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_sold_product_with_all_sale_price_currencies() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -291,7 +300,7 @@ async fn should_project_sold_product_with_all_sale_price_currencies() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_sold_product_without_main_price_then_add_sale_prices_when_corrected() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -354,6 +363,27 @@ async fn should_project_sold_product_without_main_price_then_add_sale_prices_whe
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+async fn should_reject_unrouted_product_cdc_without_creating_a_projection() {
+    let worker = ProductListingOpenSearchWorker::start().await;
+    let result: support::TestResult = async {
+        let id = ProductListingId::new();
+        for (table, operation) in [("product_listing_events", "update"), ("product_listings", "insert")] {
+            let response = reqwest::Client::new()
+                .post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
+                .json(&json!({"changes": [{"table": table, "operation": operation, "record": {"product_listing_id": id}}]}))
+                .send().await?;
+            assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
+        }
+        support::wait_until_empty(SCOPE).await?;
+        assert_no_product_projection(id, NO_PROJECTION_OBSERVATION).await
+    }.await;
+    worker
+        .finish(result)
+        .await
+        .expect("unrouted projection acceptance and cleanup");
+}
+
 struct ProductListingFixture {
     product_listing_id: ProductListingId,
     event_id: EventId,
@@ -378,15 +408,15 @@ impl ProductListingOpenSearchWorker {
                     get_opensearch_client().await.clone(),
                 ),
             ));
-        let (runtime, mut receivers) =
-            WorkerRuntime::with_product_listing_opensearch_queue(QueueConfig::new(16))
-                .unwrap_or_else(|error| {
-                    panic!("valid ProductListing OpenSearch queue configuration: {error}")
-                });
-        let receiver = receivers
-            .take(WorkerQueue::ProductListingOpenSearch)
-            .unwrap_or_else(|| panic!("ProductListing OpenSearch queue is registered"));
-        let consumer = tokio::spawn(consume_product_listing_opensearch_queue(receiver, handler));
+        let (runtime, receiver) = support::composition(SCOPE)
+            .await
+            .unwrap_or_else(|error| panic!("valid scoped SQS configuration: {error}"))
+            .into_parts();
+        let consumer = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_product_listing_opensearch_queue(receiver, handler.clone())
+        })
+        .await
+        .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
             .await
             .unwrap_or_else(|error| panic!("worker webhook bind address is available: {error}"));
@@ -781,13 +811,21 @@ async fn wait_for_product_event(
     .into())
 }
 
-async fn wait_for_product_deletion(
+async fn wait_for_product_tombstone(
     product_listing_id: ProductListingId,
-) -> Result<(), Box<dyn std::error::Error>> {
+    version: i64,
+) -> Result<Value, Box<dyn std::error::Error>> {
     for _ in 0..POLL_ATTEMPTS {
         refresh_index(PRODUCT_LISTINGS_INDEX).await;
-        if product_response(product_listing_id).await?.is_none() {
-            return Ok(());
+        if let Some(response) = product_response(product_listing_id).await?
+            && response["_version"] == version
+            && response["_source"]["projectionDeleted"] == true
+        {
+            assert_eq!(
+                json!({"productListingId": product_listing_id, "projectionDeleted": true}),
+                response["_source"]
+            );
+            return Ok(response);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
@@ -795,6 +833,65 @@ async fn wait_for_product_deletion(
         "timed out waiting for ProductListing OpenSearch deletion for {product_listing_id}"
     ))
     .into())
+}
+
+async fn assert_product_readers_empty() -> support::TestResult {
+    use fxrate_core::{FX_RATE_SCALE, FxRateId, FxRateQuote, FxRateSource, NewFxRateSnapshot};
+    use localization::Language;
+    use money::Currency;
+    use product_listing_core::product_listing_search::ProductListingSearch;
+    use product_listing_opensearch::{
+        OpenSearchProductListingSearchReader, OpenSearchProductListingSimilarProductListingsReader,
+    };
+    use product_listing_service::ports::{
+        CompiledProductListingSearch, ProductListingPriceFilterPlan,
+        ProductListingSearchReadRequest, ProductListingSearchReader,
+        ProductListingSimilarProductListingsReader, ProductListingSimilarProductListingsRequest,
+    };
+    use strum::IntoEnumIterator;
+    let snapshot = NewFxRateSnapshot::capture_eur(
+        FxRateId::new(),
+        time::OffsetDateTime::UNIX_EPOCH,
+        FxRateSource::FxRatesApi,
+        Currency::Eur,
+        Currency::iter().map(|currency| FxRateQuote::new(currency, FX_RATE_SCALE)),
+    )?
+    .into_persisted(1_i64.try_into()?);
+    let plan = ProductListingPriceFilterPlan::compile(snapshot, Currency::Eur, None)?;
+    let request = ProductListingSearchReadRequest {
+        compiled_search: CompiledProductListingSearch {
+            search: ProductListingSearch::new(Language::En, Currency::Eur),
+            price_filter_plan: plan.clone(),
+        },
+        sort: None,
+        cursor: None,
+    };
+    refresh_index(PRODUCT_LISTINGS_INDEX).await;
+    let client = get_opensearch_client().await.clone();
+    let reader = OpenSearchProductListingSearchReader::new(client.clone());
+    let ordinary = reader.search(&request).await?;
+    assert!(ordinary.items.is_empty());
+    assert_eq!(Some(0), ordinary.total);
+    let embedding = vec![0.1; 768];
+    assert!(
+        reader
+            .search_hybrid(&request, &embedding)
+            .await?
+            .items
+            .is_empty()
+    );
+    assert!(
+        OpenSearchProductListingSimilarProductListingsReader::new(client)
+            .find_similar_product_listings(&ProductListingSimilarProductListingsRequest {
+                product_listing_id: ProductListingId::new(),
+                embedding,
+                language: Language::En,
+                price_filter_plan: plan,
+            })
+            .await?
+            .is_empty()
+    );
+    Ok(())
 }
 
 async fn assert_no_product_projection(

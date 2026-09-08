@@ -1,6 +1,5 @@
-use aura_historia_worker::cdc::WorkerQueue;
 use aura_historia_worker::notification_delivery::consume_notification_delivery_queue;
-use aura_historia_worker::{QueueConfig, WorkerRunError, WorkerRuntime, serve_with_runtime};
+use aura_historia_worker::{WorkerRunError, WorkerScope, serve_with_runtime};
 use aws_sdk_s3::{
     Client as S3Client,
     config::Builder as S3ConfigBuilder,
@@ -38,13 +37,17 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::NotificationDelivery;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin =
+    Sequin::worker_webhook_for_tables(&["public.notification_deliveries"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
 const UNSAFE_IMAGE_URL: &str = "https://unsafe.shop.example/image.jpg";
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_deliver_committed_notification_delivery_and_persist_result() {
     let result = deliver_committed_notification_delivery().await;
 
@@ -54,7 +57,7 @@ async fn should_deliver_committed_notification_delivery_and_persist_result() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_retry_successful_delivery_finalization_without_sending_again() {
     let result = retry_successful_delivery_finalization().await;
 
@@ -64,7 +67,7 @@ async fn should_retry_successful_delivery_finalization_without_sending_again() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_deliver_rolled_back_or_unsupported_cdc_changes() {
     let result = reject_rolled_back_or_unsupported_changes().await;
 
@@ -74,7 +77,7 @@ async fn should_not_deliver_rolled_back_or_unsupported_cdc_changes() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_send_again_when_notification_delivery_is_redelivered() {
     let result = deduplicate_redelivered_notification_delivery().await;
 
@@ -84,7 +87,7 @@ async fn should_not_send_again_when_notification_delivery_is_redelivered() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_deliver_after_expired_lease_is_redelivered() {
     let result = redeliver_after_expired_lease().await;
 
@@ -94,7 +97,7 @@ async fn should_deliver_after_expired_lease_is_redelivered() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_persist_permanent_failure_when_template_is_invalid() {
     let result = persist_permanent_template_failure().await;
 
@@ -104,7 +107,7 @@ async fn should_persist_permanent_failure_when_template_is_invalid() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_clear_retry_failure_state_when_a_retry_succeeds() {
     let result = clear_retry_failure_state_after_successful_delivery().await;
 
@@ -466,6 +469,76 @@ impl NotificationDeliveryRepository for FailOnceFinalizationRepository {
     }
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+async fn should_preserve_provider_receipts_after_reversed_duplicate_sqs_deliveries() {
+    let result: support::TestResult = async {
+        let worker = NotificationDeliveryWorker::start(Template::Valid).await?;
+        let result = async {
+            let first = insert_delivery(&worker.pool, DeliveryState::Pending).await?;
+            let second = insert_delivery(&worker.pool, DeliveryState::Pending).await?;
+            let first_receipt = wait_for_delivery(&worker.pool, first.delivery_id, "DELIVERED").await?.provider_message_id;
+            let second_receipt = wait_for_delivery(&worker.pool, second.delivery_id, "DELIVERED").await?.provider_message_id;
+            for delivery in [&second, &first, &second, &first] {
+                assert_eq!(reqwest::StatusCode::ACCEPTED, post_cdc_change(delivery.delivery_id, delivery.notification_id, "notification_deliveries", "insert").await?);
+            }
+            support::wait_until_empty(SCOPE).await?;
+            for (delivery, receipt) in [(&first, first_receipt), (&second, second_receipt)] {
+                let persisted = delivery_row(&worker.pool, delivery.delivery_id).await?.ok_or("missing delivery")?;
+                assert_eq!("DELIVERED", persisted.status);
+                assert_eq!(1, persisted.attempt_count);
+                assert_eq!(receipt, persisted.provider_message_id);
+                assert_email_count_for(&delivery.recipient_email, 1).await?;
+                let completion: (Option<uuid::Uuid>, Option<time::OffsetDateTime>) = sqlx::query_as("SELECT completed_lease_token, completed_at FROM notification_deliveries WHERE notification_delivery_id = $1")
+                    .bind(delivery.delivery_id).fetch_one(&worker.pool).await?;
+                assert!(completion.0.is_some());
+                assert!(completion.1.is_some());
+            }
+            Ok(())
+        }.await;
+        worker.finish(result).await
+    }.await;
+    result.expect("reversed SQS delivery acceptance and cleanup");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+async fn should_retain_sqs_work_while_database_lease_is_active_then_deliver_without_republication()
+{
+    use aws_sdk_sqs::types::QueueAttributeName as A;
+    let result: support::TestResult = async {
+        let worker = NotificationDeliveryWorker::start(Template::Valid).await?;
+        let result = async {
+            let mut tx = worker.pool.begin().await?;
+            let delivery = insert_delivery_in_transaction(&mut tx, DeliveryState::ActiveLease).await?;
+            let expires: time::OffsetDateTime = sqlx::query_scalar("UPDATE notification_deliveries SET lease_expires_at = now() + interval '8 seconds' WHERE notification_delivery_id = $1 RETURNING lease_expires_at")
+                .bind(delivery.delivery_id).fetch_one(&mut *tx).await?;
+            tx.commit().await?;
+            // Only Sequin publishes. The queue must keep the message, not acknowledge AlreadyClaimed.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let attrs = test_api::get_sqs_client().await.get_queue_attributes().queue_url(WORKER_SQS.queue_url())
+                    .attribute_names(A::ApproximateNumberOfMessagesNotVisible).send().await?;
+                if attrs.attributes().and_then(|a| a.get(&A::ApproximateNumberOfMessagesNotVisible)).is_some_and(|n| n == "1") { break; }
+                assert!(tokio::time::Instant::now() < deadline, "Sequin work was not retained under active DB lease");
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
+            assert!(time::OffsetDateTime::now_utc() < expires);
+            let claimed = delivery_row(&worker.pool, delivery.delivery_id).await?.ok_or("missing active lease")?;
+            assert_eq!("PROCESSING", claimed.status);
+            assert_eq!(4, claimed.attempt_count);
+            assert_eq!(Some(expires), claimed.lease_expires_at);
+            assert_no_email_to(&delivery.recipient_email).await?;
+            let persisted = wait_for_delivery(&worker.pool, delivery.delivery_id, "DELIVERED").await?;
+            assert_eq!(5, persisted.attempt_count);
+            assert!(persisted.lease_token.is_none());
+            assert!(persisted.delivered_at.is_some_and(|at| at >= expires));
+            assert_email_count_for(&delivery.recipient_email, 1).await?;
+            support::wait_until_empty(SCOPE).await
+        }.await;
+        worker.finish(result).await
+    }.await;
+    result.expect("active lease SQS lifecycle acceptance and cleanup");
+}
+
 struct NotificationDeliveryWorker {
     pool: sqlx::PgPool,
     consumer: JoinHandle<()>,
@@ -518,12 +591,11 @@ impl NotificationDeliveryWorker {
                 )
                     as Arc<dyn NotificationChannelSender>])?,
             ));
-        let (runtime, mut receivers) =
-            WorkerRuntime::with_notification_delivery_queue(QueueConfig::new(16))?;
-        let receiver = receivers
-            .take(WorkerQueue::NotificationDelivery)
-            .ok_or_else(|| std::io::Error::other("notification delivery queue is missing"))?;
-        let consumer = tokio::spawn(consume_notification_delivery_queue(receiver, handler));
+        let (runtime, receiver) = support::composition(SCOPE).await?.into_parts();
+        let consumer = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_notification_delivery_queue(receiver, handler.clone())
+        })
+        .await?;
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {

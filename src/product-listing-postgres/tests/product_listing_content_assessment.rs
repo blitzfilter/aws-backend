@@ -1,3 +1,5 @@
+mod support;
+
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::event_id::EventId;
 use platform_postgres::SqlxUnitOfWork;
@@ -12,6 +14,7 @@ use product_listing_service::ports::{
     ProductListingContentAssessmentWriteOutcome, ProductListingContentAssessmentWriter,
     ProductListingContentAssessmentWriterFactory,
 };
+use std::time::Duration;
 use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
@@ -84,6 +87,100 @@ async fn should_hide_assessment_when_content_source_event_changes() {
         result.is_ok(),
         "content-source assessment invalidation acceptance failed: {result:?}"
     );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_persist_one_assessment_when_duplicate_completions_overlap() {
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = get_postgres_client().await;
+        let (product_id, source) = insert_product_with_created_event(&pool).await?;
+        let mut first = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(first.connection()).await?;
+        assert_eq!(ProductListingContentAssessmentWriteOutcome::Applied,
+            SqlxProductListingContentAssessmentWriterFactory::new().in_transaction(&mut first)
+                .apply(&ProductListingContentAssessmentWrite {
+                    product_listing_id: product_id, source_event_id: source,
+                    decision: Some(ContentPolicyDecision::Allowed),
+                }).await?);
+        let duplicate = apply_assessment(&pool, product_id, source);
+        tokio::pin!(duplicate);
+        support::assert_blocked(&pool, blocker_pid, 1, duplicate.as_mut()).await?;
+        first.commit().await?;
+        assert_eq!(ProductListingContentAssessmentWriteOutcome::Duplicate,
+            tokio::time::timeout(Duration::from_secs(10), duplicate).await??);
+        let stored: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+            "SELECT source_event_id, decision FROM product_listing_content_assessments WHERE product_listing_id = $1"
+        ).bind(uuid::Uuid::from(product_id)).fetch_all(&pool).await?;
+        assert_eq!(vec![(uuid::Uuid::from(source), "ALLOWED".to_owned())], stored);
+        let state: (i64, i64, i64) = sqlx::query_as(
+            "SELECT version, projection_version, (SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1) FROM product_listings WHERE product_listing_id = $1"
+        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        assert_eq!((1, 1, 1), state);
+        Ok(())
+    }.await;
+    assert!(
+        result.is_ok(),
+        "concurrent assessment completion: {result:?}"
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_preserve_new_assessment_when_old_apply_and_clear_arrive_concurrently() {
+    let result: Result<(), Box<dyn std::error::Error>> =
+        async {
+            let pool = get_postgres_client().await;
+            let (product_id, old_source) = insert_product_with_created_event(&pool).await?;
+            advance_content_source_event(&pool, product_id).await?;
+            let new_source: uuid::Uuid = sqlx::query_scalar(
+            "SELECT content_source_event_id FROM product_listings WHERE product_listing_id = $1"
+        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+            let mut newer = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+            let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(newer.connection())
+                .await?;
+            SqlxProductListingContentAssessmentWriterFactory::new()
+                .in_transaction(&mut newer)
+                .apply(&ProductListingContentAssessmentWrite {
+                    product_listing_id: product_id,
+                    source_event_id: new_source.into(),
+                    decision: Some(ContentPolicyDecision::Allowed),
+                })
+                .await?;
+            let late_completions = async {
+                let clear = async {
+                    let mut tx = SqlxUnitOfWork::new(pool.clone()).begin().await?;
+                    let outcome = SqlxProductListingContentAssessmentWriterFactory::new()
+                        .in_transaction(&mut tx)
+                        .apply(&ProductListingContentAssessmentWrite {
+                            product_listing_id: product_id,
+                            source_event_id: old_source,
+                            decision: None,
+                        })
+                        .await?;
+                    tx.commit().await?;
+                    Ok::<_, Box<dyn std::error::Error>>(outcome)
+                };
+                tokio::join!(apply_assessment(&pool, product_id, old_source), clear)
+            };
+            tokio::pin!(late_completions);
+            support::assert_blocked(&pool, blocker_pid, 2, late_completions.as_mut()).await?;
+            newer.commit().await?;
+            let (apply, clear) =
+                tokio::time::timeout(Duration::from_secs(10), late_completions).await?;
+            assert_eq!(ProductListingContentAssessmentWriteOutcome::Stale, apply?);
+            assert_eq!(ProductListingContentAssessmentWriteOutcome::Stale, clear?);
+            let stored = SqlxProductListingContentAssessmentReader::new(pool.clone())
+                .find_current_assessments(&[product_id])
+                .await?;
+            assert_eq!(
+                Some(EventId::from(new_source)),
+                stored.get(&product_id).map(|value| value.source_event_id)
+            );
+            Ok(())
+        }
+        .await;
+    assert!(result.is_ok(), "reversed assessment completion: {result:?}");
 }
 
 async fn apply_assessment(

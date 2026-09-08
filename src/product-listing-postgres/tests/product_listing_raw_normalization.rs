@@ -1,3 +1,5 @@
+mod support;
+
 use application::transaction::{Transaction, UnitOfWork};
 use listing_source_core::ListingSourceId;
 use platform_postgres::SqlxUnitOfWork;
@@ -20,12 +22,16 @@ use product_service::ports::{
     PendingProductListingRawStreamPageRequest, PendingProductListingRawStreamReader,
     ProductListingRawNormalizationOutcome,
 };
+use product_service::ports::{
+    ProductListingRawNormalizationWriter, ProductListingRawNormalizationWriterFactory,
+};
 use product_service::use_cases::{
     NormalizeProductListingRawRevisionCommand, NormalizeProductListingRawRevisionError,
     NormalizeProductListingRawRevisionHandler, NormalizeProductListingRawRevisionMode,
     NormalizeProductListingRawRevisionUseCase,
 };
 use serde_json::{Value, json};
+use std::time::Duration;
 use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
@@ -1016,6 +1022,204 @@ async fn should_normalize_valid_long_incompressible_url() {
         .await
         .unwrap_or_else(|error| panic!("load normalized long URL: {error}"));
     assert_eq!(long_url, persisted_url);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_serialize_reversed_duplicate_wakeups_with_concurrent_reconciliation() {
+    let result = concurrent_normalization(3).await;
+    assert!(
+        result.is_ok(),
+        "concurrent reversed normalization: {result:?}"
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_reconcile_remaining_revisions_after_concurrent_capped_wakeups() {
+    let result = concurrent_normalization(1).await;
+    assert!(
+        result.is_ok(),
+        "capped concurrent normalization recovery: {result:?}"
+    );
+}
+
+async fn concurrent_normalization(max_revisions: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = get_postgres_client().await;
+    let source = seed_listing_source(&pool, "concurrent-raw-source").await;
+    let unit = SqlxUnitOfWork::new(pool.clone());
+    let captures = SqlxProductListingRawCaptureWriterFactory::new();
+    let first = changed_parts(
+        capture(
+            &unit,
+            &captures,
+            raw_write(
+                source,
+                RawProductListingOperation::Upsert,
+                upsert_values("EUR 100"),
+                normalization_context(),
+                "first",
+            ),
+        )
+        .await,
+    );
+    capture(
+        &unit,
+        &captures,
+        raw_write(
+            source,
+            RawProductListingOperation::Upsert,
+            upsert_values("EUR 120"),
+            normalization_context(),
+            "second",
+        ),
+    )
+    .await;
+    let last = changed_parts(
+        capture(
+            &unit,
+            &captures,
+            raw_write(
+                source,
+                RawProductListingOperation::Delete,
+                json!({}),
+                json!({}),
+                "last",
+            ),
+        )
+        .await,
+    );
+    let handler = || {
+        NormalizeProductListingRawRevisionHandler::new(
+            SqlxUnitOfWork::new(pool.clone()),
+            SqlxProductListingRawNormalizationWriterFactory::new(),
+            SqlxProductListingRepositoryFactory::new(),
+            SqlxProductListingEventAppenderFactory::new(),
+            SqlxPendingProductListingRawStreamReader::new(pool.clone()),
+        )
+    };
+    let wakeup = |(stream, revision_id, revision)| NormalizeProductListingRawRevisionCommand {
+        mode: NormalizeProductListingRawRevisionMode::RawRevision {
+            product_listing_raw_stream_id: stream,
+            product_listing_raw_revision_id: revision_id,
+            revision,
+        },
+        max_revisions_per_stream: max_revisions,
+        pending_stream_limit: 1,
+    };
+    let reconcile = NormalizeProductListingRawRevisionCommand {
+        mode: NormalizeProductListingRawRevisionMode::Reconcile,
+        max_revisions_per_stream: max_revisions,
+        pending_stream_limit: 1,
+    };
+    let latest_worker = handler();
+    let duplicate_worker = handler();
+    let older_worker = handler();
+    let reconciler = handler();
+    let mut gate = unit.begin().await?;
+    let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(gate.connection())
+        .await?;
+    let work = SqlxProductListingRawNormalizationWriterFactory::new()
+        .in_transaction(&mut gate)
+        .lock_next(first.0)
+        .await?;
+    assert_eq!(
+        Some(1),
+        work.next_revision.map(|revision| revision.revision)
+    );
+    let attempts = async {
+        tokio::join!(
+            latest_worker.execute(wakeup(last)),
+            duplicate_worker.execute(wakeup(last)),
+            older_worker.execute(wakeup(first)),
+            reconciler.execute(reconcile),
+        )
+    };
+    tokio::pin!(attempts);
+    support::assert_blocked(&pool, blocker_pid, 4, attempts.as_mut()).await?;
+    gate.commit().await?;
+    let (latest, duplicate, older, recovered) =
+        tokio::time::timeout(Duration::from_secs(20), attempts).await?;
+    let mut completed = Vec::new();
+    for result in [latest?, duplicate?, older?, recovered?] {
+        assert!(result.stream_failures.is_empty());
+        completed.extend(
+            result
+                .revisions
+                .into_iter()
+                .map(|revision| revision.revision),
+        );
+    }
+    completed.sort_unstable();
+    assert_eq!(
+        if max_revisions == 1 {
+            vec![1]
+        } else {
+            vec![1, 2, 3]
+        },
+        completed
+    );
+
+    // A fresh process can discover any capped/raced remainder without another SQS message.
+    let recovered = handler()
+        .execute(NormalizeProductListingRawRevisionCommand {
+            mode: NormalizeProductListingRawRevisionMode::Reconcile,
+            max_revisions_per_stream: 3,
+            pending_stream_limit: 1,
+        })
+        .await?;
+    assert!(recovered.stream_failures.is_empty());
+    assert_eq!(
+        if max_revisions == 1 {
+            vec![2, 3]
+        } else {
+            vec![]
+        },
+        recovered
+            .revisions
+            .iter()
+            .map(|revision| revision.revision)
+            .collect::<Vec<_>>()
+    );
+    assert!(handler().execute(wakeup(first)).await?.revisions.is_empty());
+    assert!(handler().execute(wakeup(last)).await?.revisions.is_empty());
+    let persisted: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT normalized.revision, normalized.outcome, event.event_type FROM product_listing_raw_normalizations normalized JOIN product_listing_events event ON event.event_id = normalized.product_listing_event_id ORDER BY normalized.revision"
+    ).fetch_all(&pool).await?;
+    assert_eq!(
+        vec![
+            (
+                1,
+                "APPLIED".to_owned(),
+                "PRODUCT_LISTING_DISCOVERED".to_owned()
+            ),
+            (
+                2,
+                "APPLIED".to_owned(),
+                "PRODUCT_LISTING_CHANGED".to_owned()
+            ),
+            (
+                3,
+                "APPLIED".to_owned(),
+                "PRODUCT_LISTING_CHANGED".to_owned()
+            ),
+        ],
+        persisted
+    );
+    let state: (i64, String, Option<String>, i64, i64, i64) = sqlx::query_as(
+        "SELECT head.last_processed_revision, product.lifecycle, product.availability, product.price_amount, product.version, (SELECT count(*) FROM product_listing_events) FROM product_listing_raw_normalization_heads head JOIN product_listings product ON product.product_listing_id = head.product_listing_id"
+    ).fetch_one(&pool).await?;
+    assert_eq!((3, "WITHDRAWN".to_owned(), None, 12_000, 3, 3), state);
+    assert!(
+        SqlxPendingProductListingRawStreamReader::new(pool)
+            .list_pending_stream_page(PendingProductListingRawStreamPageRequest {
+                limit: 1,
+                cursor: None
+            })
+            .await?
+            .streams
+            .is_empty()
+    );
+    Ok(())
 }
 
 fn upsert_values(price: &str) -> Value {

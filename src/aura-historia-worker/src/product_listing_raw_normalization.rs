@@ -1,9 +1,8 @@
 use crate::{
-    InMemoryQueueReceiver,
+    WorkerScope,
     cdc::{DomainJob, DomainJobPayload},
-    retry::{InMemoryDeadLetterQueue, RetryConfig, run_with_retry},
+    queue::{JobOutcome, WorkerQueueReceiver},
 };
-use application::error::{BoxError, box_error};
 use product_listing_service::ports::ProductListingRawStreamId;
 use product_service::{
     ports::PendingProductListingRawStreamCursor,
@@ -14,7 +13,7 @@ use product_service::{
 };
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 use tokio::{sync::watch, time::MissedTickBehavior};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 const MAX_REVISIONS_PER_STREAM: u32 = 32;
 const PENDING_STREAM_LIMIT: u32 = 100;
@@ -185,52 +184,57 @@ impl ReconciliationState {
 }
 
 pub async fn consume_product_listing_raw_normalization_queue(
-    mut receiver: InMemoryQueueReceiver<DomainJob>,
+    receiver: impl Into<WorkerQueueReceiver>,
     use_case: Arc<dyn NormalizeProductListingRawRevisionUseCase>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let job_dead_letters = InMemoryDeadLetterQueue::new();
-    let reconciliation_dead_letters = InMemoryDeadLetterQueue::new();
+    let mut receiver = receiver.into();
+    let Some(_guard) = receiver.start(WorkerScope::ProductListingRawNormalization) else {
+        return;
+    };
+    let control = receiver.control();
+    let mut polling = receiver.into_polling();
     let mut reconciliation = reconciliation_interval();
     let mut reconciliation_state = ReconciliationState::default();
     let mut priority = RawNormalizationPriority::Reconciliation;
 
     loop {
-        if *shutdown.borrow() {
+        if *shutdown.borrow() || control.stopping() {
             log_shutdown(
                 reconciliation_state.pending_stream_cursor_present(),
                 reconciliation_state.continuation_stream_count(),
             );
-            return;
+            break;
         }
 
         match priority {
             RawNormalizationPriority::Reconciliation => {
                 tokio::select! {
                     biased;
+                    () = control.cancelled() => break,
                     changed = shutdown.changed() => {
                         if changed.is_err() || *shutdown.borrow() {
                             log_shutdown(
                                 reconciliation_state.pending_stream_cursor_present(),
                                 reconciliation_state.continuation_stream_count(),
                             );
-                            return;
+                            break;
                         }
                     }
                     _ = reconciliation.tick() => {
-                        reconcile_pending_stream_turn(
-                            Arc::clone(&use_case),
-                            &reconciliation_dead_letters,
-                            &mut reconciliation_state,
-                        )
-                        .await;
+                        reconcile_pending_stream_turn(Arc::clone(&use_case), &mut reconciliation_state).await;
                         priority = RawNormalizationPriority::Cdc;
                     }
-                    job = receiver.recv() => {
-                        let Some(job) = job else {
-                            return;
+                    () = polling.ready() => {
+                        let Some((mut receiver, Some(job))) = polling.take().await else {
+                            break;
                         };
-                        normalize_job(Arc::clone(&use_case), &job_dead_letters, job).await;
+                        if control.stopping() || *shutdown.borrow() {
+                            break;
+                        }
+                        let use_case = Arc::clone(&use_case);
+                        receiver.process(job, move |job| normalize_job(use_case, job)).await;
+                        polling = receiver.into_polling();
                         priority = RawNormalizationPriority::Reconciliation;
                     }
                 }
@@ -238,35 +242,37 @@ pub async fn consume_product_listing_raw_normalization_queue(
             RawNormalizationPriority::Cdc => {
                 tokio::select! {
                     biased;
+                    () = control.cancelled() => break,
                     changed = shutdown.changed() => {
                         if changed.is_err() || *shutdown.borrow() {
                             log_shutdown(
                                 reconciliation_state.pending_stream_cursor_present(),
                                 reconciliation_state.continuation_stream_count(),
                             );
-                            return;
+                            break;
                         }
                     }
-                    job = receiver.recv() => {
-                        let Some(job) = job else {
-                            return;
+                    () = polling.ready() => {
+                        let Some((mut receiver, Some(job))) = polling.take().await else {
+                            break;
                         };
-                        normalize_job(Arc::clone(&use_case), &job_dead_letters, job).await;
+                        if control.stopping() || *shutdown.borrow() {
+                            break;
+                        }
+                        let use_case = Arc::clone(&use_case);
+                        receiver.process(job, move |job| normalize_job(use_case, job)).await;
+                        polling = receiver.into_polling();
                         priority = RawNormalizationPriority::Reconciliation;
                     }
                     _ = reconciliation.tick() => {
-                        reconcile_pending_stream_turn(
-                            Arc::clone(&use_case),
-                            &reconciliation_dead_letters,
-                            &mut reconciliation_state,
-                        )
-                        .await;
+                        reconcile_pending_stream_turn(Arc::clone(&use_case), &mut reconciliation_state).await;
                         priority = RawNormalizationPriority::Cdc;
                     }
                 }
             }
         }
     }
+    polling.stop().await;
 }
 
 fn log_shutdown(pending_stream_cursor_present: bool, continuation_stream_count: usize) {
@@ -287,50 +293,43 @@ fn log_shutdown(pending_stream_cursor_present: bool, continuation_stream_count: 
 
 async fn normalize_job(
     use_case: Arc<dyn NormalizeProductListingRawRevisionUseCase>,
-    dead_letters: &InMemoryDeadLetterQueue<DomainJob>,
     job: DomainJob,
-) {
-    let idempotency_key = job.idempotency_key.as_str().to_owned();
-    let ordering_key = job.ordering_key.as_str().to_owned();
-    let result = run_with_retry(job, RetryConfig::default(), dead_letters, move |job| {
-        let use_case = Arc::clone(&use_case);
-        async move { execute_job(use_case, job).await }
-    })
-    .await;
-
-    match result {
-        Ok(result) => info!(
-            metric = "product_listing_raw_normalization_job",
-            job_type = "product_listing_raw_normalization",
-            %idempotency_key,
-            %ordering_key,
-            processed_revisions = result.revisions.len(),
-            normalization_failures = 0_u64,
-            pending_stream_page_count = 0_u64,
-            reconciliation_page = "not_applicable",
-            pending_stream_cursor_present = false,
-            "product listing raw normalization job completed"
-        ),
-        Err(_) => error!(
-            metric = "product_listing_raw_normalization_job",
-            job_type = "product_listing_raw_normalization",
-            %idempotency_key,
-            %ordering_key,
-            processed_revisions = 0_u64,
-            normalization_failures = 1_u64,
-            pending_stream_page_count = 0_u64,
-            reconciliation_page = "not_applicable",
-            pending_stream_cursor_present = false,
-            error_code = "RETRY_EXHAUSTED",
-            outcome = "dead_lettered_in_memory",
-            "product listing raw normalization job failed"
-        ),
+) -> JobOutcome {
+    let Ok(command) = command_from_job(job) else {
+        return JobOutcome::Invalid("unexpected_payload");
+    };
+    match use_case.execute(command).await {
+        Ok(result) => {
+            info!(
+                processed_revisions = result.revisions.len(),
+                normalization_failures = result.stream_failures.len(),
+                "raw stream drain finished"
+            );
+            if !result.stream_failures.is_empty() {
+                return JobOutcome::DependencyUnavailable("normalization_stream_failed");
+            }
+            if !result.continuation_stream_ids.is_empty() {
+                return JobOutcome::Retry("normalization_continuation");
+            }
+            JobOutcome::Complete("stream_drained")
+        }
+        Err(error) => {
+            use product_service::use_cases::NormalizeProductListingRawRevisionError as E;
+            match error {
+                E::InvalidLimit
+                | E::InvalidPersistedState { .. }
+                | E::UnsupportedStoredSchemaVersion
+                | E::NormalizationConfigurationFailed { .. } => {
+                    JobOutcome::Invalid("normalization_state_invalid")
+                }
+                _ => JobOutcome::DependencyUnavailable("normalization_unavailable"),
+            }
+        }
     }
 }
 
 async fn reconcile_pending_stream_turn(
     use_case: Arc<dyn NormalizeProductListingRawRevisionUseCase>,
-    dead_letters: &InMemoryDeadLetterQueue<()>,
     reconciliation_state: &mut ReconciliationState,
 ) {
     let turn = reconciliation_state.next_turn();
@@ -351,13 +350,16 @@ async fn reconcile_pending_stream_turn(
             "continuation",
         ),
     };
-    let use_case_for_retry = Arc::clone(&use_case);
-    let result = run_with_retry((), RetryConfig::default(), dead_letters, move |_| {
-        let use_case = Arc::clone(&use_case_for_retry);
-        let command = command.clone();
-        async move { use_case.execute(command).await.map_err(box_error) }
-    })
-    .await;
+    let mut task = tokio::task::JoinSet::new();
+    task.spawn(async move { use_case.execute(command).await });
+    let result = match tokio::time::timeout(Duration::from_secs(240), task.join_next()).await {
+        Ok(Some(Ok(Ok(result)))) => Ok(result),
+        _ => {
+            task.abort_all();
+            while task.join_next().await.is_some() {}
+            Err(())
+        }
+    };
 
     match result {
         Ok(result) => {
@@ -423,20 +425,12 @@ async fn reconcile_pending_stream_turn(
                     continuation_scheduling.unscheduled_continuation_count,
                 suppressed_continuation_count =
                     continuation_scheduling.suppressed_continuation_count,
-                error_code = "RETRY_EXHAUSTED",
-                outcome = "retry_exhausted",
+                error_code = "RECONCILIATION_FAILED",
+                outcome = "retry_at_next_turn",
                 "raw normalization reconciliation turn failed; a later interval will retry"
             );
         }
     }
-}
-
-async fn execute_job(
-    use_case: Arc<dyn NormalizeProductListingRawRevisionUseCase>,
-    job: DomainJob,
-) -> Result<product_service::use_cases::NormalizeProductListingRawRevisionResult, BoxError> {
-    let command = command_from_job(job).map_err(box_error)?;
-    use_case.execute(command).await.map_err(box_error)
 }
 
 fn command_from_job(
@@ -857,7 +851,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn should_retain_cursor_after_reconciliation_retries_are_exhausted()
+    async fn should_retain_cursor_after_failed_turns_without_in_process_retries()
     -> Result<(), Box<dyn std::error::Error>> {
         let cursor = pending_stream_cursor(uuid::Uuid::from_u128(3));
         let (_sender, shutdown, mut commands, consumer) = start_consumer(
@@ -881,10 +875,12 @@ mod tests {
         tokio::time::advance(RECONCILIATION_INTERVAL).await;
         assert_reconcile_from_cursor(next_command(&mut commands).await?, cursor);
 
-        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(RECONCILIATION_INTERVAL).await;
         assert_reconcile_from_cursor(next_command(&mut commands).await?, cursor);
 
-        tokio::time::advance(Duration::from_millis(200)).await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(RECONCILIATION_INTERVAL).await;
         assert_reconcile_from_cursor(next_command(&mut commands).await?, cursor);
 
         tokio::task::yield_now().await;

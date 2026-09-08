@@ -124,7 +124,7 @@ pub(crate) fn build_similar_products_request(
                                 "term": {
                                     ProductListingDocumentSerdeField::ProductListingId.as_str(): request.product_listing_id.to_string()
                                 }
-                            }]
+                            }, {"term": {"projectionDeleted": true}}]
                         }
                     }
                 }

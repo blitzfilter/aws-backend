@@ -1,6 +1,6 @@
 use aura_historia_worker::{
-    QueueConfig, WorkerRunError, WorkerRuntime, cdc::WorkerQueue,
-    product_translation::consume_product_translation_queue, serve_with_runtime,
+    WorkerRunError, WorkerScope, product_translation::consume_product_translation_queue,
+    serve_with_runtime,
 };
 use domain_primitives::event_id::EventId;
 use large_language_model::{
@@ -24,7 +24,10 @@ use test_api::{
 use tokio::{sync::oneshot, task::JoinHandle};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::ProductListingTranslation;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
@@ -49,7 +52,7 @@ impl LargeLanguageModel for FixedTranslationLlm {
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_translate_committed_discovered_product_event_and_persist_canonical_target_shape() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -97,7 +100,7 @@ async fn should_translate_committed_discovered_product_event_and_persist_canonic
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_ignore_non_discovered_product_event_without_translation_side_effect() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -113,7 +116,7 @@ async fn should_ignore_non_discovered_product_event_without_translation_side_eff
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_translate_rolled_back_discovered_product_event() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -128,7 +131,7 @@ async fn should_not_translate_rolled_back_discovered_product_event() {
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_stale_discovered_event_after_content_source_revision_advances() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -153,7 +156,7 @@ async fn should_skip_stale_discovered_event_after_content_source_revision_advanc
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_append_another_translation_event_when_source_is_redelivered() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -189,11 +192,38 @@ async fn should_not_append_another_translation_event_when_source_is_redelivered(
         .expect("worker cleanup or test failed");
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+async fn should_preserve_translation_rows_and_events_after_reversed_duplicate_sqs_deliveries() {
+    let worker = TranslationWorker::start().await;
+    let result: support::TestResult = async {
+        let first = insert_product_with_event(&worker.pool, "PRODUCT_LISTING_DISCOVERED", "DOMAIN").await?;
+        let second = insert_product_with_event(&worker.pool, "PRODUCT_LISTING_DISCOVERED", "DOMAIN").await?;
+        let first_rows = wait_for_translations(&worker.pool, first.0, 4).await?;
+        let second_rows = wait_for_translations(&worker.pool, second.0, 4).await?;
+        for event in [second.1, first.1, second.1, first.1] {
+            support::redeliver_product_event(&worker.pool, uuid::Uuid::from(event)).await?;
+        }
+        support::wait_until_empty(SCOPE).await?;
+        assert_eq!(first_rows, wait_for_translations(&worker.pool, first.0, 4).await?);
+        assert_eq!(second_rows, wait_for_translations(&worker.pool, second.0, 4).await?);
+        for (id, event) in [first, second] {
+            assert_eq!(1, enrichment_event_count(&worker.pool, id).await?);
+            let payload: serde_json::Value = sqlx::query_scalar("SELECT payload FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_TRANSLATED_TITLES'")
+                .bind(uuid::Uuid::from(id)).fetch_one(&worker.pool).await?;
+            assert_eq!(serde_json::json!(event), payload["sourceEventId"]);
+        }
+        Ok(())
+    }.await;
+    worker
+        .finish(result)
+        .await
+        .expect("reversed SQS translation acceptance and cleanup");
+}
+
 struct TranslationWorker {
     pool: sqlx::PgPool,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
-    _unused_receivers: aura_historia_worker::cdc::WorkerQueueReceivers,
     consumer: JoinHandle<()>,
 }
 
@@ -207,12 +237,15 @@ impl TranslationWorker {
                 SqlxUnitOfWork::new(pool.clone()),
                 SqlxProductListingTranslationWriterFactory::new(),
             ));
-        let (runtime, mut receivers) = WorkerRuntime::with_all_queues(QueueConfig::new(16))
-            .expect("valid worker queue configuration");
-        let receiver = receivers
-            .take(WorkerQueue::ProductListingTranslate)
-            .expect("product translation queue is registered");
-        let consumer = tokio::spawn(consume_product_translation_queue(receiver, handler));
+        let (runtime, receiver) = support::composition(SCOPE)
+            .await
+            .unwrap_or_else(|error| panic!("valid scoped SQS configuration: {error}"))
+            .into_parts();
+        let consumer = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_product_translation_queue(receiver, handler.clone())
+        })
+        .await
+        .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
             .await
             .expect("worker webhook bind address is available");
@@ -224,7 +257,6 @@ impl TranslationWorker {
             pool,
             shutdown_tx,
             server,
-            _unused_receivers: receivers,
             consumer,
         }
     }
@@ -278,14 +310,12 @@ impl TranslationWorker {
         let TranslationWorker {
             shutdown_tx,
             server,
-            _unused_receivers,
             consumer,
             ..
         } = self;
         let shutdown_result = shutdown_tx
             .send(())
             .map_err(|_| std::io::Error::other("worker shutdown channel closed"));
-        drop(_unused_receivers);
         let (server_result, consumer_result) = tokio::join!(server, consumer);
         shutdown_result?;
         server_result??;
