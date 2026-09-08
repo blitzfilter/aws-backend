@@ -44,9 +44,10 @@ struct RawCaptureRequest {
 
 enum RawCaptureSuccessAction {
     MarkScraped(CandidateMeta),
-    MarkDormantRemoved {
+    MarkRemoved {
         listing_source_id: ListingSourceId,
         url: url::Url,
+        raw_input_sha256: Vec<u8>,
         expected_last_captured_raw_input_sha256: Option<Vec<u8>>,
     },
 }
@@ -189,30 +190,24 @@ async fn flush_batch(
             }
             (
                 true,
-                RawCaptureSuccessAction::MarkDormantRemoved {
+                RawCaptureSuccessAction::MarkRemoved {
                     listing_source_id,
                     url,
+                    raw_input_sha256,
                     expected_last_captured_raw_input_sha256,
                 },
                 _,
             ) => match scraper_candidates
-                .set_disposition(
+                .mark_removed(
                     &listing_source_id,
                     &url,
-                    CrawlerDisposition::DormantRemoved,
+                    &raw_input_sha256,
                     expected_last_captured_raw_input_sha256.as_deref(),
                 )
                 .await
             {
                 Ok(CrawlerUrlWriteOutcome::Applied) => {
                     mark_as_scraped_count += 1;
-                    info!(
-                        metric = "crawler_disposition_transition",
-                        crawler_disposition_transitions = 1_u64,
-                        listing_source_id = %listing_source_id,
-                        crawler_disposition = CrawlerDisposition::DormantRemoved.as_str(),
-                        "verified crawler removal captured; URL entered dormant disposition"
-                    );
                 }
                 Ok(CrawlerUrlWriteOutcome::NoopStale) => {
                     stale_completion_count += 1;
@@ -225,7 +220,7 @@ async fn flush_batch(
                 }
                 Err(error) => {
                     mark_as_scraped_failure_count += 1;
-                    warn!(error = %error, listing_source_id = %listing_source_id, url = %url, "Raw removal capture committed but crawler disposition update failed");
+                    warn!(error = %error, listing_source_id = %listing_source_id, url = %url, "Raw removal capture committed but crawler scrape metadata update failed");
                 }
             },
             (
@@ -319,6 +314,17 @@ fn handle_verified_removal(candidate: &ScraperCandidate) -> ScrapeCandidateOutco
             };
         }
     };
+    let raw_input_sha256 = match input.hash() {
+        Ok(hash) => hash.as_bytes().to_vec(),
+        Err(error) => {
+            warn!(error = %error, listing_source_id = %candidate.listing_source_id, "Failed to hash verified-removal raw input");
+            return ScrapeCandidateOutcome {
+                capture: None,
+                errored: true,
+                skipped: false,
+            };
+        }
+    };
     let provenance = match crawler_provenance(None, None) {
         Ok(provenance) => provenance,
         Err(error) => {
@@ -339,9 +345,10 @@ fn handle_verified_removal(candidate: &ScraperCandidate) -> ScrapeCandidateOutco
                 input,
                 provenance,
             ),
-            on_success: RawCaptureSuccessAction::MarkDormantRemoved {
+            on_success: RawCaptureSuccessAction::MarkRemoved {
                 listing_source_id: candidate.listing_source_id,
                 url: candidate.url.clone(),
+                raw_input_sha256,
                 expected_last_captured_raw_input_sha256: candidate
                     .last_captured_raw_input_sha256
                     .clone(),
@@ -1547,7 +1554,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_mark_removed_url_dormant_only_after_raw_capture() {
+    async fn should_mark_removed_url_active_only_after_raw_capture() {
         let url = url::Url::parse("https://example.com/product/removed").unwrap();
         let candidate = scraper_candidate("ListingSource", url.clone());
         let listing_source_id = candidate.listing_source_id;
@@ -1570,13 +1577,13 @@ mod tests {
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
-            .expect_set_disposition()
+            .expect_mark_removed()
             .once()
             .withf(
-                move |source_id, candidate_url, disposition, expected_raw_input_sha256| {
+                move |source_id, candidate_url, raw_input_sha256, expected_raw_input_sha256| {
                     *source_id == listing_source_id
                         && candidate_url.as_str() == "https://example.com/product/removed"
-                        && *disposition == CrawlerDisposition::DormantRemoved
+                        && raw_input_sha256.len() == 32
                         && expected_raw_input_sha256.is_none()
                 },
             )
@@ -1665,7 +1672,7 @@ mod tests {
                         == Some(expected_last_captured_raw_input_sha256.as_slice())
             })
             .returning(|_, _, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
-        scraper_candidates.expect_set_disposition().never();
+        scraper_candidates.expect_mark_removed().never();
 
         let raw_capture: Arc<dyn ProductListingRawCaptureService> = Arc::new(raw_capture);
         let scraper_candidates: Arc<dyn ScraperCandidateService> = Arc::new(scraper_candidates);

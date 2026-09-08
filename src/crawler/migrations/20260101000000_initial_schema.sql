@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS listing_source_urls (
     updated           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (char_length(url) > 0),
     CHECK (url_class IN ('product', 'category', 'imprint', 'info', 'other')),
-    CHECK (crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD', 'DORMANT_REMOVED')),
+    CHECK (crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')),
     CHECK (last_captured_raw_input_sha256 IS NULL OR octet_length(last_captured_raw_input_sha256) = 32),
     PRIMARY KEY (url)
 );

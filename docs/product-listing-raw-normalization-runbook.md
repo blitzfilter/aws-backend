@@ -26,7 +26,7 @@ Structured metric events are safe to count by their fixed fields:
 - `product_listing_raw_normalization`: terminal `outcome` (`APPLIED`, `NO_CHANGE`, `IGNORED`, `REJECTED`) and latency; retryable `failure` or `stream_failure` records carry a stable `error_code`.
 - `product_listing_raw_normalization_backlog`: bounded reconciliation-page count and oldest age.
 - `product_listing_raw_normalization_reconciliation`: reconciliation runs, processed revisions, failures, bounded page count, page kind, cursor presence, FIFO depth, deferred-continuation count, and suppressed-continuation count.
-- `crawler_disposition_transition`: successful transitions to `DORMANT_SOLD` or `DORMANT_REMOVED`.
+- `crawler_disposition_transition`: successful transitions to `DORMANT_SOLD`.
 
 `NORMALIZATION_CONFIGURATION_FAILED` is a retryable normalizer configuration failure, such as availability-regex compilation, not `REJECTED`; its raw revision and stream head stay pending. Alert on sustained backlog age, repeated worker failures, or a rising `REJECTED` count. Payload size is an early warning only; capture limits remain authoritative.
 
@@ -127,7 +127,7 @@ WITH eligible_urls AS (
   JOIN listing_sources AS source ON source.listing_source_id = su.listing_source_id
   WHERE source.crawl_enabled = TRUE
     AND su.url_class = 'product'
-    AND su.crawler_disposition = 'ACTIVE'
+    AND su.crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
     AND (su.next_retry_at IS NULL OR su.next_retry_at <= now())
     AND (su.last_scraped IS NULL OR su.last_scraped < now() - interval '1 day')
 )

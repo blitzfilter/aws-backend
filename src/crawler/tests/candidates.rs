@@ -740,12 +740,12 @@ async fn scraper_should_not_return_candidate_when_listing_source_crawl_is_disabl
 }
 
 // ---------------------------------------------------------------------------
-// get_candidates — dormant URLs are not eligible
+// get_candidates — sold URLs remain eligible for rechecks
 // ---------------------------------------------------------------------------
 
 #[serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn scraper_should_not_return_candidate_when_disposition_is_dormant_removed() {
+async fn scraper_should_return_candidate_when_disposition_is_dormant_sold() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
     let listing_source_id_uuid = uuid::Uuid::new_v4();
@@ -756,12 +756,12 @@ async fn scraper_should_not_return_candidate_when_disposition_is_dormant_removed
     )
     .await;
     let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
-    let removed_url = url::Url::parse("https://scraper-disposition.example.com/p/removed").unwrap();
+    let sold_url = url::Url::parse("https://scraper-disposition.example.com/p/sold").unwrap();
     let present_url =
         url::Url::parse("https://scraper-disposition.example.com/p/out-of-stock").unwrap();
     let repository = UrlMetadataRepositoryImpl::new(pool.clone());
 
-    for url in [&removed_url, &present_url] {
+    for url in [&sold_url, &present_url] {
         repository
             .upsert_link(
                 &listing_source_id,
@@ -775,8 +775,8 @@ async fn scraper_should_not_return_candidate_when_disposition_is_dormant_removed
     repository
         .set_disposition(
             &listing_source_id,
-            &removed_url,
-            CrawlerDisposition::DormantRemoved,
+            &sold_url,
+            CrawlerDisposition::DormantSold,
         )
         .await
         .unwrap();
@@ -784,14 +784,74 @@ async fn scraper_should_not_return_candidate_when_disposition_is_dormant_removed
     let candidates = service.get_candidates(10, 100, &[]).await.unwrap();
 
     assert!(
-        !candidates
-            .iter()
-            .any(|candidate| candidate.url == removed_url)
+        candidates.iter().any(|candidate| candidate.url == sold_url),
+        "sold URLs must remain candidates for removal/restock rechecks"
     );
     assert!(
         candidates
             .iter()
             .any(|candidate| candidate.url == present_url)
+    );
+}
+
+#[serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn scraper_mark_removed_should_reactivate_sold_url_after_durable_capture() {
+    let pool = get_postgres_client().await;
+    let service = ScraperCandidateServiceImpl::new(pool.clone());
+    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let domain_id = insert_listing_source_with_domain(
+        &pool,
+        listing_source_id_uuid,
+        "scraper-removed-reactivation.example.com",
+    )
+    .await;
+    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+    let url = url::Url::parse("https://scraper-removed-reactivation.example.com/p/1").unwrap();
+    let repository = UrlMetadataRepositoryImpl::new(pool.clone());
+    repository
+        .upsert_link(
+            &listing_source_id,
+            &domain_id,
+            &url,
+            &UrlClass::ProductListing,
+        )
+        .await
+        .unwrap();
+    repository
+        .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantSold)
+        .await
+        .unwrap();
+
+    let removal_hash = vec![7; 32];
+    assert_eq!(
+        service
+            .mark_removed(&listing_source_id, &url, &removal_hash, None)
+            .await
+            .unwrap(),
+        CrawlerUrlWriteOutcome::Applied
+    );
+
+    let row: (String, Option<Vec<u8>>, Option<time::OffsetDateTime>) = sqlx::query_as(
+        "SELECT crawler_disposition, last_captured_raw_input_sha256, last_scraped \
+         FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
+    )
+    .bind(listing_source_id_uuid)
+    .bind(url.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, CrawlerDisposition::Active.as_str());
+    assert_eq!(row.1, Some(removal_hash));
+    assert!(row.2.is_some());
+    assert!(
+        !service
+            .get_candidates(10, 100, &[])
+            .await
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.url == url),
+        "the removal scrape must obey the usual daily revisit cadence"
     );
 }
 
@@ -1392,7 +1452,7 @@ async fn scraper_newer_active_completion_should_fence_delayed_sold_completion() 
 
 #[serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn scraper_newer_active_completion_should_fence_delayed_removal_completion() {
+async fn scraper_newer_active_completion_should_fence_delayed_disposition_change() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
     let listing_source_id_uuid = uuid::Uuid::new_v4();
@@ -1445,7 +1505,7 @@ async fn scraper_newer_active_completion_should_fence_delayed_removal_completion
             .set_disposition(
                 &listing_source_id,
                 &url,
-                CrawlerDisposition::DormantRemoved,
+                CrawlerDisposition::DormantSold,
                 Some(observed_raw_input_sha256.as_slice()),
             )
             .await
@@ -1605,7 +1665,7 @@ async fn scraper_should_fence_delayed_observer_local_writes_when_newer_active_ca
                     .set_disposition(
                         &delayed_listing_source_id,
                         &url,
-                        CrawlerDisposition::DormantRemoved,
+                        CrawlerDisposition::DormantSold,
                         Some(observed_raw_input_sha256.as_slice()),
                     )
                     .await
@@ -1742,7 +1802,7 @@ async fn scraper_seed_urls_should_exclude_current_url() {
 
 #[serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn scraper_seed_urls_should_only_include_same_listing_source_active_product_urls() {
+async fn scraper_seed_urls_should_include_same_listing_source_sold_product_urls() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
@@ -1806,7 +1866,7 @@ async fn scraper_seed_urls_should_only_include_same_listing_source_active_produc
     repo.set_disposition(
         &seed_listing_source_id,
         &withdrawn_url,
-        CrawlerDisposition::DormantRemoved,
+        CrawlerDisposition::DormantSold,
     )
     .await
     .unwrap();
@@ -1856,12 +1916,12 @@ async fn scraper_seed_urls_should_only_include_same_listing_source_active_produc
         "current URL must be excluded"
     );
     assert!(
-        sampled.iter().all(|u| u != &sold_url),
-        "dormant sold URLs must be excluded"
+        sampled.iter().any(|u| u == &sold_url),
+        "sold product URLs must be included for schema seeding"
     );
     assert!(
-        sampled.iter().all(|u| u != &withdrawn_url),
-        "dormant removed URLs must be excluded"
+        sampled.iter().any(|u| u == &withdrawn_url),
+        "a second sold product URL must be included for schema seeding"
     );
     assert!(
         sampled.iter().all(|u| u != &category_url),

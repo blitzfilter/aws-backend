@@ -148,7 +148,7 @@ async fn should_transition_owned_url_to_dormant_without_reactivation() {
 
     assert_eq!(
         repository
-            .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantRemoved)
+            .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantSold)
             .await
             .unwrap(),
         CrawlerUrlWriteOutcome::Applied
@@ -170,13 +170,13 @@ async fn should_transition_owned_url_to_dormant_without_reactivation() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, CrawlerDisposition::DormantRemoved.as_str());
+    assert_eq!(row.0, CrawlerDisposition::DormantSold.as_str());
     assert_eq!(CrawlerDomainId::from(row.1), domain_id);
 }
 
 #[serial_test::serial]
 #[aura_integration_test(services = [POSTGRES])]
-async fn should_keep_dormant_removed_url_absorbing_during_rediscovery_and_active_update() {
+async fn should_keep_dormant_sold_url_absorbing_during_rediscovery_and_active_update() {
     let pool = get_postgres_client().await;
     let repository = UrlMetadataRepositoryImpl::new(pool.clone());
     let listing_source_id = ListingSourceId::new();
@@ -195,7 +195,7 @@ async fn should_keep_dormant_removed_url_absorbing_during_rediscovery_and_active
 
     assert_eq!(
         repository
-            .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantRemoved)
+            .set_disposition(&listing_source_id, &url, CrawlerDisposition::DormantSold)
             .await
             .unwrap(),
         CrawlerUrlWriteOutcome::Applied
@@ -205,7 +205,7 @@ async fn should_keep_dormant_removed_url_absorbing_during_rediscovery_and_active
         .upsert_link(&listing_source_id, &domain_id, &url, &UrlClass::Other)
         .await
         .unwrap();
-    assert_eq!(rediscovered.disposition, CrawlerDisposition::DormantRemoved);
+    assert_eq!(rediscovered.disposition, CrawlerDisposition::DormantSold);
     assert_eq!(rediscovered.url_class, UrlClass::ProductListing);
 
     assert_eq!(
@@ -231,7 +231,7 @@ async fn should_keep_dormant_removed_url_absorbing_during_rediscovery_and_active
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, CrawlerDisposition::DormantRemoved.as_str());
+    assert_eq!(row.0, CrawlerDisposition::DormantSold.as_str());
     assert!(row.1.is_none());
 }
 
