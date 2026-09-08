@@ -8,6 +8,7 @@ use std::{
     future::Future,
     net::{SocketAddr, TcpListener},
     os::unix::process::ExitStatusExt,
+    path::PathBuf,
     process::{Child, Command, Stdio},
     time::Duration,
 };
@@ -43,6 +44,7 @@ pub fn unused_address() -> TestResult<SocketAddr> {
 pub struct WorkerProcess {
     child: Child,
     reaped: bool,
+    coverage_profile: Option<PathBuf>,
 }
 
 impl WorkerProcess {
@@ -59,10 +61,21 @@ impl WorkerProcess {
         let postgres = url::Url::parse(&test_api::get_postgres_host_gateway_connection_string(
             &database,
         ))?;
+        // Keep child profiles in CI's collection directory, but give each child its own
+        // file so clean-exit assertions cannot accidentally accept a parent's profile.
+        let coverage_profile = std::env::var_os("LLVM_PROFILE_FILE").map(|pattern| {
+            PathBuf::from(pattern)
+                .with_file_name(format!("worker-{}.profraw", uuid::Uuid::new_v4()))
+        });
         // No inherited credentials, endpoint overrides, AWS profiles or paid-provider config.
         // The gateway URL supplies actual fixture credentials/port; this child runs on the host.
         let child = Command::new(env!("CARGO_BIN_EXE_aura-historia-worker"))
             .env_clear()
+            .envs(
+                coverage_profile
+                    .as_ref()
+                    .map(|path| ("LLVM_PROFILE_FILE", path)),
+            )
             .env("STAGE", "test")
             .env("AWS_REGION", "eu-central-1")
             .env("AWS_ACCESS_KEY_ID", "test")
@@ -98,6 +111,7 @@ impl WorkerProcess {
         let mut process = Self {
             child,
             reaped: false,
+            coverage_profile,
         };
         let client = reqwest::Client::builder()
             .no_proxy()
@@ -150,6 +164,12 @@ impl WorkerProcess {
                         status.code(),
                         "worker must drain, not be killed or fail"
                     );
+                    if let Some(profile) = &self.coverage_profile {
+                        assert!(
+                            profile.metadata()?.len() > 0,
+                            "clean instrumented worker must flush its own collected profile"
+                        );
+                    }
                     return Ok(());
                 }
                 tokio::time::sleep(POLL_INTERVAL).await;
