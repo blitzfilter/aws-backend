@@ -486,6 +486,9 @@ impl From<PartnerProductListingAuthorizationError> for CaptureProductListingRawO
 impl From<ProductListingRawCaptureWriteError> for CaptureProductListingRawObservationError {
     fn from(error: ProductListingRawCaptureWriteError) -> Self {
         match error {
+            ProductListingRawCaptureWriteError::ListingSourceNotFound => {
+                Self::ListingSourceNotFound
+            }
             ProductListingRawCaptureWriteError::SourceRecordKeyHashCollision => {
                 Self::SourceRecordKeyHashCollision
             }

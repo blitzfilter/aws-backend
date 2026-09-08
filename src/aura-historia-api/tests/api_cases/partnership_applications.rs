@@ -16,6 +16,36 @@ fn existing_proposal(listing_source_id: Uuid) -> serde_json::Value {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_submission_that_references_a_missing_listing_source() {
+    let user_id = seed_user("USER").await;
+    let token = seed_access_token_for(user_id, std::collections::HashSet::new()).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/me/partnership-applications",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(token))
+        .json(&json!({
+            "proposal": {
+                "type": "EXISTING_LISTING_SOURCE",
+                "listingSourceId": Uuid::new_v4(),
+            },
+        }))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to submit missing ListingSource proposal: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::NOT_FOUND,
+        "PARTNERSHIP_APPLICATION_LISTING_SOURCE_NOT_FOUND",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_get_admin_partnership_application_detail_with_approval_references() {
     let applicant_user_id = seed_user("USER").await;
     let (application_id, approved_partnership_id, approved_listing_source_id) =

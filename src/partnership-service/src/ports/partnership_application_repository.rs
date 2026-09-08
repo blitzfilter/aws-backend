@@ -12,6 +12,8 @@ pub type VersionedPartnershipApplication =
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartnershipApplicationRepositoryError {
+    #[error("existing listing source not found")]
+    ListingSourceNotFound,
     #[error("concurrent partnership application update")]
     ConcurrencyConflict,
     #[error("temporary partnership application persistence failure")]

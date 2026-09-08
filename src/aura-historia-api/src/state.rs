@@ -6,6 +6,7 @@ use billing_service::use_cases::{
     CreateBillingPortalSessionUseCase,
 };
 use listing_source_service::use_cases::commands::create_listing_source::CreateListingSourceUseCase;
+use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceUseCase;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceUseCase;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceUseCase;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesUseCase;
@@ -467,6 +468,7 @@ pub struct ListingSourcesState {
     pub(crate) create: Arc<dyn CreateListingSourceUseCase>,
     pub(crate) get: Arc<dyn GetListingSourceUseCase>,
     pub(crate) update: Arc<dyn UpdateListingSourceUseCase>,
+    pub(crate) delete: Option<Arc<dyn DeleteListingSourceUseCase>>,
     pub(crate) list_administered: Arc<dyn ListAdministeredListingSourcesUseCase>,
     pub(crate) search: Arc<dyn SearchListingSourcesUseCase>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
@@ -485,10 +487,16 @@ impl ListingSourcesState {
             create,
             get,
             update,
+            delete: None,
             list_administered,
             search,
             authenticator,
         }
+    }
+
+    pub fn with_delete(mut self, delete: Arc<dyn DeleteListingSourceUseCase>) -> Self {
+        self.delete = Some(delete);
+        self
     }
 }
 

@@ -27,6 +27,8 @@ pub enum SubmitPartnershipApplicationError {
     AuthenticatedActorRequired,
     #[error("operation not permitted")]
     Forbidden,
+    #[error("existing listing source not found")]
+    ListingSourceNotFound,
     #[error("temporary partnership application failure")]
     TemporarilyUnavailable {
         #[source]
@@ -119,6 +121,9 @@ fn authorize(
 impl From<PartnershipApplicationRepositoryError> for SubmitPartnershipApplicationError {
     fn from(value: PartnershipApplicationRepositoryError) -> Self {
         match value {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound => {
+                Self::ListingSourceNotFound
+            }
             PartnershipApplicationRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
             }
@@ -603,6 +608,7 @@ mod tests {
     #[tokio::test]
     async fn should_translate_all_insert_failures_without_committing() {
         let errors = [
+            PartnershipApplicationRepositoryError::ListingSourceNotFound,
             PartnershipApplicationRepositoryError::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable {
                 source: static_error("temporary"),
@@ -628,11 +634,15 @@ mod tests {
                 .await;
 
             match index {
-                0 | 3 => assert!(matches!(
+                0 => assert!(matches!(
+                    result,
+                    Err(SubmitPartnershipApplicationError::ListingSourceNotFound)
+                )),
+                1 | 4 => assert!(matches!(
                     result,
                     Err(SubmitPartnershipApplicationError::Internal { .. })
                 )),
-                1 => assert!(matches!(
+                2 => assert!(matches!(
                     result,
                     Err(SubmitPartnershipApplicationError::TemporarilyUnavailable { .. })
                 )),

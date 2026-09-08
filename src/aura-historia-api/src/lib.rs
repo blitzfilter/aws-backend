@@ -83,6 +83,7 @@ use listing_source_postgres::{
     SqlxListingSourceSearchReaderFactory,
 };
 use listing_source_service::use_cases::commands::create_listing_source::CreateListingSourceHandler;
+use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceHandler;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceHandler;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceHandler;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesHandler;
@@ -458,7 +459,8 @@ pub fn app(state: AppState) -> Router {
                 .route(
                     "/api/v1/admin/listing-sources/{listing_source_id}",
                     get(listing_sources::get_listing_source::get_listing_source)
-                        .patch(listing_sources::update_listing_source::update_listing_source),
+                        .patch(listing_sources::update_listing_source::update_listing_source)
+                        .delete(listing_sources::delete_listing_source::delete_listing_source),
                 )
                 .route(
                     "/api/v1/listing-sources/by-slug/{listing_source_slug_id}",
@@ -696,6 +698,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
     );
     let update_listing_source = UpdateListingSourceHandler::new(
+        unit_of_work.clone(),
+        SqlxListingSourceRepositoryFactory::new(),
+        CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+    );
+    let delete_listing_source = DeleteListingSourceHandler::new(
         unit_of_work.clone(),
         SqlxListingSourceRepositoryFactory::new(),
         CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
@@ -1052,7 +1059,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         Arc::new(list_administered_listing_sources),
         Arc::new(search_listing_sources),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
-    );
+    )
+    .with_delete(Arc::new(delete_listing_source));
     let parties_state = PartiesState::new(
         Arc::new(create_party),
         Arc::new(get_party),

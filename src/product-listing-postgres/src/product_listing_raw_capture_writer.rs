@@ -670,8 +670,16 @@ async fn update_stream_head(
 }
 
 fn capture_failed(error: sqlx::Error) -> ProductListingRawCaptureWriteError {
-    ProductListingRawCaptureWriteError::CaptureFailed {
-        source: box_error(error),
+    match &error {
+        sqlx::Error::Database(database_error)
+            if database_error.constraint()
+                == Some("product_listing_raw_streams_listing_source_id_fkey") =>
+        {
+            ProductListingRawCaptureWriteError::ListingSourceNotFound
+        }
+        _ => ProductListingRawCaptureWriteError::CaptureFailed {
+            source: box_error(error),
+        },
     }
 }
 

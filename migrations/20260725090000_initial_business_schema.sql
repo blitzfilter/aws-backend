@@ -96,7 +96,7 @@ CREATE INDEX listing_source_ingestion_methods_method_idx ON listing_source_inges
 
 CREATE TABLE product_listing_raw_streams (
     product_listing_raw_stream_id uuid PRIMARY KEY,
-    listing_source_id uuid NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
+    listing_source_id uuid NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE RESTRICT,
     ingestion_method text NOT NULL,
     source_record_key text NOT NULL,
     source_record_key_sha256 bytea NOT NULL,
@@ -338,6 +338,32 @@ CREATE INDEX partnership_applications_business_state_created_idx
 CREATE INDEX partnership_applications_approved_source_created_id_idx
     ON partnership_applications (approved_listing_source_id, created DESC, partnership_application_id DESC)
     WHERE approved_listing_source_id IS NOT NULL;
+CREATE INDEX partnership_applications_existing_source_proposal_idx
+    ON partnership_applications ((proposal->>'listing_source_id'))
+    WHERE proposal->>'type' = 'EXISTING_LISTING_SOURCE';
+
+CREATE OR REPLACE FUNCTION lock_existing_listing_source_proposal()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.proposal->>'type' = 'EXISTING_LISTING_SOURCE' THEN
+        PERFORM 1 FROM listing_sources
+        WHERE listing_source_id = (NEW.proposal->>'listing_source_id')::uuid
+        FOR KEY SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'existing ListingSource proposal refers to a missing ListingSource'
+                USING ERRCODE = '23503',
+                      CONSTRAINT = 'partnership_applications_existing_listing_source_id_fkey';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER partnership_applications_lock_existing_listing_source
+BEFORE INSERT OR UPDATE OF proposal ON partnership_applications
+FOR EACH ROW EXECUTE FUNCTION lock_existing_listing_source_proposal();
 
 CREATE TABLE fx_rates (
     fx_rate_id uuid PRIMARY KEY,
@@ -368,7 +394,7 @@ CREATE TABLE product_listings (
     embedding_source_event_id uuid NOT NULL,
     listing_source_id uuid NOT NULL
         REFERENCES listing_sources(listing_source_id)
-        ON DELETE CASCADE,
+        ON DELETE RESTRICT,
     source_listing_id text NOT NULL,
     title_text text,
     title_language text,

@@ -14,7 +14,9 @@ pub(super) mod test_support {
         ListingSourceRegistrationService, MockListingSourceRegistrationRepository,
         MockListingSourceRegistrationSource,
     };
-    use crate::service::raw_capture::MockProductListingRawCaptureService;
+    use crate::service::raw_capture::{
+        MockProductListingRawCaptureService, ProductListingRawCaptureOutcome,
+    };
     use listing_source_core::ListingSourceId;
 
     pub(super) fn noop_listing_source_registration() -> ListingSourceRegistrationService {
@@ -35,9 +37,11 @@ pub(super) mod test_support {
 
     pub(super) fn noop_raw_capture() -> Box<MockProductListingRawCaptureService> {
         let mut capture = MockProductListingRawCaptureService::new();
-        capture
-            .expect_capture()
-            .returning(|observations| Box::pin(async move { vec![true; observations.len()] }));
+        capture.expect_capture().returning(|observations| {
+            Box::pin(
+                async move { vec![ProductListingRawCaptureOutcome::Persisted; observations.len()] },
+            )
+        });
         Box::new(capture)
     }
 

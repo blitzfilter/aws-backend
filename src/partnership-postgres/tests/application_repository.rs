@@ -56,6 +56,31 @@ async fn seed_user(pool: &PgPool) -> UserId {
     user_id
 }
 
+async fn seed_listing_source(pool: &PgPool) -> ListingSourceId {
+    let party_id = PartyId::new();
+    let listing_source_id = ListingSourceId::new();
+
+    sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+        .bind(uuid::Uuid::from(party_id))
+        .bind(format!("application-source-party-{party_id}"))
+        .bind("Application Repository Source Party")
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("seed application repository source Party: {error}"));
+    sqlx::query(
+        "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(format!("application-source-{listing_source_id}"))
+    .bind("Application Repository Source")
+    .bind(uuid::Uuid::from(party_id))
+    .execute(pool)
+    .await
+    .unwrap_or_else(|error| panic!("seed application repository listing source: {error}"));
+
+    listing_source_id
+}
+
 async fn seed_approval_targets(pool: &PgPool) -> (PartnershipId, ListingSourceId) {
     let party_id = PartyId::new();
     let listing_source_id = ListingSourceId::new();
@@ -114,7 +139,8 @@ async fn should_insert_and_find_application_by_id_and_applicant() {
     let pool = get_postgres_client().await;
     let applicant_user_id = seed_user(&pool).await;
     let other_user_id = seed_user(&pool).await;
-    let application = submitted_application(applicant_user_id, ListingSourceId::new());
+    let listing_source_id = seed_listing_source(&pool).await;
+    let application = submitted_application(applicant_user_id, listing_source_id);
     let mut transaction = begin(&pool).await;
     let factory = SqlxPartnershipApplicationRepositoryFactory::new();
 
@@ -165,7 +191,8 @@ async fn should_insert_and_find_application_by_id_and_applicant() {
 async fn should_find_application_for_update() {
     let pool = get_postgres_client().await;
     let applicant_user_id = seed_user(&pool).await;
-    let application = submitted_application(applicant_user_id, ListingSourceId::new());
+    let listing_source_id = seed_listing_source(&pool).await;
+    let application = submitted_application(applicant_user_id, listing_source_id);
     let inserted = insert_committed(&pool, &application).await;
     let mut transaction = begin(&pool).await;
 
@@ -230,7 +257,8 @@ async fn should_update_application_increment_version_and_persist_approval_result
 async fn should_reject_stale_application_version() {
     let pool = get_postgres_client().await;
     let applicant_user_id = seed_user(&pool).await;
-    let application = submitted_application(applicant_user_id, ListingSourceId::new());
+    let listing_source_id = seed_listing_source(&pool).await;
+    let application = submitted_application(applicant_user_id, listing_source_id);
     let inserted = insert_committed(&pool, &application).await;
     let mut changed_application = application.clone();
     changed_application
@@ -273,7 +301,8 @@ async fn should_reject_stale_application_version() {
 async fn should_hide_application_insert_and_update_after_transaction_rollback() {
     let pool = get_postgres_client().await;
     let applicant_user_id = seed_user(&pool).await;
-    let application = submitted_application(applicant_user_id, ListingSourceId::new());
+    let listing_source_id = seed_listing_source(&pool).await;
+    let application = submitted_application(applicant_user_id, listing_source_id);
 
     let mut insert_transaction = begin(&pool).await;
     let inserted = SqlxPartnershipApplicationRepositoryFactory::new()

@@ -3,7 +3,9 @@ use crate::network::policy::{NetworkErrorKind, durable_retry_cooldown_for};
 use crate::scraper::candidate_service::{ScraperCandidate, ScraperCandidateService};
 use crate::scraper::raw_input::{crawler_provenance, crawler_verified_removal_input};
 use crate::scraper::scraper_service::{ScraperError, ScraperService};
-use crate::service::raw_capture::{ProductListingRawCaptureItem, ProductListingRawCaptureService};
+use crate::service::raw_capture::{
+    ProductListingRawCaptureItem, ProductListingRawCaptureOutcome, ProductListingRawCaptureService,
+};
 use crate::spider::advisory_lock::{ListingSourceLock, LocalLockManager, UrlLock};
 use crate::spider::classification::url_metadata::{CrawlerDisposition, CrawlerUrlWriteOutcome};
 use listing_source_core::ListingSourceId;
@@ -118,10 +120,10 @@ async fn flush_batch(
         .collect();
 
     let capture_started_at = tokio::time::Instant::now();
-    let mut succeeded = raw_capture.capture(observations).await;
+    let mut outcomes = raw_capture.capture(observations).await;
     let capture_latency_ms = capture_started_at.elapsed().as_millis();
     let expected = batch.len();
-    let actual = succeeded.len();
+    let actual = outcomes.len();
 
     if actual != expected {
         warn!(
@@ -131,24 +133,38 @@ async fn flush_batch(
         );
     }
 
-    succeeded.truncate(expected);
-    if succeeded.len() < expected {
-        succeeded.resize(expected, false);
+    outcomes.truncate(expected);
+    if outcomes.len() < expected {
+        outcomes.resize(expected, ProductListingRawCaptureOutcome::RetryableFailure);
     }
 
-    let persisted_count = succeeded.iter().filter(|succeeded| **succeeded).count();
-    let persistence_failure_count = expected.saturating_sub(persisted_count);
+    let persisted_count = outcomes
+        .iter()
+        .filter(|outcome| **outcome == ProductListingRawCaptureOutcome::Persisted)
+        .count();
+    let discarded_missing_source_count = outcomes
+        .iter()
+        .filter(|outcome| **outcome == ProductListingRawCaptureOutcome::DiscardedMissingSource)
+        .count();
+    let persistence_failure_count = outcomes
+        .iter()
+        .filter(|outcome| **outcome == ProductListingRawCaptureOutcome::RetryableFailure)
+        .count();
     let mut mark_as_scraped_count = 0;
     let mut stale_completion_count = 0;
     let mut mark_as_scraped_failure_count = 0;
 
-    for (queued, succeeded) in batch.into_iter().zip(succeeded) {
+    for (queued, outcome) in batch.into_iter().zip(outcomes) {
         match (
-            succeeded,
+            outcome,
             queued.request.on_success,
             queued.request.on_failure,
         ) {
-            (true, RawCaptureSuccessAction::MarkScraped(meta), _) => {
+            (
+                ProductListingRawCaptureOutcome::Persisted,
+                RawCaptureSuccessAction::MarkScraped(meta),
+                _,
+            ) => {
                 match scraper_candidates
                     .mark_as_scraped(
                         &meta.listing_source_id,
@@ -189,7 +205,7 @@ async fn flush_batch(
                 }
             }
             (
-                true,
+                ProductListingRawCaptureOutcome::Persisted,
                 RawCaptureSuccessAction::MarkRemoved {
                     listing_source_id,
                     url,
@@ -224,7 +240,7 @@ async fn flush_batch(
                 }
             },
             (
-                false,
+                ProductListingRawCaptureOutcome::RetryableFailure,
                 _,
                 RawCaptureFailureAction::MarkScraperFailure {
                     listing_source_id,
@@ -259,7 +275,17 @@ async fn flush_batch(
                     );
                 }
             },
-            (false, _, RawCaptureFailureAction::None) => {}
+            (
+                ProductListingRawCaptureOutcome::RetryableFailure,
+                _,
+                RawCaptureFailureAction::None,
+            ) => {}
+            (ProductListingRawCaptureOutcome::DiscardedMissingSource, _, _) => {
+                debug!(
+                    outcome = "discarded_missing_source",
+                    "Discarded crawler raw-capture completion without marking it persisted"
+                );
+            }
         }
     }
 
@@ -270,6 +296,7 @@ async fn flush_batch(
         oldest_item_age_ms,
         capture_latency_ms,
         persisted_count,
+        discarded_missing_source_count,
         persistence_failure_count,
         mark_as_scraped_count,
         stale_completion_count,
@@ -1133,7 +1160,12 @@ mod tests {
         let mut push_service = MockProductListingRawCaptureService::new();
         push_service.expect_capture().once().returning(|products| {
             assert_eq!(products.len(), 2);
-            Box::pin(async { vec![true, false] })
+            Box::pin(async {
+                vec![
+                    ProductListingRawCaptureOutcome::Persisted,
+                    ProductListingRawCaptureOutcome::RetryableFailure,
+                ]
+            })
         });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
@@ -1188,6 +1220,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_not_mark_missing_source_capture_as_persisted_or_failed() {
+        let listing_source_id = ListingSourceId::new();
+        let mut raw_capture = MockProductListingRawCaptureService::new();
+        raw_capture.expect_capture().once().returning(|products| {
+            assert_eq!(products.len(), 1);
+            Box::pin(async { vec![ProductListingRawCaptureOutcome::DiscardedMissingSource] })
+        });
+
+        let mut scraper_candidates = MockScraperCandidateService::new();
+        scraper_candidates.expect_mark_as_scraped().never();
+        scraper_candidates.expect_mark_scraper_failure().never();
+
+        let raw_capture: Arc<dyn ProductListingRawCaptureService> = Arc::new(raw_capture);
+        let scraper_candidates: Arc<dyn ScraperCandidateService> = Arc::new(scraper_candidates);
+        flush_batch(
+            &raw_capture,
+            &scraper_candidates,
+            vec![queued(
+                item(listing_source_id, "deleted-source"),
+                meta(
+                    listing_source_id,
+                    "https://deleted.example/product",
+                    "deleted-source",
+                ),
+            )],
+            0,
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn should_default_missing_raw_capture_results_to_failure() {
         let first_listing_source_id = ListingSourceId::new();
         let second_listing_source_id = ListingSourceId::new();
@@ -1195,7 +1258,7 @@ mod tests {
         let mut push_service = MockProductListingRawCaptureService::new();
         push_service.expect_capture().once().returning(|products| {
             assert_eq!(products.len(), 2);
-            Box::pin(async { vec![true] })
+            Box::pin(async { vec![ProductListingRawCaptureOutcome::Persisted] })
         });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
@@ -1312,7 +1375,7 @@ mod tests {
             .returning(move |products| {
                 push_calls_for_mock.fetch_add(1, Ordering::SeqCst);
                 let len = products.len();
-                Box::pin(async move { vec![true; len] })
+                Box::pin(async move { vec![ProductListingRawCaptureOutcome::Persisted; len] })
             });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
@@ -1366,7 +1429,12 @@ mod tests {
             .returning(move |products| {
                 assert_eq!(products.len(), 2);
                 push_calls_for_mock.fetch_add(1, Ordering::SeqCst);
-                Box::pin(async { vec![true, true] })
+                Box::pin(async {
+                    vec![
+                        ProductListingRawCaptureOutcome::Persisted,
+                        ProductListingRawCaptureOutcome::Persisted,
+                    ]
+                })
             });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
@@ -1573,7 +1641,7 @@ mod tests {
                     && observations[0].command.input.operation()
                         == product_listing_normalization::RawProductListingOperation::Delete
             })
-            .returning(|_| Box::pin(async { vec![true] }));
+            .returning(|_| Box::pin(async { vec![ProductListingRawCaptureOutcome::Persisted] }));
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -1656,10 +1724,9 @@ mod tests {
         let request = outcome.capture.expect("removal must be queued for capture");
 
         let mut raw_capture = MockProductListingRawCaptureService::new();
-        raw_capture
-            .expect_capture()
-            .once()
-            .returning(|_| Box::pin(async { vec![false] }));
+        raw_capture.expect_capture().once().returning(|_| {
+            Box::pin(async { vec![ProductListingRawCaptureOutcome::RetryableFailure] })
+        });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates

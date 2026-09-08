@@ -281,6 +281,9 @@ impl From<AdminAuthorizationError> for RejectPartnershipApplicationError {
 impl From<PartnershipApplicationRepositoryError> for RejectPartnershipApplicationError {
     fn from(value: PartnershipApplicationRepositoryError) -> Self {
         match value {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound => {
+                Self::ListingSourceNotFound
+            }
             PartnershipApplicationRepositoryError::ConcurrencyConflict => Self::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
@@ -648,6 +651,33 @@ mod tests {
         ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
             Err(ListingSourceRepositoryError::Internal {
                 source: static_error("unexpected source read"),
+            })
+        }
+
+        async fn find_by_id_for_update(
+            &mut self,
+            id: ListingSourceId,
+        ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
+            self.find_by_id(id).await
+        }
+
+        async fn find_deletion_blocker(
+            &mut self,
+            _: ListingSourceId,
+        ) -> Result<
+            Option<listing_source_service::ports::ListingSourceDeletionBlocker>,
+            ListingSourceRepositoryError,
+        > {
+            Ok(None)
+        }
+
+        async fn delete_unused(
+            &mut self,
+            _: ListingSourceId,
+            _: ListingSourceStorageVersion,
+        ) -> Result<(), ListingSourceRepositoryError> {
+            Err(ListingSourceRepositoryError::Internal {
+                source: static_error("unexpected source deletion"),
             })
         }
 

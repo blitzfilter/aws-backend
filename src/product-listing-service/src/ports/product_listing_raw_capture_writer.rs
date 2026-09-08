@@ -228,6 +228,8 @@ pub enum ProductListingRawCaptureWriteOutcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProductListingRawCaptureWriteError {
+    #[error("listing source not found")]
+    ListingSourceNotFound,
     #[error("source record key hash collision")]
     SourceRecordKeyHashCollision,
     #[error("provider delivery ID conflicts with existing source evidence")]

@@ -115,6 +115,11 @@ impl From<AdminAuthorizationError> for GetPartnershipApplicationError {
 impl From<PartnershipApplicationRepositoryError> for GetPartnershipApplicationError {
     fn from(v: PartnershipApplicationRepositoryError) -> Self {
         match v {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound => {
+                Self::InvalidPersistedState {
+                    source: application::error::static_error("missing existing listing source"),
+                }
+            }
             PartnershipApplicationRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
             }

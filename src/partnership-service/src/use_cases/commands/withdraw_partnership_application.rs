@@ -116,6 +116,11 @@ impl<U: UnitOfWork, A: PartnershipApplicationRepositoryFactory<U::Tx>>
 impl From<PartnershipApplicationRepositoryError> for WithdrawPartnershipApplicationError {
     fn from(value: PartnershipApplicationRepositoryError) -> Self {
         match value {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound => {
+                Self::InvalidPersistedState {
+                    source: application::error::static_error("missing existing listing source"),
+                }
+            }
             PartnershipApplicationRepositoryError::ConcurrencyConflict => Self::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }

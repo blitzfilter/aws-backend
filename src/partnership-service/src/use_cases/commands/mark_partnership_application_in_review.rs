@@ -188,6 +188,11 @@ impl From<AdminAuthorizationError> for MarkPartnershipApplicationInReviewError {
 impl From<PartnershipApplicationRepositoryError> for MarkPartnershipApplicationInReviewError {
     fn from(value: PartnershipApplicationRepositoryError) -> Self {
         match value {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound => {
+                Self::InvalidPersistedState {
+                    source: application::error::static_error("missing existing listing source"),
+                }
+            }
             PartnershipApplicationRepositoryError::ConcurrencyConflict => Self::ConcurrencyConflict,
             PartnershipApplicationRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }

@@ -33,6 +33,7 @@ use listing_source_postgres::{
     SqlxListingSourceSearchReaderFactory,
 };
 use listing_source_service::use_cases::commands::create_listing_source::CreateListingSourceHandler;
+use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceHandler;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceHandler;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceHandler;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesHandler;
@@ -359,6 +360,7 @@ pub async fn seed_partnership_application(
     created: OffsetDateTime,
     updated: OffsetDateTime,
 ) -> PartnershipApplicationId {
+    ensure_existing_listing_source_proposal_is_seeded(&proposal).await;
     let application_id = PartnershipApplicationId::new();
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query(
@@ -663,8 +665,11 @@ pub async fn seed_access_token_for(user_id: UserId, scopes: HashSet<Scope>) -> R
 }
 
 pub async fn seed_listing_source() -> uuid::Uuid {
+    seed_listing_source_with_id(uuid::Uuid::new_v4()).await
+}
+
+async fn seed_listing_source_with_id(listing_source_id: uuid::Uuid) -> uuid::Uuid {
     let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
     let pool = get_postgres_client().await;
     let mut transaction = pool
         .begin()
@@ -706,6 +711,30 @@ pub async fn seed_listing_source() -> uuid::Uuid {
         panic!("failed to commit listing-source seed transaction: {error}")
     });
     listing_source_id
+}
+
+async fn ensure_existing_listing_source_proposal_is_seeded(proposal: &serde_json::Value) {
+    let Some(listing_source_id) = proposal
+        .get("type")
+        .filter(|proposal_type| *proposal_type == "EXISTING_LISTING_SOURCE")
+        .and_then(|_| proposal.get("listing_source_id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|listing_source_id| listing_source_id.parse::<uuid::Uuid>().ok())
+    else {
+        return;
+    };
+
+    let pool = get_postgres_client().await;
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to check existing proposal ListingSource: {error}"));
+    if !exists {
+        seed_listing_source_with_id(listing_source_id).await;
+    }
 }
 
 pub async fn seed_listing_source_for_search(
@@ -1154,7 +1183,15 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(list_administered_listing_sources),
         Arc::new(search_listing_sources),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
-    );
+    )
+    .with_delete(Arc::new(DeleteListingSourceHandler::new(
+        unit_of_work.clone(),
+        SqlxListingSourceRepositoryFactory::new(),
+        CheckUserAdminHandler::new(
+            unit_of_work.clone(),
+            user_postgres::SqlxUserAdminReaderFactory::new(),
+        ),
+    )));
     let parties_state = PartiesState::new(
         Arc::new(create_party),
         Arc::new(get_party),
