@@ -80,7 +80,7 @@ use search_filter_service::use_cases::{
     MatchProductListingEventHandler, MatchProductListingEventUseCase,
     ProjectSearchFilterChangeHandler, ProjectSearchFilterChangeUseCase,
 };
-use std::sync::Arc;
+use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::watch;
 use user_postgres::SqlxUserTierEntitlementsFactory;
 use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
@@ -422,30 +422,60 @@ async fn finish_runtime(
     runtime: aura_historia_worker::WorkerRuntime,
     task: tokio::task::JoinHandle<()>,
 ) -> Result<(), MainError> {
-    let mut consumer = SupervisedConsumer(task);
+    let drain_timeout = config.drain_timeout();
     let (stop_http, stopped) = tokio::sync::oneshot::channel();
     let server = run_until_shutdown_with_runtime(config, runtime.clone(), async move {
         let _closed = stopped.await;
     });
+    supervise_runtime(
+        runtime,
+        task,
+        server,
+        shutdown_signal(),
+        stop_http,
+        drain_timeout,
+    )
+    .await
+}
+
+async fn supervise_runtime<S, G>(
+    runtime: aura_historia_worker::WorkerRuntime,
+    task: tokio::task::JoinHandle<()>,
+    server: S,
+    shutdown: G,
+    stop_http: tokio::sync::oneshot::Sender<()>,
+    drain_timeout: Duration,
+) -> Result<(), MainError>
+where
+    S: Future<Output = Result<(), WorkerRunError>>,
+    G: Future<Output = ()>,
+{
+    let mut consumer = SupervisedConsumer(task);
+    let mut stop_http = Some(stop_http);
     tokio::pin!(server);
+    tokio::pin!(shutdown);
     tokio::select! {
         result = &mut consumer.0 => {
             runtime.shutdown();
-            let _closed = stop_http.send(());
+            if let Some(stop_http) = stop_http.take() {
+                let _closed = stop_http.send(());
+            }
             server.await?;
             let _joined = result;
             Err(MainError::ConsumerStopped)
         }
         result = &mut server => {
             runtime.shutdown();
-            consumer.drain().await?;
+            consumer.drain(drain_timeout).await?;
             result?;
             Ok(())
         }
-        () = shutdown_signal() => {
+        () = &mut shutdown => {
             runtime.shutdown();
-            let _closed = stop_http.send(());
-            let (server_result, consumer_result) = tokio::join!(server, consumer.drain());
+            if let Some(stop_http) = stop_http.take() {
+                let _closed = stop_http.send(());
+            }
+            let (server_result, consumer_result) = tokio::join!(server, consumer.drain(drain_timeout));
             consumer_result?;
             server_result?;
             Ok(())
@@ -460,14 +490,21 @@ impl Drop for SupervisedConsumer {
     }
 }
 impl SupervisedConsumer {
-    async fn drain(&mut self) -> Result<(), MainError> {
-        match tokio::time::timeout(std::time::Duration::from_secs(270), &mut self.0).await {
+    async fn drain(&mut self, drain_timeout: Duration) -> Result<(), MainError> {
+        match tokio::time::timeout(drain_timeout, &mut self.0).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(MainError::ConsumerStopped),
             Err(_) => {
+                tracing::error!(
+                    outcome = "worker_drain_deadline",
+                    drain_timeout_seconds = drain_timeout.as_secs(),
+                    "consumer drain deadline exceeded; aborting local work"
+                );
                 self.0.abort();
                 let _cancelled = (&mut self.0).await;
-                Err(MainError::ConsumerStopped)
+                Err(MainError::ConsumerDrainDeadline {
+                    seconds: drain_timeout.as_secs(),
+                })
             }
         }
     }
@@ -532,6 +569,127 @@ async fn shutdown_signal() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aura_historia_worker::WorkerRuntime;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::sync::oneshot;
+
+    const EMPTY_CDC_BATCH: &str = r#"{"changes":[]}"#;
+
+    struct DropSignal(Arc<AtomicBool>);
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    async fn assert_runtime_stops_ingress(runtime: &WorkerRuntime) {
+        assert!(runtime.ingest_cdc_json(EMPTY_CDC_BATCH).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn should_stop_runtime_when_consumer_completes_or_panics_unexpectedly() {
+        for panics in [false, true] {
+            let runtime = WorkerRuntime::empty();
+            assert!(runtime.ingest_cdc_json(EMPTY_CDC_BATCH).await.is_ok());
+            let dropped = Arc::new(AtomicBool::new(false));
+            let guard = DropSignal(dropped.clone());
+            let task = tokio::spawn(async move {
+                let _guard = guard;
+                if panics {
+                    panic!("test consumer panic");
+                }
+            });
+            let (stop_http, stopped) = oneshot::channel();
+            let server = async move {
+                let _closed = stopped.await;
+                Ok::<(), WorkerRunError>(())
+            };
+
+            let result = supervise_runtime(
+                runtime.clone(),
+                task,
+                server,
+                std::future::pending::<()>(),
+                stop_http,
+                Duration::from_secs(1),
+            )
+            .await;
+
+            assert!(matches!(result, Err(MainError::ConsumerStopped)));
+            assert!(dropped.load(Ordering::Acquire));
+            assert_runtime_stops_ingress(&runtime).await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_abort_and_join_consumer_when_drain_deadline_expires() {
+        let runtime = WorkerRuntime::empty();
+        assert!(runtime.ingest_cdc_json(EMPTY_CDC_BATCH).await.is_ok());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let guard = DropSignal(dropped.clone());
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        });
+        let (stop_http, stopped) = oneshot::channel();
+        let server = async move {
+            let _closed = stopped.await;
+            Ok::<(), WorkerRunError>(())
+        };
+
+        let result = supervise_runtime(
+            runtime.clone(),
+            task,
+            server,
+            async {},
+            stop_http,
+            Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(MainError::ConsumerDrainDeadline { seconds: 1 })
+        ));
+        assert!(dropped.load(Ordering::Acquire));
+        assert_runtime_stops_ingress(&runtime).await;
+    }
+
+    #[tokio::test]
+    async fn should_allow_active_consumer_to_finish_inside_drain_deadline() {
+        let runtime = WorkerRuntime::empty();
+        let (finish_consumer, consumer_finished) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _closed = consumer_finished.await;
+        });
+        let (stop_http, stopped) = oneshot::channel();
+        let server = async move {
+            let _closed = stopped.await;
+            let _consumer_already_stopped = finish_consumer.send(());
+            Ok::<(), WorkerRunError>(())
+        };
+
+        let result = supervise_runtime(
+            runtime.clone(),
+            task,
+            server,
+            async {},
+            stop_http,
+            Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_runtime_stops_ingress(&runtime).await;
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 enum MainError {
     #[error(transparent)]
@@ -559,8 +717,10 @@ enum MainError {
     NotificationDispatch(
         #[from] notification_service::ports::notification_channel_sender::NotificationDeliveryDispatchError,
     ),
-    #[error("worker consumer stopped unexpectedly or exceeded shutdown budget")]
+    #[error("worker consumer stopped unexpectedly")]
     ConsumerStopped,
+    #[error("worker consumer drain exceeded {seconds}s shutdown budget")]
+    ConsumerDrainDeadline { seconds: u64 },
     #[error(transparent)]
     Run(#[from] WorkerRunError),
 }

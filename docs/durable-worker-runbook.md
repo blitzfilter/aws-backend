@@ -24,12 +24,13 @@ Operational contract for #1558, checked against repository runtime, adapters, mi
 | `product-listing-normalization` | `product_listing_raw_revisions` INSERT | `ProductListingNormalization` | 300s | 240s |
 | `notification-delivery` | `notification_deliveries` INSERT | `NotificationDelivery` | 360s | 240s |
 
-These are current fixed values, not environment tuning knobs:
+Except where explicitly noted, these are fixed runtime values:
 
 - Deliberate **concurrency 1 per process**, receive batch 1, no prefetch. Normalization reserves one receive across timer turns; a received job may wait behind one bounded reconciliation turn, with heartbeat and a 245s hold budget. Handoff joins that receipt owner before execution. More replicas introduce concurrency; `ordering_key` is not an SQS ordering guarantee. Ingress stays independent of downstream outages.
 - Long poll **20s**; receive outer deadline 27s; other SQS operations have a 5s outer deadline. Heartbeat every `min(30s, visibility/3)` (20/30/30s), extending visibility to the scope value. Heartbeat failure cancels local work without deleting; cancellation cannot undo remote effects.
 - Retry visibility uses exponential **30–900s** backoff with additive jitter, capped at 900s. Native source redrive uses **`maxReceiveCount = 5`**. Dependency/settlement failures open a jittered consumer circuit; recovery probes allow one job, not a backlog drain. Deferrals also consume receives; circuits reduce outage churn, not guarantee against DLQ entry.
-- SIGTERM/SIGINT stops ingress and polling, then allows active work up to **270s** to drain before abort. It does not drain the SQS backlog. Unsettled work reappears after visibility expiry within retention. Only normalization's reconstructible cursor/FIFO may be lost locally; see its [runbook](product-listing-raw-normalization-runbook.md).
+- SIGTERM/SIGINT stops ingress and new receives, then allows only the active owned attempt to drain for `AURA_HISTORIA_WORKER_DRAIN_TIMEOUT_SECONDS` (default **270s**). It does not drain the SQS backlog. On deadline expiry, the worker aborts local work, emits `worker_drain_deadline`, exits non-zero, and relies on SQS visibility/redelivery for any unsettled receipt. Only normalization's reconstructible cursor/FIFO may be lost locally; see its [runbook](product-listing-raw-normalization-runbook.md).
+- The external process manager/orchestrator must allow more stop grace than this configured ceiling. With the 270s default, use **300s minimum** unless a deployment owner deliberately coordinates another value. HTTP connection drain is 20s and runs concurrently with consumer drain; do not add the values mechanically. This repository does not configure that external stop grace.
 
 ### Private HTTP and wire contract
 
@@ -86,7 +87,7 @@ CDK defines prod-only alarms per scope on `cloudwatch-alarms-prod`:
 
 Both use **Maximum**, one **300s** period, missing data **not breaching**. Lower stages have no corresponding alarms. Inspect deployed alarm actions/subscriptions; an idle or absent metric is not proof of health. DLQ age metrics reflect time since transfer, not the original retention deadline.
 
-Worker log signals include `scope`, stable job keys, `attempt`, `outcome`; `invalid_wire_job`, `receive_unavailable`, `dependency_circuit_open`, `heartbeat_failed`, `execution_timeout`, and `receipt_settlement_failed` distinguish failure paths. Notification signals include `active_lease_deferred`, `provider_acceptance_unknown`, and `delivery_finalization_unconfirmed`. Attempt completion is not proof of successful receipt deletion. Normalization emits metadata-only events with `metric` fields; these are **logs**, not automatically installed custom metrics/dashboards. No worker dashboard or general freshness/rebuild metric is provisioned here.
+Worker log signals include `scope`, stable job keys, `attempt`, `outcome`; `invalid_wire_job`, `receive_unavailable`, `dependency_circuit_open`, `heartbeat_failed`, `execution_timeout`, `receipt_settlement_failed`, and error-level `worker_drain_deadline` distinguish failure paths. Notification signals include `active_lease_deferred`, `provider_acceptance_unknown`, and `delivery_finalization_unconfirmed`. Attempt completion is not proof of successful receipt deletion. Normalization emits metadata-only events with `metric` fields; these are **logs**, not automatically installed custom metrics/dashboards. No worker dashboard or general freshness/rebuild metric is provisioned here.
 
 Default operator checks are read-only, using an existing approved session:
 

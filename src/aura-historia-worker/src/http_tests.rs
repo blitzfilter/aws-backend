@@ -182,6 +182,31 @@ async fn should_report_dead_consumer_without_rejecting_independent_ingress() {
     server.await.unwrap().unwrap();
 }
 #[tokio::test]
+async fn should_reject_cdc_ingress_after_runtime_starts_stopping() {
+    let (runtime, mut receivers) =
+        WorkerRuntime::with_notification_delivery_queue(QueueConfig::new(1)).unwrap();
+    let stopping = runtime.clone();
+    let (address, _stop, server) = server(runtime).await;
+
+    stopping.shutdown();
+    if let Ok(response) = reqwest::Client::new()
+        .post(format!("http://{address}/cdc/sequin"))
+        .body(body(0))
+        .send()
+        .await
+    {
+        assert_eq!(503, response.status().as_u16());
+    }
+    assert!(
+        receivers
+            .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))
+            .await
+            .is_err()
+    );
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn should_bound_accepted_sockets_before_headers_and_drain_idle_connections() {
     let (address, stop, server) = server(WorkerRuntime::empty()).await;
     let mut sockets = Vec::new();
