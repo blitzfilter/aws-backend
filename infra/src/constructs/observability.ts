@@ -6,12 +6,15 @@ import * as sns from "aws-cdk-lib/aws-sns";
 import { Construct } from "constructs";
 import type { StageConfig } from "../config";
 import { lambdaFunctionName, type LambdaCatalog, type LambdaKey } from "./lambdas";
+import { WORKER_QUEUE_DEFINITIONS } from "../worker-queue-config";
+import type { WorkerQueueCatalog } from "./worker-queues";
 
 export interface ObservabilityProps {
   readonly config: StageConfig;
   readonly stageName: string;
   readonly api: apigwv2.HttpApi;
   readonly functions: LambdaCatalog;
+  readonly workerQueues: WorkerQueueCatalog;
 }
 
 export class Observability extends Construct {
@@ -29,6 +32,35 @@ export class Observability extends Construct {
       displayName: `CloudWatch Alarms for Aura-Historia Backend stage '${props.stageName}'`,
     });
     const alarmAction = new actions.SnsAction(this.alarmTopic);
+
+    const settings = props.config.workerQueues.alarms;
+    for (const workerScope of props.config.workerQueues.enabledScopes) {
+      const queues = props.workerQueues[workerScope];
+      if (!queues) {
+        throw new Error(`Missing alarm queues for enabled worker scope '${workerScope}'.`);
+      }
+      const definition = WORKER_QUEUE_DEFINITIONS[workerScope];
+      const metricOptions = { statistic: "Maximum", period: cdk.Duration.seconds(settings.periodSeconds) };
+      const alarmOptions = {
+        evaluationPeriods: settings.evaluationPeriods,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      };
+      new cloudwatch.Alarm(this, `Worker${definition.id}SourceAgeAlarm`, {
+        ...alarmOptions,
+        alarmName: `${props.stageName}-worker-${workerScope}-source-age`,
+        alarmDescription: `Oldest ${workerScope} job is at least ${settings.sourceAgeThresholdSeconds}s old; check consumer health and dependencies.`,
+        metric: queues.queue.metricApproximateAgeOfOldestMessage(metricOptions),
+        threshold: settings.sourceAgeThresholdSeconds,
+      }).addAlarmAction(alarmAction);
+      new cloudwatch.Alarm(this, `Worker${definition.id}DeadLetterVisibleAlarm`, {
+        ...alarmOptions,
+        alarmName: `${props.stageName}-worker-${workerScope}-dlq-visible`,
+        alarmDescription: `${workerScope} has dead-letter jobs; investigate before operator-controlled replay.`,
+        metric: queues.deadLetterQueue.metricApproximateNumberOfMessagesVisible(metricOptions),
+        threshold: settings.deadLetterVisibleThreshold,
+      }).addAlarmAction(alarmAction);
+    }
 
     apiAlarm(this, props.stageName, "Api4XXErrorAlarm", "4XXError", props.api, 50, 2, "Sum").addAlarmAction(alarmAction);
     apiAlarm(this, props.stageName, "Api5XXErrorAlarm", "5XXError", props.api, 5, 1, "Sum").addAlarmAction(alarmAction);

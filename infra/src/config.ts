@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import { WORKER_QUEUE_SETTINGS, type WorkerQueueSettings } from "./worker-queue-config";
 
 export const STAGES = ["prod", "dev", "ephemeral"] as const;
 export type StageName = (typeof STAGES)[number];
@@ -31,6 +32,7 @@ export interface StageConfig {
   readonly isProd: boolean;
   readonly isEphemeral: boolean;
   readonly removalPolicy: cdk.RemovalPolicy;
+  readonly workerQueues: WorkerQueueSettings;
   readonly apiEndpointUrl: string | undefined;
   readonly apiDomainName: string | undefined;
   readonly apiGatewayCertificateArn: string | undefined;
@@ -77,6 +79,7 @@ export function stageConfig(stage: StageName, options: StageConfigOptions = {}):
     isProd,
     isEphemeral,
     removalPolicy: isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    workerQueues: WORKER_QUEUE_SETTINGS,
     apiEndpointUrl: apiDomainName ? `https://${apiDomainName}` : undefined,
     apiDomainName,
     apiGatewayCertificateArn: isEphemeral ? undefined : ssmValue(`/certificates/${stage}/api-regional-certificate-arn`),

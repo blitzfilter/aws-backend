@@ -16,6 +16,7 @@ synthesized for:
 bin/app.ts                 # CDK entrypoint and stage selection
 src/application-stack.ts   # data, compute, API, observability stack composition
 src/config.ts              # stage configuration, fixed buckets, SSM dynamic refs
+src/worker-queue-config.ts # typed native worker scopes, timing, retention, alarms
 src/parameters.ts          # deployment artifact version input
 src/resources/             # synth-time resources, e.g. Cognito email HTML and inline JS
 src/constructs/            # focused infrastructure modules
@@ -25,12 +26,16 @@ src/constructs/            # focused infrastructure modules
   lambdas.ts               # Lambda definitions, env vars, IAM grants
   observability.ts         # prod-only alarms and alarm topic
   opensearch.ts            # external dev/prod endpoint or LocalStack domain
-  queues.ts                # SQS queues and DLQs
+  queues.ts                # existing Shopify Lambda queue and DLQ
+  worker-queues.ts          # separate native worker queues, scoped IAM, handoff outputs
   storage.ts               # Postgres connection settings
-  workflow.ts              # partner application Step Functions workflow
+
 ```
 
 ## Common commands
+
+Use Node **26**, matching the workflow pin. `npm ci` uses `package-lock.json`;
+no dependency or policy-gate overrides are needed. Run from `infra/`:
 
 ```bash
 npm ci
@@ -39,11 +44,14 @@ npm test
 npm run synth -- --context stage=dev
 npm run synth -- --context stage=prod
 npm run synth -- --context stage=ephemeral
+npm run synth:all
 ```
+
+These commands build, test, and synthesize only; they do not deploy.
 
 Synth creates these stacks per stage:
 
-- `application-{stage}-data` — Postgres settings, SQS, and LocalStack OpenSearch
+- `application-{stage}-data` — Postgres settings, Shopify/worker SQS, unbound worker IAM policies, and LocalStack OpenSearch
 - `application-{stage}-compute` — Lambdas, Cognito, eventing, schedules
 - `application-{stage}-api` — HTTP API Gateway routes, domain, CloudFront, integrations, authorizer
 - `application-prod-observability` — prod-only alarms and alarm topic
@@ -75,6 +83,122 @@ Production native processes are:
 - `aura-historia-api`
 - `aura-historia-worker`
 - `aura-historia-cron`
+
+## Native worker queue contract (#1558)
+
+`src/worker-queue-config.ts` owns the typed catalog and shared settings. All ten
+scopes are enabled in `prod`, `dev`, and `ephemeral`. This catalog is separate from
+the Shopify Lambda catalog: no tier dimension, new Lambda, event-source mapping,
+or change to existing Shopify resources/wiring.
+
+Each enabled scope owns one **Standard source queue** and one **Standard DLQ**:
+
+- Source: `aura-worker-<scope>-<stage>`.
+- DLQ: `aura-worker-<scope>-dlq-<stage>`.
+- Stage is exactly CDK's `prod`, `dev`, or `ephemeral`, not a stack-name prefix or
+  the frontend's `stage` label. Names are validated against SQS's 80-character
+  limit; they are never truncated. Runtime `STAGE` must match the queue suffix.
+- Source retention: **7 days** (604800s). DLQ retention: **14 days** (1209600s).
+- Source `maxReceiveCount`: **5**. Long polling: **20s** on both queues.
+- SQS-managed encryption on both; no customer KMS key or extra KMS grants.
+- Both resource policies deny all SQS access over non-TLS transport. No public
+  Allow or cross-account access is granted.
+- DLQ `redrivePermission=byQueue` allows only its named source ARN. Source queues
+  use `denyAll` so they cannot become another queue's DLQ. This is not permission
+  for a runtime to perform operator replay/redrive.
+- Prod queues retain on **deletion and replacement**. Dev/ephemeral queues delete.
+  Retained old queues need explicit operator inventory/recovery; renaming a queue
+  does not migrate its messages or consumers.
+
+| Runtime scope | Output stem after `Worker` | Initial source visibility |
+| --- | --- | ---: |
+| `product-listing-opensearch` | `ProductListingOpensearch` | 60s |
+| `search-filter-projection` | `SearchFilterProjection` | 60s |
+| `search-filter-percolator` | `SearchFilterPercolator` | 300s |
+| `search-filter-match-notification` | `SearchFilterMatchNotification` | 60s |
+| `watchlist-notification` | `WatchlistNotification` | 60s |
+| `product-content-assessment` | `ProductContentAssessment` | 60s |
+| `product-embedding` | `ProductEmbedding` | 300s |
+| `product-translation` | `ProductTranslation` | 300s |
+| `product-listing-normalization` | `ProductListingNormalization` | 300s |
+| `notification-delivery` | `NotificationDelivery` | 360s |
+
+These are **polling Rust processes**, not Lambda SQS event sources. The infra
+six-times-Lambda-timeout guidance does **not** apply. Values match the worker's
+45s short / 240s slow execution budgets; notification's 360s visibility leaves
+headroom around its five-minute service-owned lease. Workers own bounded
+execution, visibility heartbeats, retry, and deletion after successful handling.
+Standard SQS may duplicate/reorder messages; handlers must remain idempotent.
+
+### Identity and outputs
+
+The bare-metal runtime's AWS role/trust and process deployment are **not defined
+in this CDK app**. No IAM user, access key, new runtime role, or invented deploy
+binding is created. Reuse the existing AWS credential/assumed-role arrangement.
+The external identity owner attaches only the needed per-scope managed policies;
+do not reuse the CI deploy role or an unrelated Lambda role as the worker role.
+
+| Unbound policy | Exact source actions | Paired DLQ actions |
+| --- | --- | --- |
+| Publisher | `sqs:SendMessage`, `sqs:GetQueueAttributes` | `sqs:GetQueueAttributes` only |
+| Consumer | `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility`, `sqs:GetQueueAttributes` | `sqs:GetQueueAttributes` only |
+
+DLQ attribute reads are required by the runtime's startup validation. No runtime
+DLQ message access, `GetQueueUrl`, batch pseudo-actions, wildcard resource grants,
+purge, queue deletion, or operator redrive actions are included. A process that
+both accepts CDC and polls its scoped queue needs **both** policies for that
+scope. Existing S3 template-read and SES-send permissions remain separate and
+unchanged; attaching queue policies is additive, not a replacement.
+
+The data stack (or single ephemeral stack) outputs:
+
+- `WorkerQueueAwsRegion` — effective CloudFormation region; set `AWS_REGION`
+  explicitly to this value. `AWS_DEFAULT_REGION` alone is not this runtime's
+  configuration contract. Queue URL, ARN, and SDK region must agree.
+- `WorkerQueueStage` — set `STAGE` to this exact value.
+- Per table stem: `Worker<Stem>QueueUrl`, `Worker<Stem>QueueArn`,
+  `Worker<Stem>DeadLetterQueueUrl`, `Worker<Stem>DeadLetterQueueArn`,
+  `Worker<Stem>PublisherPolicyArn`, `Worker<Stem>ConsumerPolicyArn`.
+- Managed policy names: `aura-worker-<scope>-publisher-<stage>` and
+  `aura-worker-<scope>-consumer-<stage>`.
+
+Set `AURA_HISTORIA_WORKER_SCOPE` to the exact runtime scope and
+`AURA_HISTORIA_WORKER_QUEUE_URL` to its **source** `QueueUrl`, never its DLQ.
+See [`examples/worker.env.example`](examples/worker.env.example). Preserve existing
+`POSTGRES_*` and scope-specific OpenSearch/Vertex settings. EMAIL delivery still
+requires `S3_BUCKET_NAME_TEMPLATES`, `NOTIFICATION_EMAIL_FROM`,
+`NOTIFICATION_EMAIL_REPLY_TO`, `COMMIT_SHA`, and `STAGE`, with existing S3/SES grants.
+No secrets or credentials belong in the example or stack outputs.
+
+For LocalStack, `singleStack=true` still produces `...-ephemeral` names. Use
+`STAGE=ephemeral`; substituting `local` or `test` implies different queue names.
+`AWS_ENDPOINT_URL_SQS` is allowed only in `ephemeral`, `local`, or `test`, with
+exactly the same origin as the queue URL. Real AWS stages must not set endpoint
+overrides; the runtime rejects global `AWS_ENDPOINT_URL`.
+
+### Operations and rollout boundary
+
+Prod adds two alarms per scope on the existing `cloudwatch-alarms-prod` SNS topic:
+
+- Source `ApproximateAgeOfOldestMessage` **>= 900s**.
+- DLQ `ApproximateNumberOfMessagesVisible` **>= 1**.
+
+Both use **Maximum**, one **5-minute** evaluation period, and missing data as
+**not breaching**. Lower stages have no alarms. Existing topic subscriptions and
+Lambda/API alarms remain unchanged. These are backlog signals, not proof of
+consumer health; idle queues can have missing metrics.
+
+Investigate DLQ failures, correct the cause, then replay under separately owned
+operator authorization. Never give runtime roles purge/redrive powers. Standard
+queue retention keeps the original enqueue timestamp when a message moves to the
+DLQ, so operators should not assume a fresh 14-day recovery window on arrival.
+
+This provisions the infra side only. It neither deploys a worker nor changes
+Sequin subscriptions, external IAM trust, credentials, or S3/SES configuration.
+Before runtime cutover, the external owner must attach the exported policies,
+apply the matching environment, verify startup attribute checks/readiness, and
+verify real publish/consume/retry/DLQ behavior. Synthesis alone does not establish
+an end-to-end durable-delivery guarantee or change the documented MVP guarantee.
 
 ## Deployment inputs
 

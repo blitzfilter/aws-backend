@@ -17,6 +17,7 @@ import { Observability } from "./constructs/observability";
 import { Search } from "./constructs/opensearch";
 import { importQueueCatalog, Queues } from "./constructs/queues";
 import { Storage } from "./constructs/storage";
+import { importWorkerQueueCatalog, WorkerQueues } from "./constructs/worker-queues";
 
 export interface ApplicationStackProps extends cdk.StackProps {
   readonly stage: StageName;
@@ -91,6 +92,7 @@ export function createApplicationStacks(scope: Construct, props: ApplicationStag
 export class ApplicationDataStack extends cdk.Stack {
   readonly storage: Storage;
   readonly queues: Queues;
+  readonly workerQueues: WorkerQueues;
   readonly search: Search;
 
   constructor(scope: Construct, id: string, props: ApplicationStackProps) {
@@ -111,6 +113,7 @@ export class ApplicationDataStack extends cdk.Stack {
       config,
       stageName,
     });
+    this.workerQueues = new WorkerQueues(this, "WorkerQueues", { config });
 
     this.search = new Search(this, "Search", {
       config,
@@ -119,6 +122,7 @@ export class ApplicationDataStack extends cdk.Stack {
     dataOutputs(this, {
       storage: this.storage,
       queues: this.queues,
+      workerQueues: this.workerQueues,
       search: this.search,
     });
   }
@@ -219,6 +223,7 @@ export class ApplicationApiStack extends cdk.Stack {
 export class ApplicationEphemeralStack extends cdk.Stack {
   readonly storage: Storage;
   readonly queues: Queues;
+  readonly workerQueues: WorkerQueues;
   readonly search: Search;
   readonly lambdas: Lambdas;
   readonly identity: Identity;
@@ -247,6 +252,7 @@ export class ApplicationEphemeralStack extends cdk.Stack {
       config,
       stageName,
     });
+    this.workerQueues = new WorkerQueues(this, "WorkerQueues", { config });
     this.search = new Search(this, "Search", {
       config,
     });
@@ -291,6 +297,7 @@ export class ApplicationEphemeralStack extends cdk.Stack {
     dataOutputs(this, {
       storage: this.storage,
       queues: this.queues,
+      workerQueues: this.workerQueues,
       search: this.search,
     });
     computeOutputs(this, {
@@ -323,6 +330,7 @@ export class ApplicationObservabilityStack extends cdk.Stack {
       stageName,
       api: props.api.api,
       functions: importLambdaCatalog(this, "LambdaAlarmImports", config),
+      workerQueues: importWorkerQueueCatalog(this, "WorkerQueueAlarmImports", config),
     });
 
     if (this.observability.alarmTopic) {
@@ -355,6 +363,7 @@ function dataOutputs(
     readonly search: Search;
     readonly storage: Storage;
     readonly queues: Queues;
+    readonly workerQueues: WorkerQueues;
   },
 ): void {
   new cdk.CfnOutput(stack, "PostgresHost", { value: resources.storage.postgres.host });
@@ -375,6 +384,7 @@ function dataOutputs(
   new cdk.CfnOutput(stack, "ShopifyLambdaDeadLetterQueueUrl", {
     value: resources.queues.catalog.shopify.deadLetterQueue.queueUrl,
   });
+  resources.workerQueues.addOutputs();
 
 }
 
