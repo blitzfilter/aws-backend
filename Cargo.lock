@@ -236,7 +236,7 @@ dependencies = [
  "google-cloud-auth",
  "http 1.5.0",
  "httpdate",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "jsonwebtokens",
  "listing-source-core",
  "listing-source-postgres",
@@ -346,7 +346,7 @@ dependencies = [
  "fxrate-core",
  "fxrate-postgres",
  "google-cloud-auth",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "large-language-model",
  "listing-source-core",
  "localization",
@@ -1818,7 +1818,7 @@ dependencies = [
  "fxrate-postgres",
  "google-cloud-auth",
  "imagesize",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "kuchiki",
  "large-language-model",
  "libc",
@@ -3189,7 +3189,7 @@ dependencies = [
  "fixedbitset 0.5.7",
  "guppy-summaries",
  "guppy-workspace-hack",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "itertools 0.14.0",
  "nested",
  "once_cell",
@@ -3238,7 +3238,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http 0.2.12",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "slab",
  "tokio",
  "tokio-util",
@@ -3257,7 +3257,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http 1.5.0",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "slab",
  "tokio",
  "tokio-util",
@@ -3846,9 +3846,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.14.1"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
@@ -4621,7 +4621,7 @@ checksum = "3a92ff9ad398a7d556481a607b912370999bc6441537c90a979c16d73c91a832"
 dependencies = [
  "enum-as-inner",
  "htmlparser",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "itertools 0.14.0",
  "rustc-hash",
  "thiserror 2.0.20",
@@ -5288,7 +5288,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
 dependencies = [
  "fixedbitset 0.4.2",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
 ]
 
 [[package]]
@@ -5299,7 +5299,7 @@ checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
 dependencies = [
  "fixedbitset 0.5.7",
  "hashbrown 0.15.5",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
 ]
 
 [[package]]
@@ -5707,7 +5707,7 @@ dependencies = [
  "fake",
  "fxrate-core",
  "html-escape",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "listing-source-core",
  "localization",
  "money",
@@ -5754,7 +5754,7 @@ dependencies = [
  "async-trait",
  "domain-primitives",
  "fxrate-core",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "listing-source-core",
  "localization",
  "money",
@@ -5786,7 +5786,7 @@ dependencies = [
  "async-trait",
  "domain-primitives",
  "fxrate-core",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "listing-source-core",
  "localization",
  "money",
@@ -5824,7 +5824,7 @@ dependencies = [
  "fake",
  "fxrate-core",
  "fxrate-service",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "listing-source-core",
  "listing-source-service",
  "localization",
@@ -5854,7 +5854,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "large-language-model",
  "localization",
  "product-listing-core",
@@ -5870,7 +5870,7 @@ dependencies = [
  "application",
  "async-trait",
  "domain-primitives",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "listing-source-core",
  "product-listing-core",
  "product-listing-normalization",
@@ -6634,7 +6634,7 @@ dependencies = [
  "async-trait",
  "domain-primitives",
  "fxrate-core",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "listing-source-core",
  "localization",
  "money",
@@ -6696,7 +6696,7 @@ dependencies = [
  "embedding",
  "fxrate-core",
  "fxrate-service",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "large-language-model",
  "listing-source-core",
  "localization",
@@ -6967,7 +6967,7 @@ dependencies = [
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "jiff",
  "schemars 0.9.0",
  "schemars 1.2.2",
@@ -7380,7 +7380,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.16.1",
  "hashlink",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "log",
  "memchr",
  "percent-encoding",
@@ -8150,7 +8150,7 @@ version = "0.25.13+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b"
 dependencies = [
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "toml_datetime",
  "toml_parser",
  "winnow 1.0.4",
@@ -9125,7 +9125,7 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
 dependencies = [
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "itoa 1.0.18",
  "libyaml-rs",
  "ryu",
@@ -9257,7 +9257,7 @@ checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
 dependencies = [
  "crc32fast",
  "flate2",
- "indexmap 2.14.1",
+ "indexmap 2.14.2",
  "memchr",
  "typed-path",
  "zopfli",
