@@ -1276,7 +1276,7 @@ async fn seed_current_fx_snapshot(pool: &sqlx::PgPool) -> Result<(), sqlx::Error
 
     for currency in [
         "EUR", "GBP", "USD", "AUD", "CAD", "NZD", "CNY", "BRL", "PLN", "TRY", "JPY", "CZK", "RUB",
-        "AED", "SAR", "HKD", "SGD", "CHF",
+        "AED", "SAR", "HKD", "SGD", "CHF", "ZAR",
     ] {
         sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, $3)",
@@ -1521,7 +1521,7 @@ async fn insert_fx_snapshot(
     .await?;
     for currency in [
         "EUR", "GBP", "USD", "AUD", "CAD", "NZD", "CNY", "BRL", "PLN", "TRY", "JPY", "CZK", "RUB",
-        "AED", "SAR", "HKD", "SGD", "CHF",
+        "AED", "SAR", "HKD", "SGD", "CHF", "ZAR",
     ] {
         let units_per_eur = match currency {
             "EUR" => 1_000_000,

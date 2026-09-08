@@ -71,6 +71,7 @@ fn percolation_price_field(currency: Currency) -> &'static str {
         Currency::Hkd => "priceByCurrency.hkd",
         Currency::Sgd => "priceByCurrency.sgd",
         Currency::Chf => "priceByCurrency.chf",
+        Currency::Zar => "priceByCurrency.zar",
     }
 }
 

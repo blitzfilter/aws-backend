@@ -59,12 +59,11 @@ impl UrlClass {
     }
 }
 
-/// Durable crawler scheduling state. Only successful crawler handoffs may make a URL dormant.
+/// Durable crawler scrape-state annotation. Only successful crawler handoffs may mark a URL sold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum_macros::EnumIter)]
 pub enum CrawlerDisposition {
     Active,
     DormantSold,
-    DormantRemoved,
 }
 
 impl CrawlerDisposition {
@@ -72,7 +71,6 @@ impl CrawlerDisposition {
         match self {
             Self::Active => "ACTIVE",
             Self::DormantSold => "DORMANT_SOLD",
-            Self::DormantRemoved => "DORMANT_REMOVED",
         }
     }
 }
@@ -133,5 +131,6 @@ mod tests {
             assert_eq!(disposition.as_str().parse(), Ok(disposition));
         }
         assert!("active".parse::<CrawlerDisposition>().is_err());
+        assert!("DORMANT_REMOVED".parse::<CrawlerDisposition>().is_err());
     }
 }

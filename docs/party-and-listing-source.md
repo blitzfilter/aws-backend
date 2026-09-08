@@ -33,7 +33,7 @@ WOOCOMMERCE
 PARTNER_API
 ```
 
-Provider configuration belongs to ListingSource service/PostgreSQL adapters. The business database records only that `WEB_CRAWL` is active; crawler domains, schedules, retries, schemas, budgets, and review artifacts belong to crawler-local PostgreSQL.
+Provider configuration belongs to ListingSource service/PostgreSQL adapters. `WEB_CRAWL` may persist an optional ISO 4217 `fallbackCurrency`; crawler uses it only when extracted price text has no currency hint, otherwise that price assertion is omitted. Crawler domains, schedules, retries, schemas, budgets, and review artifacts belong to crawler-local PostgreSQL.
 
 ## Partnership
 

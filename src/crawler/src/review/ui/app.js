@@ -639,7 +639,7 @@ function renderSchemaLegend(schema) {
 function renderSchemaDiff(current, compare) {
     const rawAttributeFields = Array.from(new Set(Object.keys(current?.raw_attributes || {}).concat(Object.keys(compare?.raw_attributes || {}))))
         .map(field => `raw_attributes.${field}`);
-    const fields = [...selectorFields, 'default_currency', ...rawAttributeFields];
+    const fields = [...selectorFields, ...rawAttributeFields];
     return `<div class="schema-diff">${
         fields.map(field => {
             const left = normalizeRuleValue(schemaFieldValue(current, field));
@@ -813,7 +813,6 @@ function defaultSchema() {
         images: defaultRuleFor('images'),
         auction_start: null,
         auction_end: null,
-        default_currency: null,
         raw_attributes: {}
     };
 }

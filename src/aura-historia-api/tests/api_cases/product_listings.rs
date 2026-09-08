@@ -817,7 +817,7 @@ async fn should_keep_sold_display_when_fx_snapshot_changes() {
         "cad": 40, "nzd": 40, "cny": 40, "brl": 40,
         "pln": 40, "try": 40, "jpy": 40, "czk": 40,
         "rub": 40, "aed": 40, "sar": 40, "hkd": 40,
-        "sgd": 40, "chf": 40
+        "sgd": 40, "chf": 40, "zar": 40
     });
     document["saleObservationFxRateId"] = json!(sale_fx_rate_id.to_string());
     document["saleObservedAt"] = json!("2025-01-01T00:00:00Z");
@@ -1185,7 +1185,7 @@ async fn capture_fx_snapshot(captured_at: OffsetDateTime, usd_units_per_eur: i64
 
     for currency in [
         "EUR", "GBP", "USD", "AUD", "CAD", "NZD", "CNY", "BRL", "PLN", "TRY", "JPY", "CZK", "RUB",
-        "AED", "SAR", "HKD", "SGD", "CHF",
+        "AED", "SAR", "HKD", "SGD", "CHF", "ZAR",
     ] {
         let units_per_eur = match currency {
             "EUR" => 1_000_000,

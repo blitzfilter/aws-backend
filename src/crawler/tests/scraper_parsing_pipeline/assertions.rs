@@ -6,8 +6,8 @@ use crawler::scraper::normalization::product_normalization_service::{
     ProductListingNormalizationService, ProductListingNormalizationServiceImpl,
 };
 use crawler::scraper::scraper_service::rank_applicable_schema_indices;
-use money::Currency;
 
+use money::Currency;
 use scraper::Html;
 
 use url::Url;
@@ -65,6 +65,7 @@ pub async fn assert_normalized(
     schema: &ProductCssSelectorSchema,
     html_src: &str,
     url: &str,
+    fallback_currency: Option<Currency>,
     expected: &NormalizedExpectation,
 ) {
     let html = Html::parse_document(html_src);
@@ -75,9 +76,8 @@ pub async fn assert_normalized(
     let norm_svc = ProductListingNormalizationServiceImpl::new();
 
     let product_url = Url::parse(url).expect("test URL must be valid");
-    let default_currency = schema.default_currency.map(Currency::from);
     let result = norm_svc
-        .normalize(raw, product_url, default_currency)
+        .normalize(raw, product_url, fallback_currency)
         .await
         .unwrap_or_else(|e| panic!("normalization failed: {e}"))
         .prepared;

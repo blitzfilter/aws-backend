@@ -120,6 +120,7 @@ enum PersistedCurrency {
     Hkd,
     Sgd,
     Chf,
+    Zar,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -627,6 +628,7 @@ fn price_data_from_price(price: Price) -> PersistedPrice {
         Currency::Hkd => PersistedCurrency::Hkd,
         Currency::Sgd => PersistedCurrency::Sgd,
         Currency::Chf => PersistedCurrency::Chf,
+        Currency::Zar => PersistedCurrency::Zar,
     };
     PersistedPrice {
         currency,
@@ -654,6 +656,7 @@ fn price_from_data(price: PersistedPrice) -> Price {
         PersistedCurrency::Hkd => Currency::Hkd,
         PersistedCurrency::Sgd => Currency::Sgd,
         PersistedCurrency::Chf => Currency::Chf,
+        PersistedCurrency::Zar => Currency::Zar,
     };
     Price::new(MonetaryAmount::from(price.amount), currency)
 }

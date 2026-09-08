@@ -10,7 +10,9 @@ domain_primitives::version_newtype!(ListingSourceStorageVersion);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListingIngestionConfiguration {
-    WebCrawl,
+    WebCrawl {
+        fallback_currency: Option<Currency>,
+    },
     Shopify {
         domain: Domain,
         currency: Option<Currency>,
@@ -24,9 +26,14 @@ pub enum ListingIngestionConfiguration {
 }
 
 impl ListingIngestionConfiguration {
+    #[allow(non_upper_case_globals)]
+    pub const WebCrawl: Self = Self::WebCrawl {
+        fallback_currency: None,
+    };
+
     pub fn method(&self) -> ListingIngestionMethod {
         match self {
-            Self::WebCrawl => ListingIngestionMethod::WebCrawl,
+            Self::WebCrawl { .. } => ListingIngestionMethod::WebCrawl,
             Self::Shopify { .. } => ListingIngestionMethod::Shopify,
             Self::Woocommerce { .. } => ListingIngestionMethod::Woocommerce,
             Self::PartnerApi => ListingIngestionMethod::PartnerApi,

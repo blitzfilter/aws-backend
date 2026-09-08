@@ -77,7 +77,6 @@
         "cardinality": "first"
       }
     },
-    "default_currency": "EUR",
     "source_listing_id": {
       "type": "text",
       "selector": ".sku",
@@ -127,7 +126,6 @@
         "cardinality": "first"
       }
     },
-    "default_currency": "EUR",
     "source_listing_id": {
       "name": "value",
       "type": "attribute",
@@ -179,7 +177,6 @@
         "cardinality": "first"
       }
     },
-    "default_currency": "EUR",
     "source_listing_id": {
       "name": "value",
       "type": "attribute",

@@ -26,8 +26,7 @@
       "type": "attribute",
       "name": "src",
       "cardinality": "all"
-    },
-    "default_currency": "GBP"
+    }
   },
   {
     "source_listing_id": {
@@ -52,7 +51,6 @@
       "type": "attribute",
       "name": "src",
       "cardinality": "all"
-    },
-    "default_currency": "GBP"
+    }
   }
 ]

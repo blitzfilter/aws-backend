@@ -6,6 +6,7 @@
 //! Each element in the JSON array is one test case and contains:
 //!   - `html`         — path to the HTML fixture (relative to crate root)
 //!   - `schema` or `schemas_file` — one schema or a ListingSource schema cache
+//!   - `fallback_currency` — optional operational ListingSource fallback
 //!   - `raw`          — expected raw extraction output and state evidence
 //!   - `normalized`   — expected pure-normalizer output
 
@@ -43,6 +44,7 @@ async fn should_normalize_product_for_all_fixtures() {
             &fixture.schemas[fixture.schema_index],
             &html,
             &fixture.normalized.url,
+            fixture.fallback_currency,
             &fixture.normalized,
         )
         .await;

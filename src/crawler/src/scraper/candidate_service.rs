@@ -1,11 +1,13 @@
 //! Service for fetching scraper candidates — product URLs that are due for re-scraping.
 //!
 //! A scraper candidate is a URL stored in `listing_source_urls` that is due for scraping by recency,
-//! retry, and crawler disposition. Page and schema hashes avoid needless extraction; the shared raw
+//! retry, and crawler disposition. Both active and sold URLs remain eligible so crawler evidence can
+//! observe a later removal or restock. Page and schema hashes avoid needless extraction; the shared raw
 //! normalization-input hash avoids needless operational raw captures.
 
 use async_trait::async_trait;
 use listing_source_core::ListingSourceId;
+use money::Currency;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use url::Url;
@@ -23,6 +25,7 @@ use crate::spider::classification::url_metadata::{
 pub struct ScraperCandidate {
     pub listing_source_id: ListingSourceId,
     pub listing_source_name: String,
+    pub fallback_currency: Option<Currency>,
     pub url_pattern: Option<String>,
     pub url: Url,
     pub last_scraped_hash: Option<String>,
@@ -71,6 +74,14 @@ pub trait ScraperCandidateService: Send + Sync {
         schema_fingerprint: &str,
         raw_input_sha256: &[u8],
         disposition: CrawlerDisposition,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
+    /// Records a durable crawler removal capture and makes the URL eligible for later rechecks.
+    async fn mark_removed(
+        &self,
+        listing_source_id: &ListingSourceId,
+        url: &Url,
+        raw_input_sha256: &[u8],
         expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error>;
     /// Touch a page/schema fast-path scrape without changing the raw input or disposition.
@@ -185,6 +196,7 @@ impl ScraperCandidateServiceImpl {
 struct ScraperCandidateRow {
     listing_source_id: uuid::Uuid,
     listing_source_name: String,
+    fallback_currency: Option<String>,
 
     url_pattern: Option<String>,
     url: String,
@@ -196,7 +208,7 @@ struct ScraperCandidateRow {
 const SCRAPER_CANDIDATE_QUERY: &str = r#"
     WITH eligible_urls AS (
         SELECT
-            su.listing_source_id, s.listing_source_name, sd.url_pattern, su.url,
+            su.listing_source_id, s.listing_source_name, s.fallback_currency, sd.url_pattern, su.url,
             lower(substring(su.url from '^[a-z][a-z0-9+.-]*://([^/:?#]+)')) AS normalized_host,
             su.last_scraped,
             su.last_scraped_hash,
@@ -209,7 +221,7 @@ const SCRAPER_CANDIDATE_QUERY: &str = r#"
         WHERE s.crawl_enabled = TRUE
           AND s.llm_calls_count < $3
           AND su.url_class = 'product'
-          AND su.crawler_disposition = 'ACTIVE'
+          AND su.crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
           AND (su.next_retry_at IS NULL OR su.next_retry_at <= NOW())
           AND (su.last_scraped IS NULL OR su.last_scraped < NOW() - INTERVAL '1 day')
           AND NOT EXISTS (
@@ -242,7 +254,7 @@ const SCRAPER_CANDIDATE_QUERY: &str = r#"
         JOIN selected_domains sd ON sd.normalized_host = eu.normalized_host
     )
     SELECT
-        listing_source_id, listing_source_name, url_pattern, url,
+        listing_source_id, listing_source_name, fallback_currency, url_pattern, url,
         last_scraped_hash,
         last_scraped_schema_fingerprint,
         last_captured_raw_input_sha256
@@ -272,9 +284,21 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
             let Some(url) = Url::parse(&row.url).ok() else {
                 continue;
             };
+            let fallback_currency = row
+                .fallback_currency
+                .as_deref()
+                .map(|value| {
+                    Currency::from_code(value).ok_or_else(|| {
+                        sqlx::Error::Decode(Box::new(std::io::Error::other(
+                            "persisted crawler fallback currency is invalid",
+                        )))
+                    })
+                })
+                .transpose()?;
             candidates.push(ScraperCandidate {
                 listing_source_id: ListingSourceId::from(row.listing_source_id),
                 listing_source_name: row.listing_source_name,
+                fallback_currency,
                 url_pattern: row.url_pattern,
                 url,
                 last_scraped_hash: row.last_scraped_hash,
@@ -301,7 +325,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
             WHERE s.crawl_enabled = TRUE
               AND su.listing_source_id = $1
               AND su.url_class = 'product'
-              AND su.crawler_disposition = 'ACTIVE'
+              AND su.crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
               AND su.url <> $2
             -- Intentional: schema seeding runs on a rare path (typically once per
             -- ListingSource), so ORDER BY RANDOM() keeps this simple. If rows per ListingSource grow
@@ -351,7 +375,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
              WHERE listing_source_id = $1
                AND url = $2
                AND url_class = 'product'
-               AND crawler_disposition = 'ACTIVE'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
                AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $7::bytea",
         )
         .bind(listing_source_id_uuid)
@@ -360,6 +384,45 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         .bind(schema_fingerprint)
         .bind(raw_input_sha256)
         .bind(disposition.as_str())
+        .bind(expected_last_captured_raw_input_sha256)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(if result.rows_affected() == 1 {
+            CrawlerUrlWriteOutcome::Applied
+        } else {
+            CrawlerUrlWriteOutcome::NoopStale
+        })
+    }
+
+    async fn mark_removed(
+        &self,
+        listing_source_id: &ListingSourceId,
+        url: &Url,
+        raw_input_sha256: &[u8],
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+    ) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
+        let listing_source_id_uuid: uuid::Uuid = (*listing_source_id).into();
+        let result = sqlx::query(
+            "UPDATE listing_source_urls
+             SET last_scraped = NOW(),
+                 last_captured_raw_input_sha256 = $3,
+                 crawler_disposition = 'ACTIVE',
+                 failure_count = 0,
+                 last_error_kind = NULL,
+                 last_error_message = NULL,
+                 last_status_code = NULL,
+                 next_retry_at = NULL,
+                 updated = NOW()
+             WHERE listing_source_id = $1
+               AND url = $2
+               AND url_class = 'product'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
+               AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
+        )
+        .bind(listing_source_id_uuid)
+        .bind(url.to_string())
+        .bind(raw_input_sha256)
         .bind(expected_last_captured_raw_input_sha256)
         .execute(&self.pool)
         .await?;
@@ -396,7 +459,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
              WHERE listing_source_id = $1
                AND url = $2
                AND url_class = 'product'
-               AND crawler_disposition = 'ACTIVE'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
                AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $5::bytea",
         )
         .bind(listing_source_id_uuid)
@@ -431,7 +494,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
              WHERE listing_source_id = $1
                AND url = $2
                AND url_class = 'product'
-               AND crawler_disposition = 'ACTIVE'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
                AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
         )
         .bind(listing_source_id_uuid)
@@ -466,7 +529,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                  updated = NOW()
              WHERE listing_source_id = $1
                AND url = $2
-               AND crawler_disposition = 'ACTIVE'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
                AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $4::bytea",
         )
         .bind(listing_source_id_uuid)
@@ -507,7 +570,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
              WHERE listing_source_id = $1
                AND url = $2
                AND url_class = 'product'
-               AND crawler_disposition = 'ACTIVE'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
                AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $7::bytea",
         )
         .bind(listing_source_id_uuid)
@@ -546,7 +609,7 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
              WHERE listing_source_id = $1
                AND url = $2
                AND url_class = 'product'
-               AND crawler_disposition = 'ACTIVE'
+               AND crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')
                AND last_captured_raw_input_sha256 IS NOT DISTINCT FROM $5::bytea",
         )
         .bind(listing_source_id_uuid)
@@ -661,7 +724,9 @@ mod candidate_query_tests {
     use super::SCRAPER_CANDIDATE_QUERY;
 
     #[test]
-    fn should_select_only_active_urls_for_scraping() {
-        assert!(SCRAPER_CANDIDATE_QUERY.contains("crawler_disposition = 'ACTIVE'"));
+    fn should_select_active_and_sold_urls_for_scraping() {
+        assert!(
+            SCRAPER_CANDIDATE_QUERY.contains("crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')")
+        );
     }
 }

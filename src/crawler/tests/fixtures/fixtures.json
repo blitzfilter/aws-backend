@@ -1,6 +1,7 @@
 [
   {
     "html": "tests/fixtures/html/weitze_available.html",
+    "fallback_currency": "EUR",
     "schema": {
       "source_listing_id": {
         "selector": ".nr",
@@ -35,8 +36,7 @@
         "type": "attribute",
         "name": "content",
         "cardinality": "all"
-      },
-      "default_currency": "EUR"
+      }
     },
     "raw": {
       "source_listing_id": "405500",
@@ -106,7 +106,6 @@
         "selector": ".js-product-description",
         "cardinality": "first"
       },
-      "default_currency": "USD",
       "source_listing_id": {
         "name": "content",
         "type": "attribute",
@@ -255,8 +254,7 @@
         "selector": ".woocommerce-product-gallery__image img",
         "type": "image_url",
         "cardinality": "all"
-      },
-      "default_currency": "EUR"
+      }
     },
     "raw": {
       "source_listing_id": "2025-0219-03",
@@ -336,8 +334,7 @@
         "selector": ".elementor-element-c9ea44e img",
         "type": "image_url",
         "cardinality": "all"
-      },
-      "default_currency": "EUR"
+      }
     },
     "raw": {
       "source_listing_id": "Artikel-Nr:\u00a002092",
@@ -378,7 +375,6 @@
   {
     "html": "tests/fixtures/html/nicholaswells_available.html",
     "schema": {
-      "default_currency": "EUR",
       "description": {
         "cardinality": "first",
         "selector": ".product-full-width .at-rte",
@@ -489,7 +485,6 @@
         "name": "src",
         "cardinality": "all"
       },
-      "default_currency": "EUR",
       "raw_attributes": {
         "rawCategoryPath": {
           "selector": ".ariane",
@@ -545,6 +540,7 @@
   },
   {
     "html": "tests/fixtures/html/georgianantiques_available.html",
+    "fallback_currency": "GBP",
     "schema": {
       "source_listing_id": {
         "selector": ".summary .sku",
@@ -573,8 +569,7 @@
         "type": "attribute",
         "name": "src",
         "cardinality": "all"
-      },
-      "default_currency": "GBP"
+      }
     },
     "raw": {
       "source_listing_id": "23175",

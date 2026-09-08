@@ -46,7 +46,7 @@ pub(crate) struct PreparedSchemaSelection {
     pub(crate) raw: RawExtractedProduct,
     /// Crawler-validated image URLs in canonical group order for raw capture.
     pub(crate) validated_image_urls: Vec<String>,
-    pub(crate) default_currency: Option<Currency>,
+    pub(crate) fallback_currency: Option<Currency>,
     pub(crate) schema: ProductCssSelectorSchema,
     pub(crate) fresh_schema: bool,
 }
@@ -89,6 +89,7 @@ impl ScraperServiceImpl {
         url: &Url,
         html: &str,
         schemas: &[ProductCssSelectorSchema],
+        fallback_currency: Option<Currency>,
     ) -> Result<ExistingSchemaSelection, ScraperError> {
         // `scraper::Html` is `!Send`: parse and apply every cached schema in a
         // synchronous block so the parsed document is dropped before awaits.
@@ -128,11 +129,7 @@ impl ScraperServiceImpl {
                     Err(NormalizationError::NoValidImages { .. }) => Vec::new(),
                     Err(err) => return Err(ScraperError::NormalizationError(err)),
                 };
-            match prepare_product(
-                validated_raw.clone(),
-                url.clone(),
-                candidate.schema.default_currency.map(Into::into),
-            ) {
+            match prepare_product(validated_raw.clone(), url.clone(), fallback_currency) {
                 Ok(prepared) => {
                     let score = score_prepared_product(&validated_raw, &prepared);
                     prepared_candidates.push(PreparedSchemaCandidate {
@@ -185,6 +182,7 @@ impl ScraperServiceImpl {
                     candidate.schema,
                     raw,
                     candidate.validated_raw,
+                    fallback_currency,
                 )
                 .await
             {
@@ -240,12 +238,12 @@ impl ScraperServiceImpl {
         selected_schema: &ProductCssSelectorSchema,
         raw: RawExtractedProduct,
         validated_raw: RawExtractedProduct,
+        fallback_currency: Option<Currency>,
     ) -> Result<PreparedSchemaSelection, ScraperError> {
-        let default_currency = selected_schema.default_currency.map(Currency::from);
         let validated_image_urls = validated_raw.images.clone();
         match self
             .normalization_service
-            .normalize(validated_raw, url.clone(), default_currency)
+            .normalize(validated_raw, url.clone(), fallback_currency)
             .await
         {
             Ok(NormalizationSuccess {
@@ -258,7 +256,7 @@ impl ScraperServiceImpl {
                     prepared,
                     raw,
                     validated_image_urls,
-                    default_currency,
+                    fallback_currency,
                     schema: selected_schema.clone(),
                     fresh_schema: false,
                 })

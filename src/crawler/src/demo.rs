@@ -130,6 +130,7 @@ fn demo_listing_sources() -> Vec<RegisteredListingSource> {
             listing_source_slug: listing_source_core::ListingSourceSlugId::raw(listing_source_slug)
                 .unwrap_or_else(|error| panic!("invalid demo ListingSource slug: {error}")),
             crawl_enabled: true,
+            fallback_currency: None,
         },
     )
     .collect()

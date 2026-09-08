@@ -2,19 +2,22 @@
 
 use async_trait::async_trait;
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
+use money::Currency;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
 /// Crawler-safe business identity.
 ///
-/// The business reader supplies canonical ListingSource values. `crawl_enabled` is
-/// crawler-local state derived from a complete successful `WEB_CRAWL` source read.
+/// The business reader supplies canonical ListingSource values. `crawl_enabled` and
+/// `fallback_currency` are crawler-local state derived from a complete successful
+/// `WEB_CRAWL` source read.
 #[derive(Debug, Clone)]
 pub struct RegisteredListingSource {
     pub listing_source_id: ListingSourceId,
     pub listing_source_name: ListingSourceName,
     pub listing_source_slug: ListingSourceSlugId,
     pub crawl_enabled: bool,
+    pub fallback_currency: Option<Currency>,
 }
 
 /// Result of one atomically applied business snapshot.
@@ -118,18 +121,20 @@ impl ListingSourceRegistrationRepository for ListingSourceRegistrationRepository
         for listing_source in listing_sources {
             sqlx::query(
                 "INSERT INTO listing_sources \
-                    (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, created, updated) \
-                 VALUES ($1, $2, $3, $4, NOW(), NOW()) \
+                    (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, fallback_currency, created, updated) \
+                 VALUES ($1, $2, $3, $4, $5, NOW(), NOW()) \
                  ON CONFLICT (listing_source_id) DO UPDATE SET \
                     listing_source_name = EXCLUDED.listing_source_name, \
                     listing_source_slug = EXCLUDED.listing_source_slug, \
                     crawl_enabled = EXCLUDED.crawl_enabled, \
+                    fallback_currency = EXCLUDED.fallback_currency, \
                     updated = NOW()",
             )
             .bind(uuid::Uuid::from(listing_source.listing_source_id))
             .bind(listing_source.listing_source_name.as_ref())
             .bind(listing_source.listing_source_slug.to_string())
             .bind(listing_source.crawl_enabled)
+            .bind(listing_source.fallback_currency.map(Currency::as_str))
             .execute(&mut *transaction)
             .await?;
         }
@@ -188,6 +193,7 @@ mod tests {
             listing_source_slug: ListingSourceSlugId::raw("source")
                 .unwrap_or_else(|error| panic!("valid test listing source slug: {error}")),
             crawl_enabled: true,
+            fallback_currency: None,
         }
     }
 

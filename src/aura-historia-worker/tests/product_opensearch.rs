@@ -277,7 +277,7 @@ async fn should_project_sold_product_with_all_sale_price_currencies() {
         );
         for currency in [
             "eur", "gbp", "usd", "aud", "cad", "nzd", "cny", "brl", "pln", "try", "jpy", "czk",
-            "rub", "aed", "sar", "hkd", "sgd", "chf",
+            "rub", "aed", "sar", "hkd", "sgd", "chf", "zar",
         ] {
             let expected = if currency == "jpy" { 123 } else { 12_345 };
             assert_eq!(
@@ -345,7 +345,7 @@ async fn should_project_sold_product_without_main_price_then_add_sale_prices_whe
         })?;
         for currency in [
             "eur", "gbp", "usd", "aud", "cad", "nzd", "cny", "brl", "pln", "try", "jpy", "czk",
-            "rub", "aed", "sar", "hkd", "sgd", "chf",
+            "rub", "aed", "sar", "hkd", "sgd", "chf", "zar",
         ] {
             let expected = if currency == "jpy" { 123 } else { 12_345 };
             assert_eq!(
@@ -762,7 +762,7 @@ async fn insert_equal_rate_snapshot(pool: &sqlx::PgPool) -> Result<uuid::Uuid, s
     .await?;
     for currency in [
         "EUR", "GBP", "USD", "AUD", "CAD", "NZD", "CNY", "BRL", "PLN", "TRY", "JPY", "CZK", "RUB",
-        "AED", "SAR", "HKD", "SGD", "CHF",
+        "AED", "SAR", "HKD", "SGD", "CHF", "ZAR",
     ] {
         sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, 1000000)",

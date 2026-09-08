@@ -54,7 +54,7 @@ async fn should_mark_product_removed_when_stored_removed_page_schema_matches() {
             move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_state
-                    && *received_state == CrawlerDisposition::DormantRemoved
+                    && *received_state == CrawlerDisposition::Active
             },
         )
         .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));

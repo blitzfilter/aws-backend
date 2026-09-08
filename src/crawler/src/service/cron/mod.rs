@@ -45,6 +45,7 @@ pub(super) mod test_support {
         ScraperCandidate {
             listing_source_id: ListingSourceId::new(),
             listing_source_name: listing_source_name.to_string(),
+            fallback_currency: None,
             url_pattern: None,
             url,
             last_scraped_hash: None,

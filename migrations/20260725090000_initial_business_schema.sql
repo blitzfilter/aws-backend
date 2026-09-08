@@ -15,7 +15,7 @@ CREATE TABLE users (
     created timestamptz NOT NULL DEFAULT now(),
     updated timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT users_language_check CHECK (language IS NULL OR language IN ('de', 'en', 'fr', 'es', 'it', 'zh', 'pt', 'pl', 'tr', 'nl', 'cs', 'ja', 'ru', 'ar')),
-    CONSTRAINT users_currency_check CHECK (currency IS NULL OR currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
+    CONSTRAINT users_currency_check CHECK (currency IS NULL OR currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
     CONSTRAINT users_measurement_unit_check CHECK (measurement_unit IS NULL OR measurement_unit IN ('METRIC', 'IMPERIAL')),
     CONSTRAINT users_tier_check CHECK (tier IN ('FREE', 'PRO', 'ULTIMATE')),
     CONSTRAINT users_role_check CHECK (role IN ('USER', 'ADMIN')),
@@ -66,13 +66,19 @@ CREATE TABLE listing_source_ingestion_methods (
     CONSTRAINT listing_source_ingestion_methods_check CHECK (ingestion_method IN ('WEB_CRAWL', 'SHOPIFY', 'WOOCOMMERCE', 'PARTNER_API'))
 );
 
+CREATE TABLE listing_source_web_crawl_ingestion_configurations (
+    listing_source_id uuid PRIMARY KEY REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
+    fallback_currency text,
+    CONSTRAINT listing_source_web_crawl_fallback_currency_check CHECK (fallback_currency IS NULL OR fallback_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR'))
+);
+
 CREATE TABLE listing_source_shopify_ingestion_configurations (
     listing_source_id uuid PRIMARY KEY REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
     domain text NOT NULL,
     CONSTRAINT listing_source_shopify_domain_unique UNIQUE (domain),
     currency text,
     language text,
-    CONSTRAINT listing_source_shopify_currency_check CHECK (currency IS NULL OR currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
+    CONSTRAINT listing_source_shopify_currency_check CHECK (currency IS NULL OR currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
     CONSTRAINT listing_source_shopify_language_check CHECK (language IS NULL OR language IN ('de', 'en', 'fr', 'es', 'it', 'zh', 'pt', 'pl', 'tr', 'nl', 'cs', 'ja', 'ru', 'ar'))
 );
 
@@ -81,7 +87,7 @@ CREATE TABLE listing_source_woocommerce_ingestion_configurations (
     webhook_secret text,
     currency text,
     language text,
-    CONSTRAINT listing_source_woocommerce_currency_check CHECK (currency IS NULL OR currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
+    CONSTRAINT listing_source_woocommerce_currency_check CHECK (currency IS NULL OR currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
     CONSTRAINT listing_source_woocommerce_language_check CHECK (language IS NULL OR language IN ('de', 'en', 'fr', 'es', 'it', 'zh', 'pt', 'pl', 'tr', 'nl', 'cs', 'ja', 'ru', 'ar'))
 );
 
@@ -350,7 +356,7 @@ CREATE TABLE fx_rate_quotes (
     currency text NOT NULL,
     units_per_eur bigint NOT NULL CHECK (units_per_eur > 0),
     PRIMARY KEY (fx_rate_id, currency),
-    CONSTRAINT fx_rate_quotes_currency_check CHECK (currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF'))
+    CONSTRAINT fx_rate_quotes_currency_check CHECK (currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR'))
 );
 
 CREATE TABLE product_listings (
@@ -411,9 +417,9 @@ CREATE TABLE product_listings (
     CONSTRAINT product_listings_price_amount_nonnegative CHECK (price_amount IS NULL OR price_amount >= 0),
     CONSTRAINT product_listings_price_estimate_min_amount_nonnegative CHECK (price_estimate_min_amount IS NULL OR price_estimate_min_amount >= 0),
     CONSTRAINT product_listings_price_estimate_max_amount_nonnegative CHECK (price_estimate_max_amount IS NULL OR price_estimate_max_amount >= 0),
-    CONSTRAINT product_listings_price_currency_check CHECK (price_currency IS NULL OR price_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
-    CONSTRAINT product_listings_price_estimate_min_currency_check CHECK (price_estimate_min_currency IS NULL OR price_estimate_min_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
-    CONSTRAINT product_listings_price_estimate_max_currency_check CHECK (price_estimate_max_currency IS NULL OR price_estimate_max_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
+    CONSTRAINT product_listings_price_currency_check CHECK (price_currency IS NULL OR price_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
+    CONSTRAINT product_listings_price_estimate_min_currency_check CHECK (price_estimate_min_currency IS NULL OR price_estimate_min_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
+    CONSTRAINT product_listings_price_estimate_max_currency_check CHECK (price_estimate_max_currency IS NULL OR price_estimate_max_currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
     CONSTRAINT product_listings_sale_observation_pair_check CHECK ((sale_observation_fx_rate_id IS NULL) = (sale_observed_at IS NULL)),
     CONSTRAINT product_listings_images_array CHECK (jsonb_typeof(product_images) = 'array'),
     CONSTRAINT product_listings_embedding_dimension_check CHECK (embedding IS NULL OR (array_ndims(embedding) = 1 AND cardinality(embedding) = 768)),
@@ -570,7 +576,7 @@ CREATE TABLE search_filters (
     CONSTRAINT search_filters_state_check CHECK (state IN ('ACTIVE', 'INACTIVE_BY_USER', 'INACTIVE_BY_RESTRICTED_PLAN')),
     CONSTRAINT search_filters_search_object CHECK (jsonb_typeof(search) = 'object'),
     CONSTRAINT search_filters_language_check CHECK (language IN ('de', 'en', 'fr', 'es', 'it', 'zh', 'pt', 'pl', 'tr', 'nl', 'cs', 'ja', 'ru', 'ar')),
-    CONSTRAINT search_filters_currency_check CHECK (currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF')),
+    CONSTRAINT search_filters_currency_check CHECK (currency IN ('EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY', 'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR')),
     CONSTRAINT search_filters_embedding_dimension_check CHECK (embedding IS NULL OR (array_ndims(embedding) = 1 AND cardinality(embedding) = 768)),
     CONSTRAINT search_filters_enhanced_description_non_blank CHECK (enhanced_search_description IS NULL OR btrim(enhanced_search_description) <> ''),
     CONSTRAINT search_filters_version_positive CHECK (version >= 1)

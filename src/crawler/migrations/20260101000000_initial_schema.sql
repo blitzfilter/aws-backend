@@ -6,9 +6,16 @@ CREATE TABLE IF NOT EXISTS listing_sources (
     listing_source_name TEXT        NOT NULL,
     listing_source_slug TEXT        NOT NULL,
     crawl_enabled       BOOLEAN     NOT NULL DEFAULT FALSE,
+    fallback_currency   TEXT,
     llm_calls_count     BIGINT      NOT NULL DEFAULT 0,
     created             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT listing_sources_fallback_currency_check CHECK (
+        fallback_currency IS NULL OR fallback_currency IN (
+            'EUR', 'GBP', 'USD', 'AUD', 'CAD', 'NZD', 'CNY', 'BRL', 'PLN', 'TRY',
+            'JPY', 'CZK', 'RUB', 'AED', 'SAR', 'HKD', 'SGD', 'CHF', 'ZAR'
+        )
+    )
 );
 
 CREATE TABLE IF NOT EXISTS listing_source_product_schemas (
@@ -63,7 +70,7 @@ CREATE TABLE IF NOT EXISTS listing_source_urls (
     updated           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (char_length(url) > 0),
     CHECK (url_class IN ('product', 'category', 'imprint', 'info', 'other')),
-    CHECK (crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD', 'DORMANT_REMOVED')),
+    CHECK (crawler_disposition IN ('ACTIVE', 'DORMANT_SOLD')),
     CHECK (last_captured_raw_input_sha256 IS NULL OR octet_length(last_captured_raw_input_sha256) = 32),
     PRIMARY KEY (url)
 );

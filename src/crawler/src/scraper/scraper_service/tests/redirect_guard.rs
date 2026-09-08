@@ -106,7 +106,7 @@ async fn should_withdraw_product_when_product_url_redirects_to_homepage() {
             move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_set_presence
-                    && *received_state == CrawlerDisposition::DormantRemoved
+                    && *received_state == CrawlerDisposition::Active
             },
         )
         .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
@@ -157,7 +157,7 @@ async fn should_withdraw_product_when_redirected_url_does_not_match_product_patt
             move |received_listing_source_id, received_url, received_state, _| {
                 *received_listing_source_id == id
                     && received_url == &url_for_set_presence
-                    && *received_state == CrawlerDisposition::DormantRemoved
+                    && *received_state == CrawlerDisposition::Active
             },
         )
         .returning(|_, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));

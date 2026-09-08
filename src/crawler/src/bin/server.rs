@@ -124,6 +124,7 @@ impl ListingSourceRegistrationSource for PostgresWebCrawlSource {
                     listing_source_name: source.listing_source_name,
                     listing_source_slug: source.listing_source_slug,
                     crawl_enabled: source.web_crawl_enabled,
+                    fallback_currency: source.fallback_currency,
                 })
             })
             .collect()

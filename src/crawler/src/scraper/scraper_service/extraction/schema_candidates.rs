@@ -19,8 +19,7 @@ use scraper::Html;
 /// * Multiple description fragments count as one populated `description` field.
 /// * Every non-empty `raw_attributes` key counts as one distinct attribute.
 ///
-/// `default_currency` is schema context, not extracted page data, and does not
-/// increase the score. Empty strings, empty vectors, and empty optional values
+/// Empty strings, empty vectors, and empty optional values
 /// never count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ExtractionCompletenessScore(usize);
@@ -232,7 +231,7 @@ pub fn rank_applicable_schema_indices(
             crate::scraper::normalization::product_normalization_service::prepare_product(
                 validated_raw.clone(),
                 base_url.clone(),
-                candidate.schema.default_currency.map(Into::into),
+                None,
             )
         else {
             continue;
@@ -380,21 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn should_ignore_default_currency_when_scoring() {
-        // default_currency lives on ProductCssSelectorSchema, not
-        // RawExtractedProduct, so it can never affect the score.
-        let raw = raw_product();
-        let baseline = score_raw_product(&raw).as_usize();
-
-        let mut populated = raw_product();
-        populated.title = "Chair".to_string();
-        let populated_baseline = score_raw_product(&populated).as_usize();
-
-        assert_eq!(baseline, 0);
-        assert_eq!(populated_baseline, 1);
-    }
-
-    #[test]
     fn should_score_prepared_values_and_ignore_synthesized_id() {
         let mut raw = raw_product();
         raw.title = "Chair".to_string();
@@ -456,7 +440,6 @@ mod tests {
             },
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: BTreeMap::new(),
         };
 
@@ -511,7 +494,6 @@ mod tests {
             },
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: BTreeMap::new(),
         };
 

@@ -20,13 +20,14 @@ pub(crate) fn hash_html(html: &str) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Fingerprint the ordered effective schema set, including selector rules, raw attributes, and
-/// default-currency context. The schema structures serialize deterministically (raw keys are a
-/// `BTreeMap`), so a semantic schema change forces extraction even for unchanged HTML.
-pub(crate) fn fingerprint_schema_set(
+/// Fingerprint the ordered effective schema set and source fallback currency.
+/// Schema structures serialize deterministically (raw keys are a `BTreeMap`), so a selector or
+/// fallback-currency change forces extraction even for unchanged HTML.
+pub(crate) fn fingerprint_scraper_context(
     schemas: &[ProductCssSelectorSchema],
+    fallback_currency: Option<money::Currency>,
 ) -> Result<String, serde_json::Error> {
-    let encoded = serde_json::to_vec(schemas)?;
+    let encoded = serde_json::to_vec(&(schemas, fallback_currency.map(money::Currency::as_str)))?;
     let digest = Sha256::digest(encoded);
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
