@@ -35,6 +35,15 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
         AURA_API.base_url()
     );
 
+    let product_count_before_delete = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM product_listings WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("count eligible source ProductListings: {error}"));
+    assert_eq!(0, product_count_before_delete);
+
     let response = client
         .delete(&path)
         .bearer_auth(token.clone())
@@ -71,6 +80,13 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to count deleted ingestion methods: {error}"));
+    let product_count_after_delete = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM product_listings WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("count deleted source ProductListings: {error}"));
     let grant_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE listing_source_id = $1",
     )
@@ -80,6 +96,7 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     .unwrap_or_else(|error| panic!("failed to count deleted grants: {error}"));
     assert_eq!(0, source_count);
     assert_eq!(0, method_count);
+    assert_eq!(0, product_count_after_delete);
     assert_eq!(0, grant_count);
     let unrelated_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
@@ -120,7 +137,8 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_preserve_used_listing_source_when_delete_is_blocked() {
+async fn should_preserve_live_and_withdrawn_product_listing_source_dependencies_when_delete_is_blocked()
+ {
     let product_listing_id = seed_product().await;
     let pool = get_postgres_client().await;
     let listing_source_id = sqlx::query_scalar::<_, uuid::Uuid>(
@@ -131,17 +149,37 @@ async fn should_preserve_used_listing_source_when_delete_is_blocked() {
     .await
     .unwrap_or_else(|error| panic!("failed to find product listing source: {error}"));
     let admin_id = seed_user("ADMIN").await;
-    let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let token =
+        String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
+    let delete_path = format!(
+        "{}/api/v1/admin/listing-sources/{listing_source_id}",
+        AURA_API.base_url()
+    );
 
     let response = reqwest::Client::new()
-        .delete(format!(
-            "{}/api/v1/admin/listing-sources/{listing_source_id}",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
+        .delete(&delete_path)
+        .bearer_auth(token.clone())
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to delete used listing source: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_problem(status, &body, reqwest::StatusCode::CONFLICT, "CONFLICT");
+
+    sqlx::query(
+        "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL, projection_version = projection_version + 1 WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("withdraw protected product listing: {error}"));
+    let response = reqwest::Client::new()
+        .delete(delete_path)
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap_or_else(|error| {
+            panic!("failed to delete source retained by withdrawn product: {error}")
+        });
     let (status, body) = json_response(response).await;
     assert_problem(status, &body, reqwest::StatusCode::CONFLICT, "CONFLICT");
 
@@ -152,15 +190,17 @@ async fn should_preserve_used_listing_source_when_delete_is_blocked() {
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to check blocked source: {error}"));
-    let product_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM product_listings WHERE product_listing_id = $1)",
+    let product = sqlx::query_as::<_, (String, Option<String>, i64)>(
+        "SELECT lifecycle, availability, projection_version FROM product_listings WHERE product_listing_id = $1",
     )
     .bind(uuid::Uuid::from(product_listing_id))
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to check protected product: {error}"));
     assert!(source_exists);
-    assert!(product_exists);
+    assert_eq!("WITHDRAWN", product.0);
+    assert_eq!(None, product.1);
+    assert!(product.2 > 1);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]

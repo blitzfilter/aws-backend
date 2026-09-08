@@ -8037,7 +8037,9 @@ paths:
         streams, approved PartnershipApplication reference, or retained existing-source proposal.
         The committed transaction explicitly removes its Partnership grants and owned ingestion
         configuration, including provider/webhook secrets. Enabled `WEB_CRAWL` is not a blocker:
-        crawler-local state converges asynchronously and stale captures for the deleted UUID fail.
+        every new spider or scraper pass refreshes authoritative ListingSource scope before candidate
+        selection, and a failed refresh skips that pass. Already-running work can race with deletion;
+        the business raw-capture fence discards that missing-source result without recreating state.
         This operation does not retire or purge a used source. A repeated delete returns `404`.
       operationId: adminDeleteListingSource
       tags:

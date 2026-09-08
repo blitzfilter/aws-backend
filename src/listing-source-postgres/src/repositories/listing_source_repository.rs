@@ -492,6 +492,46 @@ mod tests {
 
     const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
+    async fn insert_user(pool: &sqlx::PgPool) -> uuid::Uuid {
+        let user_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
+        )
+        .bind(user_id)
+        .bind(format!("delete-test-{user_id}@example.test"))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert proposal applicant: {error}"));
+        user_id
+    }
+
+    fn existing_source_proposal(source_id: ListingSourceId) -> serde_json::Value {
+        serde_json::json!({
+            "type": "EXISTING_LISTING_SOURCE",
+            "listing_source_id": source_id.to_string(),
+        })
+    }
+
+    async fn wait_until_backend_waits_for_lock(pool: &sqlx::PgPool, backend_pid: i32) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let wait_event_type = sqlx::query_scalar::<_, String>(
+                "SELECT COALESCE(wait_event_type, '') FROM pg_stat_activity WHERE pid = $1",
+            )
+            .bind(backend_pid)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or_else(|error| panic!("inspect concurrent backend state: {error}"));
+            if wait_event_type.as_deref() == Some("Lock") {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("concurrent PostgreSQL backend did not wait for its row lock");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     async fn insert_basic_source(pool: &sqlx::PgPool, name: &str) -> (ListingSourceId, PartyId) {
         let source_id = ListingSourceId::new();
         let party_id = PartyId::new();
@@ -875,6 +915,151 @@ mod tests {
             product_error,
             sqlx::Error::Database(ref error) if error.constraint() == Some("product_listings_listing_source_id_fkey")
         ));
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_reject_delayed_existing_source_proposal_after_source_delete_commits() {
+        let pool = get_postgres_client().await;
+        let (source_id, _) = insert_basic_source(&pool, "Delete race target").await;
+        let applicant_user_id = insert_user(&pool).await;
+
+        let mut delete_tx = pool
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin delete race transaction: {error}"));
+        sqlx::query("SELECT 1 FROM listing_sources WHERE listing_source_id = $1 FOR UPDATE")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&mut *delete_tx)
+            .await
+            .unwrap_or_else(|error| panic!("lock delete race target: {error}"));
+
+        let (proposal_pid_tx, proposal_pid_rx) = tokio::sync::oneshot::channel();
+        let proposal_pool = pool.clone();
+        let proposal = existing_source_proposal(source_id);
+        let proposal_task = tokio::spawn(async move {
+            let mut tx = proposal_pool.begin().await?;
+            let backend_pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let _ = proposal_pid_tx.send(backend_pid);
+            sqlx::query(
+                "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, 'SUBMITTED', $3)",
+            )
+            .bind(uuid::Uuid::new_v4())
+            .bind(applicant_user_id)
+            .bind(proposal)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        });
+        let proposal_pid = proposal_pid_rx
+            .await
+            .unwrap_or_else(|_| panic!("proposal transaction did not expose its backend"));
+        wait_until_backend_waits_for_lock(&pool, proposal_pid).await;
+
+        sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&mut *delete_tx)
+            .await
+            .unwrap_or_else(|error| panic!("delete locked source: {error}"));
+        delete_tx
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit source deletion: {error}"));
+
+        let proposal_error = proposal_task
+            .await
+            .unwrap_or_else(|error| panic!("join delayed proposal task: {error}"))
+            .expect_err("proposal must fail after committed source deletion");
+        assert!(matches!(
+            proposal_error,
+            sqlx::Error::Database(ref error)
+                if error.code().as_deref() == Some("23503")
+                    && error.constraint() == Some("partnership_applications_existing_listing_source_id_fkey")
+        ));
+        let application_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM partnership_applications WHERE applicant_user_id = $1)",
+        )
+        .bind(applicant_user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("check delayed proposal persistence: {error}"));
+        assert!(!application_exists);
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_observe_existing_source_proposal_after_its_key_share_lock_commits() {
+        let pool = get_postgres_client().await;
+        let (source_id, _) = insert_basic_source(&pool, "Proposal race target").await;
+        let applicant_user_id = insert_user(&pool).await;
+        let (proposal_ready_tx, proposal_ready_rx) = tokio::sync::oneshot::channel();
+        let (commit_proposal_tx, commit_proposal_rx) = tokio::sync::oneshot::channel();
+        let proposal_pool = pool.clone();
+        let proposal = existing_source_proposal(source_id);
+        let proposal_task = tokio::spawn(async move {
+            let mut tx = proposal_pool.begin().await?;
+            sqlx::query(
+                "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, 'SUBMITTED', $3)",
+            )
+            .bind(uuid::Uuid::new_v4())
+            .bind(applicant_user_id)
+            .bind(proposal)
+            .execute(&mut *tx)
+            .await?;
+            let _ = proposal_ready_tx.send(());
+            let _ = commit_proposal_rx.await;
+            tx.commit().await
+        });
+        proposal_ready_rx
+            .await
+            .unwrap_or_else(|_| panic!("proposal transaction did not acquire key-share lock"));
+
+        let (delete_pid_tx, delete_pid_rx) = tokio::sync::oneshot::channel();
+        let delete_pool = pool.clone();
+        let delete_task = tokio::spawn(async move {
+            let mut tx = delete_pool.begin().await?;
+            let backend_pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let _ = delete_pid_tx.send(backend_pid);
+            sqlx::query("SELECT 1 FROM listing_sources WHERE listing_source_id = $1 FOR UPDATE")
+                .bind(uuid::Uuid::from(source_id))
+                .execute(&mut *tx)
+                .await?;
+            let blocker = SqlxListingSourceRepository {
+                connection: &mut tx,
+            }
+            .find_deletion_blocker(source_id)
+            .await
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+            Ok::<_, sqlx::Error>(blocker)
+        });
+        let delete_pid = delete_pid_rx
+            .await
+            .unwrap_or_else(|_| panic!("delete transaction did not expose its backend"));
+        wait_until_backend_waits_for_lock(&pool, delete_pid).await;
+        let _ = commit_proposal_tx.send(());
+
+        proposal_task
+            .await
+            .unwrap_or_else(|error| panic!("join proposal transaction: {error}"))
+            .unwrap_or_else(|error| panic!("commit proposal transaction: {error}"));
+        let blocker = delete_task
+            .await
+            .unwrap_or_else(|error| panic!("join delete transaction: {error}"))
+            .unwrap_or_else(|error| panic!("read delete blocker after proposal commit: {error}"));
+        assert_eq!(
+            Some(ListingSourceDeletionBlocker::ExistingSourcePartnershipApplication),
+            blocker
+        );
+        let source_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+        )
+        .bind(uuid::Uuid::from(source_id))
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("check proposal-won source: {error}"));
+        assert!(source_exists);
     }
 
     #[aura_integration_test(services = [BUSINESS_SCHEMA])]

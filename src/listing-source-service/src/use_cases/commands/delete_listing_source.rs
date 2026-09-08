@@ -102,56 +102,78 @@ where
         context: &OperationContext,
         command: DeleteListingSourceCommand,
     ) -> Result<(), DeleteListingSourceError> {
-        ensure_admin(context, &self.check_user_admin).await?;
+        let result = async {
+            ensure_admin(context, &self.check_user_admin).await?;
 
-        let mut tx = self
-            .unit_of_work
-            .begin()
-            .await
-            .map_err(|_| DeleteListingSourceError::BeginTransactionFailed)?;
-        let stored = self
-            .sources
-            .in_transaction(&mut tx)
-            .find_by_id_for_update(command.listing_source_id)
-            .await?
-            .ok_or(DeleteListingSourceError::NotFound)?;
-        if let Some(blocker) = self
-            .sources
-            .in_transaction(&mut tx)
-            .find_deletion_blocker(command.listing_source_id)
-            .await?
-        {
-            tracing::Span::current().record("outcome", "dependency_conflict");
-            tracing::warn!(
+            let mut tx = self
+                .unit_of_work
+                .begin()
+                .await
+                .map_err(|_| DeleteListingSourceError::BeginTransactionFailed)?;
+            let stored = self
+                .sources
+                .in_transaction(&mut tx)
+                .find_by_id_for_update(command.listing_source_id)
+                .await?
+                .ok_or(DeleteListingSourceError::NotFound)?;
+            if let Some(blocker) = self
+                .sources
+                .in_transaction(&mut tx)
+                .find_deletion_blocker(command.listing_source_id)
+                .await?
+            {
+                tracing::warn!(
+                    action = "delete_listing_source",
+                    listing_source_id = %command.listing_source_id,
+                    blocker = blocker_name(blocker),
+                    outcome = "dependency_conflict",
+                    "listing source deletion rejected by protected dependency"
+                );
+                return Err(DeleteListingSourceError::DependencyConflict { blocker });
+            }
+            self.sources
+                .in_transaction(&mut tx)
+                .delete_unused(command.listing_source_id, stored.version)
+                .await?;
+            tx.commit()
+                .await
+                .map_err(|_| DeleteListingSourceError::CommitTransactionFailed)?;
+            Ok(())
+        }
+        .await;
+
+        let outcome = delete_outcome(&result);
+        tracing::Span::current().record("outcome", outcome);
+        if result.is_ok() {
+            tracing::info!(
                 action = "delete_listing_source",
                 listing_source_id = %command.listing_source_id,
-                blocker = blocker_name(blocker),
-                outcome = "dependency_conflict",
-                "listing source deletion rejected by protected dependency"
+                actor_type = context.principal.kind(),
+                actor_id = %context.principal.label(),
+                request_id = %context.request_id,
+                correlation_id = %context.correlation_id,
+                changed = true,
+                outcome,
+                "listing source deleted"
             );
-            return Err(DeleteListingSourceError::DependencyConflict { blocker });
         }
-        self.sources
-            .in_transaction(&mut tx)
-            .delete_unused(command.listing_source_id, stored.version)
-            .await?;
-        tx.commit()
-            .await
-            .map_err(|_| DeleteListingSourceError::CommitTransactionFailed)?;
+        result
+    }
+}
 
-        tracing::Span::current().record("outcome", "success");
-        tracing::info!(
-            action = "delete_listing_source",
-            listing_source_id = %command.listing_source_id,
-            actor_type = context.principal.kind(),
-            actor_id = %context.principal.label(),
-            request_id = %context.request_id,
-            correlation_id = %context.correlation_id,
-            changed = true,
-            outcome = "success",
-            "listing source deleted"
-        );
-        Ok(())
+fn delete_outcome(result: &Result<(), DeleteListingSourceError>) -> &'static str {
+    match result {
+        Ok(()) => "success",
+        Err(DeleteListingSourceError::AuthenticatedActorRequired) => "unauthenticated",
+        Err(DeleteListingSourceError::Forbidden) => "forbidden",
+        Err(DeleteListingSourceError::NotFound) => "not_found",
+        Err(DeleteListingSourceError::DependencyConflict { .. }) => "dependency_conflict",
+        Err(DeleteListingSourceError::ConcurrencyConflict) => "concurrency_conflict",
+        Err(DeleteListingSourceError::BeginTransactionFailed) => "begin_failed",
+        Err(DeleteListingSourceError::CommitTransactionFailed) => "commit_failed",
+        Err(DeleteListingSourceError::TemporarilyUnavailable { .. }) => "persistence_unavailable",
+        Err(DeleteListingSourceError::InvalidPersistedState { .. }) => "invalid_persisted_state",
+        Err(DeleteListingSourceError::Internal { .. }) => "internal_failure",
     }
 }
 
@@ -435,6 +457,59 @@ mod tests {
     fn failure() -> ListingSourceRepositoryError {
         ListingSourceRepositoryError::Internal {
             source: static_error("fake failure"),
+        }
+    }
+
+    #[test]
+    fn should_classify_every_terminal_delete_outcome() {
+        let cases = [
+            (Ok(()), "success"),
+            (
+                Err(DeleteListingSourceError::AuthenticatedActorRequired),
+                "unauthenticated",
+            ),
+            (Err(DeleteListingSourceError::Forbidden), "forbidden"),
+            (Err(DeleteListingSourceError::NotFound), "not_found"),
+            (
+                Err(DeleteListingSourceError::DependencyConflict {
+                    blocker: ListingSourceDeletionBlocker::ProductListings,
+                }),
+                "dependency_conflict",
+            ),
+            (
+                Err(DeleteListingSourceError::ConcurrencyConflict),
+                "concurrency_conflict",
+            ),
+            (
+                Err(DeleteListingSourceError::BeginTransactionFailed),
+                "begin_failed",
+            ),
+            (
+                Err(DeleteListingSourceError::CommitTransactionFailed),
+                "commit_failed",
+            ),
+            (
+                Err(DeleteListingSourceError::TemporarilyUnavailable {
+                    source: static_error("temporary"),
+                }),
+                "persistence_unavailable",
+            ),
+            (
+                Err(DeleteListingSourceError::InvalidPersistedState {
+                    source: static_error("invalid"),
+                }),
+                "invalid_persisted_state",
+            ),
+            (
+                Err(DeleteListingSourceError::Internal {
+                    source: static_error("internal"),
+                }),
+                "internal_failure",
+            ),
+        ];
+
+        for (result, expected) in cases {
+            assert_eq!(expected, delete_outcome(&result));
         }
     }
 

@@ -1,9 +1,16 @@
+use application::operation_context::{CorrelationId, OperationContext, Principal, RequestId};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope,
     product_listing_opensearch::consume_product_listing_opensearch_queue, serve_with_runtime,
 };
 use domain_primitives::event_id::EventId;
 use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
+use listing_source_core::ListingSourceId;
+use listing_source_postgres::SqlxListingSourceRepositoryFactory;
+use listing_source_service::use_cases::commands::delete_listing_source::{
+    DeleteListingSourceCommand, DeleteListingSourceError, DeleteListingSourceHandler,
+    DeleteListingSourceUseCase,
+};
 use opensearch::GetParts;
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_core::product_listing_id::ProductListingId;
@@ -19,6 +26,9 @@ use test_api::{
     get_opensearch_client, get_postgres_client, get_sequin_worker_webhook_bind_addr, refresh_index,
 };
 use tokio::{sync::oneshot, task::JoinHandle};
+use user_service::use_cases::queries::check_user_admin::{
+    CheckUserAdminError, CheckUserAdminRequest, CheckUserAdminResult, CheckUserAdminUseCase,
+};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 mod support;
@@ -156,6 +166,64 @@ async fn should_skip_stale_product_event_trigger() {
             NO_PROJECTION_OBSERVATION,
         )
         .await
+    }
+    .await;
+
+    worker
+        .finish(result)
+        .await
+        .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+async fn should_preserve_live_product_projection_and_withdrawn_tombstone_when_source_delete_is_blocked()
+ {
+    let worker = ProductListingOpenSearchWorker::start().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let fixture = insert_active_product_with_event(&worker.pool, 21).await?;
+        let live_document = wait_for_product_response(fixture.product_listing_id).await?;
+
+        let active_delete = delete_listing_source_as_system(&worker.pool, fixture.listing_source_id).await;
+        assert!(matches!(
+            active_delete,
+            Err(DeleteListingSourceError::DependencyConflict { .. })
+        ));
+        assert_product_response_unchanged_for(
+            fixture.product_listing_id,
+            &live_document,
+            NO_PROJECTION_OBSERVATION,
+        )
+        .await?;
+
+        let _withdrawn_event_id = withdraw_product_listing(&worker.pool, fixture.product_listing_id).await?;
+        let tombstone = wait_for_product_tombstone(fixture.product_listing_id, 22).await?;
+        let withdrawn_delete = delete_listing_source_as_system(&worker.pool, fixture.listing_source_id).await;
+        assert!(matches!(
+            withdrawn_delete,
+            Err(DeleteListingSourceError::DependencyConflict { .. })
+        ));
+        assert_product_response_unchanged_for(
+            fixture.product_listing_id,
+            &tombstone,
+            NO_PROJECTION_OBSERVATION,
+        )
+        .await?;
+
+        let source_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+        )
+        .bind(uuid::Uuid::from(fixture.listing_source_id))
+        .fetch_one(&worker.pool)
+        .await?;
+        let withdrawn_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM product_listings WHERE product_listing_id = $1 AND lifecycle = 'WITHDRAWN')",
+        )
+        .bind(uuid::Uuid::from(fixture.product_listing_id))
+        .fetch_one(&worker.pool)
+        .await?;
+        assert!(source_exists);
+        assert!(withdrawn_exists);
+        Ok(())
     }
     .await;
 
@@ -386,7 +454,41 @@ async fn should_reject_unrouted_product_cdc_without_creating_a_projection() {
 
 struct ProductListingFixture {
     product_listing_id: ProductListingId,
+    listing_source_id: ListingSourceId,
     event_id: EventId,
+}
+
+struct SystemOnlyAdminCheck;
+
+#[async_trait::async_trait]
+impl CheckUserAdminUseCase for SystemOnlyAdminCheck {
+    async fn execute(
+        &self,
+        _: &OperationContext,
+        _: CheckUserAdminRequest,
+    ) -> Result<CheckUserAdminResult, CheckUserAdminError> {
+        Err(CheckUserAdminError::Forbidden)
+    }
+}
+
+async fn delete_listing_source_as_system(
+    pool: &sqlx::PgPool,
+    listing_source_id: ListingSourceId,
+) -> Result<(), DeleteListingSourceError> {
+    DeleteListingSourceHandler::new(
+        SqlxUnitOfWork::new(pool.clone()),
+        SqlxListingSourceRepositoryFactory::new(),
+        SystemOnlyAdminCheck,
+    )
+    .execute(
+        &OperationContext {
+            principal: Principal::System,
+            request_id: RequestId::new("product-opensearch-listing-source-delete-test"),
+            correlation_id: CorrelationId::new(listing_source_id.to_string()),
+        },
+        DeleteListingSourceCommand { listing_source_id },
+    )
+    .await
 }
 
 struct ProductListingOpenSearchWorker {
@@ -519,6 +621,7 @@ async fn insert_active_product_with_event(
     tx.commit().await?;
     Ok(ProductListingFixture {
         product_listing_id,
+        listing_source_id: ListingSourceId::from(listing_source_id),
         event_id,
     })
 }
@@ -642,6 +745,7 @@ async fn insert_sold_product_with_event(
     tx.commit().await?;
     Ok(ProductListingFixture {
         product_listing_id,
+        listing_source_id: ListingSourceId::from(listing_source_id),
         event_id,
     })
 }
@@ -671,6 +775,7 @@ async fn insert_sold_product_without_main_price_with_event(
     tx.commit().await?;
     Ok(ProductListingFixture {
         product_listing_id,
+        listing_source_id: ListingSourceId::from(listing_source_id),
         event_id,
     })
 }
