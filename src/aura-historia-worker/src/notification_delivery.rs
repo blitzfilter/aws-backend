@@ -1,120 +1,104 @@
 use crate::{
-    InMemoryQueueReceiver,
+    WorkerScope,
     cdc::{DomainJob, DomainJobPayload},
-    retry::{InMemoryDeadLetterQueue, RetryConfig, run_with_retry},
+    queue::{JobOutcome, WorkerQueueReceiver},
 };
-use application::error::{BoxError, box_error};
-use notification_core::notification_delivery_id::NotificationDeliveryId;
-use notification_service::use_cases::commands::deliver_notification::{
-    DeliverNotificationCommand, DeliverNotificationResult, DeliverNotificationUseCase,
+use notification_service::{
+    ports::notification_delivery_repository::NotificationDeliveryError,
+    use_cases::commands::deliver_notification::{
+        DeliverNotificationCommand, DeliverNotificationError, DeliverNotificationResult,
+        DeliverNotificationUseCase,
+    },
 };
 use std::sync::Arc;
-use tracing::{error, info};
+use time::{Duration, OffsetDateTime};
+
+const LEASE_SAFETY: Duration = Duration::seconds(5);
 
 pub async fn consume_notification_delivery_queue(
-    mut receiver: InMemoryQueueReceiver<DomainJob>,
+    receiver: impl Into<WorkerQueueReceiver>,
     use_case: Arc<dyn DeliverNotificationUseCase>,
 ) {
-    let dead_letters = InMemoryDeadLetterQueue::new();
-
-    while let Some(job) = receiver.recv().await {
-        let idempotency_key = job.idempotency_key.as_str().to_owned();
-        let ordering_key = job.ordering_key.as_str().to_owned();
-        let delivery_id = notification_delivery_id(&job)
-            .unwrap_or_default()
-            .to_owned();
-        let use_case_for_retry = Arc::clone(&use_case);
-        let result = run_with_retry(job, RetryConfig::default(), &dead_letters, move |job| {
-            let use_case = Arc::clone(&use_case_for_retry);
-            async move { execute_job(use_case, job).await }
+    receiver
+        .into()
+        .run(WorkerScope::NotificationDelivery, move |job| {
+            execute_job(use_case.clone(), job)
         })
         .await;
-
-        match result {
-            Ok(()) => info!(
-                job_type = "notification_delivery",
-                %idempotency_key,
-                %ordering_key,
-                %delivery_id,
-                outcome = "applied",
-                "notification delivery job completed"
-            ),
-            Err(error) => error!(
-                job_type = "notification_delivery",
-                %idempotency_key,
-                %ordering_key,
-                %delivery_id,
-                error = %error,
-                outcome = "dead_lettered_in_memory",
-                "notification delivery job failed"
-            ),
+}
+async fn execute_job(use_case: Arc<dyn DeliverNotificationUseCase>, job: DomainJob) -> JobOutcome {
+    let Ok(command) = command_from_job(job) else {
+        return JobOutcome::Invalid("delivery_metadata_invalid");
+    };
+    match use_case.execute(command).await {
+        Ok(result) => delivery_outcome(result, OffsetDateTime::now_utc()),
+        Err(error) => delivery_error(error),
+    }
+}
+fn delivery_outcome(result: DeliverNotificationResult, now: OffsetDateTime) -> JobOutcome {
+    match result {
+        DeliverNotificationResult::Delivered { .. } => JobOutcome::Complete("delivered"),
+        DeliverNotificationResult::AlreadyDelivered => JobOutcome::Complete("already_delivered"),
+        DeliverNotificationResult::PermanentlyFailed => JobOutcome::Complete("permanently_failed"),
+        // This result follows a committed permanent-failure finalization in the service.
+        DeliverNotificationResult::SourceMissing => {
+            JobOutcome::Complete("source_missing_finalized")
+        }
+        DeliverNotificationResult::DeliveryMissing => JobOutcome::Retry("delivery_missing"),
+        DeliverNotificationResult::AlreadyClaimed { lease_expires_at } => {
+            match lease_expires_at.checked_add(LEASE_SAFETY) {
+                Some(not_before) => JobOutcome::RetryAfter(not_before),
+                None => JobOutcome::Invalid("lease_expiry_invalid"),
+            }
+        }
+        DeliverNotificationResult::ClaimDeferred { retry_after } => {
+            let Ok(delay) = Duration::try_from(retry_after) else {
+                return JobOutcome::Invalid("claim_delay_invalid");
+            };
+            match now.checked_add(delay.max(Duration::seconds(1))) {
+                Some(not_before) => JobOutcome::RetryAfter(not_before),
+                None => JobOutcome::Invalid("claim_delay_invalid"),
+            }
         }
     }
 }
-
-#[tracing::instrument(
-    name = "process_notification_delivery_job",
-    skip(use_case, job),
-    fields(notification_delivery_id = tracing::field::Empty)
-)]
-async fn execute_job(
-    use_case: Arc<dyn DeliverNotificationUseCase>,
-    job: DomainJob,
-) -> Result<(), BoxError> {
-    let command = command_from_job(job).map_err(box_error)?;
-    tracing::Span::current().record(
-        "notification_delivery_id",
-        tracing::field::display(command.notification_delivery_id),
-    );
-    let outcome = use_case.execute(command).await.map_err(box_error)?;
-    let outcome = match outcome {
-        DeliverNotificationResult::Delivered { .. } => "delivered",
-        DeliverNotificationResult::DeliveryMissing => "delivery_missing",
-        DeliverNotificationResult::AlreadyDelivered => "already_delivered",
-        DeliverNotificationResult::AlreadyClaimed => "already_claimed",
-        DeliverNotificationResult::SourceMissing => "source_missing",
-        DeliverNotificationResult::PermanentlyFailed => "permanently_failed",
-    };
-    info!(
-        job_type = "notification_delivery",
-        outcome, "notification delivery processed"
-    );
-    Ok(())
+fn delivery_error(error: DeliverNotificationError) -> JobOutcome {
+    match error {
+        DeliverNotificationError::Repository(
+            NotificationDeliveryError::InvalidPersistedState { .. },
+        ) => JobOutcome::Invalid("delivery_state_invalid"),
+        DeliverNotificationError::UnregisteredChannel { .. } => {
+            JobOutcome::Invalid("delivery_channel_unregistered")
+        }
+        DeliverNotificationError::LeaseLost => JobOutcome::Retry("lease_lost"),
+        DeliverNotificationError::AmbiguousSend(_) => {
+            JobOutcome::DependencyUnavailable("provider_acceptance_unknown")
+        }
+        DeliverNotificationError::AttemptTimedOut { .. } => {
+            JobOutcome::DependencyUnavailable("delivery_attempt_timeout")
+        }
+        DeliverNotificationError::FinalizationExhausted { .. } => {
+            JobOutcome::DependencyUnavailable("delivery_finalization_unconfirmed")
+        }
+        DeliverNotificationError::Repository(NotificationDeliveryError::OperationFailed {
+            ..
+        })
+        | DeliverNotificationError::RetryableSend(_) => {
+            JobOutcome::DependencyUnavailable("delivery_dependency_unavailable")
+        }
+    }
 }
-
-fn notification_delivery_id(job: &DomainJob) -> Option<&str> {
-    let DomainJobPayload::NotificationDeliveryCreated(delivery) = &job.payload else {
-        return None;
-    };
-    Some(delivery.notification_delivery_id.as_str())
-}
-
-fn command_from_job(
-    job: DomainJob,
-) -> Result<DeliverNotificationCommand, NotificationDeliveryWorkerError> {
+fn command_from_job(job: DomainJob) -> Result<DeliverNotificationCommand, crate::jobs::InvalidJob> {
     let DomainJobPayload::NotificationDeliveryCreated(delivery) = job.payload else {
-        return Err(NotificationDeliveryWorkerError::UnexpectedJobPayload);
+        return Err(crate::jobs::InvalidJob);
     };
-    let notification_delivery_id =
-        NotificationDeliveryId::try_from(delivery.notification_delivery_id).map_err(|source| {
-            NotificationDeliveryWorkerError::InvalidDeliveryId {
-                source: box_error(source),
-            }
-        })?;
     Ok(DeliverNotificationCommand {
-        notification_delivery_id,
+        notification_delivery_id: delivery
+            .notification_delivery_id
+            .as_str()
+            .try_into()
+            .map_err(|_| crate::jobs::InvalidJob)?,
     })
-}
-
-#[derive(Debug, thiserror::Error)]
-enum NotificationDeliveryWorkerError {
-    #[error("notification delivery queue received an unexpected job payload")]
-    UnexpectedJobPayload,
-    #[error("notification delivery job has an invalid delivery id")]
-    InvalidDeliveryId {
-        #[source]
-        source: BoxError,
-    },
 }
 
 #[cfg(test)]
@@ -125,33 +109,30 @@ mod tests {
         cdc::{IdempotencyKey, NotificationDeliveryCreatedJob, OrderingKey, WorkerQueue},
         in_memory_queue,
     };
+    use notification_core::notification_delivery_id::NotificationDeliveryId;
     use std::sync::Mutex;
-
     #[derive(Default)]
     struct Handler {
         commands: Mutex<Vec<DeliverNotificationCommand>>,
     }
-
     #[async_trait::async_trait]
     impl DeliverNotificationUseCase for Handler {
         async fn execute(
             &self,
             command: DeliverNotificationCommand,
-        ) -> Result<DeliverNotificationResult, notification_service::use_cases::commands::deliver_notification::DeliverNotificationError>{
+        ) -> Result<DeliverNotificationResult, DeliverNotificationError> {
             self.commands
                 .lock()
-                .map_err(|_| notification_service::use_cases::commands::deliver_notification::DeliverNotificationError::LeaseLost)?
+                .map_err(|_| DeliverNotificationError::LeaseLost)?
                 .push(command);
             Ok(DeliverNotificationResult::Delivered { attempt_count: 1 })
         }
     }
-
     #[tokio::test]
     async fn should_map_notification_delivery_job_to_delivery_command()
     -> Result<(), Box<dyn std::error::Error>> {
         let (sender, receiver) = in_memory_queue(QueueConfig::new(1))?;
         let notification_delivery_id = NotificationDeliveryId::new();
-
         sender
             .enqueue(DomainJob {
                 target_queue: WorkerQueue::NotificationDelivery,
@@ -170,19 +151,140 @@ mod tests {
             .await?;
         drop(sender);
         let handler = Arc::new(Handler::default());
-
         consume_notification_delivery_queue(receiver, handler.clone()).await;
-
         assert_eq!(
             vec![DeliverNotificationCommand {
-                notification_delivery_id,
+                notification_delivery_id
             }],
-            handler
-                .commands
-                .lock()
-                .map_err(|_| std::io::Error::other("test mutex poisoned"))?
-                .clone()
+            *handler.commands.lock().unwrap()
         );
         Ok(())
+    }
+    #[test]
+    fn should_defer_active_lease_to_persisted_expiry_plus_safety() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let expiry = now + Duration::minutes(5);
+        assert_eq!(
+            JobOutcome::RetryAfter(expiry + LEASE_SAFETY),
+            delivery_outcome(
+                DeliverNotificationResult::AlreadyClaimed {
+                    lease_expires_at: expiry
+                },
+                now
+            )
+        );
+        assert_eq!(
+            JobOutcome::RetryAfter(now + Duration::seconds(2)),
+            delivery_outcome(
+                DeliverNotificationResult::ClaimDeferred {
+                    retry_after: std::time::Duration::from_secs(2)
+                },
+                now
+            )
+        );
+    }
+    #[test]
+    fn should_never_ack_delivery_errors_in_any_attempt_phase() {
+        use notification_core::notification_delivery::NotificationDeliveryChannel;
+        use notification_service::{
+            ports::notification_channel_sender::NotificationChannelSendError,
+            use_cases::commands::deliver_notification::DeliveryAttemptPhase,
+        };
+        for error in [
+            DeliverNotificationError::LeaseLost,
+            DeliverNotificationError::Repository(NotificationDeliveryError::OperationFailed {
+                source: std::io::Error::other("database unavailable").into(),
+            }),
+            DeliverNotificationError::Repository(
+                NotificationDeliveryError::InvalidPersistedState {
+                    source: std::io::Error::other("invalid persisted state").into(),
+                },
+            ),
+            DeliverNotificationError::UnregisteredChannel {
+                channel: NotificationDeliveryChannel::Email,
+            },
+            DeliverNotificationError::RetryableSend(NotificationChannelSendError::Retryable {
+                code: "UNAVAILABLE",
+                source: std::io::Error::other("provider unavailable").into(),
+            }),
+            DeliverNotificationError::AmbiguousSend(NotificationChannelSendError::Ambiguous {
+                code: "UNKNOWN",
+                source: std::io::Error::other("response lost").into(),
+            }),
+            DeliverNotificationError::FinalizationExhausted {
+                source: NotificationDeliveryError::OperationFailed {
+                    source: std::io::Error::other("commit unconfirmed").into(),
+                },
+            },
+        ] {
+            assert!(!matches!(delivery_error(error), JobOutcome::Complete(_)));
+        }
+        for phase in [
+            DeliveryAttemptPhase::Claim,
+            DeliveryAttemptPhase::Provider,
+            DeliveryAttemptPhase::Finalization,
+        ] {
+            assert!(!matches!(
+                delivery_error(DeliverNotificationError::AttemptTimedOut { phase }),
+                JobOutcome::Complete(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn should_bound_deferrals_without_treating_invalid_expiry_as_completion() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        assert_eq!(
+            JobOutcome::RetryAfter(now + Duration::seconds(1)),
+            delivery_outcome(
+                DeliverNotificationResult::ClaimDeferred {
+                    retry_after: std::time::Duration::ZERO
+                },
+                now
+            )
+        );
+        assert!(matches!(
+            delivery_outcome(
+                DeliverNotificationResult::ClaimDeferred {
+                    retry_after: std::time::Duration::MAX,
+                },
+                now
+            ),
+            JobOutcome::Invalid(_)
+        ));
+        let expiry = time::Date::MAX.with_hms(23, 59, 59).unwrap().assume_utc();
+        assert!(matches!(
+            delivery_outcome(
+                DeliverNotificationResult::AlreadyClaimed {
+                    lease_expires_at: expiry,
+                },
+                now
+            ),
+            JobOutcome::Invalid(_)
+        ));
+    }
+
+    #[test]
+    fn should_delete_only_durable_terminal_delivery_results() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        for result in [
+            DeliverNotificationResult::Delivered { attempt_count: 1 },
+            DeliverNotificationResult::AlreadyDelivered,
+            DeliverNotificationResult::SourceMissing,
+            DeliverNotificationResult::PermanentlyFailed,
+        ] {
+            assert!(matches!(
+                delivery_outcome(result, now),
+                JobOutcome::Complete(_)
+            ));
+        }
+        assert!(matches!(
+            delivery_outcome(DeliverNotificationResult::DeliveryMissing, now),
+            JobOutcome::Retry(_)
+        ));
+        for error in [DeliverNotificationError::LeaseLost,
+            DeliverNotificationError::AttemptTimedOut { phase: notification_service::use_cases::commands::deliver_notification::DeliveryAttemptPhase::Finalization }] {
+            assert!(!matches!(delivery_error(error), JobOutcome::Complete(_)));
+        }
     }
 }

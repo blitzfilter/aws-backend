@@ -16,6 +16,13 @@ pub enum NotificationChannelSendError {
         #[source]
         source: BoxError,
     },
+    /// Acceptance is unknown; keep the lease and do not send again in this attempt.
+    #[error("notification channel send outcome is unknown: {code}")]
+    Ambiguous {
+        code: &'static str,
+        #[source]
+        source: BoxError,
+    },
     #[error("notification channel send failed permanently: {code}")]
     Permanent {
         code: &'static str,
@@ -27,7 +34,9 @@ pub enum NotificationChannelSendError {
 impl NotificationChannelSendError {
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::Retryable { code, .. } | Self::Permanent { code, .. } => code,
+            Self::Retryable { code, .. }
+            | Self::Ambiguous { code, .. }
+            | Self::Permanent { code, .. } => code,
         }
     }
 }
@@ -36,6 +45,8 @@ impl NotificationChannelSendError {
 pub trait NotificationChannelSender: Send + Sync {
     fn channel(&self) -> NotificationDeliveryChannel;
 
+    /// Called at most once per service attempt. Cancellation/timeout may follow provider
+    /// acceptance; implementations must not detach work or claim exactly-once delivery.
     async fn send(
         &self,
         source: &NotificationDeliverySource,

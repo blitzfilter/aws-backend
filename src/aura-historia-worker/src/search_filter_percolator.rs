@@ -1,88 +1,102 @@
 use crate::{
-    InMemoryQueueReceiver,
+    WorkerScope,
     cdc::{DomainJob, DomainJobPayload},
-    retry::{InMemoryDeadLetterQueue, RetryConfig, run_with_retry},
+    queue::{JobOutcome, WorkerQueueReceiver},
 };
-use application::error::{BoxError, box_error};
 use search_filter_service::use_cases::{
-    MatchProductListingEventCommand, MatchProductListingEventOutcome,
-    MatchProductListingEventUseCase,
+    MatchProductListingEventCommand, MatchProductListingEventError,
+    MatchProductListingEventOutcome, MatchProductListingEventUseCase,
 };
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info};
 
 pub async fn consume_search_filter_percolator_queue(
-    mut receiver: InMemoryQueueReceiver<DomainJob>,
+    receiver: impl Into<WorkerQueueReceiver>,
     use_case: Arc<dyn MatchProductListingEventUseCase>,
 ) {
-    let dead_letters = InMemoryDeadLetterQueue::new();
-
-    while let Some(job) = receiver.recv().await {
-        let idempotency_key = job.idempotency_key.as_str().to_owned();
-        let ordering_key = job.ordering_key.as_str().to_owned();
-        let use_case_for_retry = Arc::clone(&use_case);
-        let outcome = Arc::new(Mutex::new(None));
-        let outcome_for_retry = Arc::clone(&outcome);
-        let result = run_with_retry(job, RetryConfig::default(), &dead_letters, move |job| {
-            let use_case = Arc::clone(&use_case_for_retry);
-            let outcome = Arc::clone(&outcome_for_retry);
-            async move { execute_job(use_case, job, outcome).await }
+    receiver
+        .into()
+        .run(WorkerScope::SearchFilterPercolator, move |job| {
+            execute_job(use_case.clone(), job)
         })
         .await;
-
-        match (result, outcome.lock().await.take()) {
-            (Ok(()), Some(outcome)) => info!(
-                job_type = "search_filter_percolator",
-                %idempotency_key,
-                %ordering_key,
-                ?outcome,
-                "search filter percolator job completed"
-            ),
-            (Ok(()), None) => error!(
-                job_type = "search_filter_percolator",
-                %idempotency_key,
-                %ordering_key,
-                outcome = "missing",
-                "search filter percolator job completed without an outcome"
-            ),
-            (Err(error), _) => error!(
-                job_type = "search_filter_percolator",
-                %idempotency_key,
-                %ordering_key,
-                error = %error,
-                outcome = "dead_lettered_in_memory",
-                "search filter percolator job failed"
-            ),
-        }
-    }
 }
 
 async fn execute_job(
     use_case: Arc<dyn MatchProductListingEventUseCase>,
     job: DomainJob,
-    outcome: Arc<Mutex<Option<MatchProductListingEventOutcome>>>,
-) -> Result<(), BoxError> {
-    let command = command_from_job(job).map_err(box_error)?;
-    let result = use_case.execute(command).await.map_err(box_error)?;
-    *outcome.lock().await = Some(result.outcome);
-    Ok(())
-}
-
-fn command_from_job(
-    job: DomainJob,
-) -> Result<MatchProductListingEventCommand, SearchFilterPercolatorWorkerError> {
+) -> JobOutcome {
     let DomainJobPayload::ProductListingEvent(event) = job.payload else {
-        return Err(SearchFilterPercolatorWorkerError::UnexpectedJobPayload);
+        return JobOutcome::Invalid("unexpected_payload");
     };
-    Ok(MatchProductListingEventCommand {
-        origin_event_id: event.event_id,
-        product_listing_id: event.product_listing_id,
-    })
+    match use_case
+        .execute(MatchProductListingEventCommand {
+            origin_event_id: event.event_id,
+            product_listing_id: event.product_listing_id,
+        })
+        .await
+    {
+        Ok(result) => {
+            tracing::info!(
+                percolated_count = result.percolated_count,
+                persisted_match_count = result.persisted_match_count,
+                enhanced_evaluation_failure_count = result.enhanced_evaluation_failure_count,
+                "percolation completed"
+            );
+            percolator_outcome(result.outcome)
+        }
+        Err(error) => {
+            use MatchProductListingEventError as E;
+            match error {
+                E::ProductListingSourceStateInvalid { .. }
+                | E::ProductListingSourceMismatch
+                | E::SaleSnapshotStateInvalid { .. }
+                | E::EventSnapshotStateInvalid { .. }
+                | E::EventValuationConversionFailed { .. }
+                | E::CandidateStateInvalid { .. }
+                | E::PersistedMatchStateInvalid { .. } => {
+                    JobOutcome::Invalid("percolator_state_invalid")
+                }
+                E::SaleSnapshotNotFound { .. } | E::EventSnapshotNotFound { .. } => {
+                    JobOutcome::Retry("valuation_snapshot_missing")
+                }
+                _ => JobOutcome::DependencyUnavailable("percolator_unavailable"),
+            }
+        }
+    }
+}
+fn percolator_outcome(outcome: MatchProductListingEventOutcome) -> JobOutcome {
+    match outcome {
+        MatchProductListingEventOutcome::Processed => JobOutcome::Complete("processed"),
+        MatchProductListingEventOutcome::DuplicateAlreadyPersisted => {
+            JobOutcome::Complete("duplicate")
+        }
+        MatchProductListingEventOutcome::StaleSourceSkipped => JobOutcome::Complete("stale"),
+        MatchProductListingEventOutcome::InactiveSourceSkipped => JobOutcome::Complete("withdrawn"),
+        MatchProductListingEventOutcome::IgnoredEventType => JobOutcome::Complete("ignored_event"),
+        MatchProductListingEventOutcome::SourceNotFound => JobOutcome::Retry("missing_source"),
+    }
 }
 
-#[derive(Debug, thiserror::Error)]
-enum SearchFilterPercolatorWorkerError {
-    #[error("search filter percolator queue received an unexpected job payload")]
-    UnexpectedJobPayload,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn should_not_ack_missing_source_or_invalidate_historical_work_in_transport() {
+        assert_eq!(
+            JobOutcome::Retry("missing_source"),
+            percolator_outcome(MatchProductListingEventOutcome::SourceNotFound)
+        );
+        for outcome in [
+            MatchProductListingEventOutcome::Processed,
+            MatchProductListingEventOutcome::DuplicateAlreadyPersisted,
+            MatchProductListingEventOutcome::StaleSourceSkipped,
+            MatchProductListingEventOutcome::InactiveSourceSkipped,
+            MatchProductListingEventOutcome::IgnoredEventType,
+        ] {
+            assert!(matches!(
+                percolator_outcome(outcome),
+                JobOutcome::Complete(_)
+            ));
+        }
+    }
 }

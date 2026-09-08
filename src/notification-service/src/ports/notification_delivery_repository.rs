@@ -47,7 +47,12 @@ pub enum ClaimNotificationDeliveryOutcome {
     Missing,
     Delivered,
     PermanentlyFailed,
-    AlreadyClaimed,
+    /// Another attempt owns this persisted PROCESSING lease. Never acknowledge it.
+    AlreadyClaimed {
+        lease_expires_at: OffsetDateTime,
+    },
+    /// The failed claim raced with a release or expiry. Retry shortly, without acknowledging.
+    Reclaimable,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +80,9 @@ pub trait NotificationDeliveryRepository: Send + Sync {
         lease_token: Uuid,
     ) -> Result<ClaimNotificationDeliveryOutcome, NotificationDeliveryError>;
 
+    /// Finalization methods return true for a committed write OR an exact replay of the
+    /// original token, result, and completion timestamp. False means ownership was lost.
+    /// Errors (including an ambiguous commit) must never be treated as completion.
     async fn mark_delivered(
         &self,
         notification_delivery_id: NotificationDeliveryId,

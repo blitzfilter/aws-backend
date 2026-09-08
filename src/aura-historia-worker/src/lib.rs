@@ -1,25 +1,31 @@
 pub mod cdc;
+mod http;
+pub mod jobs;
 pub mod notification_delivery;
 pub mod product_content_assessment;
 pub mod product_embedding;
 pub mod product_listing_opensearch;
 pub mod product_listing_raw_normalization;
 pub mod product_translation;
-pub mod retry;
+pub mod queue;
+
 pub mod search_filter_match_notifications;
 pub mod search_filter_percolator;
 pub mod search_filter_projection;
 pub mod watchlist_notifications;
+mod wire;
 
 use platform_postgres::{PostgresPoolConfig, PostgresPoolConfigError};
 use std::future::Future;
 use std::net::{AddrParseError, SocketAddr};
 use std::num::ParseIntError;
-use std::sync::Arc;
+#[cfg(test)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, error, info};
+use tokio::net::TcpListener;
+#[cfg(test)]
+use tokio::net::TcpStream;
+use tokio::sync::mpsc;
+use tracing::info;
 
 use crate::cdc::{
     CdcFanout, CdcIngestError, WorkerQueue, WorkerQueueReceivers, WorkerQueueRegistry,
@@ -50,14 +56,14 @@ const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 2;
 
 const DEFAULT_WORKER_HEALTH_BIND_ADDR: &str = "0.0.0.0:8081";
 const DEFAULT_LOCAL_WORKER_SCOPE: &str = "search-filter-projection";
-const REQUEST_BUFFER_BYTES: usize = 65_536;
+
 pub const SEQUIN_CDC_PATH: &str = "/cdc/sequin";
 
 pub trait WorkerJob: Send + 'static {}
 
 impl<T> WorkerJob for T where T: Send + 'static {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::EnumIter)]
 pub enum WorkerScope {
     SearchFilterProjection,
     SearchFilterPercolator,
@@ -72,6 +78,21 @@ pub enum WorkerScope {
 }
 
 impl WorkerScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SearchFilterProjection => "search-filter-projection",
+            Self::SearchFilterPercolator => "search-filter-percolator",
+            Self::SearchFilterMatchNotification => "search-filter-match-notification",
+            Self::WatchlistNotification => "watchlist-notification",
+            Self::ProductListingContentAssessment => "product-content-assessment",
+            Self::ProductListingTranslation => "product-translation",
+            Self::ProductListingEmbedding => "product-embedding",
+            Self::ProductListingOpenSearch => "product-listing-opensearch",
+            Self::ProductListingRawNormalization => "product-listing-normalization",
+            Self::NotificationDelivery => "notification-delivery",
+        }
+    }
+
     pub(crate) fn from_getter<F>(mut get: F) -> Result<Self, WorkerStartupConfigError>
     where
         F: FnMut(&'static str) -> Option<String>,
@@ -89,19 +110,10 @@ impl WorkerScope {
             }
         };
 
-        match value.as_str() {
-            "search-filter-projection" => Ok(Self::SearchFilterProjection),
-            "search-filter-percolator" => Ok(Self::SearchFilterPercolator),
-            "search-filter-match-notification" => Ok(Self::SearchFilterMatchNotification),
-            "watchlist-notification" => Ok(Self::WatchlistNotification),
-            "product-content-assessment" => Ok(Self::ProductListingContentAssessment),
-            "product-translation" => Ok(Self::ProductListingTranslation),
-            "product-embedding" => Ok(Self::ProductListingEmbedding),
-            "product-listing-opensearch" => Ok(Self::ProductListingOpenSearch),
-            "product-listing-normalization" => Ok(Self::ProductListingRawNormalization),
-            "notification-delivery" => Ok(Self::NotificationDelivery),
-            _ => Err(WorkerStartupConfigError::InvalidScope { value }),
-        }
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|scope| scope.as_str() == value)
+            .ok_or(WorkerStartupConfigError::InvalidScope { value })
     }
 
     pub(crate) const fn consumer_queue(self) -> WorkerQueue {
@@ -241,6 +253,7 @@ impl WorkerNotificationDeliveryConfig {
 pub struct WorkerStartupConfig {
     worker: WorkerConfig,
     scope: WorkerScope,
+    queue: queue::SqsQueueConfig,
     postgres: PostgresPoolConfig,
     opensearch: Option<WorkerOpenSearchConfig>,
     vertex_ai: Option<WorkerVertexAiConfig>,
@@ -259,6 +272,7 @@ impl WorkerStartupConfig {
         let stage = get(WORKER_STAGE_ENV);
         let scope = WorkerScope::from_getter(&mut get)?;
         let worker = WorkerConfig::from_getter(&mut get)?;
+        let queue = queue::SqsQueueConfig::from_getter(scope, &mut get)?;
         let postgres = postgres_config(&mut get)?;
         let (opensearch, vertex_ai, notification_delivery) = match scope {
             WorkerScope::SearchFilterProjection | WorkerScope::ProductListingOpenSearch => (
@@ -320,11 +334,16 @@ impl WorkerStartupConfig {
         Ok(Self {
             worker,
             scope,
+            queue,
             postgres,
             opensearch,
             vertex_ai,
             notification_delivery,
         })
+    }
+
+    pub fn queue(&self) -> &queue::SqsQueueConfig {
+        &self.queue
     }
 
     pub const fn worker(&self) -> &WorkerConfig {
@@ -463,6 +482,8 @@ pub enum WorkerPostgresConfigError {
 #[derive(thiserror::Error, Debug)]
 pub enum WorkerStartupConfigError {
     #[error(transparent)]
+    Queue(#[from] queue::QueueError),
+    #[error(transparent)]
     Worker(#[from] WorkerConfigError),
     #[error(transparent)]
     Postgres(#[from] WorkerPostgresConfigError),
@@ -552,14 +573,14 @@ where
 #[derive(Debug, Clone)]
 pub struct WorkerRuntime {
     cdc_fanout: CdcFanout,
-    _default_receivers: Option<Arc<Mutex<WorkerQueueReceivers>>>,
+    control: queue::RuntimeControl,
 }
 
 impl WorkerRuntime {
     pub fn new(cdc_fanout: CdcFanout) -> Self {
         Self {
             cdc_fanout,
-            _default_receivers: None,
+            control: queue::RuntimeControl::new(true),
         }
     }
 
@@ -711,17 +732,47 @@ impl WorkerRuntime {
         Self::new(CdcFanout::new(WorkerQueueRegistry::new()))
     }
 
+    pub fn shutdown(&self) {
+        self.control.shutdown();
+    }
+
     pub async fn ingest_cdc_json(&self, body: &str) -> Result<usize, CdcIngestError> {
+        if self.control.stopping() {
+            return Err(cdc::CdcFanoutError::PublicationFailed.into());
+        }
         self.cdc_fanout.ingest_json(body).await
     }
 }
 
 pub struct WorkerRuntimeComposition {
     runtime: WorkerRuntime,
-    receiver: InMemoryQueueReceiver<crate::cdc::DomainJob>,
+    receiver: queue::WorkerQueueReceiver,
 }
 
 impl WorkerRuntimeComposition {
+    /// Normal production composition, also usable by embedded runtimes with their AWS client.
+    pub async fn with_sqs(
+        client: aws_sdk_sqs::Client,
+        config: queue::SqsQueueConfig,
+    ) -> Result<Self, queue::QueueError> {
+        Ok(Self::from_sqs_queue(
+            queue::SqsQueue::new(client, config).await?,
+        ))
+    }
+
+    pub fn from_sqs_queue(queue: queue::SqsQueue) -> Self {
+        let scope = queue.config().scope();
+        let control = queue::RuntimeControl::new(false);
+        let receiver = queue::WorkerQueueReceiver::sqs(queue.clone(), control.clone());
+        let registry = WorkerQueueRegistry::new().with_sqs_queue(queue);
+        let runtime = WorkerRuntime {
+            cdc_fanout: CdcFanout::for_scope(scope, registry),
+            control,
+        };
+        Self { runtime, receiver }
+    }
+
+    /// Explicit legacy in-memory composition. Never selected by production startup.
     pub fn build(scope: WorkerScope, config: QueueConfig) -> Result<Self, QueueConfigError> {
         let (runtime, mut receivers) = match scope {
             WorkerScope::SearchFilterProjection => {
@@ -763,22 +814,20 @@ impl WorkerRuntimeComposition {
                     queue: consumer_queue,
                 })?;
 
-        Ok(Self { runtime, receiver })
+        Ok(Self {
+            runtime,
+            receiver: receiver.into(),
+        })
     }
 
-    pub fn into_parts(self) -> (WorkerRuntime, InMemoryQueueReceiver<crate::cdc::DomainJob>) {
+    pub fn into_parts(self) -> (WorkerRuntime, queue::WorkerQueueReceiver) {
         (self.runtime, self.receiver)
     }
 }
 
 impl Default for WorkerRuntime {
     fn default() -> Self {
-        let (runtime, receivers) = Self::with_all_queues(QueueConfig::new(1024))
-            .expect("default queue capacity should be valid");
-        Self {
-            cdc_fanout: runtime.cdc_fanout,
-            _default_receivers: Some(Arc::new(Mutex::new(receivers))),
-        }
+        Self::empty()
     }
 }
 
@@ -807,7 +856,7 @@ pub fn route(method: &str, path: &str) -> HttpResponse {
 
 pub async fn run_until_shutdown<S>(config: WorkerConfig, shutdown: S) -> Result<(), WorkerRunError>
 where
-    S: Future<Output = ()>,
+    S: Future<Output = ()> + Send + 'static,
 {
     run_until_shutdown_with_runtime(config, WorkerRuntime::default(), shutdown).await
 }
@@ -818,7 +867,7 @@ pub async fn run_until_shutdown_with_runtime<S>(
     shutdown: S,
 ) -> Result<(), WorkerRunError>
 where
-    S: Future<Output = ()>,
+    S: Future<Output = ()> + Send + 'static,
 {
     let listener = TcpListener::bind(config.health_bind_addr())
         .await
@@ -828,7 +877,7 @@ where
 
 pub async fn serve<S>(listener: TcpListener, shutdown: S) -> Result<(), WorkerRunError>
 where
-    S: Future<Output = ()>,
+    S: Future<Output = ()> + Send + 'static,
 {
     serve_with_runtime(listener, WorkerRuntime::default(), shutdown).await
 }
@@ -839,118 +888,11 @@ pub async fn serve_with_runtime<S>(
     shutdown: S,
 ) -> Result<(), WorkerRunError>
 where
-    S: Future<Output = ()>,
+    S: Future<Output = ()> + Send + 'static,
 {
     let local_addr = listener.local_addr().map_err(WorkerRunError::LocalAddr)?;
-    info!(bind_addr = %local_addr, "aura-historia-worker health and CDC server listening");
-    tokio::pin!(shutdown);
-    let runtime = Arc::new(runtime);
-
-    loop {
-        tokio::select! {
-            accept_result = listener.accept() => {
-                let (stream, peer_addr) = accept_result.map_err(WorkerRunError::Accept)?;
-                let runtime = Arc::clone(&runtime);
-                debug!(%peer_addr, "accepted worker connection");
-                tokio::spawn(async move {
-                    if let Err(error) = handle_connection(stream, runtime).await {
-                        error!(%error, "worker connection failed");
-                    }
-                });
-            }
-            () = &mut shutdown => {
-                info!("aura-historia-worker shutdown requested");
-                return Ok(());
-            }
-        }
-    }
-}
-
-async fn handle_connection(
-    mut stream: TcpStream,
-    runtime: Arc<WorkerRuntime>,
-) -> Result<(), std::io::Error> {
-    let mut buffer = [0_u8; REQUEST_BUFFER_BYTES];
-    let bytes_read = stream.read(&mut buffer).await?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let parsed_request = parse_http_request(&request);
-    let response = handle_request(parsed_request, runtime).await;
-    write_response(&mut stream, response).await
-}
-
-async fn handle_request(
-    parsed_request: Option<HttpRequest<'_>>,
-    runtime: Arc<WorkerRuntime>,
-) -> HttpResponse {
-    let Some(request) = parsed_request else {
-        return HttpResponse {
-            status_code: 400,
-            body: "bad request\n",
-        };
-    };
-
-    if request.method == "POST" && request.path == SEQUIN_CDC_PATH {
-        return match runtime.ingest_cdc_json(request.body).await {
-            Ok(_) => HttpResponse {
-                status_code: 202,
-                body: "accepted\n",
-            },
-            Err(CdcIngestError::InvalidJson(_)) => HttpResponse {
-                status_code: 400,
-                body: "invalid CDC JSON\n",
-            },
-            Err(error) => {
-                error!(%error, "CDC fanout failed; requesting Sequin retry");
-                HttpResponse {
-                    status_code: 503,
-                    body: "CDC fanout failed\n",
-                }
-            }
-        };
-    }
-
-    route(request.method, request.path)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct HttpRequest<'a> {
-    method: &'a str,
-    path: &'a str,
-    body: &'a str,
-}
-
-fn parse_http_request(request: &str) -> Option<HttpRequest<'_>> {
-    let (head, body) = request.split_once("\r\n\r\n").unwrap_or((request, ""));
-    let line = head.lines().next()?;
-    let mut parts = line.split_whitespace();
-    let method = parts.next()?;
-    let path = parts.next()?;
-    Some(HttpRequest { method, path, body })
-}
-
-async fn write_response(
-    stream: &mut TcpStream,
-    response: HttpResponse,
-) -> Result<(), std::io::Error> {
-    let status = match response.status_code {
-        200 => "200 OK",
-        202 => "202 Accepted",
-        400 => "400 Bad Request",
-        404 => "404 Not Found",
-        503 => "503 Service Unavailable",
-        _ => "500 Internal Server Error",
-    };
-    let bytes = response.body.as_bytes();
-    stream
-        .write_all(
-            format!(
-                "HTTP/1.1 {status}\r\ncontent-length: {}\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\n{}",
-                bytes.len(),
-                response.body
-            )
-            .as_bytes(),
-        )
-        .await
+    info!(bind_addr = %local_addr, "aura-historia-worker private health and CDC server listening");
+    http::serve(listener, runtime, shutdown).await
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -984,6 +926,13 @@ mod tests {
         env(&[
             (WORKER_STAGE_ENV, "prod"),
             (WORKER_SCOPE_ENV, scope),
+            (queue::AWS_REGION_ENV, "eu-central-1"),
+            (
+                queue::WORKER_QUEUE_URL_ENV,
+                &format!(
+                    "https://sqs.eu-central-1.amazonaws.com/123456789012/aura-worker-{scope}-prod"
+                ),
+            ),
             (POSTGRES_HOST_ENV, "postgres"),
             (POSTGRES_DATABASE_ENV, "aura_historia"),
             (POSTGRES_USERNAME_ENV, "worker"),
@@ -1270,8 +1219,16 @@ mod tests {
 
         let (runtime, mut receiver) = composition.into_parts();
         assert_eq!(1, runtime.ingest_cdc_json(cdc_json).await?);
-        let job = receiver.recv().await.ok_or("scoped consumer stopped")?;
-        assert_eq!(consumer_queue, job.target_queue);
+        let _guard = receiver.start(scope).ok_or("consumer scope mismatch")?;
+        let delivery = receiver.recv().await.ok_or("scoped consumer stopped")?;
+        let (sent, received) = oneshot::channel();
+        receiver
+            .process(delivery, move |job| async move {
+                let _closed = sent.send(job.target_queue);
+                queue::JobOutcome::Complete("test_completed")
+            })
+            .await;
+        assert_eq!(consumer_queue, received.await?);
 
         Ok(())
     }

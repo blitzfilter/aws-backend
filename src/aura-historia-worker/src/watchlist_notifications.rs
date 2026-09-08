@@ -1,176 +1,76 @@
+use crate::{
+    WorkerScope,
+    cdc::{DomainJob, DomainJobPayload},
+    queue::{JobOutcome, WorkerQueueReceiver},
+};
+use product_listing_service::use_cases::{
+    GenerateWatchlistNotificationsCommand, GenerateWatchlistNotificationsResult,
+    GenerateWatchlistNotificationsUseCase,
+};
 use std::sync::Arc;
 
-use application::error::{BoxError, box_error};
-use product_listing_service::use_cases::{
-    GenerateWatchlistNotificationsCommand, GenerateWatchlistNotificationsUseCase,
-};
-use tracing::{error, info};
-
-use crate::retry::{InMemoryDeadLetterQueue, RetryConfig, run_with_retry};
-use crate::{
-    InMemoryQueueReceiver,
-    cdc::{DomainJob, DomainJobPayload},
-};
-
 pub async fn consume_watchlist_notification_queue(
-    receiver: InMemoryQueueReceiver<DomainJob>,
+    receiver: impl Into<WorkerQueueReceiver>,
     handler: Arc<dyn GenerateWatchlistNotificationsUseCase>,
 ) {
-    let dead_letters = InMemoryDeadLetterQueue::new();
-    consume_watchlist_notification_queue_with_dead_letters(receiver, handler, &dead_letters).await;
-}
-
-async fn consume_watchlist_notification_queue_with_dead_letters(
-    mut receiver: InMemoryQueueReceiver<DomainJob>,
-    handler: Arc<dyn GenerateWatchlistNotificationsUseCase>,
-    dead_letters: &InMemoryDeadLetterQueue<DomainJob>,
-) {
-    while let Some(job) = receiver.recv().await {
-        let idempotency_key = job.idempotency_key.as_str().to_owned();
-        let ordering_key = job.ordering_key.as_str().to_owned();
-        let handler_for_retry = Arc::clone(&handler);
-        let result = run_with_retry(job, RetryConfig::default(), dead_letters, move |job| {
-            let handler = Arc::clone(&handler_for_retry);
-            async move { generate_watchlist_notifications(handler, job).await }
+    receiver
+        .into()
+        .run(WorkerScope::WatchlistNotification, move |job| {
+            generate_watchlist_notifications(handler.clone(), job)
         })
         .await;
-        match result {
-            Ok(outcome) => match outcome {
-                WatchlistNotificationWorkerOutcome::Applied {
-                    recipient_count,
-                    inserted_count,
-                    already_exists_count,
-                } => info!(
-                    job_type = "watchlist_notification",
-                    %idempotency_key,
-                    %ordering_key,
-                    recipient_count,
-                    inserted_count,
-                    already_exists_count,
-                    outcome = "applied",
-                    "watchlist notification job completed"
-                ),
-                WatchlistNotificationWorkerOutcome::Duplicate {
-                    recipient_count,
-                    already_exists_count,
-                } => info!(
-                    job_type = "watchlist_notification",
-                    %idempotency_key,
-                    %ordering_key,
-                    recipient_count,
-                    already_exists_count,
-                    outcome = "duplicate",
-                    "watchlist notification job completed"
-                ),
-                WatchlistNotificationWorkerOutcome::SuppressedForMissingSource => info!(
-                    job_type = "watchlist_notification",
-                    %idempotency_key,
-                    %ordering_key,
-                    outcome = "suppressed_for_missing_source",
-                    "watchlist notification job completed"
-                ),
-                WatchlistNotificationWorkerOutcome::IgnoredEvent => info!(
-                    job_type = "watchlist_notification",
-                    %idempotency_key,
-                    %ordering_key,
-                    outcome = "ignored_event",
-                    "watchlist notification job completed"
-                ),
-                WatchlistNotificationWorkerOutcome::SuppressedForWithdrawnProductListing => info!(
-                    job_type = "watchlist_notification",
-                    %idempotency_key,
-                    %ordering_key,
-                    outcome = "suppressed_for_withdrawn_product",
-                    "watchlist notification job completed"
-                ),
-            },
-            Err(error) => {
-                error!(job_type = "watchlist_notification", %idempotency_key, %ordering_key, error = %error, outcome = "dead_lettered_in_memory", "watchlist notification job failed")
-            }
-        }
-    }
 }
-
 async fn generate_watchlist_notifications(
     handler: Arc<dyn GenerateWatchlistNotificationsUseCase>,
     job: DomainJob,
-) -> Result<WatchlistNotificationWorkerOutcome, WatchlistNotificationWorkerError> {
+) -> JobOutcome {
     let DomainJobPayload::ProductListingEvent(event) = job.payload else {
-        return Err(WatchlistNotificationWorkerError::UnexpectedJobPayload);
+        return JobOutcome::Invalid("unexpected_payload");
     };
-    handler
+    // The service loads the exact historical event and locks current lifecycle through commit.
+    // No transport cache/current-event comparison may suppress a later historical notification.
+    match handler
         .execute(GenerateWatchlistNotificationsCommand {
             event_id: event.event_id,
             product_listing_id: event.product_listing_id,
         })
         .await
-        .map(|result| match result {
-            product_listing_service::use_cases::GenerateWatchlistNotificationsResult::Applied {
-                recipient_count,
-                inserted_count,
-                already_exists_count,
-            } if inserted_count == 0 && already_exists_count > 0 => {
-                WatchlistNotificationWorkerOutcome::Duplicate {
-                    recipient_count,
-                    already_exists_count,
-                }
-            }
-            product_listing_service::use_cases::GenerateWatchlistNotificationsResult::Applied {
-                recipient_count,
-                inserted_count,
-                already_exists_count,
-            } => WatchlistNotificationWorkerOutcome::Applied {
-                recipient_count,
-                inserted_count,
-                already_exists_count,
-            },
-            product_listing_service::use_cases::GenerateWatchlistNotificationsResult::SuppressedForMissingSource => {
-                WatchlistNotificationWorkerOutcome::SuppressedForMissingSource
-            }
-            product_listing_service::use_cases::GenerateWatchlistNotificationsResult::IgnoredEvent => {
-                WatchlistNotificationWorkerOutcome::IgnoredEvent
-            }
-            product_listing_service::use_cases::GenerateWatchlistNotificationsResult::SuppressedForWithdrawnProductListing => {
-                WatchlistNotificationWorkerOutcome::SuppressedForWithdrawnProductListing
-            }
-        })
-        .map_err(|source| WatchlistNotificationWorkerError::Generate {
-            source: box_error(source),
-        })
+    {
+        Ok(result) => watchlist_outcome(result),
+        Err(_) => JobOutcome::DependencyUnavailable("watchlist_notification_unavailable"),
+    }
 }
-
-#[derive(Debug)]
-enum WatchlistNotificationWorkerOutcome {
-    Applied {
-        recipient_count: usize,
-        inserted_count: usize,
-        already_exists_count: usize,
-    },
-    Duplicate {
-        recipient_count: usize,
-        already_exists_count: usize,
-    },
-    SuppressedForMissingSource,
-    IgnoredEvent,
-    SuppressedForWithdrawnProductListing,
-}
-
-#[derive(Debug, thiserror::Error)]
-enum WatchlistNotificationWorkerError {
-    #[error("watchlist notification queue received an unexpected job payload")]
-    UnexpectedJobPayload,
-
-    #[error("watchlist notification generation failed")]
-    Generate {
-        #[source]
-        source: BoxError,
-    },
+fn watchlist_outcome(result: GenerateWatchlistNotificationsResult) -> JobOutcome {
+    match result {
+        GenerateWatchlistNotificationsResult::Applied {
+            recipient_count,
+            inserted_count,
+            already_exists_count,
+        } => {
+            tracing::info!(
+                recipient_count,
+                inserted_count,
+                already_exists_count,
+                "historical watchlist notifications committed"
+            );
+            JobOutcome::Complete(if inserted_count == 0 && already_exists_count > 0 {
+                "duplicate"
+            } else {
+                "applied"
+            })
+        }
+        GenerateWatchlistNotificationsResult::SuppressedForMissingSource => {
+            JobOutcome::Retry("missing_source")
+        }
+        GenerateWatchlistNotificationsResult::IgnoredEvent => JobOutcome::Complete("ignored_event"),
+        GenerateWatchlistNotificationsResult::SuppressedForWithdrawnProductListing => {
+            JobOutcome::Complete("withdrawn")
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
     use crate::{
         QueueConfig,
@@ -179,32 +79,8 @@ mod tests {
     };
     use domain_primitives::event_id::EventId;
     use product_listing_core::product_listing_id::ProductListingId;
-    use product_listing_service::use_cases::GenerateWatchlistNotificationsResult;
-
-    struct Handler {
-        commands: Mutex<Vec<GenerateWatchlistNotificationsCommand>>,
-        result: GenerateWatchlistNotificationsResult,
-    }
-
-    impl Handler {
-        fn with_result(result: GenerateWatchlistNotificationsResult) -> Self {
-            Self {
-                commands: Mutex::new(Vec::new()),
-                result,
-            }
-        }
-    }
-
-    impl Default for Handler {
-        fn default() -> Self {
-            Self::with_result(GenerateWatchlistNotificationsResult::Applied {
-                recipient_count: 1,
-                inserted_count: 1,
-                already_exists_count: 0,
-            })
-        }
-    }
-
+    use std::sync::Mutex;
+    struct Handler(Mutex<Vec<GenerateWatchlistNotificationsCommand>>);
     #[async_trait::async_trait]
     impl GenerateWatchlistNotificationsUseCase for Handler {
         async fn execute(
@@ -214,135 +90,63 @@ mod tests {
             GenerateWatchlistNotificationsResult,
             product_listing_service::use_cases::GenerateWatchlistNotificationsError,
         > {
-            self.commands
-                .lock()
-                .map_err(|_| {
-                    product_listing_service::use_cases::GenerateWatchlistNotificationsError::NotificationCreateFailed {
-                        source: box_error(std::io::Error::other("test mutex poisoned")),
-                    }
-                })?
-                .push(command);
-            Ok(self.result)
+            self.0.lock().unwrap().push(command);
+            Ok(GenerateWatchlistNotificationsResult::IgnoredEvent)
         }
     }
-
-    #[tokio::test]
-    async fn should_complete_missing_source_without_retry_or_dead_letter()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (sender, receiver) = in_memory_queue(QueueConfig::new(1))?;
-        let event_id = EventId::new();
-        let product_listing_id = ProductListingId::new();
-        sender
-            .enqueue(DomainJob {
-                target_queue: WorkerQueue::WatchlistNotification,
-                idempotency_key: IdempotencyKey::new(format!("product-event:{event_id}")),
-                ordering_key: OrderingKey::new(format!("product:{product_listing_id}")),
-                payload: DomainJobPayload::ProductListingEvent(ProductListingEventJob {
-                    event_id,
-                    product_listing_id,
-                }),
-            })
-            .await?;
-        drop(sender);
-        let handler = Arc::new(Handler::with_result(
-            GenerateWatchlistNotificationsResult::SuppressedForMissingSource,
-        ));
-        let dead_letters = InMemoryDeadLetterQueue::new();
-
-        consume_watchlist_notification_queue_with_dead_letters(
-            receiver,
-            handler.clone(),
-            &dead_letters,
-        )
-        .await;
-
-        let command_count = {
-            let commands = handler
-                .commands
-                .lock()
-                .map_err(|_| std::io::Error::other("test mutex poisoned"))?;
-            commands.len()
-        };
-        assert_eq!(1, command_count);
-        assert!(dead_letters.entries().await.is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn should_complete_ignored_event_without_retry_or_dead_letter()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (sender, receiver) = in_memory_queue(QueueConfig::new(1))?;
-        let event_id = EventId::new();
-        let product_listing_id = ProductListingId::new();
-        sender
-            .enqueue(DomainJob {
-                target_queue: WorkerQueue::WatchlistNotification,
-                idempotency_key: IdempotencyKey::new(format!("product-event:{event_id}")),
-                ordering_key: OrderingKey::new(format!("product:{product_listing_id}")),
-                payload: DomainJobPayload::ProductListingEvent(ProductListingEventJob {
-                    event_id,
-                    product_listing_id,
-                }),
-            })
-            .await?;
-        drop(sender);
-        let handler = Arc::new(Handler::with_result(
-            GenerateWatchlistNotificationsResult::IgnoredEvent,
-        ));
-        let dead_letters = InMemoryDeadLetterQueue::new();
-
-        consume_watchlist_notification_queue_with_dead_letters(
-            receiver,
-            handler.clone(),
-            &dead_letters,
-        )
-        .await;
-
-        let command_count = {
-            let commands = handler
-                .commands
-                .lock()
-                .map_err(|_| std::io::Error::other("test mutex poisoned"))?;
-            commands.len()
-        };
-        assert_eq!(1, command_count);
-        assert!(dead_letters.entries().await.is_empty());
-        Ok(())
-    }
-
     #[tokio::test]
     async fn should_map_product_event_job_to_watchlist_notification_command()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (sender, receiver) = in_memory_queue(QueueConfig::new(1))?;
+        let (sender, receiver) = in_memory_queue(QueueConfig::new(2))?;
         let event_id = EventId::new();
         let product_listing_id = ProductListingId::new();
-        sender
-            .enqueue(DomainJob {
-                target_queue: WorkerQueue::WatchlistNotification,
-                idempotency_key: IdempotencyKey::new(format!("product-event:{event_id}")),
-                ordering_key: OrderingKey::new(format!("product:{product_listing_id}")),
-                payload: DomainJobPayload::ProductListingEvent(ProductListingEventJob {
-                    event_id,
-                    product_listing_id,
-                }),
-            })
-            .await?;
-        drop(sender);
-        let handler = Arc::new(Handler::default());
-
-        consume_watchlist_notification_queue(receiver, handler.clone()).await;
-
-        assert_eq!(
-            vec![GenerateWatchlistNotificationsCommand {
+        let job = DomainJob {
+            target_queue: WorkerQueue::WatchlistNotification,
+            idempotency_key: IdempotencyKey::new(format!("product-event:{event_id}")),
+            ordering_key: OrderingKey::new(format!("product:{product_listing_id}")),
+            payload: DomainJobPayload::ProductListingEvent(ProductListingEventJob {
                 event_id,
-                product_listing_id
-            }],
-            handler
-                .commands
-                .lock()
-                .map_err(|_| std::io::Error::other("test mutex poisoned"))?
-                .clone()
+                product_listing_id,
+            }),
+        };
+        sender.enqueue(job.clone()).await?;
+        sender.enqueue(job).await?;
+        drop(sender);
+        let handler = Arc::new(Handler(Mutex::new(vec![])));
+        consume_watchlist_notification_queue(receiver, handler.clone()).await;
+        assert_eq!(
+            vec![
+                GenerateWatchlistNotificationsCommand {
+                    event_id,
+                    product_listing_id
+                };
+                2
+            ],
+            *handler.0.lock().unwrap()
         );
         Ok(())
+    }
+    #[test]
+    fn should_retain_missing_source_and_complete_verified_historical_outcomes() {
+        assert_eq!(
+            JobOutcome::Retry("missing_source"),
+            watchlist_outcome(GenerateWatchlistNotificationsResult::SuppressedForMissingSource)
+        );
+        for result in [
+            GenerateWatchlistNotificationsResult::IgnoredEvent,
+            GenerateWatchlistNotificationsResult::SuppressedForWithdrawnProductListing,
+            GenerateWatchlistNotificationsResult::Applied {
+                recipient_count: 1,
+                inserted_count: 1,
+                already_exists_count: 0,
+            },
+            GenerateWatchlistNotificationsResult::Applied {
+                recipient_count: 1,
+                inserted_count: 0,
+                already_exists_count: 1,
+            },
+        ] {
+            assert!(matches!(watchlist_outcome(result), JobOutcome::Complete(_)));
+        }
     }
 }

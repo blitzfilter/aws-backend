@@ -584,6 +584,8 @@ where
                 None
             },
             enhanced_match_reason,
+            expected_search: filter.search,
+            expected_embedding: filter.embedding,
         });
     }
     EvaluatedCandidates {
@@ -734,6 +736,8 @@ mod tests {
         committed: usize,
         persisted: Vec<SearchFilterProductListingMatch>,
         active_reads: usize,
+        candidate_requests: Vec<SearchFilterMatchCandidate>,
+        current_filter: Option<SearchFilterView>,
         sale_snapshot_reads: usize,
         event_snapshot_reads: usize,
         sale_snapshot: Option<FxRateSnapshot>,
@@ -992,6 +996,29 @@ mod tests {
     struct Evaluator;
     struct PermanentlyFailingEvaluator;
 
+    struct PausedEvaluator {
+        entered: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl LargeLanguageModel for PausedEvaluator {
+        async fn generate<Output>(
+            &self,
+            _request: StructuredGenerationRequest,
+        ) -> Result<Output, LargeLanguageModelError>
+        where
+            Output: serde::de::DeserializeOwned + Send,
+        {
+            self.entered.notify_one();
+            self.resume.notified().await;
+            serde_json::from_str(r#"{"matches":true,"reason":"Matches the evaluated search"}"#)
+                .map_err(|source| LargeLanguageModelError::InvalidResponse {
+                    source: box_error(source),
+                })
+        }
+    }
+
     #[async_trait::async_trait]
     impl LargeLanguageModel for Evaluator {
         async fn generate<Output>(
@@ -1036,14 +1063,22 @@ mod tests {
             candidates: &[SearchFilterMatchCandidate],
         ) -> Result<Vec<ActiveSearchFilterMatchCandidate>, ActiveSearchFilterMatchCandidateReadError>
         {
-            self.0
-                .lock()
-                .map_err(|_| ActiveSearchFilterMatchCandidateReadError::ReadFailed {
+            let mut state = self.0.lock().map_err(|_| {
+                ActiveSearchFilterMatchCandidateReadError::ReadFailed {
                     source: box_error(std::io::Error::other("test mutex poisoned")),
-                })?
-                .active_reads += 1;
+                }
+            })?;
+            state.active_reads += 1;
+            state.candidate_requests.extend_from_slice(candidates);
             Ok(candidates
                 .iter()
+                .filter(|candidate| {
+                    state.current_filter.as_ref().is_none_or(|current| {
+                        current.state == SearchFilterState::Active
+                            && current.search == candidate.expected_search
+                            && current.embedding == candidate.expected_embedding
+                    })
+                })
                 .map(|candidate| ActiveSearchFilterMatchCandidate {
                     user_id: candidate.user_id,
                     search_filter_id: candidate.search_filter_id,
@@ -1214,6 +1249,79 @@ mod tests {
             Candidates(Arc::clone(&state)),
             Matches(state),
         )
+    }
+
+    #[tokio::test]
+    async fn should_revalidate_evaluated_inputs_when_filter_changes_during_paused_enhanced_work()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let state = Arc::new(Mutex::new(State::default()));
+        let product = product()?;
+        let command = MatchProductListingEventCommand {
+            origin_event_id: product.event_id,
+            product_listing_id: product.product_listing_id,
+        };
+        let mut original = filter(UserId::new(), UserSearchFilterId::new());
+        original.search.enhanced_search_description = Some("Antique ceramic vase".try_into()?);
+        original.embedding = Some(vec![0.25; 768]);
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let handler = MatchProductListingEventHandler::new(
+            FakeUnitOfWork(state.clone()),
+            Sources(vec![product]),
+            CurrentEventGuards(state.clone()),
+            FxRates(state.clone()),
+            Index {
+                filters: vec![original.clone()],
+                state: state.clone(),
+            },
+            PausedEvaluator {
+                entered: entered.clone(),
+                resume: resume.clone(),
+            },
+            Candidates(state.clone()),
+            Matches(state.clone()),
+        );
+        let edit_during_external_work = async {
+            entered.notified().await;
+            {
+                let mut state = state
+                    .lock()
+                    .map_err(|_| std::io::Error::other("test mutex poisoned"))?;
+                assert_eq!(
+                    1, state.committed,
+                    "source transaction must finish before external work"
+                );
+                assert!(state.candidate_requests.is_empty());
+                let mut changed = original.clone();
+                changed.search.enhanced_search_description =
+                    Some("Modern steel furniture".try_into()?);
+                changed.embedding = Some(vec![0.75; 768]);
+                state.current_filter = Some(changed);
+            }
+            resume.notify_one();
+            Ok::<_, Box<dyn std::error::Error>>(())
+        };
+        let (result, edit) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(handler.execute(command), edit_during_external_work)
+        })
+        .await?;
+        edit?;
+        let result = result?;
+        assert_eq!(1, result.percolated_count);
+        assert_eq!(0, result.persisted_match_count);
+        let state = state
+            .lock()
+            .map_err(|_| std::io::Error::other("test mutex poisoned"))?;
+        assert_eq!(2, state.committed);
+        assert!(state.persisted.is_empty());
+        assert_eq!(1, state.candidate_requests.len());
+        assert_eq!(original.search, state.candidate_requests[0].expected_search);
+        assert_eq!(
+            original.embedding,
+            state.candidate_requests[0].expected_embedding
+        );
+        assert!(state.candidate_requests[0].enhanced_match_reason.is_some());
+        Ok(())
     }
 
     #[tokio::test]

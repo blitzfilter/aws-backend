@@ -1,6 +1,6 @@
 use application::transaction::{Transaction, UnitOfWork};
 use aura_historia_worker::search_filter_projection::consume_search_filter_projection_queue;
-use aura_historia_worker::{QueueConfig, WorkerRunError, WorkerRuntime, serve_with_runtime};
+use aura_historia_worker::{WorkerRunError, WorkerScope, serve_with_runtime};
 use domain_primitives::event_id::EventId;
 use localization::{Language, Localized};
 use money::Currency;
@@ -27,7 +27,8 @@ use search_filter_core::{NewSearchFilter, SearchFilter};
 use search_filter_opensearch::OpenSearchSearchFilterIndex;
 use search_filter_postgres::{SqlxSearchFilterIndexReader, SqlxSearchFilterRepositoryFactory};
 use search_filter_service::ports::{
-    SearchFilterIndex, SearchFilterRepository, SearchFilterRepositoryFactory,
+    SearchFilterIndex, SearchFilterIndexQuery, SearchFilterRepository,
+    SearchFilterRepositoryFactory,
 };
 use search_filter_service::use_cases::{
     ProjectSearchFilterChangeHandler, ProjectSearchFilterChangeUseCase,
@@ -44,12 +45,15 @@ use tokio::task::JoinHandle;
 use user_core::user_id::UserId;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::SearchFilterProjection;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.search_filters"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const POLL_ATTEMPTS: usize = 120;
 const ROLLBACK_OBSERVATION_DURATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_search_filter_insert_from_sequin() {
     let result = project_search_filter_insert_from_sequin().await;
 
@@ -59,7 +63,7 @@ async fn should_project_search_filter_insert_from_sequin() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_replace_search_filter_projection_after_sequin_update() {
     let result = project_search_filter_update_from_sequin().await;
 
@@ -69,7 +73,7 @@ async fn should_replace_search_filter_projection_after_sequin_update() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_project_rolled_back_search_filter_insert_from_sequin() {
     let result = reject_rolled_back_search_filter_insert_from_sequin().await;
 
@@ -79,7 +83,7 @@ async fn should_not_project_rolled_back_search_filter_insert_from_sequin() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_remove_search_filter_projection_after_sequin_delete() {
     let result = project_search_filter_delete_from_sequin().await;
 
@@ -130,6 +134,37 @@ async fn project_search_filter_update_from_sequin() -> Result<(), Box<dyn std::e
         .await?;
         wait_for_percolation(&worker.index, filter.id(), "Sequin original cabinet", false).await?;
         assert_eq!(2, updated_version);
+        for (version, operation) in [(2, "update"), (1, "insert"), (2, "update"), (1, "insert")] {
+            redeliver_filter(user_id, filter.id(), version, operation).await?;
+        }
+        support::wait_until_empty(SCOPE).await?;
+        wait_for_percolation(
+            &worker.index,
+            filter.id(),
+            "Sequin replacement cabinet",
+            true,
+        )
+        .await?;
+        wait_for_percolation(&worker.index, filter.id(), "Sequin original cabinet", false).await?;
+        let document: serde_json::Value = get_opensearch_client()
+            .await
+            .get(opensearch::GetParts::IndexId(
+                "user_search_filters",
+                &filter.id().to_string(),
+            ))
+            .send()
+            .await?
+            .error_for_status_code()?
+            .json()
+            .await?;
+        assert_eq!(serde_json::json!(2), document["_version"]);
+        assert_eq!(serde_json::json!(2), document["_source"]["sourceVersion"]);
+        let query = worker
+            .index
+            .query(&search_filter_service::ports::SearchFilterIndexQuery::default())
+            .await?;
+        assert_eq!(1, query.items.len());
+        assert_eq!(Some(1), query.total);
         Ok(())
     }
     .await;
@@ -172,11 +207,98 @@ async fn project_search_filter_delete_from_sequin() -> Result<(), Box<dyn std::e
         delete_filter(&worker.pool, filter.id()).await?;
 
         wait_for_percolation(&worker.index, filter.id(), "Sequin deleted cabinet", false).await?;
+        support::wait_until_empty(SCOPE).await?;
+        assert_filter_tombstone(&worker.index, filter.id(), 2).await?;
+        for (operation, version) in [("delete", 1), ("insert", 1), ("delete", 1), ("update", 1)] {
+            redeliver_filter(user_id, filter.id(), version, operation).await?;
+        }
+        support::wait_until_empty(SCOPE).await?;
+        assert_filter_tombstone(&worker.index, filter.id(), 2).await?;
         Ok(())
     }
     .await;
 
     worker.finish(result).await
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+async fn should_project_inactive_filter_but_hide_it_from_active_queries_and_reject_unrouted_cdc() {
+    let result: support::TestResult = async {
+        let worker = ProjectionWorker::start().await?;
+        let result = async {
+            let user = seed_user(&worker.pool).await?;
+            let filter = search_filter(user, "Inactive SQS filter cabinet")?;
+            insert_filter(&worker.pool, &filter).await?;
+            wait_for_percolation(&worker.index, filter.id(), "Inactive SQS filter cabinet", true).await?;
+            sqlx::query("UPDATE search_filters SET state = 'INACTIVE_BY_USER', version = version + 1 WHERE user_search_filter_id = $1")
+                .bind(uuid::Uuid::from(filter.id())).execute(&worker.pool).await?;
+            wait_for_filter_state(&worker.index, filter.id(), SearchFilterState::InactiveByUser).await?;
+            let active = worker.index.query(&SearchFilterIndexQuery {
+                state: Some(SearchFilterState::Active),
+                ..Default::default()
+            }).await?;
+            assert!(active.items.is_empty());
+            assert_eq!(Some(0), active.total);
+            let document: serde_json::Value = get_opensearch_client().await
+                .get(opensearch::GetParts::IndexId("user_search_filters", &filter.id().to_string()))
+                .send().await?.error_for_status_code()?.json().await?;
+            assert_eq!(serde_json::json!(2), document["_version"]);
+            assert_eq!(serde_json::json!("INACTIVE_BY_USER"), document["_source"]["state"]);
+            assert_eq!(1, worker.index.query(&search_filter_service::ports::SearchFilterIndexQuery::default()).await?.items.len());
+            let response = reqwest::Client::new()
+                .post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
+                .json(&serde_json::json!({"changes": [{"table": "users", "operation": "update", "record": {"user_id": user}}]}))
+                .send().await?;
+            assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
+            support::wait_until_empty(SCOPE).await
+        }.await;
+        worker.finish(result).await
+    }.await;
+    result.expect("inactive/unrouted filter acceptance and cleanup");
+}
+
+async fn redeliver_filter(
+    user_id: UserId,
+    id: UserSearchFilterId,
+    version: i64,
+    operation: &str,
+) -> support::TestResult {
+    support::post_change(serde_json::json!({
+        "record": {"user_id": user_id, "user_search_filter_id": id, "version": version},
+        "action": operation,
+        "metadata": {"table_schema": "public", "table_name": "search_filters"},
+    }))
+    .await
+}
+
+async fn assert_filter_tombstone(
+    index: &OpenSearchSearchFilterIndex,
+    id: UserSearchFilterId,
+    version: i64,
+) -> support::TestResult {
+    let document: serde_json::Value = get_opensearch_client()
+        .await
+        .get(opensearch::GetParts::IndexId(
+            "user_search_filters",
+            &id.to_string(),
+        ))
+        .send()
+        .await?
+        .error_for_status_code()?
+        .json()
+        .await?;
+    assert_eq!(serde_json::json!(version), document["_version"]);
+    assert_eq!(
+        serde_json::json!({"userSearchFilterId": id, "sourceVersion": version, "projectionDeleted": true}),
+        document["_source"]
+    );
+    refresh_index("user_search_filters").await;
+    let query = index
+        .query(&search_filter_service::ports::SearchFilterIndexQuery::default())
+        .await?;
+    assert!(query.items.is_empty());
+    assert_eq!(Some(0), query.total);
+    wait_for_percolation(index, id, "Sequin deleted cabinet", false).await
 }
 
 struct ProjectionWorker {
@@ -196,13 +318,11 @@ impl ProjectionWorker {
                 SqlxSearchFilterIndexReader::new(pool.clone()),
                 index.clone(),
             ));
-        let (runtime, mut receivers) =
-            WorkerRuntime::with_search_filter_projection_queue(QueueConfig::new(16))?;
-        let receiver = receivers
-            .take(aura_historia_worker::cdc::WorkerQueue::SearchFilterOpenSearch)
-            .ok_or_else(|| std::io::Error::other("search-filter worker queue is missing"))?;
-        let projection_task =
-            tokio::spawn(consume_search_filter_projection_queue(receiver, handler));
+        let (runtime, receiver) = support::composition(SCOPE).await?.into_parts();
+        let projection_task = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_search_filter_projection_queue(receiver, handler.clone())
+        })
+        .await?;
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
@@ -337,6 +457,31 @@ async fn assert_not_percolated_for(
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
+}
+
+async fn wait_for_filter_state(
+    index: &OpenSearchSearchFilterIndex,
+    id: UserSearchFilterId,
+    state: SearchFilterState,
+) -> support::TestResult {
+    let query = SearchFilterIndexQuery {
+        state: Some(state),
+        ..Default::default()
+    };
+    for _ in 0..POLL_ATTEMPTS {
+        refresh_index("user_search_filters").await;
+        if index
+            .query(&query)
+            .await?
+            .items
+            .iter()
+            .any(|filter| filter.search_filter_id == id)
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    Err(format!("search filter {id} did not reach projected state {state:?}").into())
 }
 
 async fn wait_for_percolation(

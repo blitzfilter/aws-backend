@@ -3,7 +3,7 @@ use crate::product_listing_percolation_document::{
 };
 use application::error::box_error;
 use fxrate_core::FxRateSnapshot;
-use opensearch::{DeleteParts, IndexParts, OpenSearch, http::StatusCode, params::VersionType};
+use opensearch::{IndexParts, OpenSearch, http::StatusCode, params::VersionType};
 use platform_opensearch::response::read_response;
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_service::ports::{
@@ -73,12 +73,18 @@ impl ProductListingSearchProjection for OpenSearchProductListingSearchProjection
         let version = checked_source_version(source_version)?;
         let response = self
             .client
-            .delete(DeleteParts::IndexId(
+            .index(IndexParts::IndexId(
                 &self.index,
                 &product_listing_id.to_string(),
             ))
             .version(version)
             .version_type(VersionType::External)
+            // Physical DELETE forgets its version after index.gc_deletes (default 60s).
+            // Keep this content-free document until a strictly newer source replaces it.
+            .body(serde_json::json!({
+                "productListingId": product_listing_id,
+                "projectionDeleted": true,
+            }))
             .send()
             .await
             .map_err(
@@ -156,6 +162,13 @@ fn projection_write_error(
         ProductListingSearchProjectionWriteError::DeleteFailed { source }
     }
 }
+
+#[cfg(test)]
+#[path = "paused_write.rs"]
+mod paused_write;
+#[cfg(test)]
+#[path = "projection_race_tests.rs"]
+mod race_tests;
 
 #[cfg(test)]
 mod tests {

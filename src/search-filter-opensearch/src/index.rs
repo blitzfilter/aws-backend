@@ -7,7 +7,7 @@ use platform_opensearch::{
 };
 
 use opensearch::{
-    DeleteParts, IndexParts, OpenSearch, SearchParts,
+    IndexParts, OpenSearch, SearchParts,
     http::{Method, StatusCode, headers::HeaderMap, request::JsonBody},
     params::VersionType,
 };
@@ -266,7 +266,10 @@ fn build_percolate_body(
 ) -> serde_json::Value {
     let mut body = json!({
         "pit": {"id": pit_id, "keep_alive": PIT_KEEP_ALIVE},
-        "query": {"percolate": {"field": "query", "document": product_document}},
+        "query": {"bool": {
+            "must": [{"percolate": {"field": "query", "document": product_document}}],
+            "must_not": [{"term": {"projectionDeleted": true}}]
+        }},
         "size": PERCOLATION_PAGE_SIZE,
         "track_total_hits": true,
         "sort": [{"userSearchFilterId": {"order": "asc"}}]
@@ -315,9 +318,16 @@ impl SearchFilterIndex for OpenSearchSearchFilterIndex {
     ) -> Result<SearchFilterProjectionWriteOutcome, SearchFilterIndexError> {
         let response = self
             .client
-            .delete(DeleteParts::IndexId(&self.index, &id.to_string()))
+            .index(IndexParts::IndexId(&self.index, &id.to_string()))
             .version(source_version)
             .version_type(VersionType::External)
+            // Physical DELETE loses its fence after index.gc_deletes (default 60s).
+            // Replace the full document, including its percolator query, with a durable fence.
+            .body(json!({
+                "userSearchFilterId": id,
+                "sourceVersion": source_version,
+                "projectionDeleted": true,
+            }))
             .send()
             .await
             .map_err(|source| SearchFilterIndexError::DeleteFailed {
@@ -440,7 +450,10 @@ fn build_query_body(query: &SearchFilterIndexQuery) -> serde_json::Value {
     }
     let cursor = query.effective_cursor();
     let mut body = json!({
-        "query":{"bool":{"filter":filter}},
+        "query":{"bool":{
+            "filter":filter,
+            "must_not":[{"term":{"projectionDeleted":true}}]
+        }},
         "size": cursor.size,
         "sort":[{"userSearchFilterId":{"order":"asc"}}]
     });
@@ -449,6 +462,13 @@ fn build_query_body(query: &SearchFilterIndexQuery) -> serde_json::Value {
     }
     body
 }
+
+#[cfg(test)]
+#[path = "paused_write.rs"]
+mod paused_write;
+#[cfg(test)]
+#[path = "projection_race_tests.rs"]
+mod race_tests;
 
 #[cfg(test)]
 mod tests {
@@ -477,6 +497,10 @@ mod tests {
 
         assert_eq!(Cursor::<serde_json::Value>::default().size, body["size"]);
         assert!(body.get("search_after").is_none());
+        assert_eq!(
+            json!([{"term": {"projectionDeleted": true}}]),
+            body["query"]["bool"]["must_not"]
+        );
     }
 
     #[test]
@@ -485,6 +509,10 @@ mod tests {
 
         assert_eq!(PERCOLATION_PAGE_SIZE, body["size"]);
         assert_eq!(true, body["track_total_hits"]);
+        assert_eq!(
+            json!([{"term": {"projectionDeleted": true}}]),
+            body["query"]["bool"]["must_not"]
+        );
         assert_eq!("pit-1", body["pit"]["id"]);
         assert_eq!(
             json!([{"userSearchFilterId": {"order": "asc"}}]),

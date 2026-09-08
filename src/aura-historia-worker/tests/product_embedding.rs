@@ -1,6 +1,6 @@
 use aura_historia_worker::{
-    QueueConfig, WorkerRunError, WorkerRuntime, cdc::WorkerQueue,
-    product_embedding::consume_product_embedding_queue, serve_with_runtime,
+    WorkerRunError, WorkerScope, product_embedding::consume_product_embedding_queue,
+    serve_with_runtime,
 };
 use domain_primitives::event_id::EventId;
 use embedding::{
@@ -24,7 +24,10 @@ use test_api::{
 use tokio::{sync::oneshot, task::JoinHandle};
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::ProductListingEmbedding;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
@@ -52,7 +55,7 @@ impl EmbeddingGenerator for FixedEmbeddingGenerator {
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_embed_committed_created_product_event_and_persist_canonical_target_shape() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -81,7 +84,7 @@ async fn should_embed_committed_created_product_event_and_persist_canonical_targ
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_ignore_non_created_product_event_without_embedding_side_effect() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -96,7 +99,7 @@ async fn should_ignore_non_created_product_event_without_embedding_side_effect()
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_embed_rolled_back_created_product_event() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -110,7 +113,7 @@ async fn should_not_embed_rolled_back_created_product_event() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_stale_created_event_after_product_revision_advances() {
     let pool = get_postgres_client().await;
     let (product_listing_id, source_event_id) =
@@ -139,11 +142,11 @@ async fn should_skip_stale_created_event_after_product_revision_advances() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_reembed_when_committed_image_change_advances_source_marker() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
-        let (product_listing_id, _) =
+        let (product_listing_id, first_event_id) =
             insert_product_with_event(&worker.pool, "PRODUCT_LISTING_DISCOVERED", "DOMAIN").await?;
         let _ = wait_for_embedding(&worker.pool, product_listing_id).await?;
         let image_event_id = insert_image_change(&worker.pool, product_listing_id).await?;
@@ -152,6 +155,19 @@ async fn should_reembed_when_committed_image_change_advances_source_marker() {
             wait_for_embedding(&worker.pool, product_listing_id).await?;
         assert_eq!(uuid::Uuid::from(image_event_id), embedding_source_event_id);
         assert_ne!(uuid::Uuid::from(image_event_id), current_event_id);
+        for event_id in [
+            image_event_id,
+            first_event_id,
+            image_event_id,
+            first_event_id,
+        ] {
+            support::redeliver_product_event(&worker.pool, uuid::Uuid::from(event_id)).await?;
+        }
+        support::wait_until_empty(SCOPE).await?;
+        let (_, persisted_current, persisted_source) =
+            wait_for_embedding(&worker.pool, product_listing_id).await?;
+        assert_eq!(current_event_id, persisted_current);
+        assert_eq!(embedding_source_event_id, persisted_source);
         assert_embedding_event_count_for_duration(
             &worker.pool,
             product_listing_id,
@@ -167,7 +183,7 @@ async fn should_reembed_when_committed_image_change_advances_source_marker() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_append_another_embedded_event_when_source_is_redelivered() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -201,7 +217,6 @@ struct EmbeddingWorker {
     pool: sqlx::PgPool,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
-    unused_receivers: aura_historia_worker::cdc::WorkerQueueReceivers,
     consumer: JoinHandle<()>,
 }
 
@@ -215,12 +230,15 @@ impl EmbeddingWorker {
                 SqlxUnitOfWork::new(pool.clone()),
                 SqlxProductListingEmbeddingWriterFactory::new(),
             ));
-        let (runtime, mut receivers) = WorkerRuntime::with_all_queues(QueueConfig::new(16))
-            .unwrap_or_else(|error| panic!("valid worker queue configuration: {error}"));
-        let receiver = receivers
-            .take(WorkerQueue::ProductListingEmbed)
-            .unwrap_or_else(|| panic!("product embedding queue is registered"));
-        let consumer = tokio::spawn(consume_product_embedding_queue(receiver, handler));
+        let (runtime, receiver) = support::composition(SCOPE)
+            .await
+            .unwrap_or_else(|error| panic!("valid scoped SQS configuration: {error}"))
+            .into_parts();
+        let consumer = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_product_embedding_queue(receiver, handler.clone())
+        })
+        .await
+        .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
             .await
             .unwrap_or_else(|error| panic!("worker webhook bind address is available: {error}"));
@@ -232,7 +250,6 @@ impl EmbeddingWorker {
             pool,
             shutdown_tx,
             server,
-            unused_receivers: receivers,
             consumer,
         }
     }
@@ -268,7 +285,6 @@ impl EmbeddingWorker {
             .shutdown_tx
             .send(())
             .map_err(|_| std::io::Error::other("worker shutdown channel closed"));
-        drop(self.unused_receivers);
         let (server_result, consumer_result) = tokio::join!(self.server, self.consumer);
         shutdown_result?;
         server_result??;

@@ -2,55 +2,104 @@
 
 ## Purpose
 
-- Own bare-metal async worker runtime, Sequin CDC ingestion, and in-memory worker queues for #1341.
-
-## Core Design
-
-- `main.rs` reads `LOG_LEVEL`, bootstraps typed `platform-observability` logging, config, health/CDC server, and graceful shutdown.
-- `lib.rs` owns runtime config including typed worker-local `POSTGRES_*` parsing, `/health`, `/ready`, `/cdc/sequin`, server loop, default all-queue runtime, and bounded queue primitives. Runtime wiring imports direct owners: `platform-postgres` SQLx mechanics, `platform-observability` logging, `application` contracts/errors, and bounded-context core values; it has no `common` dependency.
-- `product_listing_raw_normalization.rs` consumes compact raw-revision wake-ups and invokes `product-service` normalization. Startup runs one bounded global PostgreSQL pending-stream page; later reconciliation turns alternate one worker-local non-durable FIFO continuation and one global cursor page when a continuation exists. Only a clean capped drain enters that FIFO; isolated retryable stream errors stay pending and never enter it. Every global page is limited to available FIFO capacity. When a full FIFO continuation is popped, its vacated slot stays reserved for the next global page and its immediate capped hint is suppressed only until authoritative traversal reoffers it. A global cursor advances after every continuation from its bounded page fits; otherwise it stays so a later page reoffers deferred streams. A successful terminal global page clears it; retry exhaustion retains it. Direct CDC jobs never move or cancel the cursor/FIFO. Missed ticks skip rather than burst. Once a reconciliation turn is due, at most one ready CDC job runs before it; after a global page, one ready CDC job gets a turn before another due reconciliation turn. Watch shutdown exits after active work without draining queued wake-ups. Reconciliation logs are metadata-only with processed/failure/page/cursor/FIFO/suppressed-hint fields. Raw JSON never enters this queue.
-- `cdc.rs` normalizes Sequin webhook JSON to domain jobs and fans out only after strict ProductListing v1 header, wire-shape, and canonical-value validation. ProductListing jobs carry typed event and ProductListing IDs only; raw event strings do not cross the router boundary.
-- `product_listing_opensearch.rs` consumes `ProductListingOpenSearch` jobs, rereads the committed current ProductListing source by stable event/ProductListing IDs, loads an immutable sale snapshot only when a main source price needs sale-time conversion, then writes or deletes the canonical rebuildable ProductListing document with OpenSearch external version protection from the current persisted projection version.
-- `search_filter_projection.rs` consumes `SearchFilterOpenSearch` jobs, rereads committed Postgres state, and writes its FX-independent canonical OpenSearch projection with target-side source-version protection.
-- `search_filter_percolator.rs` maps domain/enrichment `ProductListingEvent` jobs to the inbound matching command and invokes the service. ProductListing jobs carry typed `EventId` and `ProductListingId`, parsed once at CDC ingress. The service rereads committed ProductListing state with its exact persisted sale FX snapshot, skips stale triggers whose event ID no longer matches current state and skips current withdrawn listings before percolation, then locks/rechecks the ProductListing current event in the final Postgres match transaction before canonical match persistence. It evaluates enhanced filters outside Postgres. No legacy evaluator is linked.
-- `search_filter_match_notifications.rs` maps persisted-match insert jobs to the inbound notification command and invokes the service. Match jobs and source reads use `(user_id, user_search_filter_id, product_listing_id, origin_event_id)`; the exact persisted match remains historical fact despite unrelated later ProductListing events. The transaction-scoped ProductListing source locks current lifecycle through notification commit; current withdrawn state suppresses notification snapshots. Worker logs distinguish inserted notifications, semantic duplicates, and withdrawn suppression.
-- `watchlist_notifications.rs` consumes price/availability ProductListing event jobs, rereads the exact committed Postgres event/source, selects recipients using `product_listing_events.event_time` and current watchlist intervals, requires current `ACTIVE` lifecycle, then creates idempotent PostgreSQL notification records. Later unrelated ProductListing events do not suppress historical notification facts. Its worker acknowledges and logs applied, duplicate, missing-source, ignored-event, and withdrawn suppression separately; only actual failures retry or enter the in-memory DLQ.
-- `notification_delivery.rs` consumes notification-delivery insert jobs and invokes the canonical delivery use case. The use case claims the durable PostgreSQL delivery lease, dispatches by persisted channel once per claimed attempt, captures the provider outcome, then retries only the matching terminal PostgreSQL update with the original lease token, completion timestamp, and provider receipt/error code before reporting completion. EMAIL currently uses S3 templates and SES; delivery presentation uses the snapshot assessment and current `show_unassessed_or_sensitive_content` preference before rendering.
-- `product_embedding.rs` consumes `PRODUCT_LISTING_DISCOVERED` jobs and `PRODUCT_LISTING_CHANGED` jobs whose payload has the `images` dimension, rereads committed current ProductListing state, invokes the neutral Vertex embedding capability before a short transaction, and atomically persists the vector plus `ENRICHMENT_EMBEDDED`. Stale and duplicate jobs are explicit no-ops.
-- `product_content_assessment.rs` consumes only `PRODUCT_LISTING_DISCOVERED` ProductListing event jobs, reads the listing text source, and stores a content-source-revision guarded assessment. `PRODUCT_LISTING_CHANGED` and enrichment events do not route there.
-- `product_translation.rs` consumes `PRODUCT_LISTING_DISCOVERED` jobs, uses `localization::Language`, rereads committed current ProductListing source, invokes the configured neutral Vertex LLM title translator, and atomically persists canonical Postgres translations plus one translated-titles enrichment event. Duplicate completion is keyed by source event, so the first committed text wins. Stale and duplicate jobs are explicit no-ops.
-- `retry.rs` owns in-process retry, idempotency memory, and in-memory DLQ helpers.
-- No worker-owned persistence tables in MVP. Crash after CDC fan-out may lose queued jobs; the post-ack loss window is tracked by #1558. `product-listing-normalization` repairs its own missed wake-ups from authoritative raw-stream progress through bounded reconciliation.
+- Own private async worker runtime, strict Sequin CDC ingress, and Standard SQS transport for #1558.
+- PostgreSQL owns business truth. OpenSearch owns rebuildable projections. SQS owns queued work and native DLQs, not business state.
 
 ## Ownership
 
-- This doc rule `src/aura-historia-worker/**`.
-- Parent doc: `src/AGENTS.md`.
+- This doc rules `src/aura-historia-worker/**`. Parent: `src/AGENTS.md`.
+- Read root, src, and here before edit. Worker implements no service port or business use case.
+- Runtime-local queue traits are private. Service use cases still own transactions, durable idempotency, and source guards.
 
-## Local Contracts
+## Shape
 
-- Read repo root, `src/AGENTS.md`, then here before edit.
-- Update this doc when env vars, queue behavior, dependencies, or runtime behavior changes.
-- Runtime scope comes from required `AURA_HISTORIA_WORKER_SCOPE`: `product-listing-normalization` accepts only `product_listing_raw_revisions` inserts and requires only `POSTGRES_*`; `search-filter-projection` accepts only `search_filters`; `search-filter-percolator` accepts v1 domain/enrichment `product_listing_events` inserts; `search-filter-match-notification` accepts only `search_filter_matches` inserts; `watchlist-notification` accepts only v1 `PRODUCT_LISTING_CHANGED` events whose object payload has `pricing.price` or `availability`; `notification-delivery` accepts only `notification_deliveries` inserts; `product-content-assessment` accepts only v1 `PRODUCT_LISTING_DISCOVERED` `product_listing_events` inserts; `product-embedding` accepts v1 `PRODUCT_LISTING_DISCOVERED` plus `PRODUCT_LISTING_CHANGED` events whose object payload has `images`; `product-translation` accepts only v1 `PRODUCT_LISTING_DISCOVERED` `product_listing_events` inserts; `product-listing-opensearch` accepts every supported v1 `product_listing_events` insert. ProductListing supports `PRODUCT_LISTING_DISCOVERED`/`PRODUCT_LISTING_CHANGED` in `DOMAIN` and `ENRICHMENT_EMBEDDED`/`ENRICHMENT_TRANSLATED_TITLES` in `ENRICHMENT`; other group/type pairs or versions reject before fanout. Only `STAGE=ephemeral`, `local`, or `test` may default to projection. Other tables fail delivery rather than filling unconsumed queues. Configure each Sequin subscription accordingly.
-- Startup validates scoped configuration before Postgres connects or readiness binds. Every scope requires `POSTGRES_*`. Search-filter projection/percolator scopes require `OPENSEARCH_ENDPOINT_URL` and, outside local development, OpenSearch credentials. Percolator and product-translation require explicit `VERTEX_AI_PROJECT_ID`, `VERTEX_AI_LOCATION`, `VERTEX_AI_MODEL`, Google ADC with Cloud Platform scope, and a buildable configured large-language-model Vertex HTTP client; product-embedding requires only `VERTEX_AI_PROJECT_ID`, `VERTEX_AI_LOCATION`, and Google ADC. Match-notification, watchlist, and notification-delivery scopes use PostgreSQL notification adapters. Generic delivery config owns optional channel configs. Current EMAIL config needs `S3_BUCKET_NAME_TEMPLATES`, `NOTIFICATION_EMAIL_FROM`, `NOTIFICATION_EMAIL_REPLY_TO`, `STAGE`, `COMMIT_SHA`, and AWS credentials with S3 template-read plus SES send permission. Channel-specific runtime wiring resolves EMAIL targets; startup registers configured senders and verifies all production planner channels have a sender. Only the selected scope initializes its OpenSearch, Vertex, S3/SES, and source-reader adapters.
-- Event-flow changes must update `docs/events/flow.md`. ProductListing routing rejects malformed supported payloads before acknowledgment; only recognized valid irrelevant events become ignored work.
+- `main.rs`: scoped adapter composition, AWS credential chain, logging, SIGINT/SIGTERM, consumer supervision, bounded drain.
+- `lib.rs`: typed startup config, explicit runtime composition, Axum server entry points.
+- `cdc.rs`: existing strict ProductListing v1 event validation and scoped routing. Whole batch and destinations prevalidated before first publication.
+- `jobs.rs`: compact worker jobs, canonical IDs, positive versions, logical-key validation. Existing `cdc::*` job exports remain compatible.
+- `wire.rs`: private version-one SQS DTO. Envelope has `schema_version: 1`, canonical scope, logical idempotency/ordering keys, explicit SCREAMING_SNAKE_CASE `job_type`, and compact `payload`.
+- `queue/`: typed queue config, read-only startup attribute checks, Standard SQS transport, shared receipt lifecycle, private failure tests.
+- `http.rs`: `/health`, `/ready`, `/cdc/sequin`; Axum complete-body extraction on bounded, owned Hyper HTTP/1 connections. Private HTTP tests live under `src/`.
+- Scope modules map jobs to existing inbound use cases and translate results to transport dispositions. No local correctness cache or in-process job DLQ/retry loop.
 
-## Work Guidance
+## Production composition
 
-- Keep runtime glue thin.
-- Worker implements no service port or use case. It only maps CDC/queue jobs and composes adapters from adapter crates. Runtime-local queue and transport traits are allowed.
-- Register all known worker queues by default when every route has a consumer. A dedicated runtime may register only its explicitly scoped CDC route; it must reject other tables before acknowledgment.
-- Queue payloads should be domain types or domain IDs, not Sequin/AWS envelopes.
-- Sub-worker implementation must extract typed DTOs/payloads from Postgres/domain rows when behavior needs event/change fields; do not consume raw Sequin JSON outside router.
-- Ack Sequin only after all relevant bounded queue enqueues succeed.
-- Use domain idempotency keys; Sequin IDs/LSNs are logs only.
-- Keep queue abstraction replaceable by SQS/Lambda/ECS later.
-- Every production worker route needs rigorous black-box acceptance tests in `tests/` using real Postgres, Sequin, the running worker server, and every written target store. Cover happy path, rollback, ignored changes, redelivery/idempotency, filtering, and persisted output shape. Notification delivery tests use LocalStack S3 templates plus SES and assert persisted delivery state. Search-filter quota fixtures seed earlier matches in the same calendar month. Search-filter projection fixtures use canonical `listing-source-core` source summaries. Declare `Sequin::worker_webhook()` after fixtures in `#[aura_integration_test]`; it owns one process-lived subscription. Worker helpers bind `get_sequin_worker_webhook_bind_addr()` and own only runtime shutdown. Start the worker before writing watched source rows; fixture helpers must not emit those rows.
+- `SqsQueueConfig::new(scope, queue_url: Url, region: String, stage: String, local_endpoint: Option<Url>)` validates configuration.
+- `SqsQueue::new(aws_sdk_sqs::Client, config).await` validates source queue and DLQ; preserves supplied credentials, pins region/endpoint and SDK bounds.
+- `SqsQueue::from_config(config).await` uses the workspace AWS default credential chain.
+- `WorkerRuntimeComposition::with_sqs(client, config).await` or `from_sqs_queue(validated_queue)` creates ingress and its supervised receiver.
+- `into_parts()` returns `(WorkerRuntime, WorkerQueueReceiver)`. Existing `consume_*_queue` functions accept `impl Into<WorkerQueueReceiver>` and the existing scope use-case trait object. Raw normalization also takes its existing shutdown watch receiver.
+- `WorkerRuntime::shutdown()` stops ingress acceptance and new receives. Running attempts drain within scope budget.
+- Explicit legacy in-memory queue constructors remain for existing test composition. `WorkerRuntimeComposition::build` is in-memory only; production never calls it. `WorkerRuntime::default()` is unconfigured, not an implicit in-memory fallback.
+- No generic inbox, outbox, processed-job, or worker persistence table.
+
+## Queue contract
+
+- Required: `AURA_HISTORIA_WORKER_SCOPE`, `AURA_HISTORIA_WORKER_QUEUE_URL`, `AWS_REGION`, `STAGE`, and scoped service dependencies below. Existing local scope default remains only for `ephemeral`, `local`, `test`; queue/region/stage never default.
+- Queue name: `aura-worker-<scope>-<stage>`. DLQ: `aura-worker-<scope>-dlq-<stage>`.
+- Production URL: regional HTTPS SQS URL with twelve-digit account and exact name. ARN must match region, account, scope, and stage.
+- Explicit `AWS_ENDPOINT_URL_SQS` accepted only in `ephemeral`/`local`/`test`, never production. Queue URL and explicit endpoint must share exact origin; fixtures canonicalize provider-generated URLs, runtime never rewrites them. Generic `AWS_ENDPOINT_URL` is rejected by env config. Typed constructors likewise need explicit local endpoint. SQS-specific region, endpoint resolver, non-FIPS/non-dual-stack settings and operation bounds override supplied client settings; credentials remain supplied.
+- Source retention 7 days; DLQ retention 14 days; native `maxReceiveCount=5`; source long-poll attribute 20 seconds; source/DLQ Standard, encrypted, and covered by unconditional deny-insecure-transport policies. Wildcard and NotPrincipal Allow grants fail startup, even when conditional. AWS's absent `FifoQueue` means Standard; `true` is rejected. Source redrive allow is `denyAll`; DLQ is `byQueue` with exactly the intended source ARN and no onward redrive.
+- Visibility: 300s for normalization, percolator, embedding, translation; 360s for delivery; 60s for other scopes. Execution: 240s slow/delivery, 45s short. Notification stays below its five-minute PostgreSQL lease.
+- Startup reads attributes only. No queue creation, attribute mutation, custom DLQ publication, FIFO group/dedup fields, or local fallback.
+- SDK connect/read/attempt/operation bounds: 3/25/30/55s, at most two SDK attempts. Transport wraps receives at 27s and other operations at 5s. Long poll is 20s.
+
+## CDC and wire
+
+- HTTP body <=1 MiB, changes <=100, jobs <=500. Existing discovery fanout is at most five jobs per change. Sequin subscriptions must honor these limits; oversized immutable source rows require an upstream delivery strategy, not silent truncation.
+- At most 16 accepted HTTP/1 sockets and 16 requests; capacity reserved before accept. Headers: 5s, 32 fields, 16 KiB parser buffer. Request deadline 10s; publication deadline 8s; whole connection including response write 20s. One request per connection. Oversized Content-Length rejects before body reads; Axum still collects and limits all complete bodies, including chunked input.
+- Server owns connection tasks in a JoinSet. Shutdown drops listener, closes undispatched/partial-header sockets immediately, gracefully drains active requests, joins within 20s, then aborts/joins leftovers. Owner cancellation aborts children; no detached connection tasks.
+- Entire bounded CDC batch routes and checks every registered destination before any send. SQS sends are sequential and awaited. Only all-success returns 202. Mid-publication failure/deadline may leave duplicates on redelivery; source/target guards own correctness.
+- Queue messages <=16 KiB encoded UTF-8 bytes; wire encoder, queue publisher and AWS send adapter each enforce the bound. Five supported payload variants: ProductListing event IDs, raw stream/revision IDs plus revision, search-filter IDs/version/operation, historical match IDs, notification delivery ID.
+- Wire intentionally ignores additive unknown fields. Unknown schema/type/scope, missing fields, noncanonical/nil IDs, nonpositive/overflowing versions, and forged logical keys are poison: no handler execution and no delete.
+- Logical keys preserve existing formats: `product-event:<event>` / `product:<listing>`; `product-listing-raw-revision:<revision>` / `product-listing-raw-stream:<stream>`; `search-filter:<filter>:<version>:<lowercase operation>` / `search-filter:<filter>`; `search-filter-match:<user>:<filter>:<listing>:<event>` / `user:<user>`; `notification-delivery:<delivery>` for both keys.
+- Sequin delivery IDs and LSNs never own idempotency. Raw source payloads never enter SQS jobs.
+- Exactly ten production scopes. Legacy `UserTierEnforcement` job types have no wire encoding, registration in `ALL`, or production CDC route.
+
+## Consumer lifecycle
+
+- Capacity one, reserved before receive; no prefetch. Shared receipt owner controls execution, heartbeat, visibility, and deletion. Receive explicitly requests only ApproximateReceiveCount, SentTimestamp and ApproximateFirstReceiveTimestamp. Missing/invalid numeric metadata fails closed; receipts remain unacknowledged. Receipt handles, provider bodies and sender identifiers never logged.
+- Structured logs include received scope/attempt, validated epoch-ms timestamps, receive duration, execution duration, and per-publication encoded byte count/latency/outcome. Cancelled, timed-out or invalid-response publication stays acceptance-unknown, never success; cancellation logs through an owned drop guard.
+- Normalizer owns one pending receive across reconciliation timer turns. One reserved receipt may wait behind one bounded reconciliation turn; heartbeat continues until explicit handoff joins the owner. Hold budget 245s; lost heartbeat/deadline skips execution and retains receipt. Never poll another receipt during CDC execution/settlement. Shutdown joins the poll owner; owner drop aborts its task.
+- Heartbeat every `min(30s, visibility/3)` while a receipt is held or executing; this cap is required for every scope. No detached heartbeat. Handler task is abort-on-owner-drop; timeout/panic/cancellation is not acknowledgment. Heartbeat failure cancels and joins handler.
+- Stop heartbeat before terminal delete or retry visibility. Only explicit durable terminal outcomes delete. Failed delete retries at most three times without rerunning handler.
+- Retry visibility uses exponential jitter from 30s, cap 900s. Invalid jobs remain for native redrive.
+- `AlreadyClaimed { lease_expires_at }` defers to persisted expiry +5s. `ClaimDeferred { retry_after }` defers at least one second. Neither is Complete. Ambiguous send, exhausted finalization, lost lease, and timeout never acknowledge.
+- Service dependency error or execution timeout opens consumer circuit with exponential pause (30–900s). Read-only SQS attribute probe precedes one half-open service attempt. Poison, missing source and active claims do not close a service circuit. Preserve any service failure completed during a failing heartbeat call.
+- Receive/heartbeat/held-receipt lease/settlement failures pause transport without setting or clearing an outstanding service probe. A successful receive, including an empty long poll, restores readiness only for transport-only outages; the attribute probe alone does not. Shutdown cancels paused/probing receives. No bulk receive during outage. No separate PostgreSQL/provider health probe yet; downstream recovery is checked by that single service attempt.
+- Consumer drop/death marks health/readiness failed. Dependency pause keeps liveness but clears readiness. CDC publication does not depend on consumer health. Main supervisor treats consumer exit as process failure.
+- Shutdown stops HTTP/receives and drains HTTP concurrently with active execution/settlement. Consumer supervisor ceiling 270s. No queued in-memory wake-up drain.
+
+## Scope meanings
+
+| Scope | CDC input | Terminal / retry meaning |
+| --- | --- | --- |
+| `product-listing-normalization` | raw revision inserts | Authoritative stream drain complete; capped continuation retries. Startup repair, bounded cursor/FIFO and alternating timer/CDC turns remain. Missing next revision means drained per service contract. |
+| `search-filter-projection` | search_filters changes | Service target write/stale result completes. Missing upsert source is handled by versioned target tombstone in service, not an unconditional transport ack. |
+| `search-filter-percolator` | supported ProductListing events | Processed/duplicate/stale/inactive/ignored complete; absent committed source retries. Service checks and rechecks current source revision. |
+| `search-filter-match-notification` | match inserts | Exact historical match identity retained. Created/duplicate/quota/deleted-user/stale/withdrawn suppression completes; missing match/listing retries. |
+| `watchlist-notification` | changed main price/availability | Exact event plus event-time recipients and locked current lifecycle. Applied/duplicate/ignored/withdrawn complete; missing source retries. No current-event cache. |
+| `notification-delivery` | delivery inserts | Delivered/already-delivered/persisted permanent failure completes. SourceMissing completes only after service finalization. Missing delivery retries; claims defer. |
+| `product-content-assessment` | discovery inserts | Guarded applied/cleared/duplicate/stale/ignored complete; absent source retries. |
+| `product-embedding` | discovery or changed images | Guarded applied/duplicate/stale/ignored and authoritative missing-title no-op complete; absent source retries. |
+| `product-translation` | discovery inserts | Guarded applied/duplicate/stale/ignored and authoritative missing/empty title/language no-op complete; absent source retries. |
+| `product-listing-opensearch` | supported ProductListing events | Applied/version-stale/deleted complete; missing source or missing required sale snapshot retries. Projection race protection remains target adapter responsibility. |
+
+## Service dependencies
+
+- All scopes require `POSTGRES_*`. Projection/percolator require scoped OpenSearch endpoint and production credentials.
+- Percolator/translation need Vertex project/location/model and Google ADC. Embedding needs Vertex project/location and ADC. Only selected scope initializes adapters.
+- EMAIL delivery needs S3 templates, SES credentials, from/reply-to addresses, `STAGE`, `COMMIT_SHA`; generic dispatcher verifies planner channels.
+- Worker uses workspace `aws-sdk-sqs`, `axum`, `strum`, `strum_macros`, plus pinned `hyper` (`server,http1`) and `hyper-util` (`tokio,service`). Update manifests/lockfile and black-box process/Sequin/SQS/DLQ acceptance together.
 
 ## Verification
 
-- `cargo check -p aura-historia-worker`
-- `cargo test -p aura-historia-worker --all-features`
+- `cargo check --locked -p aura-historia-worker`
+- `cargo test --locked -p aura-historia-worker --all-features`
+- Private tests cover wire snapshots/negative matrices, lifecycle failures, publication prevalidation/partial/ambiguous failure, safe timing logs, real SDK requests against loopback HTTP stubs, config policy drift, HTTP fragmentation/socket/header/body limits/timeouts/cancellation/drain, sustained outage recovery, maximum fanout, and normalizer fairness/owned polling/held heartbeat/handoff/shutdown.
+- Every scope's acceptance uses real PostgreSQL, Sequin, LocalStack SQS and written target stores with independent competing consumers. Raw normalization keeps a four-second direct CDC deadline; timer reconciliation cannot replace prompt receipt handling.
+- `tests/process_durability.rs` runs actual worker children against persistent fixtures. Deterministic database/HTTP barriers cover death before completion/deletion, overlapping consumers, native DLQ persistence, lost send/delete responses, and SIGTERM drain. Unit fakes do not prove process durability. Real AWS smoke remains opt-in.
+- Keep architecture/event-flow/runbook, Sequin limits, queue/DLQ IAM, heartbeat cap, receipt scheduling and deployment shutdown grace aligned. Operational rollout remains external; follow `docs/durable-worker-runbook.md`.
 
 ## Child DOX Index
 

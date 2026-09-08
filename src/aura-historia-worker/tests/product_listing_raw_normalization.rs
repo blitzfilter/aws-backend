@@ -1,6 +1,6 @@
 use application::transaction::{Transaction, UnitOfWork};
 use aura_historia_worker::{
-    QueueConfig, WorkerRunError, WorkerRuntimeComposition, WorkerScope,
+    WorkerRunError, WorkerScope,
     product_listing_raw_normalization::consume_product_listing_raw_normalization_queue,
     serve_with_runtime,
 };
@@ -36,13 +36,17 @@ use tokio::{
 };
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook();
+mod support;
+const SCOPE: WorkerScope = WorkerScope::ProductListingRawNormalization;
+const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
+const WORKER_SEQUIN: Sequin =
+    Sequin::worker_webhook_for_tables(&["public.product_listing_raw_revisions"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const DIRECT_CDC_POLL_ATTEMPTS: usize = 20;
 const DIRECT_CDC_TIMEOUT: Duration = Duration::from_secs(4);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_idempotently() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pool = get_postgres_client().await;
@@ -51,7 +55,7 @@ async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_id
         let capture_writer = SqlxProductListingRawCaptureWriterFactory::new();
 
         // This insert happens before the runtime starts. The immediate reconciliation tick must
-        // repair the missing in-memory wake-up even if Sequin could not deliver it yet.
+        // repair work committed before ingress startup even if Sequin could not deliver it yet.
         let first = capture(
             &unit_of_work,
             &capture_writer,
@@ -100,7 +104,7 @@ async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_id
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pool = get_postgres_client().await;
@@ -163,6 +167,91 @@ async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation()
     }
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+async fn should_normalize_committed_sequin_revisions_in_order_despite_reversed_duplicate_sqs_wakeups()
+ {
+    let result: support::TestResult = async {
+        let pool = get_postgres_client().await;
+        let source = seed_listing_source(&pool, "raw-sqs-order").await?;
+        let uow = SqlxUnitOfWork::new(pool.clone());
+        let capture_writer = SqlxProductListingRawCaptureWriterFactory::new();
+        let worker = RawNormalizationWorker::start(pool.clone()).await?;
+        let result = async {
+            // Startup repair has no rows. This first committed write must arrive through Sequin/SQS.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let first = changed_parts(capture(&uow, &capture_writer, raw_write(source, "ordered", 7, "EUR 100")).await?)?;
+            let normalized = tokio::time::timeout(DIRECT_CDC_TIMEOUT, wait_for_normalization(&pool, first.1.as_uuid(), 1)).await;
+            if normalized.is_err() {
+                use aws_sdk_sqs::types::QueueAttributeName as A;
+                let counts = test_api::get_sqs_client().await.get_queue_attributes()
+                    .queue_url(WORKER_SQS.queue_url())
+                    .attribute_names(A::ApproximateNumberOfMessages)
+                    .attribute_names(A::ApproximateNumberOfMessagesNotVisible)
+                    .send().await?;
+                return Err(format!("Sequin wake-up did not normalize within four seconds; SQS counts: {:?}", counts.attributes()).into());
+            }
+            normalized??;
+            let second = changed_parts(capture(&uow, &capture_writer, raw_write(source, "ordered", 7, "EUR 120")).await?)?;
+            assert_eq!(first.0, second.0);
+            assert_eq!(1, first.2);
+            assert_eq!(2, second.2);
+            wait_for_normalization(&pool, second.1.as_uuid(), 1).await?;
+            for (stream, revision, number) in [second, first, second, first] {
+                redeliver_raw_revision(stream.as_uuid(), revision.as_uuid(), number).await?;
+            }
+            support::wait_until_empty(SCOPE).await?;
+            let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as("SELECT revision, outcome, error_code FROM product_listing_raw_normalizations WHERE product_listing_raw_stream_id = $1 ORDER BY revision")
+                .bind(first.0.as_uuid()).fetch_all(&pool).await?;
+            assert_eq!(vec![(1, "APPLIED".to_owned(), None), (2, "APPLIED".to_owned(), None)], rows);
+            let head: (i64, uuid::Uuid) = sqlx::query_as("SELECT last_processed_revision, product_listing_id FROM product_listing_raw_normalization_heads WHERE product_listing_raw_stream_id = $1")
+                .bind(first.0.as_uuid()).fetch_one(&pool).await?;
+            assert_eq!(2, head.0);
+            let product: (i64, String, String) = sqlx::query_as("SELECT price_amount, price_currency, lifecycle FROM product_listings WHERE product_listing_id = $1")
+                .bind(head.1).fetch_one(&pool).await?;
+            assert_eq!((12000, "EUR".to_owned(), "ACTIVE".to_owned()), product);
+            let events: Vec<String> = sqlx::query_scalar("SELECT event_type FROM product_listing_events WHERE product_listing_id = $1 ORDER BY event_time")
+                .bind(head.1).fetch_all(&pool).await?;
+            assert_eq!(vec!["PRODUCT_LISTING_DISCOVERED", "PRODUCT_LISTING_CHANGED"], events);
+            Ok(())
+        }.await;
+        worker.finish(result).await
+    }.await;
+    result.expect("ordered Sequin/SQS raw normalization and cleanup");
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+async fn should_not_normalize_rollback_or_accept_unrouted_raw_changes() {
+    let result: support::TestResult = async {
+        let pool = get_postgres_client().await;
+        let source = seed_listing_source(&pool, "raw-sqs-rollback").await?;
+        let worker = RawNormalizationWorker::start(pool.clone()).await?;
+        let result = async {
+            let uow = SqlxUnitOfWork::new(pool.clone());
+            let mut tx = uow.begin().await?;
+            let outcome = SqlxProductListingRawCaptureWriterFactory::new().in_transaction(&mut tx)
+                .capture(raw_write(source, "rollback", 9, "EUR 100")).await?;
+            let (stream, revision, number) = changed_parts(outcome)?;
+            drop(tx);
+            let client = reqwest::Client::new();
+            for (table, operation) in [("product_listing_raw_revisions", "update"), ("product_listing_raw_streams", "insert")] {
+                let response = client.post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
+                    .json(&json!({"changes": [{"table": table, "operation": operation, "record": {
+                        "product_listing_raw_stream_id": stream.as_uuid(), "product_listing_raw_revision_id": revision.as_uuid(), "revision": number,
+                    }}]})).send().await?;
+                assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            support::wait_until_empty(SCOPE).await?;
+            for query in ["SELECT count(*) FROM product_listing_raw_revisions", "SELECT count(*) FROM product_listing_raw_normalizations", "SELECT count(*) FROM product_listings", "SELECT count(*) FROM product_listing_events"] {
+                assert_eq!(0, sqlx::query_scalar::<_, i64>(query).fetch_one(&pool).await?);
+            }
+            Ok(())
+        }.await;
+        worker.finish(result).await
+    }.await;
+    result.expect("rollback/filter raw SQS acceptance and cleanup");
+}
+
 struct RawNormalizationWorker {
     shutdown_tx: oneshot::Sender<()>,
     consumer_shutdown: watch::Sender<bool>,
@@ -180,17 +269,17 @@ impl RawNormalizationWorker {
                 SqlxProductListingEventAppenderFactory::new(),
                 SqlxPendingProductListingRawStreamReader::new(pool),
             ));
-        let composition = WorkerRuntimeComposition::build(
-            WorkerScope::ProductListingRawNormalization,
-            QueueConfig::new(16),
-        )?;
-        let (runtime, receiver) = composition.into_parts();
+        let (runtime, receiver) = support::composition(SCOPE).await?.into_parts();
+
         let (consumer_shutdown, consumer_shutdown_rx) = watch::channel(false);
-        let consumer = tokio::spawn(consume_product_listing_raw_normalization_queue(
-            receiver,
-            handler,
-            consumer_shutdown_rx,
-        ));
+        let consumer = support::competing_consumers(SCOPE, receiver, move |receiver| {
+            consume_product_listing_raw_normalization_queue(
+                receiver,
+                handler.clone(),
+                consumer_shutdown_rx.clone(),
+            )
+        })
+        .await?;
         let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {

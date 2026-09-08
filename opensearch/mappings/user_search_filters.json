@@ -152,6 +152,7 @@
     },
     "mappings": {
         "properties": {
+            "projectionDeleted": {"type": "boolean"},
             "userSearchFilterId": {"type": "keyword"},
             "userId": {"type": "keyword"},
             "sourceVersion": {"type": "long"},

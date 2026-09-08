@@ -13,6 +13,7 @@
 
 - This doc rule `opensearch/**`.
 - Schema and analyzer drift hurt search hard. Treat change as contract change.
+- Both mappings reserve boolean `projectionDeleted` for content-free durable projection fences. All owning-crate readers exclude true; absent remains live. Do not TTL or physically delete these documents: physical-delete version GC is not durable fencing. Expand mappings/readers before switching writers; retire old physical-delete writers. Owning adapter docs record rebuild limits and coordinator rollout needs.
 
 ## Local Contracts
 
