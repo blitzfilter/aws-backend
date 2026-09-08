@@ -68,7 +68,7 @@
 - Service dependency error or execution timeout opens consumer circuit with exponential pause (30–900s). Read-only SQS attribute probe precedes one half-open service attempt. Poison, missing source and active claims do not close a service circuit. Preserve any service failure completed during a failing heartbeat call.
 - Receive/heartbeat/held-receipt lease/settlement failures pause transport without setting or clearing an outstanding service probe. A successful receive, including an empty long poll, restores readiness only for transport-only outages; the attribute probe alone does not. Shutdown cancels paused/probing receives. No bulk receive during outage. No separate PostgreSQL/provider health probe yet; downstream recovery is checked by that single service attempt.
 - Consumer drop/death marks health/readiness failed. Dependency pause keeps liveness but clears readiness. CDC publication does not depend on consumer health. Main supervisor treats consumer exit as process failure.
-- Shutdown stops HTTP/receives and drains HTTP concurrently with active execution/settlement. Consumer supervisor ceiling 270s. No queued in-memory wake-up drain.
+- Shutdown stops HTTP/new receives and drains HTTP concurrently with the active owned execution/settlement attempt. `AURA_HISTORIA_WORKER_DRAIN_TIMEOUT_SECONDS` sets the consumer supervisor ceiling; default 270s. Deadline expiry aborts/joins local consumer work and is process-fatal. No queued in-memory wake-up drain or SQS backlog drain.
 
 ## Scope meanings
 

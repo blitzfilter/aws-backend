@@ -19,6 +19,7 @@ use platform_postgres::{PostgresPoolConfig, PostgresPoolConfigError};
 use std::future::Future;
 use std::net::{AddrParseError, SocketAddr};
 use std::num::ParseIntError;
+use std::time::Duration;
 #[cfg(test)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -32,6 +33,7 @@ use crate::cdc::{
 };
 
 pub const WORKER_HEALTH_BIND_ADDR_ENV: &str = "AURA_HISTORIA_WORKER_HEALTH_BIND_ADDR";
+pub const WORKER_DRAIN_TIMEOUT_SECONDS_ENV: &str = "AURA_HISTORIA_WORKER_DRAIN_TIMEOUT_SECONDS";
 pub const WORKER_SCOPE_ENV: &str = "AURA_HISTORIA_WORKER_SCOPE";
 pub const WORKER_STAGE_ENV: &str = "STAGE";
 pub const OPENSEARCH_ENDPOINT_URL_ENV: &str = "OPENSEARCH_ENDPOINT_URL";
@@ -55,6 +57,7 @@ const DEFAULT_POSTGRES_PORT: u16 = 5432;
 const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 2;
 
 const DEFAULT_WORKER_HEALTH_BIND_ADDR: &str = "0.0.0.0:8081";
+const DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS: u64 = 270;
 const DEFAULT_LOCAL_WORKER_SCOPE: &str = "search-filter-projection";
 
 pub const SEQUIN_CDC_PATH: &str = "/cdc/sequin";
@@ -139,6 +142,7 @@ fn is_local_development_stage(stage: Option<&str>) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerConfig {
     health_bind_addr: SocketAddr,
+    drain_timeout: Duration,
 }
 
 impl WorkerConfig {
@@ -158,12 +162,31 @@ impl WorkerConfig {
                 source,
             }
         })?;
+        let drain_timeout = match get(WORKER_DRAIN_TIMEOUT_SECONDS_ENV) {
+            Some(value) => {
+                let seconds = value
+                    .parse()
+                    .map_err(|source| WorkerConfigError::InvalidDrainTimeout { value, source })?;
+                if seconds == 0 {
+                    return Err(WorkerConfigError::ZeroDrainTimeout);
+                }
+                Duration::from_secs(seconds)
+            }
+            None => Duration::from_secs(DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS),
+        };
 
-        Ok(Self { health_bind_addr })
+        Ok(Self {
+            health_bind_addr,
+            drain_timeout,
+        })
     }
 
     pub const fn health_bind_addr(&self) -> SocketAddr {
         self.health_bind_addr
+    }
+
+    pub const fn drain_timeout(&self) -> Duration {
+        self.drain_timeout
     }
 }
 
@@ -174,6 +197,13 @@ pub enum WorkerConfigError {
         value: String,
         source: AddrParseError,
     },
+    #[error("invalid {env_name}: {value}", env_name = WORKER_DRAIN_TIMEOUT_SECONDS_ENV)]
+    InvalidDrainTimeout {
+        value: String,
+        source: ParseIntError,
+    },
+    #[error("{env_name} must be greater than zero", env_name = WORKER_DRAIN_TIMEOUT_SECONDS_ENV)]
+    ZeroDrainTimeout,
 }
 
 pub struct WorkerOpenSearchConfig {
@@ -996,6 +1026,10 @@ mod tests {
             "0.0.0.0:8081".parse::<SocketAddr>()?,
             config.health_bind_addr()
         );
+        assert_eq!(
+            Duration::from_secs(DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS),
+            config.drain_timeout()
+        );
         Ok(())
     }
 
@@ -1010,6 +1044,34 @@ mod tests {
             config.health_bind_addr()
         );
         Ok(())
+    }
+
+    #[test]
+    fn should_read_drain_timeout_from_env() -> Result<(), Box<dyn std::error::Error>> {
+        let values = env(&[(WORKER_DRAIN_TIMEOUT_SECONDS_ENV, "321")]);
+
+        let config = WorkerConfig::from_getter(|name| values.get(name).cloned())?;
+
+        assert_eq!(Duration::from_secs(321), config.drain_timeout());
+        Ok(())
+    }
+
+    #[rstest]
+    #[case("not-a-number", false)]
+    #[case("0", true)]
+    fn should_reject_invalid_drain_timeout(#[case] value: &str, #[case] zero: bool) {
+        let values = env(&[(WORKER_DRAIN_TIMEOUT_SECONDS_ENV, value)]);
+
+        let config = WorkerConfig::from_getter(|name| values.get(name).cloned());
+
+        if zero {
+            assert!(matches!(config, Err(WorkerConfigError::ZeroDrainTimeout)));
+        } else {
+            assert!(matches!(
+                config,
+                Err(WorkerConfigError::InvalidDrainTimeout { .. })
+            ));
+        }
     }
 
     #[test]
