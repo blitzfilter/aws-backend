@@ -1921,7 +1921,7 @@ Tables or columns consumed by CDC MUST NOT be renamed or removed without reviewi
 
 The current SQS envelope explicitly requires `schema_version = 1`, exact scope/job discriminators, canonical IDs, and validated idempotency/ordering keys; jobs are at most 16 KiB and contain compact identifiers, never raw source rows. Unknown additive envelope/payload fields are deliberately tolerated. Missing required fields, unsupported versions/types, wrong scope, and mismatched keys fail explicitly without deletion. This compatibility rule does not relax strict ProductListing CDC event-payload validation.
 
-Notification completion adds `completed_lease_token` and `completed_at` through the root migration rail. Exact finalization retries reuse the original token, result/receipt/error, and completion timestamp; an exact persisted completion receipt confirms a lost response without another send or write. Preserve these columns and fencing semantics across rollback.
+The initial business schema defines `completed_lease_token` and `completed_at`. Exact finalization retries reuse the original token, result/receipt/error, and completion timestamp; an exact persisted completion receipt confirms a lost response without another send or write. Preserve these columns and fencing semantics across rollback.
 
 ### 12.9 Failure handling
 

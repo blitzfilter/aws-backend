@@ -19,7 +19,7 @@
 - First finalization requires PROCESSING, matching active token, and lease newer than both original completion time and current database clock. Late old completion cannot bypass fencing. No match checks an exact persisted receipt in a fresh statement snapshot; concurrent identical finalizations and lost commit responses therefore replay read-only.
 - Receipt uses `completed_lease_token`, `completed_at`, status, provider message ID/error code, and delivered timestamp. Match every field with original bind values (Postgres microsecond precision). Replay returns true; differing token/result/time or missing row returns false. Reclaim clears completion token/time before issuing a newer lease; old attempt cannot finalize or confirm the newer result.
 - Active lease columns still clear on completion. Existing terminal rows have no replay receipt and remain terminal to claim; never backfill invented tokens. Database/commit failures retain SQLx source behind safe service errors. Never log source payloads, receipt, token, or recipient.
-- Root `migrations/20260907000000_notification_completion_receipt.sql` owns the additive receipt columns/constraint. Production and tests use the root migration rail; adapter never auto-migrates. No separate delivery-schema fixture.
+- The initial business schema owns the receipt columns/constraint. Production and tests use the root migration rail; adapter never auto-migrates. No separate delivery-schema fixture.
 - No exactly-once provider guarantee; PostgreSQL cannot atomically commit an email send. No processed table, republisher, or generic outbox.
 
 ## Verification
@@ -27,7 +27,7 @@
 - `cargo check -p notification-postgres`
 - `cargo test -p notification-postgres --all-features`
 - Focused real PostgreSQL: `cargo test --locked -p notification-postgres --lib --all-features delivery_repository::tests -- --test-threads=1`.
-- Tests use only `test-api::Postgres::new("migrations")`, including the root receipt migration. Cover concurrent claims, exact persisted expiry, before/at/after expiry, status-read races, rollback, stale-token fencing, exact completion replay, concurrent finalization, and safe retained DB errors.
+- Tests use only `test-api::Postgres::new("migrations")`, including initial-schema receipt columns. Cover concurrent claims, exact persisted expiry, before/at/after expiry, status-read races, rollback, stale-token fencing, exact completion replay, concurrent finalization, and safe retained DB errors.
 
 ## Child DOX Index
 

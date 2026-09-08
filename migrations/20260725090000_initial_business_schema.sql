@@ -794,6 +794,9 @@ CREATE TABLE notification_deliveries (
     lease_token uuid,
     lease_expires_at timestamptz,
 
+    completed_lease_token uuid,
+    completed_at timestamptz,
+
     provider_message_id text,
     last_error_code text,
     delivered_at timestamptz,
@@ -836,6 +839,16 @@ CREATE TABLE notification_deliveries (
             status <> 'PROCESSING'
             AND lease_token IS NULL
             AND lease_expires_at IS NULL
+        )
+    ),
+
+    CONSTRAINT notification_deliveries_completion_shape_check CHECK (
+        (completed_lease_token IS NULL AND completed_at IS NULL)
+        OR
+        (
+            completed_lease_token IS NOT NULL
+            AND completed_at IS NOT NULL
+            AND status <> 'PROCESSING'
         )
     ),
 
