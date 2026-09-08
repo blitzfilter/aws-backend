@@ -8,6 +8,7 @@ use product_listing_normalization::{
     normalize_description, normalize_image_urls, normalize_price,
     normalize_source_listing_id_with_url_sha_fallback, normalize_title, quick_check_availability,
 };
+use tracing::warn;
 use url::Url;
 
 #[async_trait::async_trait]
@@ -18,7 +19,7 @@ pub trait ProductListingNormalizationService: Send + Sync {
         &self,
         raw: RawExtractedProduct,
         url: Url,
-        default_currency: Option<Currency>,
+        fallback_currency: Option<Currency>,
     ) -> ProductListingNormalizationResult;
 }
 
@@ -67,7 +68,7 @@ pub struct PreparedProduct {
 pub fn prepare_product(
     raw: RawExtractedProduct,
     url: Url,
-    default_currency: Option<Currency>,
+    fallback_currency: Option<Currency>,
 ) -> Result<PreparedProduct, NormalizationError> {
     let availability =
         quick_check_availability(raw.state.as_str()).map_err(map_availability_error)?;
@@ -84,12 +85,21 @@ pub fn prepare_product(
     )?;
     let description = normalize_description(raw.description, title_language)?;
 
-    let price = normalize_price(raw.price.as_deref(), default_currency)
-        .map_err(|error| map_price_error(error, PriceField::Price))?;
-    let price_estimate_min = normalize_price(raw.price_estimate_min.as_deref(), default_currency)
-        .map_err(|error| map_price_error(error, PriceField::EstimateMin))?;
-    let price_estimate_max = normalize_price(raw.price_estimate_max.as_deref(), default_currency)
-        .map_err(|error| map_price_error(error, PriceField::EstimateMax))?;
+    let price = normalize_price_or_skip_missing_currency(
+        raw.price.as_deref(),
+        fallback_currency,
+        PriceField::Price,
+    )?;
+    let price_estimate_min = normalize_price_or_skip_missing_currency(
+        raw.price_estimate_min.as_deref(),
+        fallback_currency,
+        PriceField::EstimateMin,
+    )?;
+    let price_estimate_max = normalize_price_or_skip_missing_currency(
+        raw.price_estimate_max.as_deref(),
+        fallback_currency,
+        PriceField::EstimateMax,
+    )?;
     let images = normalize_image_urls(raw.images, &url).map_err(map_image_error)?;
     let auction_start = normalize_date_time(raw.auction_start.as_deref())
         .map_err(|error| map_date_time_error(error, DateTimeField::AuctionStart))?;
@@ -133,9 +143,9 @@ impl ProductListingNormalizationService for ProductListingNormalizationServiceIm
         &self,
         raw: RawExtractedProduct,
         url: Url,
-        default_currency: Option<Currency>,
+        fallback_currency: Option<Currency>,
     ) -> ProductListingNormalizationResult {
-        let prepared = prepare_product(raw, url, default_currency).map_err(failure)?;
+        let prepared = prepare_product(raw, url, fallback_currency).map_err(failure)?;
         Ok(NormalizationSuccess {
             prepared,
             llm_calls_used: 0,
@@ -147,6 +157,21 @@ fn failure(error: NormalizationError) -> NormalizationFailure {
     NormalizationFailure {
         error,
         llm_calls_used: 0,
+    }
+}
+
+fn normalize_price_or_skip_missing_currency(
+    raw: Option<&str>,
+    fallback_currency: Option<Currency>,
+    field: PriceField,
+) -> Result<Option<money::Price>, NormalizationError> {
+    match normalize_price(raw, fallback_currency) {
+        Ok(price) => Ok(price),
+        Err(PriceNormalizationError::UnknownCurrency) => {
+            warn!(price_field = ?field, "Skipping price extraction because no currency was detected");
+            Ok(None)
+        }
+        Err(error) => Err(map_price_error(error, field)),
     }
 }
 
@@ -218,6 +243,45 @@ mod tests {
         assert_eq!(
             error.failure_scope(),
             product_listing_normalization::error::NormalizationFailureScope::System
+        );
+    }
+
+    #[test]
+    fn should_skip_price_when_currency_is_absent_without_a_source_fallback() {
+        let mut raw = raw();
+        raw.price = Some("5500".to_owned());
+
+        let prepared = prepare_product(
+            raw,
+            Url::parse("https://example.com/listings/123")
+                .unwrap_or_else(|error| panic!("test URL must parse: {error}")),
+            None,
+        )
+        .unwrap_or_else(|error| panic!("missing currency must not reject the product: {error}"));
+
+        assert_eq!(None, prepared.price);
+    }
+
+    #[test]
+    fn should_apply_source_fallback_when_price_has_no_currency_hint() {
+        let mut raw = raw();
+        raw.price = Some("5500".to_owned());
+
+        let prepared = prepare_product(
+            raw,
+            Url::parse("https://example.com/listings/123")
+                .unwrap_or_else(|error| panic!("test URL must parse: {error}")),
+            Some(Currency::Zar),
+        )
+        .unwrap_or_else(|error| panic!("source fallback must normalize the price: {error}"));
+
+        let price = prepared
+            .price
+            .unwrap_or_else(|| panic!("price must be extracted with fallback currency"));
+        assert_eq!(Currency::Zar, price.currency);
+        assert_eq!(
+            money::MonetaryAmount::from(550_000_u64),
+            price.monetary_amount
         );
     }
 

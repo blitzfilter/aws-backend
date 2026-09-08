@@ -2,6 +2,7 @@ use listing_source_core::ListingSourceId;
 mod bookkeeping;
 mod budget;
 mod cached_schema_selection;
+mod fallback_currency;
 mod fresh_schema_generation;
 mod happy_path;
 mod hash_skip;
@@ -103,7 +104,6 @@ pub(super) fn minimal_schema() -> ProductCssSelectorSchema {
         images: attr_rule_all("img", "src"),
         auction_start: None,
         auction_end: None,
-        default_currency: None,
         raw_attributes: Default::default(),
     }
 }

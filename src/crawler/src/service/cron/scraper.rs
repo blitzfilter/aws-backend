@@ -408,18 +408,35 @@ async fn scrape_candidate(
         };
     };
 
-    match ctx
-        .scraper
-        .scrape(
-            &candidate.listing_source_id,
-            &candidate.url,
-            candidate.url_pattern.as_deref(),
-            candidate.last_scraped_hash.as_deref(),
-            candidate.last_scraped_schema_fingerprint.as_deref(),
-            candidate.last_captured_raw_input_sha256.as_deref(),
-        )
-        .await
-    {
+    let scrape_result = match candidate.fallback_currency {
+        Some(fallback_currency) => {
+            ctx.scraper
+                .scrape_with_fallback_currency(
+                    &candidate.listing_source_id,
+                    &candidate.url,
+                    candidate.url_pattern.as_deref(),
+                    candidate.last_scraped_hash.as_deref(),
+                    candidate.last_scraped_schema_fingerprint.as_deref(),
+                    candidate.last_captured_raw_input_sha256.as_deref(),
+                    Some(fallback_currency),
+                )
+                .await
+        }
+        None => {
+            ctx.scraper
+                .scrape(
+                    &candidate.listing_source_id,
+                    &candidate.url,
+                    candidate.url_pattern.as_deref(),
+                    candidate.last_scraped_hash.as_deref(),
+                    candidate.last_scraped_schema_fingerprint.as_deref(),
+                    candidate.last_captured_raw_input_sha256.as_deref(),
+                )
+                .await
+        }
+    };
+
+    match scrape_result {
         Ok(Some(scraped)) => {
             let disposition = match &scraped.availability {
                 product_listing_normalization::ListingAvailabilityQuickCheck::Resolved(

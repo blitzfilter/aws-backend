@@ -11,6 +11,7 @@ use crate::scraper::scraper_service::image_validation::filter_valid_image_urls;
 use crate::scraper::scraper_service::pipeline::cached_schema_selection::PreparedSchemaSelection;
 use crate::scraper::scraper_service::service::ScraperServiceImpl;
 use listing_source_core::ListingSourceId;
+use money::Currency;
 use serde_json::json;
 use tracing::debug;
 use url::Url;
@@ -21,6 +22,7 @@ pub(crate) struct FreshSchemaGenerationContext<'a> {
     pub(crate) url: &'a Url,
     pub(crate) html: &'a str,
     pub(crate) existing_schemas: &'a [ProductCssSelectorSchema],
+    pub(crate) fallback_currency: Option<Currency>,
     pub(crate) expected_last_captured_raw_input_sha256: Option<&'a [u8]>,
 }
 
@@ -68,11 +70,7 @@ impl ScraperServiceImpl {
 
         match self
             .normalization_service
-            .normalize(
-                validated_raw,
-                ctx.url.clone(),
-                generated_schema.default_currency.map(money::Currency::from),
-            )
+            .normalize(validated_raw, ctx.url.clone(), ctx.fallback_currency)
             .await
         {
             Ok(NormalizationSuccess {
@@ -105,9 +103,7 @@ impl ScraperServiceImpl {
                             prepared,
                             raw: reapplied,
                             validated_image_urls,
-                            default_currency: generated_schema
-                                .default_currency
-                                .map(money::Currency::from),
+                            fallback_currency: ctx.fallback_currency,
                             schema: generated_schema,
                             fresh_schema: true,
                         })

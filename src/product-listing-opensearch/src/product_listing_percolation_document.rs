@@ -48,6 +48,7 @@ struct ProductListingPercolationPricesDocument {
     hkd: u64,
     sgd: u64,
     chf: u64,
+    zar: u64,
 }
 
 /// Private temporary ProductListing representation used only as a percolator input.
@@ -193,6 +194,7 @@ fn percolation_prices(
         hkd: prices.amount_in(Currency::Hkd),
         sgd: prices.amount_in(Currency::Sgd),
         chf: prices.amount_in(Currency::Chf),
+        zar: prices.amount_in(Currency::Zar),
     }
 }
 
@@ -313,6 +315,7 @@ fn sale_prices(
         hkd: amount_in(Currency::Hkd)?,
         sgd: amount_in(Currency::Sgd)?,
         chf: amount_in(Currency::Chf)?,
+        zar: amount_in(Currency::Zar)?,
     })
 }
 
@@ -915,10 +918,12 @@ mod tests {
             hkd: 1,
             sgd: 1,
             chf: 1,
+            zar: 1,
         })?;
 
-        assert_eq!(18, value.as_object().map_or(0, serde_json::Map::len));
+        assert_eq!(19, value.as_object().map_or(0, serde_json::Map::len));
         assert!(value.get("jpy").is_some());
+        assert!(value.get("zar").is_some());
         assert!(value.get("priceEstimateMin").is_none());
         Ok(())
     }

@@ -857,7 +857,7 @@ pub(super) async fn seed_current_fx_snapshot(pool: &sqlx::PgPool) {
 
     for currency in [
         "EUR", "GBP", "USD", "AUD", "CAD", "NZD", "CNY", "BRL", "PLN", "TRY", "JPY", "CZK", "RUB",
-        "AED", "SAR", "HKD", "SGD", "CHF",
+        "AED", "SAR", "HKD", "SGD", "CHF", "ZAR",
     ] {
         if let Err(error) = sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, $3)",

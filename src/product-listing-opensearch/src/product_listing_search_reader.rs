@@ -711,6 +711,7 @@ fn currency_code(currency: Currency) -> &'static str {
         Currency::Hkd => "HKD",
         Currency::Sgd => "SGD",
         Currency::Chf => "CHF",
+        Currency::Zar => "ZAR",
     }
 }
 
@@ -734,6 +735,7 @@ fn sale_price_field_for(currency: Currency) -> &'static str {
         Currency::Hkd => "salePrices.hkd",
         Currency::Sgd => "salePrices.sgd",
         Currency::Chf => "salePrices.chf",
+        Currency::Zar => "salePrices.zar",
     }
 }
 
@@ -1165,6 +1167,7 @@ mod tests {
             hkd: 100,
             sgd: 100,
             chf: 100,
+            zar: 100,
         });
         document.sale_observation_fx_rate_id = Some(FxRateId::new());
         document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);

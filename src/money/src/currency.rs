@@ -49,6 +49,7 @@ pub enum Currency {
     Hkd,
     Sgd,
     Chf,
+    Zar,
 }
 
 impl Currency {
@@ -119,6 +120,7 @@ impl Currency {
             Currency::Hkd => "HK$",
             Currency::Sgd => "S$",
             Currency::Chf => "CHF",
+            Currency::Zar => "R",
         }
     }
 
@@ -141,7 +143,8 @@ impl Currency {
             | Currency::Sar
             | Currency::Hkd
             | Currency::Sgd
-            | Currency::Chf => ".",
+            | Currency::Chf
+            | Currency::Zar => ".",
         }
     }
 
@@ -184,6 +187,7 @@ impl Currency {
             Currency::Hkd => "HKD",
             Currency::Sgd => "SGD",
             Currency::Chf => "CHF",
+            Currency::Zar => "ZAR",
         }
     }
 }

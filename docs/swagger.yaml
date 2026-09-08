@@ -15872,6 +15872,9 @@ components:
               type: string
               enum:
                 - WEB_CRAWL
+            fallbackCurrency:
+              type: string
+              description: Optional ISO 4217 fallback used only when crawler-extracted price text contains no currency hint.
         - type: object
           required:
             - type

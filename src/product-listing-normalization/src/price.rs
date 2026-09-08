@@ -27,7 +27,9 @@ pub type PriceError = PriceNormalizationError;
 /// Multi-character symbols (`NZD`, `AUD`, `CAD`) are checked before the plain
 /// `$` to avoid false matches.
 pub fn detect_currency(raw: &str) -> Option<Currency> {
-    if raw.contains("NZD") || raw.contains("NZ$") {
+    if raw.contains("ZAR") {
+        Some(Currency::Zar)
+    } else if raw.contains("NZD") || raw.contains("NZ$") {
         Some(Currency::Nzd)
     } else if raw.contains("AUD") || raw.contains("A$") {
         Some(Currency::Aud)
@@ -532,6 +534,7 @@ mod tests {
     #[case("CAD 100", Some(Currency::Cad))]
     #[case("NZ$100", Some(Currency::Nzd))]
     #[case("NZD 100", Some(Currency::Nzd))]
+    #[case("ZAR 100", Some(Currency::Zar))]
     #[case("100", None)]
     #[case("CHF 100", None)]
     #[case("", None)]

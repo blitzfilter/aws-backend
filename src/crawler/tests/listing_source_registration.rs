@@ -3,6 +3,7 @@ use crawler::service::listing_source_registration::{
     RegisteredListingSource,
 };
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
+use money::Currency;
 use test_api::*;
 
 const POSTGRES: Postgres = Postgres::new("src/crawler/migrations");
@@ -35,7 +36,39 @@ fn listing_source(
         listing_source_name: ListingSourceName::try_from("Test source").unwrap(),
         listing_source_slug: ListingSourceSlugId::raw("test-source").unwrap(),
         crawl_enabled,
+        fallback_currency: None,
     }
+}
+
+#[serial_test::serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_persist_and_clear_fallback_currency_from_listing_source_snapshot() {
+    let pool = get_postgres_client().await;
+    let repository = ListingSourceRegistrationRepositoryImpl::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    let mut source = listing_source(listing_source_id, true);
+    source.fallback_currency = Some(Currency::Zar);
+
+    repository.apply_snapshot(&[source.clone()]).await.unwrap();
+    let persisted: Option<String> = sqlx::query_scalar(
+        "SELECT fallback_currency FROM listing_sources WHERE listing_source_id = $1",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(Some("ZAR".to_owned()), persisted);
+
+    source.fallback_currency = None;
+    repository.apply_snapshot(&[source]).await.unwrap();
+    let cleared: Option<String> = sqlx::query_scalar(
+        "SELECT fallback_currency FROM listing_sources WHERE listing_source_id = $1",
+    )
+    .bind(uuid::Uuid::from(listing_source_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(None, cleared);
 }
 
 #[serial_test::serial]

@@ -15,13 +15,15 @@ use url::Url;
 /// Builds the complete V1 input retained by the operational raw-revision stream.
 ///
 /// Source payload keeps the untouched extraction. Generic raw values use the
-/// crawler-validated image projection; the worker remains the sole canonical
+/// crawler-validated image projection and omit price fields that deterministic
+/// preparation could not resolve; the worker remains the sole canonical
 /// normalization authority.
 pub(crate) fn crawler_raw_input(
     raw: &RawExtractedProduct,
     validated_image_urls: &[String],
     candidate_url: &Url,
-    default_currency: Option<Currency>,
+    fallback_currency: Option<Currency>,
+    resolved_price_fields: [bool; 3],
 ) -> Result<ProductListingNormalizationInput, NormalizationInputError> {
     let source_payload = serde_json::to_value(raw)
         .map_err(NormalizationInputError::JsonSerialization)
@@ -40,9 +42,9 @@ pub(crate) fn crawler_raw_input(
         source_listing_id: raw.source_listing_id.clone(),
         title: ProductListingRawValuesPatch::Set(raw.title.clone()),
         description: ProductListingRawValuesPatch::Set(raw.description.clone()),
-        price: patch(raw.price.clone()),
-        price_estimate_min: patch(raw.price_estimate_min.clone()),
-        price_estimate_max: patch(raw.price_estimate_max.clone()),
+        price: price_patch(raw.price.clone(), resolved_price_fields[0]),
+        price_estimate_min: price_patch(raw.price_estimate_min.clone(), resolved_price_fields[1]),
+        price_estimate_max: price_patch(raw.price_estimate_max.clone(), resolved_price_fields[2]),
         availability: ProductListingRawValuesPatch::Set(raw.state.clone()),
         url: ProductListingRawValuesPatch::Set(candidate_url.to_string()),
         images: ProductListingRawValuesPatch::Set(validated_image_urls.to_vec()),
@@ -55,7 +57,7 @@ pub(crate) fn crawler_raw_input(
         .and_then(RawProductListingValues::new)?;
     let context = NormalizationContext::new(json!({
         "baseUrl": candidate_url,
-        "fallbackCurrency": default_currency.map(|currency| currency.as_str()),
+        "fallbackCurrency": fallback_currency.map(|currency| currency.as_str()),
     }))?;
 
     ProductListingNormalizationInput::new(
@@ -101,6 +103,14 @@ pub(crate) fn crawler_provenance(
     }))
 }
 
+fn price_patch(value: Option<String>, resolved: bool) -> ProductListingRawValuesPatch<String> {
+    if resolved {
+        patch(value)
+    } else {
+        ProductListingRawValuesPatch::Clear
+    }
+}
+
 fn patch(value: Option<String>) -> ProductListingRawValuesPatch<String> {
     match value {
         Some(value) => ProductListingRawValuesPatch::Set(value),
@@ -135,7 +145,13 @@ mod tests {
         let url = Url::parse("https://example.com/products/1")
             .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
         let extracted = raw();
-        let input = crawler_raw_input(&extracted, &extracted.images, &url, Some(Currency::Eur))?;
+        let input = crawler_raw_input(
+            &extracted,
+            &extracted.images,
+            &url,
+            Some(Currency::Eur),
+            [true, false, false],
+        )?;
 
         assert_eq!(
             Some(&serde_json::Value::String("100 EUR".to_owned())),
@@ -148,6 +164,32 @@ mod tests {
         assert_eq!(
             Some(&serde_json::json!(["/chair.jpg"])),
             input.source_payload().value().get("images")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_clear_unresolved_price_from_generic_raw_values() -> Result<(), NormalizationInputError>
+    {
+        let url = Url::parse("https://example.com/products/1")
+            .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
+        let extracted = raw();
+
+        let input = crawler_raw_input(
+            &extracted,
+            &extracted.images,
+            &url,
+            None,
+            [false, false, false],
+        )?;
+
+        assert_eq!(
+            Some(&serde_json::Value::String("100 EUR".to_owned())),
+            input.source_payload().value().get("price")
+        );
+        assert_eq!(
+            Some(&serde_json::json!({"action": "CLEAR"})),
+            input.raw_values().value().get("price")
         );
         Ok(())
     }
@@ -170,8 +212,13 @@ mod tests {
             "https://example.com/images/second-fallback-640x480.jpg".to_owned(),
         ];
 
-        let input =
-            crawler_raw_input(&extracted, &validated_image_urls, &url, Some(Currency::Eur))?;
+        let input = crawler_raw_input(
+            &extracted,
+            &validated_image_urls,
+            &url,
+            Some(Currency::Eur),
+            [true, false, false],
+        )?;
 
         assert_eq!(
             input.source_payload().value().get("images"),
@@ -205,14 +252,26 @@ mod tests {
         let url = Url::parse("https://example.com/products/1")
             .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
         let extracted = raw();
-        let first =
-            crawler_raw_input(&extracted, &extracted.images, &url, Some(Currency::Eur))?.hash()?;
+        let first = crawler_raw_input(
+            &extracted,
+            &extracted.images,
+            &url,
+            Some(Currency::Eur),
+            [true, false, false],
+        )?
+        .hash()?;
         let mut changed = raw();
         changed
             .raw_attributes
             .insert("rawMaterial".to_owned(), vec!["Oak".to_owned()]);
-        let second =
-            crawler_raw_input(&changed, &changed.images, &url, Some(Currency::Eur))?.hash()?;
+        let second = crawler_raw_input(
+            &changed,
+            &changed.images,
+            &url,
+            Some(Currency::Eur),
+            [true, false, false],
+        )?
+        .hash()?;
         assert_ne!(first, second);
         Ok(())
     }

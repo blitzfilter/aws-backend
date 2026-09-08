@@ -215,6 +215,7 @@ pub(crate) struct SalePricesDocument {
     pub(crate) hkd: u64,
     pub(crate) sgd: u64,
     pub(crate) chf: u64,
+    pub(crate) zar: u64,
 }
 
 impl SalePricesDocument {
@@ -238,6 +239,7 @@ impl SalePricesDocument {
             Currency::Hkd => self.hkd,
             Currency::Sgd => self.sgd,
             Currency::Chf => self.chf,
+            Currency::Zar => self.zar,
         }
     }
 }

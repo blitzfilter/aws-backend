@@ -1,4 +1,5 @@
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
+use money::Currency;
 
 use super::ListingSourceReadError;
 
@@ -9,6 +10,7 @@ pub struct WebCrawlSource {
     pub listing_source_name: ListingSourceName,
     pub listing_source_slug: ListingSourceSlugId,
     pub web_crawl_enabled: bool,
+    pub fallback_currency: Option<Currency>,
 }
 
 #[async_trait::async_trait]

@@ -9,6 +9,7 @@ use crate::expectation_types::{NormalizedExpectation, NormalizedExpectationJson,
 pub struct ScraperParsingPipelineFixture {
     pub schemas: Vec<ProductCssSelectorSchema>,
     pub schema_index: usize,
+    pub fallback_currency: Option<Currency>,
     pub raw: RawExpectation,
     pub normalized: NormalizedExpectation,
     pub html_path: String,
@@ -29,6 +30,7 @@ struct FixtureJson {
     schemas_file: Option<String>,
     #[serde(default)]
     schema_index: usize,
+    fallback_currency: Option<String>,
     raw: RawExpectation,
     normalized: NormalizedExpectationJson,
 }
@@ -81,6 +83,7 @@ fn fixture_from_json(f: FixtureJson) -> ScraperParsingPipelineFixture {
     ScraperParsingPipelineFixture {
         schemas,
         schema_index: f.schema_index,
+        fallback_currency: f.fallback_currency.as_deref().map(parse_currency),
         raw: f.raw,
         normalized: normalized_from_json(f.normalized),
         html_path: f.html,
@@ -145,6 +148,7 @@ fn parse_currency(code: &str) -> Currency {
         "HKD" => Currency::Hkd,
         "SGD" => Currency::Sgd,
         "CHF" => Currency::Chf,
+        "ZAR" => Currency::Zar,
         other => panic!("unsupported currency '{other}' in fixtures.json"),
     }
 }

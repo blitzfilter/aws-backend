@@ -45,6 +45,7 @@ enum ProviderCurrency {
     Hkd,
     Sgd,
     Chf,
+    Zar,
 }
 
 impl From<ProviderCurrency> for Currency {
@@ -68,6 +69,7 @@ impl From<ProviderCurrency> for Currency {
             ProviderCurrency::Hkd => Self::Hkd,
             ProviderCurrency::Sgd => Self::Sgd,
             ProviderCurrency::Chf => Self::Chf,
+            ProviderCurrency::Zar => Self::Zar,
         }
     }
 }
