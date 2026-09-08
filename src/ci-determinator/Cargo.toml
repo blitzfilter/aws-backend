@@ -11,5 +11,5 @@ path = "src/main.rs"
 anyhow = "1"
 camino = "1"
 determinator = "0.12"
-guppy = "0.17"
+guppy = "0.18"
 serde_json = { workspace = true }
