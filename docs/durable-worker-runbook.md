@@ -24,7 +24,7 @@ Operational contract for #1558, checked against repository runtime, adapters, mi
 | `product-listing-normalization` | `product_listing_raw_revisions` INSERT | `ProductListingNormalization` | 300s | 240s |
 | `notification-delivery` | `notification_deliveries` INSERT | `NotificationDelivery` | 360s | 240s |
 
-These are current fixed values, not environment tuning knobs:
+Except where explicitly noted, these are fixed runtime values:
 
 - Deliberate **concurrency 1 per process**, receive batch 1, no prefetch. Normalization reserves one receive across timer turns; a received job may wait behind one bounded reconciliation turn, with heartbeat and a 245s hold budget. Handoff joins that receipt owner before execution. More replicas introduce concurrency; `ordering_key` is not an SQS ordering guarantee. Ingress stays independent of downstream outages.
 - Long poll **20s**; receive outer deadline 27s; other SQS operations have a 5s outer deadline. Heartbeat every `min(30s, visibility/3)` (20/30/30s), extending visibility to the scope value. Heartbeat failure cancels local work without deleting; cancellation cannot undo remote effects.
