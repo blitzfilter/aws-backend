@@ -287,27 +287,36 @@ pub(super) fn validate_attributes(
         return Err(QueueError::Attribute("DLQ RedrivePolicy"));
     }
     if !dlq {
-        require(
-            attributes,
-            A::VisibilityTimeout,
-            &config.visibility_timeout().as_secs().to_string(),
-            "VisibilityTimeout",
-        )?;
-        require(
-            attributes,
-            A::ReceiveMessageWaitTimeSeconds,
-            "20",
-            "ReceiveMessageWaitTimeSeconds",
-        )?;
-        let redrive: Value = serde_json::from_str(
-            attr(attributes, A::RedrivePolicy).ok_or(QueueError::Attribute("RedrivePolicy"))?,
-        )
-        .map_err(|_| QueueError::Attribute("RedrivePolicy"))?;
-        if redrive["deadLetterTargetArn"] != config.arn(true)
-            || !(redrive["maxReceiveCount"] == 5 || redrive["maxReceiveCount"] == "5")
-        {
-            return Err(QueueError::Attribute("RedrivePolicy"));
-        }
+        validate_source_attributes(config, attributes)?;
+    }
+    Ok(())
+}
+
+fn validate_source_attributes(
+    config: &SqsQueueConfig,
+    attributes: &Attributes,
+) -> Result<(), QueueError> {
+    use QueueAttributeName as A;
+    require(
+        attributes,
+        A::VisibilityTimeout,
+        &config.visibility_timeout().as_secs().to_string(),
+        "VisibilityTimeout",
+    )?;
+    require(
+        attributes,
+        A::ReceiveMessageWaitTimeSeconds,
+        "20",
+        "ReceiveMessageWaitTimeSeconds",
+    )?;
+    let redrive: Value = serde_json::from_str(
+        attr(attributes, A::RedrivePolicy).ok_or(QueueError::Attribute("RedrivePolicy"))?,
+    )
+    .map_err(|_| QueueError::Attribute("RedrivePolicy"))?;
+    if redrive["deadLetterTargetArn"] != config.arn(true)
+        || !(redrive["maxReceiveCount"] == 5 || redrive["maxReceiveCount"] == "5")
+    {
+        return Err(QueueError::Attribute("RedrivePolicy"));
     }
     Ok(())
 }

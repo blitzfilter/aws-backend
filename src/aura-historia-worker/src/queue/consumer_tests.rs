@@ -1,6 +1,18 @@
-use super::super::{QueueError, SqsQueueConfig};
-use super::*;
-use crate::jobs::*;
+use super::super::{
+    API_TIMEOUT, Message, QueueError, RECEIVE_TIMEOUT, SqsQueue, SqsQueueConfig, Transport, bounded,
+};
+use super::{
+    JobOutcome, RuntimeControl, WorkerQueueReceiver, deferred_seconds, execute_owned, retry_delay,
+    settle,
+};
+use crate::{
+    WorkerScope,
+    jobs::{
+        DomainJob, DomainJobPayload, IdempotencyKey, NotificationDeliveryCreatedJob, OrderingKey,
+        ProductListingRawRevisionJob, WorkerQueue,
+    },
+    wire,
+};
 use product_service::use_cases::{
     NormalizeProductListingRawRevisionCommand, NormalizeProductListingRawRevisionError,
     NormalizeProductListingRawRevisionMode, NormalizeProductListingRawRevisionResult,
@@ -8,9 +20,18 @@ use product_service::use_cases::{
 };
 use std::{
     collections::VecDeque,
-    sync::{Mutex, atomic::AtomicUsize},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
-use tokio::sync::oneshot;
+use time::OffsetDateTime;
+use tokio::{
+    sync::{oneshot, watch},
+    task::JoinSet,
+    time::Instant,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Call {

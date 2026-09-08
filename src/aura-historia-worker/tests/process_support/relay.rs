@@ -642,39 +642,13 @@ async fn try_forward(state: &RelayState, request: Request) -> TestResult<Option<
         if queue_url.path() != source.path() && queue_url.path() != dlq.path() {
             return Err("relay request targets a queue outside this fixture".into());
         }
-        if matches!(operation, "SendMessage" | "DeleteMessage") {
-            invocation = parts
-                .headers
-                .get("amz-sdk-invocation-id")
-                .ok_or("SDK invocation ID missing")?
-                .to_str()?
-                .to_owned();
-            state.observations.record(Observation::SqsAttempt {
-                operation: operation.to_owned(),
-                invocation: invocation.clone(),
-                handle: sqs_request
-                    .get("ReceiptHandle")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            });
-            let loss = state.loss.borrow().clone();
-            if let Some(loss) = loss.filter(|loss| loss.operation == operation) {
-                let mut selected = loss.invocation.lock().await;
-                if selected.as_ref() == Some(&invocation) {
-                    state
-                        .observations
-                        .record(Observation::SdkRetryDropped { invocation });
-                    return Ok(None);
-                } else if selected.is_none() {
-                    *selected = Some(invocation.clone());
-                    lose_response = Some(loss.clone());
-                } else {
-                    // Do not let a new runtime attempt pass before the test's DB barrier.
-                    drop(selected);
-                    loss.released().await?;
-                }
-            }
-        }
+        let Some(attempt) =
+            prepare_sqs_attempt(state, operation, &parts.headers, &sqs_request).await?
+        else {
+            return Ok(None);
+        };
+        invocation = attempt.invocation;
+        lose_response = attempt.lose_response;
         if operation == "DeleteMessage" && hold_deletes.load(Ordering::SeqCst) {
             state.observations.record(Observation::DeleteHeld {
                 handle: field(&sqs_request, "ReceiptHandle")?.to_owned(),
@@ -701,54 +675,14 @@ async fn try_forward(state: &RelayState, request: Request) -> TestResult<Option<
     let status = result.status();
     let headers = transport_headers(result.headers().clone());
     let response_body = result.bytes().await?;
-    if matches!(state.destination, Destination::Webhook) {
-        let body = String::from_utf8(bytes.to_vec())?;
-        state
-            .observations
-            .record(if status == StatusCode::ACCEPTED {
-                Observation::Accepted { body }
-            } else {
-                Observation::Rejected { body, status }
-            });
-    } else if status.is_success() {
-        if let Destination::Sqs { consumer, .. } = &state.destination {
-            let result: Value = serde_json::from_slice(&response_body)?;
-            match operation {
-                "SendMessage" => state.observations.record(Observation::Sent {
-                    body: field(&sqs_request, "MessageBody")?.to_owned(),
-                    message_id: field(&result, "MessageId")?.to_owned(),
-                }),
-                "ReceiveMessage" => {
-                    if let Some(messages) = result.get("Messages").and_then(Value::as_array) {
-                        for message in messages {
-                            state.observations.record(Observation::Received(Receipt {
-                                consumer,
-                                message_id: field(message, "MessageId")?.to_owned(),
-                                body: field(message, "Body")?.to_owned(),
-                                handle: field(message, "ReceiptHandle")?.to_owned(),
-                                count: field(&message["Attributes"], "ApproximateReceiveCount")?
-                                    .parse()?,
-                            }));
-                        }
-                    }
-                }
-                "DeleteMessage" => state.observations.record(Observation::Deleted {
-                    handle: field(&sqs_request, "ReceiptHandle")?.to_owned(),
-                }),
-                "ChangeMessageVisibility" => {
-                    state.observations.record(Observation::VisibilityChanged {
-                        handle: field(&sqs_request, "ReceiptHandle")?.to_owned(),
-                        seconds: sqs_request["VisibilityTimeout"]
-                            .as_i64()
-                            .ok_or("visibility missing")?,
-                    })
-                }
-                _ => {}
-            }
-        }
-    } else {
-        return Err(format!("upstream HTTP {status} for {operation}").into());
-    }
+    record_upstream_response(
+        state,
+        operation,
+        &sqs_request,
+        &bytes,
+        status,
+        &response_body,
+    )?;
     if let Some(loss) = lose_response {
         state.observations.record(Observation::ResponseWithheld {
             operation: operation.to_owned(),
@@ -770,6 +704,131 @@ async fn try_forward(state: &RelayState, request: Request) -> TestResult<Option<
     *response.status_mut() = status;
     *response.headers_mut() = headers;
     Ok(Some(response))
+}
+
+#[derive(Default)]
+struct SqsAttempt {
+    invocation: String,
+    lose_response: Option<ResponseLoss>,
+}
+
+async fn prepare_sqs_attempt(
+    state: &RelayState,
+    operation: &str,
+    headers: &HeaderMap,
+    sqs_request: &Value,
+) -> TestResult<Option<SqsAttempt>> {
+    if !matches!(operation, "SendMessage" | "DeleteMessage") {
+        return Ok(Some(SqsAttempt::default()));
+    }
+    let invocation = headers
+        .get("amz-sdk-invocation-id")
+        .ok_or("SDK invocation ID missing")?
+        .to_str()?
+        .to_owned();
+    state.observations.record(Observation::SqsAttempt {
+        operation: operation.to_owned(),
+        invocation: invocation.clone(),
+        handle: sqs_request
+            .get("ReceiptHandle")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    });
+    let mut lose_response = None;
+    let loss = state.loss.borrow().clone();
+    if let Some(loss) = loss.filter(|loss| loss.operation == operation) {
+        let mut selected = loss.invocation.lock().await;
+        if selected.as_ref() == Some(&invocation) {
+            state
+                .observations
+                .record(Observation::SdkRetryDropped { invocation });
+            return Ok(None);
+        } else if selected.is_none() {
+            *selected = Some(invocation.clone());
+            lose_response = Some(loss.clone());
+        } else {
+            // Do not let a new runtime attempt pass before the test's DB barrier.
+            drop(selected);
+            loss.released().await?;
+        }
+    }
+    Ok(Some(SqsAttempt {
+        invocation,
+        lose_response,
+    }))
+}
+
+fn record_upstream_response(
+    state: &RelayState,
+    operation: &str,
+    sqs_request: &Value,
+    request_body: &[u8],
+    status: StatusCode,
+    response_body: &[u8],
+) -> TestResult {
+    if matches!(state.destination, Destination::Webhook) {
+        let body = String::from_utf8(request_body.to_vec())?;
+        state
+            .observations
+            .record(if status == StatusCode::ACCEPTED {
+                Observation::Accepted { body }
+            } else {
+                Observation::Rejected { body, status }
+            });
+    } else if status.is_success() {
+        if let Destination::Sqs { consumer, .. } = &state.destination {
+            record_sqs_response(
+                &state.observations,
+                consumer,
+                operation,
+                sqs_request,
+                response_body,
+            )?;
+        }
+    } else {
+        return Err(format!("upstream HTTP {status} for {operation}").into());
+    }
+    Ok(())
+}
+
+fn record_sqs_response(
+    observations: &Observations,
+    consumer: &'static str,
+    operation: &str,
+    sqs_request: &Value,
+    response_body: &[u8],
+) -> TestResult {
+    let result: Value = serde_json::from_slice(response_body)?;
+    match operation {
+        "SendMessage" => observations.record(Observation::Sent {
+            body: field(sqs_request, "MessageBody")?.to_owned(),
+            message_id: field(&result, "MessageId")?.to_owned(),
+        }),
+        "ReceiveMessage" => {
+            if let Some(messages) = result.get("Messages").and_then(Value::as_array) {
+                for message in messages {
+                    observations.record(Observation::Received(Receipt {
+                        consumer,
+                        message_id: field(message, "MessageId")?.to_owned(),
+                        body: field(message, "Body")?.to_owned(),
+                        handle: field(message, "ReceiptHandle")?.to_owned(),
+                        count: field(&message["Attributes"], "ApproximateReceiveCount")?.parse()?,
+                    }));
+                }
+            }
+        }
+        "DeleteMessage" => observations.record(Observation::Deleted {
+            handle: field(sqs_request, "ReceiptHandle")?.to_owned(),
+        }),
+        "ChangeMessageVisibility" => observations.record(Observation::VisibilityChanged {
+            handle: field(sqs_request, "ReceiptHandle")?.to_owned(),
+            seconds: sqs_request["VisibilityTimeout"]
+                .as_i64()
+                .ok_or("visibility missing")?,
+        }),
+        _ => {}
+    }
+    Ok(())
 }
 
 fn field<'a>(value: &'a Value, name: &str) -> TestResult<&'a str> {

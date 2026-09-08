@@ -1,6 +1,14 @@
 //! Versioned SQS boundary. Additive unknown envelope/payload fields are deliberately ignored.
 //! Required fields, discriminators, IDs and keys remain strict; CDC event payloads are separate.
-use crate::{WorkerScope, cdc::CdcOperation, jobs::*};
+use crate::{
+    WorkerScope,
+    cdc::CdcOperation,
+    jobs::{
+        DomainJob, DomainJobPayload, IdempotencyKey, InvalidJob, NotificationDeliveryCreatedJob,
+        OrderingKey, ProductListingEventJob, ProductListingRawRevisionJob, SearchFilterChangedJob,
+        SearchFilterMatchCreatedJob, canonical_uuid,
+    },
+};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
@@ -225,8 +233,10 @@ pub(crate) fn decode(body: &str, expected_scope: WorkerScope) -> Result<DomainJo
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{MAX_JOB_BYTES, WireError, decode, encode};
+    use crate::WorkerScope;
     use serde_json::{Value, json};
+    use strum::IntoEnumIterator;
 
     const A: &str = "10000000-0000-0000-0000-000000000001";
     const B: &str = "20000000-0000-0000-0000-000000000002";
@@ -310,6 +320,22 @@ mod tests {
         Ok(())
     }
 
+    fn invalid_payload_values(field: &str, value: &Value) -> Vec<Value> {
+        if field.ends_with("id") {
+            vec![
+                json!("bad"),
+                json!("00000000-0000-0000-0000-000000000000"),
+                json!("10000000000000000000000000000001"),
+                json!(3),
+                Value::Null,
+            ]
+        } else if value.is_number() {
+            vec![json!(0), json!(-1), json!(1.5), json!("3"), json!(u64::MAX)]
+        } else {
+            vec![json!("update"), json!("UNKNOWN"), Value::Null]
+        }
+    }
+
     #[test]
     fn should_reject_invalid_envelopes_and_payloads_for_every_variant() {
         for (scope, original) in snapshots() {
@@ -336,19 +362,7 @@ mod tests {
                 let mut body = original.clone();
                 body["payload"].as_object_mut().unwrap().remove(field);
                 assert!(decode(&body.to_string(), scope).is_err(), "missing {field}");
-                let invalid = if field.ends_with("id") {
-                    vec![
-                        json!("bad"),
-                        json!("00000000-0000-0000-0000-000000000000"),
-                        json!("10000000000000000000000000000001"),
-                        json!(3),
-                        Value::Null,
-                    ]
-                } else if value.is_number() {
-                    vec![json!(0), json!(-1), json!(1.5), json!("3"), json!(u64::MAX)]
-                } else {
-                    vec![json!("update"), json!("UNKNOWN"), Value::Null]
-                };
+                let invalid = invalid_payload_values(field, value);
                 for value in invalid {
                     let mut body = original.clone();
                     body["payload"][field] = value;

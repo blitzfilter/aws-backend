@@ -1,9 +1,10 @@
-use super::{paused_write::PausedWrite, *};
+use super::{DEFAULT_INDEX, OpenSearchSearchFilterIndex, paused_write::PausedWrite};
+use crate::document::SearchFilterDocument;
 use domain_primitives::event_id::EventId;
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use localization::Language;
 use money::Currency;
-use opensearch::{GetParts, indices::IndicesPutSettingsParts};
+use opensearch::{GetParts, http::StatusCode, indices::IndicesPutSettingsParts};
 use product_listing_core::{
     listing_lifecycle::ListingLifecycle, product_listing_id::ProductListingId,
     product_listing_search::ProductListingSearch, product_listing_slug_id::ProductListingSlugId,
@@ -14,8 +15,14 @@ use product_listing_service::ports::{
     ProductListingSearchFilterMatchSourceEventKind,
 };
 use search_filter_core::{
-    search_filter_state::SearchFilterState, user_search_filter_name::UserSearchFilterName,
+    search_filter_state::SearchFilterState, user_search_filter_id::UserSearchFilterId,
+    user_search_filter_name::UserSearchFilterName,
 };
+use search_filter_service::ports::{
+    SearchFilterIndex, SearchFilterIndexQuery, SearchFilterProjection,
+    SearchFilterProjectionWriteOutcome, SearchFilterView,
+};
+use serde_json::json;
 use std::time::Duration;
 use test_api::{
     IntegrationTestService, OpenSearch as TestOpenSearch, aura_integration_test,

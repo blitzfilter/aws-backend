@@ -1,23 +1,28 @@
-use super::{paused_write::PausedWrite, *};
+use super::{DEFAULT_INDEX, OpenSearchProductListingSearchProjection, paused_write::PausedWrite};
 use crate::{
     OpenSearchProductListingSearchReader, OpenSearchProductListingSimilarProductListingsReader,
+    product_listing_percolation_document::product_listing_document,
 };
 use domain_primitives::event_id::EventId;
 use fxrate_core::{FX_RATE_SCALE, FxRateId, FxRateQuote, FxRateSource, NewFxRateSnapshot};
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use localization::{Language, Localized};
 use money::Currency;
-use opensearch::{DeleteParts, GetParts, indices::IndicesPutSettingsParts};
+use opensearch::{
+    DeleteParts, GetParts, IndexParts, http::StatusCode, indices::IndicesPutSettingsParts,
+    params::VersionType,
+};
 use product_listing_core::{
-    listing_lifecycle::ListingLifecycle, product_listing_search::ProductListingSearch,
-    product_listing_slug_id::ProductListingSlugId, source_listing_id::SourceListingId,
-    title::Title,
+    listing_lifecycle::ListingLifecycle, product_listing_id::ProductListingId,
+    product_listing_search::ProductListingSearch, product_listing_slug_id::ProductListingSlugId,
+    source_listing_id::SourceListingId, title::Title,
 };
 use product_listing_service::ports::{
     CompiledProductListingSearch, ListingSourceSummary, ProductListingPriceFilterPlan,
-    ProductListingSearchFilterMatchSourceEventKind, ProductListingSearchReadRequest,
-    ProductListingSearchReader, ProductListingSimilarProductListingsReader,
-    ProductListingSimilarProductListingsRequest,
+    ProductListingSearchFilterMatchSource, ProductListingSearchFilterMatchSourceEventKind,
+    ProductListingSearchProjection, ProductListingSearchProjectionWriteOutcome,
+    ProductListingSearchReadRequest, ProductListingSearchReader,
+    ProductListingSimilarProductListingsReader, ProductListingSimilarProductListingsRequest,
 };
 use serde_json::{Value, json};
 use std::time::Duration;

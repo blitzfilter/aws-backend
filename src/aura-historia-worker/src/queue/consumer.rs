@@ -276,29 +276,7 @@ impl WorkerQueueReceiver {
     /// `into_polling`; only shutdown may abandon a pending poll, without acknowledgment.
     pub(crate) async fn recv(&mut self) -> Option<Delivery> {
         loop {
-            if self.control.stopping() {
-                return None;
-            }
-            if let Some(until) = self.pause_until {
-                tokio::select! {
-                    biased;
-                    () = self.control.cancelled() => return None,
-                    () = tokio::time::sleep_until(until) => {}
-                }
-                if let Source::Sqs(queue) = &self.source {
-                    let probe = tokio::select! {
-                        biased;
-                        () = self.control.cancelled() => return None,
-                        result = bounded(queue.transport.probe(), API_TIMEOUT) => result,
-                    };
-                    if probe.is_err() {
-                        self.pause();
-                        continue;
-                    }
-                }
-                // Half-open: one job probes service recovery, not a drain of the backlog.
-                self.pause_until = None;
-            }
+            self.wait_for_receive_resume().await?;
             let receive_started = Instant::now();
             let received = match &mut self.source {
                 Source::Memory(receiver) => {
@@ -352,6 +330,36 @@ impl WorkerQueueReceiver {
                     self.pause();
                 }
             }
+        }
+    }
+
+    async fn wait_for_receive_resume(&mut self) -> Option<()> {
+        loop {
+            if self.control.stopping() {
+                return None;
+            }
+            let Some(until) = self.pause_until else {
+                return Some(());
+            };
+            tokio::select! {
+                biased;
+                () = self.control.cancelled() => return None,
+                () = tokio::time::sleep_until(until) => {}
+            }
+            if let Source::Sqs(queue) = &self.source {
+                let probe = tokio::select! {
+                    biased;
+                    () = self.control.cancelled() => return None,
+                    result = bounded(queue.transport.probe(), API_TIMEOUT) => result,
+                };
+                if probe.is_err() {
+                    self.pause();
+                    continue;
+                }
+            }
+            // Half-open: one job probes service recovery, not a drain of the backlog.
+            self.pause_until = None;
+            return Some(());
         }
     }
 
