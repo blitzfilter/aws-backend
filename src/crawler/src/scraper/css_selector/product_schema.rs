@@ -1,4 +1,3 @@
-use crate::scraper::css_selector::currency_dto::CurrencyDto;
 use crate::scraper::css_selector::rule::{
     ExtractionError, ExtractionRule, split_image_candidate_group,
 };
@@ -102,19 +101,6 @@ pub struct ProductCssSelectorSchema {
     )]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub auction_end: Option<ExtractionRule>,
-
-    #[schemars(
-        description = "The default currency for this ListingSource's prices, as an ISO 4217 code (e.g. \
-        \"EUR\", \"GBP\", \"USD\", \"AUD\", \"CAD\", \"NZD\"). \
-        This is full-page fallback context, not a selector rule. \
-        Set this when the price elements on the page do not include a currency symbol or code \
-        themselves — for example when the currency appears in a sibling element \
-        (e.g. <span class=\"currency\">EUR</span>), a page-level label \
-        (\"Auction currency: EUR\"), a <meta> tag, or another DOM node with currency metadata. \
-        Leave null only if the currency is always embedded in every price string."
-    )]
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub default_currency: Option<CurrencyDto>,
 
     #[schemars(
         description = "Crawler-only raw product attributes keyed by stable camelCase names from the configured raw attribute registry, such as rawShipment, rawCondition, rawMaterial, rawYear, rawPeriod, rawCategory, rawTags, rawMeasurements, rawOrigin, or rawArtistName. Use only for visible product-specific values that do not yet have normalized product fields. Extract raw values only; do not normalize or derive values."
@@ -475,7 +461,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         (parsed, schema)
@@ -513,7 +498,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: Some(attr_rule("time#auction-start", "datetime")),
             auction_end: Some(attr_rule("time#auction-end", "datetime")),
-            default_currency: None,
             raw_attributes: Default::default(),
         }
     }
@@ -644,7 +628,6 @@ mod tests {
             images: image_rule_all("#wpgs-gallery img, .wcgs-woocommerce-product-gallery img"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
 
@@ -676,7 +659,6 @@ mod tests {
             images: image_rule_all("#wrong-gallery img"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
 
@@ -713,7 +695,6 @@ mod tests {
             images: image_rule_all("#wpgs-gallery img"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
 
@@ -781,7 +762,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();
@@ -809,7 +789,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();
@@ -914,7 +893,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();
@@ -947,7 +925,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();
@@ -986,7 +963,6 @@ mod tests {
             images: images_rule,
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();
@@ -1045,7 +1021,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1073,7 +1048,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1101,7 +1075,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1134,7 +1107,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1163,7 +1135,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1192,7 +1163,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1221,7 +1191,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1250,7 +1219,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: Some(attr_rule("time#auction-start", "datetime")),
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1279,7 +1247,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: Some(attr_rule("time#auction-end", "datetime")),
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1320,7 +1287,6 @@ mod tests {
                 images: good_img,
                 auction_start: None,
                 auction_end: None,
-                default_currency: None,
                 raw_attributes: Default::default(),
             },
             "title" => ProductCssSelectorSchema {
@@ -1334,7 +1300,6 @@ mod tests {
                 images: good_img,
                 auction_start: None,
                 auction_end: None,
-                default_currency: None,
                 raw_attributes: Default::default(),
             },
             "state" => ProductCssSelectorSchema {
@@ -1348,7 +1313,6 @@ mod tests {
                 images: good_img,
                 auction_start: None,
                 auction_end: None,
-                default_currency: None,
                 raw_attributes: Default::default(),
             },
             "images" => ProductCssSelectorSchema {
@@ -1362,7 +1326,6 @@ mod tests {
                 images: bad,
                 auction_start: None,
                 auction_end: None,
-                default_currency: None,
                 raw_attributes: Default::default(),
             },
             _ => unreachable!(),
@@ -1394,7 +1357,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         // We only care that the error exists and mentions the field name.
@@ -1421,7 +1383,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1453,7 +1414,6 @@ mod tests {
             images: attr_rule_all("div.gallery img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();
@@ -1479,7 +1439,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let err = schema.apply(&html).unwrap_err();
@@ -1513,7 +1472,6 @@ mod tests {
             },
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
 
@@ -1574,7 +1532,6 @@ mod tests {
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         };
         let result = schema.apply(&html).unwrap();

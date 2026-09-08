@@ -410,7 +410,9 @@ mod tests {
         StoredListingSource {
             source,
             configuration: ListingSourceIngestionConfigurations(vec![
-                ListingIngestionConfiguration::WebCrawl,
+                ListingIngestionConfiguration::WebCrawl {
+                    fallback_currency: None,
+                },
             ]),
             version: ListingSourceStorageVersion::INITIAL,
             created: OffsetDateTime::UNIX_EPOCH,

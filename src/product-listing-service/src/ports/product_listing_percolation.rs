@@ -26,6 +26,7 @@ pub struct ProductListingPricesByCurrency {
     hkd: u64,
     sgd: u64,
     chf: u64,
+    zar: u64,
 }
 
 impl ProductListingPricesByCurrency {
@@ -58,6 +59,7 @@ impl ProductListingPricesByCurrency {
             hkd: amount_in(Currency::Hkd)?,
             sgd: amount_in(Currency::Sgd)?,
             chf: amount_in(Currency::Chf)?,
+            zar: amount_in(Currency::Zar)?,
         })
     }
 
@@ -81,6 +83,7 @@ impl ProductListingPricesByCurrency {
             Currency::Hkd => self.hkd,
             Currency::Sgd => self.sgd,
             Currency::Chf => self.chf,
+            Currency::Zar => self.zar,
         }
     }
 }

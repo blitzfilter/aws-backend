@@ -147,6 +147,7 @@ mod tests {
                                 panic!("valid test listing source slug: {error}")
                             }),
                             crawl_enabled: true,
+                            fallback_currency: None,
                         },
                     ])
                 })

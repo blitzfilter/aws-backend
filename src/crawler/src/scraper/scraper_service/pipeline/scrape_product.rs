@@ -7,7 +7,7 @@ use crate::scraper::scraper_service::pipeline::cached_schema_selection::Existing
 use crate::scraper::scraper_service::pipeline::fresh_schema_generation::FreshSchemaGenerationContext;
 use crate::scraper::scraper_service::service::{FetchError, ScraperServiceImpl};
 use crate::scraper::scraper_service::util::hash::{
-    fingerprint_schema_set, hash_html, hash_main_fragment,
+    fingerprint_scraper_context, hash_html, hash_main_fragment,
 };
 use crate::scraper::scraper_service::util::html::extract_main_fragment;
 use crate::spider::classification::url_metadata::CrawlerUrlWriteOutcome;
@@ -132,6 +132,28 @@ impl ScraperService for ScraperServiceImpl {
         last_scraped_schema_fingerprint: Option<&str>,
         expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<Option<ScrapedProduct>, ScraperError> {
+        self.scrape_with_fallback_currency(
+            listing_source_id,
+            url,
+            product_url_pattern,
+            last_scraped_hash,
+            last_scraped_schema_fingerprint,
+            expected_last_captured_raw_input_sha256,
+            None,
+        )
+        .await
+    }
+
+    async fn scrape_with_fallback_currency(
+        &self,
+        listing_source_id: &ListingSourceId,
+        url: &Url,
+        product_url_pattern: Option<&str>,
+        last_scraped_hash: Option<&str>,
+        last_scraped_schema_fingerprint: Option<&str>,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+        fallback_currency: Option<money::Currency>,
+    ) -> Result<Option<ScrapedProduct>, ScraperError> {
         let domain = url
             .host_str()
             .ok_or_else(|| ScraperError::NoHost { url: url.clone() })?;
@@ -203,9 +225,11 @@ impl ScraperService for ScraperServiceImpl {
         let listing_source_product_schemas = self
             .obtain_schemas(listing_source_id, url, product_url_pattern, &html)
             .await?;
-        let stored_schema_fingerprint =
-            fingerprint_schema_set(&listing_source_product_schemas.product_schemas)
-                .map_err(ScraperError::SchemaFingerprint)?;
+        let stored_schema_fingerprint = fingerprint_scraper_context(
+            &listing_source_product_schemas.product_schemas,
+            fallback_currency,
+        )
+        .map_err(ScraperError::SchemaFingerprint)?;
 
         if has_main
             && last_scraped_hash == Some(current_hash.as_str())
@@ -241,6 +265,7 @@ impl ScraperService for ScraperServiceImpl {
                 url,
                 &html,
                 &listing_source_product_schemas.product_schemas,
+                fallback_currency,
             )
             .await?
         {
@@ -258,6 +283,7 @@ impl ScraperService for ScraperServiceImpl {
                     url,
                     html: &html,
                     existing_schemas: &listing_source_product_schemas.product_schemas,
+                    fallback_currency,
                     expected_last_captured_raw_input_sha256,
                 })
                 .await?
@@ -268,13 +294,18 @@ impl ScraperService for ScraperServiceImpl {
         if selection.fresh_schema {
             effective_schemas.push(selection.schema.clone());
         }
-        let schema_fingerprint =
-            fingerprint_schema_set(&effective_schemas).map_err(ScraperError::SchemaFingerprint)?;
+        let schema_fingerprint = fingerprint_scraper_context(&effective_schemas, fallback_currency)
+            .map_err(ScraperError::SchemaFingerprint)?;
         let raw_input = crawler_raw_input(
             &selection.raw,
             &selection.validated_image_urls,
             url,
-            selection.default_currency,
+            selection.fallback_currency,
+            [
+                selection.prepared.price.is_some(),
+                selection.prepared.price_estimate_min.is_some(),
+                selection.prepared.price_estimate_max.is_some(),
+            ],
         )
         .map_err(ScraperError::RawNormalizationInput)?;
         let raw_input_sha256 = raw_input

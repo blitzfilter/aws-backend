@@ -439,7 +439,6 @@ mod tests {
             },
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         }
     }

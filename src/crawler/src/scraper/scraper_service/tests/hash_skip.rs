@@ -1,6 +1,6 @@
 use super::*;
 use crate::scraper::scraper_service::util::hash::{
-    fingerprint_schema_set, hash_html, hash_main_fragment,
+    fingerprint_scraper_context, hash_html, hash_main_fragment,
 };
 use sha2::{Digest, Sha256};
 
@@ -18,7 +18,7 @@ async fn should_skip_fetching_and_return_none_when_hashes_match() {
     });
 
     let schema = listing_source_product_schemas(id);
-    let schema_fingerprint = fingerprint_schema_set(&schema.product_schemas)
+    let schema_fingerprint = fingerprint_scraper_context(&schema.product_schemas, None)
         .unwrap_or_else(|error| panic!("test schema must serialize: {error}"));
     let mut schema_svc = MockProductListingSchemaService::new();
     schema_svc

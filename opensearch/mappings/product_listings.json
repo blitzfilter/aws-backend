@@ -235,7 +235,8 @@
                     "sar": { "type": "unsigned_long" },
                     "hkd": { "type": "unsigned_long" },
                     "sgd": { "type": "unsigned_long" },
-                    "chf": { "type": "unsigned_long" }
+                    "chf": { "type": "unsigned_long" },
+                    "zar": { "type": "unsigned_long" }
                 }
             },
             "saleObservationFxRateId": {

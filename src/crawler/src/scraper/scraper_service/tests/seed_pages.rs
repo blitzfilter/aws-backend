@@ -39,7 +39,6 @@ async fn should_seed_schema_generation_with_additional_sample_pages_on_cache_mis
             images: attr_rule_all("img", "src"),
             auction_start: None,
             auction_end: None,
-            default_currency: None,
             raw_attributes: Default::default(),
         }
     };

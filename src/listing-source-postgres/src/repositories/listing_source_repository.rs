@@ -103,6 +103,13 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
             .execute(&mut *self.connection)
             .await
             .map_err(db_write)?;
+        sqlx::query(
+            "DELETE FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1",
+        )
+        .bind(uuid::Uuid::from(source.id()))
+        .execute(&mut *self.connection)
+        .await
+        .map_err(db_write)?;
         sqlx::query("DELETE FROM listing_source_shopify_ingestion_configurations WHERE listing_source_id=$1")
             .bind(uuid::Uuid::from(source.id()))
             .execute(&mut *self.connection)
@@ -209,8 +216,10 @@ async fn write_configuration(
             ListingIngestionConfiguration::Woocommerce { currency, language } => {
                 sqlx::query("INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id,webhook_secret,currency,language) VALUES ($1,$2,$3,$4)").bind(uuid::Uuid::from(id)).bind(woocommerce_webhook_secret).bind(currency.map(|v|v.as_str())).bind(language.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
             }
-            ListingIngestionConfiguration::WebCrawl | ListingIngestionConfiguration::PartnerApi => {
+            ListingIngestionConfiguration::WebCrawl { fallback_currency } => {
+                sqlx::query("INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id,fallback_currency) VALUES ($1,$2)").bind(uuid::Uuid::from(id)).bind(fallback_currency.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
             }
+            ListingIngestionConfiguration::PartnerApi => {}
         }
     }
     Ok(())
@@ -230,7 +239,10 @@ async fn read_configuration(
     for row in methods {
         match row.ingestion_method.parse().map_err(invalid)? {
             ListingIngestionMethod::WebCrawl => {
-                configs.push(ListingIngestionConfiguration::WebCrawl)
+                let fallback_currency=sqlx::query_scalar::<_,Option<String>>("SELECT fallback_currency FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1").bind(id).fetch_optional(&mut *connection).await.map_err(db_read)?.ok_or_else(|| invalid(ListingIngestionConfigurationMismatch))?;
+                configs.push(ListingIngestionConfiguration::WebCrawl {
+                    fallback_currency: parse_optional_currency(fallback_currency.as_deref())?,
+                });
             }
             ListingIngestionMethod::PartnerApi => {
                 configs.push(ListingIngestionConfiguration::PartnerApi)
@@ -256,6 +268,14 @@ async fn read_configuration(
         .iter()
         .map(ListingIngestionConfiguration::method)
         .collect::<HashSet<_>>();
+    let has_orphan_web_crawl = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1)",
+    )
+    .bind(id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(db_read)?
+        && !methods.contains(&ListingIngestionMethod::WebCrawl);
     let has_orphan_shopify = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM listing_source_shopify_ingestion_configurations WHERE listing_source_id=$1)",
     )
@@ -272,7 +292,7 @@ async fn read_configuration(
     .await
     .map_err(db_read)?
         && !methods.contains(&ListingIngestionMethod::Woocommerce);
-    if has_orphan_shopify || has_orphan_woocommerce {
+    if has_orphan_web_crawl || has_orphan_shopify || has_orphan_woocommerce {
         return Err(invalid(ListingIngestionConfigurationMismatch));
     }
     let configurations = ListingSourceIngestionConfigurations(configs);
@@ -386,7 +406,7 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("insert operator party: {error}"));
 
-        let source = ListingSource::create(NewListingSource {
+        let mut source = ListingSource::create(NewListingSource {
             id: ListingSourceId::new(),
             name: ListingSourceName::try_from("Provider Source")
                 .unwrap_or_else(|error| panic!("invalid test listing source name: {error}")),
@@ -406,7 +426,9 @@ mod tests {
             referral_configuration: None,
         });
         let configuration = ListingSourceIngestionConfigurations(vec![
-            ListingIngestionConfiguration::WebCrawl,
+            ListingIngestionConfiguration::WebCrawl {
+                fallback_currency: Some(money::Currency::Eur),
+            },
             ListingIngestionConfiguration::Shopify {
                 domain: Domain::try_from("shop.provider.example")
                     .unwrap_or_else(|error| panic!("test domain: {error}")),
@@ -451,7 +473,7 @@ mod tests {
         assert_eq!(source.id(), stored.source.id());
         assert_eq!(configuration, stored.configuration);
 
-        let readers = SqlxListingSourceReaders::new(pool);
+        let readers = SqlxListingSourceReaders::new(pool.clone());
         let details = readers
             .find_details_by_id(source.id())
             .await
@@ -492,6 +514,7 @@ mod tests {
             candidate.listing_source_id == source.id()
                 && candidate.listing_source_name == *source.name()
                 && candidate.listing_source_slug == *source.slug_id()
+                && candidate.fallback_currency == Some(money::Currency::Eur)
         }));
 
         let body = b"payload";
@@ -504,6 +527,83 @@ mod tests {
                 .await
                 .unwrap_or_else(|error| panic!("verify WooCommerce signature: {error}"))
         );
+
+        source.replace_ingestion_methods(HashSet::from([ListingIngestionMethod::PartnerApi]));
+        let updated_configuration =
+            ListingSourceIngestionConfigurations(vec![ListingIngestionConfiguration::PartnerApi]);
+        let mut transaction = unit_of_work
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin update transaction: {error}"));
+        let updated = SqlxListingSourceRepositoryFactory::new()
+            .in_transaction(&mut transaction)
+            .update(
+                &source,
+                &updated_configuration,
+                PatchField::Unchanged,
+                stored.version,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("update listing source: {error}"));
+        transaction
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit update transaction: {error}"));
+        assert_eq!(updated_configuration, updated.configuration);
+        let web_crawl_configured = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1)",
+        )
+        .bind(uuid::Uuid::from(source.id()))
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("check deleted WebCrawl configuration: {error}"));
+        assert!(!web_crawl_configured);
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_reject_orphan_web_crawl_configuration() {
+        let pool = get_postgres_client().await;
+        let operator_party_id = PartyId::new();
+        let source_id = ListingSourceId::new();
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(uuid::Uuid::from(operator_party_id))
+            .bind(format!("orphan-web-crawl-operator-{operator_party_id}"))
+            .bind("Orphan WebCrawl operator")
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert operator party: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(uuid::Uuid::from(source_id))
+        .bind(format!("orphan-web-crawl-source-{source_id}"))
+        .bind("Orphan WebCrawl source")
+        .bind(uuid::Uuid::from(operator_party_id))
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert listing source: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id) VALUES ($1)",
+        )
+        .bind(uuid::Uuid::from(source_id))
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert orphan WebCrawl configuration: {error}"));
+
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool);
+        let mut transaction = unit_of_work
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin transaction: {error}"));
+        let result = SqlxListingSourceRepositoryFactory::new()
+            .in_transaction(&mut transaction)
+            .find_by_id(source_id)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ListingSourceRepositoryError::InvalidPersistedState { .. })
+        ));
     }
 
     fn hmac_sha256(secret: &[u8], body: &[u8]) -> Result<Vec<u8>, openssl::error::ErrorStack> {
@@ -515,8 +615,9 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_unknown_persisted_currency_and_language() {
+    fn should_reject_unknown_or_noncanonical_persisted_currency_and_language() {
         assert!(parse_optional_currency(Some("INVALID")).is_err());
+        assert!(parse_optional_currency(Some("eur")).is_err());
         assert!(parse_optional_language(Some("INVALID")).is_err());
     }
 

@@ -591,7 +591,6 @@ async fn should_generate_single_schema_without_failed_schema_context() {
         images: attr_rule_all("img", "src"),
         auction_start: None,
         auction_end: None,
-        default_currency: None,
         raw_attributes: Default::default(),
     };
 

@@ -137,7 +137,10 @@ pub(crate) struct UpdateListingSourceDataParts {
 #[serde(tag = "type")]
 pub(crate) enum ListingIngestionConfigurationData {
     #[serde(rename = "WEB_CRAWL")]
-    WebCrawl,
+    WebCrawl {
+        #[serde(default, rename = "fallbackCurrency")]
+        fallback_currency: Option<String>,
+    },
     #[serde(rename = "SHOPIFY")]
     Shopify {
         domain: String,
@@ -162,7 +165,11 @@ impl TryFrom<ListingIngestionConfigurationData> for ListingIngestionConfiguratio
 
     fn try_from(value: ListingIngestionConfigurationData) -> Result<Self, Self::Error> {
         match value {
-            ListingIngestionConfigurationData::WebCrawl => Ok(Self::WebCrawl),
+            ListingIngestionConfigurationData::WebCrawl { fallback_currency } => {
+                Ok(Self::WebCrawl {
+                    fallback_currency: parse_currency(fallback_currency)?,
+                })
+            }
             ListingIngestionConfigurationData::Shopify {
                 domain,
                 currency,
@@ -463,11 +470,25 @@ mod tests {
             r#"{
                 "name":"Source",
                 "operator":{"type":"EXISTING","partyId":"550e8400-e29b-41d4-a716-446655440000"},
-                "ingestionConfiguration":[{"type":"WEB_CRAWL"},{"type":"PARTNER_API"}]
+                "ingestionConfiguration":[{"type":"WEB_CRAWL","fallbackCurrency":"ZAR"},{"type":"PARTNER_API"}]
             }"#,
         )?;
 
-        assert_eq!(2, source.ingestion_configuration.len());
+        let configuration = source
+            .ingestion_configuration
+            .into_iter()
+            .next()
+            .ok_or_else(|| serde_json::Error::io(std::io::Error::other("missing WEB_CRAWL")))?
+            .try_into()
+            .map_err(|error: ApiError| {
+                serde_json::Error::io(std::io::Error::other(error.to_string()))
+            })?;
+        assert!(matches!(
+            configuration,
+            ListingIngestionConfiguration::WebCrawl {
+                fallback_currency: Some(money::Currency::Zar),
+            }
+        ));
         Ok(())
     }
 

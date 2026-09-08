@@ -76,7 +76,6 @@
         "cardinality": "first"
       }
     },
-    "default_currency": "GBP",
     "source_listing_id": {
       "type": "text",
       "selector": ".sku",
@@ -111,7 +110,6 @@
         "cardinality": "all"
       }
     },
-    "default_currency": "GBP",
     "source_listing_id": {
       "type": "text",
       "selector": ".sku",

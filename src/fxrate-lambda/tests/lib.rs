@@ -78,7 +78,8 @@ async fn should_capture_complete_fx_snapshot_from_scheduled_event() {
         .fetch_one(&pool)
         .await?;
         assert_eq!(1, snapshots);
-        assert_eq!(18, conversions);
+        let expected_quotes = i64::try_from(Currency::iter().count())?;
+        assert_eq!(expected_quotes, conversions);
         Ok(())
     }
     .await;

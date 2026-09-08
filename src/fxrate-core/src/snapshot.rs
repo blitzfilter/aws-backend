@@ -619,6 +619,7 @@ mod tests {
             FxRateQuote::new(Currency::Hkd, FX_RATE_SCALE),
             FxRateQuote::new(Currency::Sgd, FX_RATE_SCALE),
             FxRateQuote::new(Currency::Chf, FX_RATE_SCALE),
+            FxRateQuote::new(Currency::Zar, FX_RATE_SCALE),
         ];
         let precise = NewFxRateSnapshot::capture_eur(
             FxRateId::new(),

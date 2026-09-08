@@ -46,7 +46,6 @@ fn minimal_css_schema() -> ProductCssSelectorSchema {
         },
         auction_start: None,
         auction_end: None,
-        default_currency: None,
         raw_attributes: Default::default(),
     }
 }
@@ -117,7 +116,6 @@ fn full_css_schema() -> ProductCssSelectorSchema {
             },
             cardinality: ExtractionCardinality::First,
         }),
-        default_currency: None,
         raw_attributes: Default::default(),
     }
 }

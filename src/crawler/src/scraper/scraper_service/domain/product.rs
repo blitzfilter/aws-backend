@@ -1,5 +1,6 @@
 use crate::scraper::scraper_service::domain::errors::ScraperError;
 use listing_source_core::ListingSourceId;
+use money::Currency;
 use product_listing_normalization::{
     ListingAvailabilityQuickCheck, ProductListingNormalizationInput,
 };
@@ -42,4 +43,27 @@ pub trait ScraperService: Send + Sync {
         last_scraped_schema_fingerprint: Option<&str>,
         expected_last_captured_raw_input_sha256: Option<&[u8]>,
     ) -> Result<Option<ScrapedProduct>, ScraperError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn scrape_with_fallback_currency(
+        &self,
+        listing_source_id: &ListingSourceId,
+        url: &Url,
+        product_url_pattern: Option<&str>,
+        last_scraped_hash: Option<&str>,
+        last_scraped_schema_fingerprint: Option<&str>,
+        expected_last_captured_raw_input_sha256: Option<&[u8]>,
+        fallback_currency: Option<Currency>,
+    ) -> Result<Option<ScrapedProduct>, ScraperError> {
+        let _ = fallback_currency;
+        self.scrape(
+            listing_source_id,
+            url,
+            product_url_pattern,
+            last_scraped_hash,
+            last_scraped_schema_fingerprint,
+            expected_last_captured_raw_input_sha256,
+        )
+        .await
+    }
 }

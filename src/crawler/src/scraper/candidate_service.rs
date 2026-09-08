@@ -6,6 +6,7 @@
 
 use async_trait::async_trait;
 use listing_source_core::ListingSourceId;
+use money::Currency;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use url::Url;
@@ -23,6 +24,7 @@ use crate::spider::classification::url_metadata::{
 pub struct ScraperCandidate {
     pub listing_source_id: ListingSourceId,
     pub listing_source_name: String,
+    pub fallback_currency: Option<Currency>,
     pub url_pattern: Option<String>,
     pub url: Url,
     pub last_scraped_hash: Option<String>,
@@ -185,6 +187,7 @@ impl ScraperCandidateServiceImpl {
 struct ScraperCandidateRow {
     listing_source_id: uuid::Uuid,
     listing_source_name: String,
+    fallback_currency: Option<String>,
 
     url_pattern: Option<String>,
     url: String,
@@ -196,7 +199,7 @@ struct ScraperCandidateRow {
 const SCRAPER_CANDIDATE_QUERY: &str = r#"
     WITH eligible_urls AS (
         SELECT
-            su.listing_source_id, s.listing_source_name, sd.url_pattern, su.url,
+            su.listing_source_id, s.listing_source_name, s.fallback_currency, sd.url_pattern, su.url,
             lower(substring(su.url from '^[a-z][a-z0-9+.-]*://([^/:?#]+)')) AS normalized_host,
             su.last_scraped,
             su.last_scraped_hash,
@@ -242,7 +245,7 @@ const SCRAPER_CANDIDATE_QUERY: &str = r#"
         JOIN selected_domains sd ON sd.normalized_host = eu.normalized_host
     )
     SELECT
-        listing_source_id, listing_source_name, url_pattern, url,
+        listing_source_id, listing_source_name, fallback_currency, url_pattern, url,
         last_scraped_hash,
         last_scraped_schema_fingerprint,
         last_captured_raw_input_sha256
@@ -272,9 +275,21 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
             let Some(url) = Url::parse(&row.url).ok() else {
                 continue;
             };
+            let fallback_currency = row
+                .fallback_currency
+                .as_deref()
+                .map(|value| {
+                    Currency::from_code(value).ok_or_else(|| {
+                        sqlx::Error::Decode(Box::new(std::io::Error::other(
+                            "persisted crawler fallback currency is invalid",
+                        )))
+                    })
+                })
+                .transpose()?;
             candidates.push(ScraperCandidate {
                 listing_source_id: ListingSourceId::from(row.listing_source_id),
                 listing_source_name: row.listing_source_name,
+                fallback_currency,
                 url_pattern: row.url_pattern,
                 url,
                 last_scraped_hash: row.last_scraped_hash,
