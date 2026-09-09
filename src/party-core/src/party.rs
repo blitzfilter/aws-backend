@@ -106,9 +106,14 @@ mod tests {
             .unwrap_or_else(|error| panic!("invalid test party name: {error}"))
     }
 
+    fn party_id() -> Result<PartyId, domain_primitives::object_id::ObjectIdError> {
+        PartyId::try_from("pty_01h455vb4pex5vy7enb1p677vn")
+    }
+
     #[test]
-    fn should_always_disambiguate_slug_when_creating_party() {
-        let party_id = PartyId::from(uuid::Uuid::nil());
+    fn should_always_disambiguate_slug_when_creating_party()
+    -> Result<(), domain_primitives::object_id::ObjectIdError> {
+        let party_id = party_id()?;
         let party = Party::create(NewParty {
             id: party_id,
             name: party_name("Antik und Stil"),
@@ -116,14 +121,16 @@ mod tests {
         });
 
         assert_eq!(
-            "antik-und-stil-00000000-0000-0000-0000-000000000000",
+            "antik-und-stil-01890a5d-ac96-774b-bf1d-d5586c639f75",
             party.slug_id().as_ref()
         );
+        Ok(())
     }
 
     #[test]
-    fn should_disambiguate_fallback_slug_when_name_has_no_slug_characters() {
-        let party_id = PartyId::from(uuid::Uuid::nil());
+    fn should_disambiguate_fallback_slug_when_name_has_no_slug_characters()
+    -> Result<(), domain_primitives::object_id::ObjectIdError> {
+        let party_id = party_id()?;
         let party = Party::create(NewParty {
             id: party_id,
             name: party_name("\u{10FFFF}"),
@@ -131,9 +138,10 @@ mod tests {
         });
 
         assert_eq!(
-            "party-00000000-0000-0000-0000-000000000000",
+            "party-01890a5d-ac96-774b-bf1d-d5586c639f75",
             party.slug_id().as_ref()
         );
+        Ok(())
     }
 
     #[test]
@@ -147,7 +155,7 @@ mod tests {
         assert!(party.rename(party_name("Neue Identität")).changed());
 
         assert_eq!(
-            format!("antik-und-stil-{}", party.id()),
+            format!("antik-und-stil-{}", party.id().as_uuid()),
             party.slug_id().as_ref()
         );
         assert_eq!("Neue Identität", party.name().as_ref());

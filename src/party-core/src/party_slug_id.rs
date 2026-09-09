@@ -39,7 +39,7 @@ impl PartySlugId {
             prefix.as_str()
         };
 
-        Self(format!("{prefix}-{party_id}"))
+        Self(format!("{prefix}-{}", party_id.as_uuid()))
     }
 }
 
