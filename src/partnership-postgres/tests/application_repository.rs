@@ -48,7 +48,7 @@ async fn commit(transaction: SqlxTransaction) {
 async fn seed_user(pool: &PgPool) -> UserId {
     let user_id = UserId::new();
     sqlx::query("INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@application-repository.test"))
         .execute(pool)
         .await
@@ -61,8 +61,11 @@ async fn seed_listing_source(pool: &PgPool) -> ListingSourceId {
     let listing_source_id = ListingSourceId::new();
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(uuid::Uuid::from(party_id))
-        .bind(format!("application-source-party-{party_id}"))
+        .bind(party_id.into_uuid())
+        .bind(format!(
+            "application-source-party-{}",
+            party_id.as_uuid().simple()
+        ))
         .bind("Application Repository Source Party")
         .execute(pool)
         .await
@@ -70,10 +73,13 @@ async fn seed_listing_source(pool: &PgPool) -> ListingSourceId {
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(format!("application-source-{listing_source_id}"))
+    .bind(listing_source_id.into_uuid())
+    .bind(format!(
+        "application-source-{}",
+        listing_source_id.as_uuid().simple()
+    ))
     .bind("Application Repository Source")
-    .bind(uuid::Uuid::from(party_id))
+    .bind(party_id.into_uuid())
     .execute(pool)
     .await
     .unwrap_or_else(|error| panic!("seed application repository listing source: {error}"));
@@ -87,8 +93,8 @@ async fn seed_approval_targets(pool: &PgPool) -> (PartnershipId, ListingSourceId
     let partnership_id = PartnershipId::new();
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(uuid::Uuid::from(party_id))
-        .bind(format!("application-party-{party_id}"))
+        .bind(party_id.into_uuid())
+        .bind(format!("application-party-{}", party_id.as_uuid().simple()))
         .bind("Application Repository Party")
         .execute(pool)
         .await
@@ -96,16 +102,19 @@ async fn seed_approval_targets(pool: &PgPool) -> (PartnershipId, ListingSourceId
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(format!("application-source-{listing_source_id}"))
+    .bind(listing_source_id.into_uuid())
+    .bind(format!(
+        "application-source-{}",
+        listing_source_id.as_uuid().simple()
+    ))
     .bind("Application Repository Source")
-    .bind(uuid::Uuid::from(party_id))
+    .bind(party_id.into_uuid())
     .execute(pool)
     .await
     .unwrap_or_else(|error| panic!("seed application repository listing source: {error}"));
     sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
-        .bind(uuid::Uuid::from(partnership_id))
-        .bind(uuid::Uuid::from(party_id))
+        .bind(partnership_id.into_uuid())
+        .bind(party_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("seed application repository partnership: {error}"));
@@ -188,6 +197,29 @@ async fn should_insert_and_find_application_by_id_and_applicant() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_store_existing_listing_source_proposal_id_as_raw_uuid_text() {
+    let pool = get_postgres_client().await;
+    let applicant_user_id = seed_user(&pool).await;
+    let listing_source_id = seed_listing_source(&pool).await;
+    let application = submitted_application(applicant_user_id, listing_source_id);
+
+    insert_committed(&pool, &application).await;
+
+    let stored_listing_source_id = sqlx::query_scalar::<_, String>(
+        "SELECT proposal->>'listing_source_id' FROM partnership_applications WHERE partnership_application_id = $1",
+    )
+    .bind(application.id().into_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("read stored proposal ListingSource ID: {error}"));
+    assert_eq!(
+        listing_source_id.as_uuid().to_string(),
+        stored_listing_source_id
+    );
+    assert_ne!(listing_source_id.to_string(), stored_listing_source_id);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_find_application_for_update() {
     let pool = get_postgres_client().await;
     let applicant_user_id = seed_user(&pool).await;
@@ -242,14 +274,14 @@ async fn should_update_application_increment_version_and_persist_approval_result
     let row = sqlx::query_as::<_, (String, i64, Option<uuid::Uuid>, Option<uuid::Uuid>)>(
         "SELECT business_state, version, approved_partnership_id, approved_listing_source_id FROM partnership_applications WHERE partnership_application_id=$1",
     )
-    .bind(uuid::Uuid::from(application.id()))
+    .bind(application.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read persisted partnership application: {error}"));
     assert_eq!("APPROVED", row.0);
     assert_eq!(2, row.1);
-    assert_eq!(Some(uuid::Uuid::from(partnership_id)), row.2);
-    assert_eq!(Some(uuid::Uuid::from(listing_source_id)), row.3);
+    assert_eq!(Some(partnership_id.into_uuid()), row.2);
+    assert_eq!(Some(listing_source_id.into_uuid()), row.3);
     assert_eq!(1, count_applications(&pool).await);
 }
 
@@ -288,7 +320,7 @@ async fn should_reject_stale_application_version() {
     let row = sqlx::query_as::<_, (String, i64)>(
         "SELECT business_state, version FROM partnership_applications WHERE partnership_application_id=$1",
     )
-    .bind(uuid::Uuid::from(application.id()))
+    .bind(application.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read application after stale update: {error}"));
@@ -331,7 +363,7 @@ async fn should_hide_application_insert_and_update_after_transaction_rollback() 
     let row = sqlx::query_as::<_, (String, i64)>(
         "SELECT business_state, version FROM partnership_applications WHERE partnership_application_id=$1",
     )
-    .bind(uuid::Uuid::from(application.id()))
+    .bind(application.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read application after rollback: {error}"));

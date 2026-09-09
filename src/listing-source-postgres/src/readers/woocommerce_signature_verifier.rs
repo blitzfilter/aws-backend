@@ -28,7 +28,7 @@ impl WoocommerceSignatureVerifier for SqlxListingSourceReaders {
                      AND source_grant.listing_source_id=c.listing_source_id \
                )",
         )
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(read_error)?

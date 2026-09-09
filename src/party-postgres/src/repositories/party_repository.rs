@@ -39,7 +39,7 @@ impl PartyRepository for SqlxPartyRepository<'_> {
         builder
             .push(party_columns())
             .push(" FROM parties WHERE party_id = ")
-            .push_bind(uuid::Uuid::from(id));
+            .push_bind(id.into_uuid());
         let row = builder
             .build_query_as::<PartyRow>()
             .fetch_optional(&mut *self.connection)
@@ -61,7 +61,7 @@ impl PartyRepository for SqlxPartyRepository<'_> {
         builder
             .push(party_columns())
             .push(" FROM parties WHERE party_id = ")
-            .push_bind(uuid::Uuid::from(id))
+            .push_bind(id.into_uuid())
             .push(" FOR UPDATE");
         let row = builder
             .build_query_as::<PartyRow>()
@@ -93,7 +93,7 @@ impl PartyRepository for SqlxPartyRepository<'_> {
             END
             "#,
         )
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_one(&mut *self.connection)
         .await
         .map_err(PartyLookupSqlxError)?;
@@ -121,7 +121,7 @@ impl PartyRepository for SqlxPartyRepository<'_> {
             }
         })?;
         let result = sqlx::query("DELETE FROM parties WHERE party_id = $1 AND version = $2")
-            .bind(uuid::Uuid::from(id))
+            .bind(id.into_uuid())
             .bind(expected_version)
             .execute(&mut *self.connection)
             .await
@@ -164,7 +164,7 @@ impl PartyRepository for SqlxPartyRepository<'_> {
         builder.push(party_columns());
         let row = builder
             .build_query_as::<PartyRow>()
-            .bind(uuid::Uuid::from(party.id()))
+            .bind(party.id().into_uuid())
             .bind(party.slug_id().as_ref())
             .bind(party.name().as_ref())
             .bind(party.contact().phone.as_deref())
@@ -206,7 +206,7 @@ impl PartyRepository for SqlxPartyRepository<'_> {
             .bind(party.name().as_ref())
             .bind(party.contact().phone.as_deref())
             .bind(party.contact().email.as_ref().map(ToString::to_string))
-            .bind(uuid::Uuid::from(party.id()))
+            .bind(party.id().into_uuid())
             .bind(expected_version)
             .fetch_optional(&mut *self.connection)
             .await

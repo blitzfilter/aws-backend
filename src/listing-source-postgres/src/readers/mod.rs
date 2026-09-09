@@ -52,10 +52,10 @@ mod tests {
     async fn should_require_the_operator_partnership_exact_source_grant_for_provider_reads() {
         let pool = get_postgres_client().await;
         let source_id = ListingSourceId::new();
-        let operator_party_id = uuid::Uuid::new_v4();
-        let unrelated_party_id = uuid::Uuid::new_v4();
-        let operator_partnership_id = uuid::Uuid::new_v4();
-        let unrelated_partnership_id = uuid::Uuid::new_v4();
+        let operator_party_id = uuid::Uuid::now_v7();
+        let unrelated_party_id = uuid::Uuid::now_v7();
+        let operator_partnership_id = uuid::Uuid::now_v7();
+        let unrelated_partnership_id = uuid::Uuid::now_v7();
         let domain = Domain::try_from("shop.provider-reader.example")
             .unwrap_or_else(|error| panic!("valid test domain: {error}"));
 
@@ -82,8 +82,11 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
-        .bind(uuid::Uuid::from(source_id))
-        .bind(format!("provider-reader-source-{source_id}"))
+        .bind(source_id.into_uuid())
+        .bind(format!(
+                    "provider-reader-source-{}",
+                    source_id.as_uuid().simple()
+                ))
         .bind("Provider reader source")
         .bind(operator_party_id)
         .execute(&pool)
@@ -92,14 +95,14 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, 'SHOPIFY'), ($1, 'WOOCOMMERCE')",
         )
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("insert provider ingestion methods: {error}"));
         sqlx::query(
             "INSERT INTO listing_source_shopify_ingestion_configurations (listing_source_id, domain) VALUES ($1, $2)",
         )
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .bind(domain.as_str())
         .execute(&pool)
         .await
@@ -107,7 +110,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id, webhook_secret) VALUES ($1, $2)",
         )
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .bind("provider-reader-secret")
         .execute(&pool)
         .await
@@ -127,7 +130,7 @@ mod tests {
             "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
         )
         .bind(unrelated_partnership_id)
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("insert unrelated source grant: {error}"));
@@ -162,7 +165,7 @@ mod tests {
             "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
         )
         .bind(operator_partnership_id)
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("insert exact source grant: {error}"));

@@ -1,4 +1,5 @@
 use application::error::box_error;
+use domain_primitives::object_id::ObjectIdError;
 use listing_source_core::{
     ListingIngestionMethod, ListingSourceId, ListingSourceName, ListingSourcePresentation,
 };
@@ -41,6 +42,16 @@ pub(crate) struct ApplicationRow {
 }
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum MappingError {
+    #[error("invalid PartnershipApplication ID persisted")]
+    PartnershipApplicationId(#[source] ObjectIdError),
+    #[error("invalid applicant User ID persisted")]
+    ApplicantUserId(#[source] ObjectIdError),
+    #[error("invalid proposal ListingSource ID persisted")]
+    ProposalListingSourceId(#[source] ObjectIdError),
+    #[error("invalid approved Partnership ID persisted")]
+    ApprovedPartnershipId(#[source] ObjectIdError),
+    #[error("invalid approved ListingSource ID persisted")]
+    ApprovedListingSourceId(#[source] ObjectIdError),
     #[error("invalid application state")]
     State,
     #[error("invalid application proposal")]
@@ -60,6 +71,7 @@ pub(crate) enum MappingError {
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 enum ProposalV1 {
     ExistingListingSource {
+        #[serde(with = "canonical_uuid")]
         listing_source_id: uuid::Uuid,
     },
     ProposedListingSource {
@@ -82,12 +94,38 @@ struct ProposedListingSourceV1 {
     image: Option<String>,
     requested_ingestion_methods: Vec<String>,
 }
+
+mod canonical_uuid {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    pub(super) fn serialize<S>(value: &uuid::Uuid, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<uuid::Uuid, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let uuid = uuid::Uuid::parse_str(&value).map_err(D::Error::custom)?;
+        if uuid.to_string() != value {
+            return Err(D::Error::custom(
+                "persisted UUID must use canonical hyphenated lowercase text",
+            ));
+        }
+        Ok(uuid)
+    }
+}
+
 impl From<&PartnershipProposal> for ProposalV1 {
     fn from(v: &PartnershipProposal) -> Self {
         match v {
             PartnershipProposal::ExistingListingSource { listing_source_id } => {
                 Self::ExistingListingSource {
-                    listing_source_id: (*listing_source_id).into(),
+                    listing_source_id: listing_source_id.into_uuid(),
                 }
             }
             PartnershipProposal::ProposedListingSource {
@@ -127,7 +165,8 @@ impl TryFrom<ProposalV1> for PartnershipProposal {
         match v {
             ProposalV1::ExistingListingSource { listing_source_id } => {
                 Ok(Self::ExistingListingSource {
-                    listing_source_id: ListingSourceId::from(listing_source_id),
+                    listing_source_id: ListingSourceId::try_from(listing_source_id)
+                        .map_err(MappingError::ProposalListingSourceId)?,
                 })
             }
             ProposalV1::ProposedListingSource {
@@ -198,8 +237,10 @@ fn application_values(
     let approval_result = match (row.approved_partnership_id, row.approved_listing_source_id) {
         (Some(partnership_id), Some(listing_source_id)) => {
             Some(PartnershipApplicationApprovalResult::new(
-                PartnershipId::from(partnership_id),
-                ListingSourceId::from(listing_source_id),
+                PartnershipId::try_from(partnership_id)
+                    .map_err(MappingError::ApprovedPartnershipId)?,
+                ListingSourceId::try_from(listing_source_id)
+                    .map_err(MappingError::ApprovedListingSourceId)?,
             ))
         }
         (None, None) => None,
@@ -215,8 +256,10 @@ fn rehydrate_application(
     approval_result: Option<PartnershipApplicationApprovalResult>,
 ) -> Result<PartnershipApplication, MappingError> {
     PartnershipApplication::rehydrate(RehydratedPartnershipApplicationState {
-        id: PartnershipApplicationId::from(row.partnership_application_id),
-        applicant_user_id: UserId::from(row.applicant_user_id),
+        id: PartnershipApplicationId::try_from(row.partnership_application_id)
+            .map_err(MappingError::PartnershipApplicationId)?,
+        applicant_user_id: UserId::try_from(row.applicant_user_id)
+            .map_err(MappingError::ApplicantUserId)?,
         state,
         proposal,
         approval_result,
@@ -291,8 +334,8 @@ mod tests {
 
     fn row(state: &str, proposal: serde_json::Value) -> ApplicationRow {
         ApplicationRow {
-            partnership_application_id: uuid::Uuid::new_v4(),
-            applicant_user_id: uuid::Uuid::new_v4(),
+            partnership_application_id: uuid::Uuid::now_v7(),
+            applicant_user_id: uuid::Uuid::now_v7(),
             business_state: state.to_owned(),
             proposal,
             approved_partnership_id: None,
@@ -306,15 +349,17 @@ mod tests {
     fn existing_proposal() -> serde_json::Value {
         json!({
             "type": "EXISTING_LISTING_SOURCE",
-            "listing_source_id": uuid::Uuid::new_v4(),
+            "listing_source_id": uuid::Uuid::now_v7(),
         })
     }
 
     #[test]
     fn should_map_admin_summary_with_persisted_metadata() {
         let row = row("SUBMITTED", existing_proposal());
-        let expected_id = PartnershipApplicationId::from(row.partnership_application_id);
-        let expected_applicant = UserId::from(row.applicant_user_id);
+        let expected_id = PartnershipApplicationId::try_from(row.partnership_application_id)
+            .unwrap_or_else(|error| panic!("valid application ID fixture: {error}"));
+        let expected_applicant = UserId::try_from(row.applicant_user_id)
+            .unwrap_or_else(|error| panic!("valid applicant User ID fixture: {error}"));
 
         let summary = admin_summary(row)
             .unwrap_or_else(|error| panic!("valid application row should map: {error}"));
@@ -330,8 +375,8 @@ mod tests {
     #[test]
     fn should_map_view_with_persisted_approval_result() {
         let mut row = row("APPROVED", existing_proposal());
-        let partnership_id = uuid::Uuid::new_v4();
-        let listing_source_id = uuid::Uuid::new_v4();
+        let partnership_id = uuid::Uuid::now_v7();
+        let listing_source_id = uuid::Uuid::now_v7();
         row.approved_partnership_id = Some(partnership_id);
         row.approved_listing_source_id = Some(listing_source_id);
 
@@ -340,11 +385,136 @@ mod tests {
 
         assert_eq!(
             Some(PartnershipApplicationApprovalResult::new(
-                PartnershipId::from(partnership_id),
-                ListingSourceId::from(listing_source_id),
+                PartnershipId::try_from(partnership_id)
+                    .unwrap_or_else(|error| panic!("valid Partnership ID fixture: {error}")),
+                ListingSourceId::try_from(listing_source_id)
+                    .unwrap_or_else(|error| panic!("valid ListingSource ID fixture: {error}")),
             )),
             view.approval_result
         );
+    }
+
+    #[test]
+    fn should_serialize_existing_listing_source_id_as_canonical_uuid_text() {
+        let listing_source_id = ListingSourceId::new();
+        let proposal = PartnershipProposal::ExistingListingSource { listing_source_id };
+        let expected = listing_source_id.as_uuid().to_string();
+
+        let stored = proposal_json(&proposal)
+            .unwrap_or_else(|error| panic!("serialize storage proposal: {error}"));
+
+        assert_eq!(
+            Some(expected.as_str()),
+            stored
+                .get("listing_source_id")
+                .and_then(serde_json::Value::as_str)
+        );
+        assert_ne!(
+            Some(listing_source_id.to_string().as_str()),
+            stored
+                .get("listing_source_id")
+                .and_then(serde_json::Value::as_str)
+        );
+    }
+
+    #[test]
+    fn should_decode_canonical_uuidv7_listing_source_id() {
+        let listing_source_id = ListingSourceId::new();
+        let persisted = row(
+            "SUBMITTED",
+            json!({
+                "type": "EXISTING_LISTING_SOURCE",
+                "listing_source_id": listing_source_id.as_uuid().to_string(),
+            }),
+        );
+
+        let application = application(persisted)
+            .unwrap_or_else(|error| panic!("decode canonical proposal UUID: {error}"));
+
+        assert!(matches!(
+            application.value.proposal(),
+            PartnershipProposal::ExistingListingSource {
+                listing_source_id: decoded,
+            } if *decoded == listing_source_id
+        ));
+    }
+
+    #[test]
+    fn should_reject_noncanonical_uuid_text_for_persisted_listing_source_id() {
+        let listing_source_id = ListingSourceId::new();
+        let invalid_proposal_id = row(
+            "SUBMITTED",
+            json!({
+                "type": "EXISTING_LISTING_SOURCE",
+                "listing_source_id": listing_source_id.as_uuid().simple().to_string(),
+            }),
+        );
+
+        assert!(matches!(
+            application(invalid_proposal_id),
+            Err(MappingError::Proposal(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_wrong_version_object_ids() {
+        let mut invalid_application_id = row("SUBMITTED", existing_proposal());
+        invalid_application_id.partnership_application_id = uuid::Uuid::new_v4();
+        assert!(matches!(
+            application(invalid_application_id),
+            Err(MappingError::PartnershipApplicationId(_))
+        ));
+
+        let mut invalid_applicant_id = row("SUBMITTED", existing_proposal());
+        invalid_applicant_id.applicant_user_id = uuid::Uuid::new_v4();
+        assert!(matches!(
+            application(invalid_applicant_id),
+            Err(MappingError::ApplicantUserId(_))
+        ));
+
+        let invalid_proposal_id = row(
+            "SUBMITTED",
+            json!({
+                "type": "EXISTING_LISTING_SOURCE",
+                "listing_source_id": uuid::Uuid::new_v4(),
+            }),
+        );
+        assert!(matches!(
+            application(invalid_proposal_id),
+            Err(MappingError::ProposalListingSourceId(_))
+        ));
+
+        let mut invalid_approval_id = row("APPROVED", existing_proposal());
+        invalid_approval_id.approved_partnership_id = Some(uuid::Uuid::new_v4());
+        invalid_approval_id.approved_listing_source_id = Some(uuid::Uuid::now_v7());
+        assert!(matches!(
+            application(invalid_approval_id),
+            Err(MappingError::ApprovedPartnershipId(_))
+        ));
+
+        let mut invalid_approval_source_id = row("APPROVED", existing_proposal());
+        invalid_approval_source_id.approved_partnership_id = Some(uuid::Uuid::now_v7());
+        invalid_approval_source_id.approved_listing_source_id = Some(uuid::Uuid::new_v4());
+        assert!(matches!(
+            application(invalid_approval_source_id),
+            Err(MappingError::ApprovedListingSourceId(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_typeid_text_for_persisted_listing_source_id() {
+        let invalid_proposal_id = row(
+            "SUBMITTED",
+            json!({
+                "type": "EXISTING_LISTING_SOURCE",
+                "listing_source_id": ListingSourceId::new().to_string(),
+            }),
+        );
+
+        assert!(matches!(
+            application(invalid_proposal_id),
+            Err(MappingError::Proposal(_))
+        ));
     }
 
     #[test]

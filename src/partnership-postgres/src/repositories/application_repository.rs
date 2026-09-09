@@ -43,7 +43,7 @@ impl PartnershipApplicationRepository for Repository<'_> {
         sqlx::query_as::<_, ApplicationRow>(AssertSqlSafe(format!(
             "SELECT {APPLICATION_COLUMNS} FROM partnership_applications WHERE partnership_application_id=$1"
         )))
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(read)?
@@ -60,7 +60,7 @@ impl PartnershipApplicationRepository for Repository<'_> {
         sqlx::query_as::<_, ApplicationRow>(AssertSqlSafe(format!(
             "SELECT {APPLICATION_COLUMNS} FROM partnership_applications WHERE partnership_application_id=$1 FOR UPDATE"
         )))
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(read)?
@@ -78,8 +78,8 @@ impl PartnershipApplicationRepository for Repository<'_> {
         sqlx::query_as::<_, ApplicationRow>(AssertSqlSafe(format!(
             "SELECT {APPLICATION_COLUMNS} FROM partnership_applications WHERE applicant_user_id=$1 AND partnership_application_id=$2"
         )))
-        .bind(uuid::Uuid::from(user))
-        .bind(uuid::Uuid::from(id))
+        .bind(user.into_uuid())
+        .bind(id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(read)?
@@ -96,8 +96,8 @@ impl PartnershipApplicationRepository for Repository<'_> {
         sqlx::query_as::<_, ApplicationRow>(AssertSqlSafe(format!(
             "INSERT INTO partnership_applications(partnership_application_id,applicant_user_id,business_state,proposal) VALUES($1,$2,$3,$4) RETURNING {APPLICATION_COLUMNS}"
         )))
-        .bind(uuid::Uuid::from(app.id()))
-        .bind(uuid::Uuid::from(app.applicant_user_id()))
+        .bind(app.id().into_uuid())
+        .bind(app.applicant_user_id().into_uuid())
         .bind(app.state().as_str())
         .bind(proposal)
         .fetch_one(&mut *self.connection)
@@ -120,9 +120,9 @@ impl PartnershipApplicationRepository for Repository<'_> {
         )))
         .bind(app.state().as_str())
         .bind(proposal)
-        .bind(approval_result.map(|result| uuid::Uuid::from(result.partnership_id())))
-        .bind(approval_result.map(|result| uuid::Uuid::from(result.listing_source_id())))
-        .bind(uuid::Uuid::from(app.id()))
+        .bind(approval_result.map(|result| result.partnership_id().into_uuid()))
+        .bind(approval_result.map(|result| result.listing_source_id().into_uuid()))
+        .bind(app.id().into_uuid())
         .bind(expected)
         .fetch_optional(&mut *self.connection)
         .await

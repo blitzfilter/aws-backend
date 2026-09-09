@@ -3,6 +3,41 @@ use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugI
 use partnership_service::ports::*;
 use sqlx::PgPool;
 use user_core::user_id::UserId;
+#[derive(Debug, thiserror::Error)]
+#[error("invalid administered ListingSource ID persisted")]
+struct InvalidAdministeredListingSourceId(#[source] domain_primitives::object_id::ObjectIdError);
+
+#[derive(sqlx::FromRow)]
+struct AdministeredListingSourceRow {
+    listing_source_id: uuid::Uuid,
+    listing_source_slug_id: String,
+    name: String,
+}
+
+impl TryFrom<AdministeredListingSourceRow> for AdministeredListingSource {
+    type Error = SourceAuthorizationError;
+
+    fn try_from(row: AdministeredListingSourceRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            listing_source_id: ListingSourceId::try_from(row.listing_source_id).map_err(
+                |error| SourceAuthorizationError::InvalidReadModel {
+                    source: box_error(InvalidAdministeredListingSourceId(error)),
+                },
+            )?,
+            slug_id: ListingSourceSlugId::raw(row.listing_source_slug_id).map_err(|error| {
+                SourceAuthorizationError::InvalidReadModel {
+                    source: box_error(error),
+                }
+            })?,
+            name: ListingSourceName::try_from(row.name).map_err(|error| {
+                SourceAuthorizationError::InvalidReadModel {
+                    source: box_error(error),
+                }
+            })?,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct SqlxListingSourceAuthorization {
     pool: PgPool,
@@ -35,8 +70,8 @@ impl ListingSourceAuthorization for SqlxListingSourceAuthorization {
                   AND partnership.business_state = 'ACTIVE'\
             )",
         )
-        .bind(uuid::Uuid::from(user_id))
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(user_id.into_uuid())
+        .bind(listing_source_id.into_uuid())
         .fetch_one(&self.pool)
         .await
         .map_err(|source| SourceAuthorizationError::TemporarilyUnavailable {
@@ -47,13 +82,7 @@ impl ListingSourceAuthorization for SqlxListingSourceAuthorization {
         &self,
         user_id: UserId,
     ) -> Result<Vec<AdministeredListingSource>, SourceAuthorizationError> {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            listing_source_id: uuid::Uuid,
-            listing_source_slug_id: String,
-            name: String,
-        }
-        let rows = sqlx::query_as::<_, Row>(
+        let rows = sqlx::query_as::<_, AdministeredListingSourceRow>(
             "SELECT DISTINCT s.listing_source_id, s.listing_source_slug_id, s.name \
              FROM partnership_members member \
              JOIN partnership_listing_source_grants source_grant \
@@ -67,28 +96,37 @@ impl ListingSourceAuthorization for SqlxListingSourceAuthorization {
              WHERE member.user_id = $1 \
              ORDER BY s.name",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_all(&self.pool)
         .await
         .map_err(|source| SourceAuthorizationError::TemporarilyUnavailable {
             source: box_error(source),
         })?;
         rows.into_iter()
-            .map(|row| {
-                Ok(AdministeredListingSource {
-                    listing_source_id: ListingSourceId::from(row.listing_source_id),
-                    slug_id: ListingSourceSlugId::raw(row.listing_source_slug_id).map_err(|e| {
-                        SourceAuthorizationError::InvalidReadModel {
-                            source: box_error(e),
-                        }
-                    })?,
-                    name: ListingSourceName::try_from(row.name).map_err(|error| {
-                        SourceAuthorizationError::InvalidReadModel {
-                            source: box_error(error),
-                        }
-                    })?,
-                })
-            })
+            .map(AdministeredListingSource::try_from)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(listing_source_id: uuid::Uuid) -> AdministeredListingSourceRow {
+        AdministeredListingSourceRow {
+            listing_source_id,
+            listing_source_slug_id: "source".to_owned(),
+            name: "Source".to_owned(),
+        }
+    }
+
+    #[test]
+    fn should_map_valid_uuidv7_listing_source_id() {
+        assert!(AdministeredListingSource::try_from(row(uuid::Uuid::now_v7())).is_ok());
+    }
+
+    #[test]
+    fn should_reject_wrong_version_listing_source_id() {
+        assert!(AdministeredListingSource::try_from(row(uuid::Uuid::new_v4())).is_err());
     }
 }

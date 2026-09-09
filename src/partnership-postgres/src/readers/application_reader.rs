@@ -54,7 +54,7 @@ impl PartnershipApplicationReader for Reader<'_> {
             "SELECT {APPLICATION_COLUMNS} FROM partnership_applications WHERE applicant_user_id=$1 ORDER BY created DESC, partnership_application_id DESC"
         );
         let rows = sqlx::query_as::<_, ApplicationRow>(AssertSqlSafe(query))
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .fetch_all(&mut *self.connection)
             .await
             .map_err(
@@ -116,7 +116,7 @@ impl PartnershipApplicationReader for Reader<'_> {
                 .push(" (")
                 .push_bind(search_after.position)
                 .push(", ")
-                .push_bind(uuid::Uuid::from(search_after.application_id))
+                .push_bind(search_after.application_id.into_uuid())
                 .push(")");
         }
         builder
@@ -185,7 +185,7 @@ fn push_filters(builder: &mut QueryBuilder<Postgres>, search: &PartnershipApplic
     if let Some(applicant_user_id) = search.applicant_user_id {
         builder
             .push(" AND applicant_user_id = ")
-            .push_bind(uuid::Uuid::from(applicant_user_id));
+            .push_bind(applicant_user_id.into_uuid());
     }
     if !search.proposal_type_query.is_empty() {
         let proposal_types = search
@@ -200,7 +200,7 @@ fn push_filters(builder: &mut QueryBuilder<Postgres>, search: &PartnershipApplic
             .push(")");
     }
     if let Some(listing_source_id) = search.listing_source_id {
-        let listing_source_uuid = uuid::Uuid::from(listing_source_id);
+        let listing_source_uuid = listing_source_id.into_uuid();
         builder
             .push(" AND (approved_listing_source_id = ")
             .push_bind(listing_source_uuid)
@@ -237,6 +237,7 @@ mod tests {
         query::range_query::RangeQuery,
         sort::{Sort, SortOrder},
     };
+    use listing_source_core::ListingSourceId;
     use partnership_core::{
         partnership_application_id::PartnershipApplicationId,
         partnership_application_state::PartnershipApplicationState,
@@ -254,7 +255,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@reader.test"))
         .execute(pool)
         .await
@@ -275,8 +276,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal, created, updated) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(uuid::Uuid::from(application_id))
-        .bind(uuid::Uuid::from(applicant_user_id))
+        .bind(application_id.into_uuid())
+        .bind(applicant_user_id.into_uuid())
         .bind(state)
         .bind(proposal)
         .bind(created)
@@ -317,15 +318,19 @@ mod tests {
         {
             return;
         }
-        let listing_source_id = proposal
+        let listing_source_uuid = proposal
             .get("listing_source_id")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|listing_source_id| listing_source_id.parse::<uuid::Uuid>().ok())
+            .cloned()
+            .map(serde_json::from_value::<uuid::Uuid>)
+            .transpose()
+            .unwrap_or_else(|error| panic!("invalid existing proposal ListingSource UUID: {error}"))
             .unwrap_or_else(|| panic!("existing proposal must contain a ListingSource UUID"));
+        let listing_source_id = ListingSourceId::try_from(listing_source_uuid)
+            .unwrap_or_else(|error| panic!("invalid existing proposal ListingSource ID: {error}"));
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
         )
-        .bind(listing_source_id)
+        .bind(listing_source_id.into_uuid())
         .fetch_one(pool)
         .await
         .unwrap_or_else(|error| panic!("failed to check reader ListingSource: {error}"));
@@ -333,10 +338,10 @@ mod tests {
             return;
         }
 
-        let party_id = uuid::Uuid::new_v4();
+        let party_id = party_core::party_id::PartyId::new();
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(party_id)
-            .bind(format!("reader-party-{party_id}"))
+            .bind(party_id.into_uuid())
+            .bind(format!("reader-party-{}", party_id.as_uuid().simple()))
             .bind(format!("Reader Party {party_id}"))
             .execute(pool)
             .await
@@ -344,19 +349,22 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
-        .bind(listing_source_id)
-        .bind(format!("reader-source-{listing_source_id}"))
+        .bind(listing_source_id.into_uuid())
+        .bind(format!(
+                    "reader-source-{}",
+                    listing_source_id.as_uuid().simple()
+                ))
         .bind(format!("Reader ListingSource {listing_source_id}"))
-        .bind(party_id)
+        .bind(party_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("failed to seed reader ListingSource: {error}"));
     }
 
-    fn existing_proposal(listing_source_id: uuid::Uuid) -> serde_json::Value {
+    fn existing_proposal(listing_source_id: ListingSourceId) -> serde_json::Value {
         json!({
             "type": "EXISTING_LISTING_SOURCE",
-            "listing_source_id": listing_source_id,
+            "listing_source_id": listing_source_id.into_uuid(),
         })
     }
 
@@ -364,7 +372,7 @@ mod tests {
     async fn should_apply_admin_application_filters_and_inclusive_ranges() {
         let pool = get_postgres_client().await;
         let applicant_user_id = seed_user(&pool).await;
-        let listing_source_id = uuid::Uuid::new_v4();
+        let listing_source_id = ListingSourceId::new();
         let matching_id = seed_application(
             &pool,
             applicant_user_id,
@@ -378,7 +386,7 @@ mod tests {
             &pool,
             applicant_user_id,
             "IN_REVIEW",
-            existing_proposal(uuid::Uuid::new_v4()),
+            existing_proposal(ListingSourceId::new()),
             datetime!(2026-01-02 00:00 UTC),
             datetime!(2026-02-02 00:00 UTC),
         )
@@ -391,7 +399,7 @@ mod tests {
             .proposal_type_query
             .extend([PartnershipProposalType::ExistingListingSource]);
         search.applicant_user_id = Some(applicant_user_id);
-        search.listing_source_id = Some(listing_source_id.into());
+        search.listing_source_id = Some(listing_source_id);
         search.created = Some(RangeQuery {
             min: Some(datetime!(2026-01-01 00:00 UTC)),
             max: Some(datetime!(2026-01-01 00:00 UTC)),
@@ -431,7 +439,7 @@ mod tests {
                 &pool,
                 applicant_user_id,
                 "SUBMITTED",
-                existing_proposal(uuid::Uuid::new_v4()),
+                existing_proposal(ListingSourceId::new()),
                 created,
                 created,
             )
@@ -440,7 +448,7 @@ mod tests {
                 &pool,
                 applicant_user_id,
                 "SUBMITTED",
-                existing_proposal(uuid::Uuid::new_v4()),
+                existing_proposal(ListingSourceId::new()),
                 created,
                 created,
             )
@@ -449,7 +457,7 @@ mod tests {
                 &pool,
                 applicant_user_id,
                 "SUBMITTED",
-                existing_proposal(uuid::Uuid::new_v4()),
+                existing_proposal(ListingSourceId::new()),
                 created,
                 created,
             )

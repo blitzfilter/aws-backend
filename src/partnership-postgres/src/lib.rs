@@ -18,6 +18,7 @@ mod tests {
         operation_context::{CorrelationId, OperationContext, Principal, RequestId},
         transaction::{Transaction, UnitOfWork},
     };
+    use listing_source_core::ListingSourceId;
     use listing_source_postgres::SqlxListingSourceRepositoryFactory;
     use notification_service::ports::notification_creator::{
         NewNotification, NotificationCreationError, NotificationCreationOutcome,
@@ -34,6 +35,7 @@ mod tests {
             ApprovePartnershipApplicationUseCase,
         },
     };
+    use party_core::party_id::PartyId;
     use party_postgres::SqlxPartyRepositoryFactory;
     use platform_postgres::{SqlxTransaction, SqlxUnitOfWork};
     use serde_json::json;
@@ -148,7 +150,7 @@ mod tests {
         let result = sqlx::query(
             "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@example.test"))
         .execute(pool)
         .await;
@@ -166,8 +168,8 @@ mod tests {
         let result = sqlx::query(
             "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, $3, $4)",
         )
-        .bind(uuid::Uuid::from(application_id))
-        .bind(uuid::Uuid::from(applicant_user_id))
+        .bind(application_id.into_uuid())
+        .bind(applicant_user_id.into_uuid())
         .bind(state)
         .bind(proposal)
         .execute(pool)
@@ -213,7 +215,7 @@ mod tests {
 
     async fn count_members_for_user(pool: &PgPool, user_id: UserId) -> i64 {
         match sqlx::query_scalar("SELECT count(*) FROM partnership_members WHERE user_id = $1")
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .fetch_one(pool)
             .await
         {
@@ -222,11 +224,11 @@ mod tests {
         }
     }
 
-    async fn count_grants_for_source(pool: &PgPool, listing_source_id: uuid::Uuid) -> i64 {
+    async fn count_grants_for_source(pool: &PgPool, listing_source_id: ListingSourceId) -> i64 {
         match sqlx::query_scalar(
             "SELECT count(*) FROM partnership_listing_source_grants WHERE listing_source_id = $1",
         )
-        .bind(listing_source_id)
+        .bind(listing_source_id.into_uuid())
         .fetch_one(pool)
         .await
         {
@@ -239,7 +241,7 @@ mod tests {
         match sqlx::query_scalar::<_, String>(
             "SELECT business_state FROM partnership_applications WHERE partnership_application_id = $1",
         )
-        .bind(uuid::Uuid::from(application_id))
+        .bind(application_id.into_uuid())
         .fetch_one(pool)
         .await
         {
@@ -248,10 +250,10 @@ mod tests {
         }
     }
 
-    fn existing_source(source_id: uuid::Uuid) -> serde_json::Value {
+    fn existing_source(source_id: ListingSourceId) -> serde_json::Value {
         json!({
             "type": "EXISTING_LISTING_SOURCE",
-            "listing_source_id": source_id,
+            "listing_source_id": source_id.into_uuid(),
         })
     }
 
@@ -386,22 +388,28 @@ mod tests {
         let pool = get_postgres_client().await;
         let first_user_id = seed_user(&pool).await;
         let second_user_id = seed_user(&pool).await;
-        let party_id = uuid::Uuid::new_v4();
-        let source_id = uuid::Uuid::new_v4();
+        let party_id = PartyId::new();
+        let source_id = ListingSourceId::new();
         let party = sqlx::query(
             "INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, 'Concurrent Operator')",
         )
-        .bind(party_id)
-        .bind(format!("concurrent-operator-{party_id}"))
+        .bind(party_id.into_uuid())
+        .bind(format!(
+                    "concurrent-operator-{}",
+                    party_id.as_uuid().simple()
+                ))
         .execute(&pool)
         .await;
         assert!(party.is_ok());
         let source = sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, 'Concurrent Source', $3)",
         )
-        .bind(source_id)
-        .bind(format!("concurrent-source-{source_id}"))
-        .bind(party_id)
+        .bind(source_id.into_uuid())
+        .bind(format!(
+                    "concurrent-source-{}",
+                    source_id.as_uuid().simple()
+                ))
+        .bind(party_id.into_uuid())
         .execute(&pool)
         .await;
         assert!(source.is_ok());
@@ -445,14 +453,8 @@ mod tests {
 
         assert_eq!(first.partnership_id, second.partnership_id);
         assert!(first.partnership_id.is_some());
-        assert_eq!(
-            Some(listing_source_core::ListingSourceId::from(source_id)),
-            first.listing_source_id
-        );
-        assert_eq!(
-            Some(listing_source_core::ListingSourceId::from(source_id)),
-            second.listing_source_id
-        );
+        assert_eq!(Some(source_id), first.listing_source_id);
+        assert_eq!(Some(source_id), second.listing_source_id);
         assert_eq!(
             "APPROVED",
             application_state(&pool, first_application_id).await
@@ -477,20 +479,20 @@ mod tests {
     async fn should_approve_existing_source_and_expose_granted_source_authorization() {
         let pool = get_postgres_client().await;
         let user_id = seed_user(&pool).await;
-        let party_id = uuid::Uuid::new_v4();
-        let source_id = uuid::Uuid::new_v4();
+        let party_id = PartyId::new();
+        let source_id = ListingSourceId::new();
         let party = sqlx::query(
             "INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, 'existing-operator', 'Existing Operator')",
         )
-        .bind(party_id)
+        .bind(party_id.into_uuid())
         .execute(&pool)
         .await;
         assert!(party.is_ok());
         let source = sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, 'existing-source', 'Existing Source', $2)",
         )
-        .bind(source_id)
-        .bind(party_id)
+        .bind(source_id.into_uuid())
+        .bind(party_id.into_uuid())
         .execute(&pool)
         .await;
         assert!(source.is_ok());
@@ -500,7 +502,7 @@ mod tests {
             "IN_REVIEW",
             json!({
                 "type": "EXISTING_LISTING_SOURCE",
-                "listing_source_id": source_id,
+                "listing_source_id": source_id.into_uuid(),
             }),
         )
         .await;
@@ -513,7 +515,6 @@ mod tests {
             .await;
         assert!(result.is_ok());
         let authorization = SqlxListingSourceAuthorization::new(pool.clone());
-        let source_id = listing_source_core::ListingSourceId::from(source_id);
         assert!(matches!(
             authorization.can_write_source(user_id, source_id).await,
             Ok(true)
@@ -523,7 +524,7 @@ mod tests {
 
         let dissolved =
             sqlx::query("UPDATE partnerships SET business_state = 'DISSOLVED' WHERE party_id = $1")
-                .bind(party_id)
+                .bind(party_id.into_uuid())
                 .execute(&pool)
                 .await;
         assert!(dissolved.is_ok());
@@ -548,7 +549,7 @@ mod tests {
         let existing_party = sqlx::query(
             "INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, 'northwind-antiques-existing', 'Northwind Antiques')",
         )
-        .bind(uuid::Uuid::new_v4())
+        .bind(PartyId::new().into_uuid())
         .execute(&pool)
         .await;
         assert!(existing_party.is_ok());

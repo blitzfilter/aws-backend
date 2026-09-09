@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 application = { workspace = true }
 async-trait = { workspace = true }
+domain-primitives = { workspace = true }
 party-core = { workspace = true }
 party-service = { workspace = true }
 platform-postgres = { workspace = true }
@@ -16,7 +17,6 @@ time = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-domain-primitives = { workspace = true }
 serial_test = { workspace = true }
 test-api = { workspace = true, features = ["postgres"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

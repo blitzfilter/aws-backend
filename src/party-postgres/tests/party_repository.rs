@@ -3,6 +3,7 @@ use party_core::{
     party::{NewParty, Party, PartyContact},
     party_id::PartyId,
     party_name::PartyName,
+    party_slug_id::PartySlugId,
 };
 use party_postgres::SqlxPartyRepositoryFactory;
 use party_service::ports::{PartyRepository, PartyRepositoryError, PartyRepositoryFactory};
@@ -178,7 +179,7 @@ async fn should_reject_invalid_persisted_party_state() {
 
     match sqlx::query("UPDATE parties SET email = $1 WHERE party_id = $2")
         .bind("invalid-email")
-        .bind(uuid::Uuid::from(party.id()))
+        .bind(party.id().into_uuid())
         .execute(&pool)
         .await
     {
@@ -196,13 +197,40 @@ async fn should_reject_invalid_persisted_party_state() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_reject_wrong_version_persisted_party_id() {
+    let pool = get_postgres_client().await;
+    let party_id = uuid::Uuid::new_v4();
+    let slug_id = PartySlugId::raw("wrong-version-party")
+        .unwrap_or_else(|error| panic!("valid Party slug fixture: {error}"));
+    sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+        .bind(party_id)
+        .bind(slug_id.as_ref())
+        .bind("Wrong version Party")
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert wrong-version Party row: {error}"));
+
+    let unit_of_work = SqlxUnitOfWork::new(pool);
+    let mut tx = begin(&unit_of_work).await;
+    let result = SqlxPartyRepositoryFactory::new()
+        .in_transaction(&mut tx)
+        .find_by_slug(&slug_id)
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(PartyRepositoryError::InvalidPersistedState { .. })
+    ));
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_reject_invalid_persisted_party_name() {
     let pool = get_postgres_client().await;
     let party_id = PartyId::new();
 
     let inserted =
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::from(party_id))
+            .bind(party_id.into_uuid())
             .bind("invalid-name")
             .bind("Valid name")
             .execute(&pool)
@@ -211,7 +239,7 @@ async fn should_reject_invalid_persisted_party_name() {
 
     let corrupted = sqlx::query("UPDATE parties SET name = $1 WHERE party_id = $2")
         .bind("\u{2003}\u{00a0}")
-        .bind(uuid::Uuid::from(party_id))
+        .bind(party_id.into_uuid())
         .execute(&pool)
         .await;
     assert!(corrupted.is_ok());
@@ -235,7 +263,7 @@ async fn should_enforce_party_name_and_slug_schema_constraints() {
 
     let blank_name =
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::now_v7())
             .bind("valid-slug")
             .bind("   ")
             .execute(&pool)
@@ -244,7 +272,7 @@ async fn should_enforce_party_name_and_slug_schema_constraints() {
 
     let oversized_name =
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::now_v7())
             .bind("another-valid-slug")
             .bind("é".repeat(128))
             .execute(&pool)
@@ -253,7 +281,7 @@ async fn should_enforce_party_name_and_slug_schema_constraints() {
 
     let blank_slug =
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::now_v7())
             .bind("")
             .bind("Valid name")
             .execute(&pool)
@@ -336,7 +364,7 @@ async fn should_report_listing_source_and_active_or_dissolved_partnership_blocke
     }
     commit(tx).await;
 
-    let source_id = uuid::Uuid::new_v4();
+    let source_id = uuid::Uuid::now_v7();
     for (sql, party_id) in [(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         source_party.id(),
@@ -345,7 +373,7 @@ async fn should_report_listing_source_and_active_or_dissolved_partnership_blocke
             .bind(source_id)
             .bind(format!("source-{source_id}"))
             .bind("Source blocker")
-            .bind(uuid::Uuid::from(party_id))
+            .bind(party_id.into_uuid())
             .execute(&pool)
             .await
         {
@@ -356,8 +384,8 @@ async fn should_report_listing_source_and_active_or_dissolved_partnership_blocke
         if let Err(error) = sqlx::query(
             "INSERT INTO partnerships (partnership_id, party_id, business_state) VALUES ($1, $2, $3)",
         )
-        .bind(uuid::Uuid::new_v4())
-        .bind(uuid::Uuid::from(party.id()))
+        .bind(uuid::Uuid::now_v7())
+        .bind(party.id().into_uuid())
         .bind(state)
         .execute(&pool)
         .await
@@ -440,18 +468,18 @@ async fn should_reject_stale_and_direct_delete_of_party_with_restrictive_referen
         Err(PartyRepositoryError::ConcurrencyConflict)
     ));
 
-    let partnership_id = uuid::Uuid::new_v4();
+    let partnership_id = uuid::Uuid::now_v7();
     if let Err(error) =
         sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
             .bind(partnership_id)
-            .bind(uuid::Uuid::from(restricted_party.id()))
+            .bind(restricted_party.id().into_uuid())
             .execute(&pool)
             .await
     {
         panic!("failed to insert restrictive partnership: {error}");
     }
     let direct_delete = sqlx::query("DELETE FROM parties WHERE party_id = $1")
-        .bind(uuid::Uuid::from(restricted_party.id()))
+        .bind(restricted_party.id().into_uuid())
         .execute(&pool)
         .await;
     assert!(direct_delete.is_err());

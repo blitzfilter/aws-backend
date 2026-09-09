@@ -67,7 +67,7 @@ impl PartySearchReader for SqlxPartySearchReader<'_> {
             .push(" FROM ranked WHERE TRUE");
         if let Some(search_after) = cursor.search_after {
             builder.push(" AND rn > (SELECT rn FROM ranked WHERE party_id = ");
-            builder.push_bind(uuid::Uuid::from(search_after));
+            builder.push_bind(search_after.into_uuid());
             builder.push(")");
         }
         builder.push(" ORDER BY rn LIMIT ").push_bind(limit);

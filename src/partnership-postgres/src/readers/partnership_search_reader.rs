@@ -2,6 +2,7 @@ use application::{
     error::box_error,
     pagination::{Cursor, CursoredResult},
 };
+use domain_primitives::object_id::ObjectIdError;
 use partnership_core::partnership_id::PartnershipId;
 use partnership_service::{
     ports::{PartnershipSearchReadError, PartnershipSearchReader, PartnershipSearchReaderFactory},
@@ -57,6 +58,10 @@ struct PartnershipSearchRow {
 
 #[derive(Debug, thiserror::Error)]
 enum PartnershipSearchRowMappingError {
+    #[error("invalid persisted Partnership ID")]
+    PartnershipId(#[source] ObjectIdError),
+    #[error("invalid persisted Party ID")]
+    PartyId(#[source] ObjectIdError),
     #[error("invalid persisted party slug")]
     PartySlug(#[source] InvalidPartySlugId),
     #[error("invalid persisted party name")]
@@ -77,9 +82,10 @@ impl TryFrom<PartnershipSearchRow> for AdminPartnershipSummary {
             .map_err(PartnershipSearchRowMappingError::ListingSourceGrantCount)?;
 
         Ok(Self {
-            partnership_id: PartnershipId::from(row.partnership_id),
+            partnership_id: PartnershipId::try_from(row.partnership_id)
+                .map_err(Self::Error::PartnershipId)?,
             party: PartnershipPartySummary {
-                party_id: PartyId::from(row.party_id),
+                party_id: PartyId::try_from(row.party_id).map_err(Self::Error::PartyId)?,
                 party_slug_id: PartySlugId::raw(row.party_slug_id)
                     .map_err(PartnershipSearchRowMappingError::PartySlug)?,
                 name: PartyName::try_from(row.party_name)
@@ -119,7 +125,7 @@ impl PartnershipSearchReader for SqlxPartnershipSearchReader<'_> {
                 .push(" AND (p.created, p.partnership_id) < (")
                 .push_bind(search_after.position)
                 .push(", ")
-                .push_bind(uuid::Uuid::from(search_after.partnership_id))
+                .push_bind(search_after.partnership_id.into_uuid())
                 .push(")");
         }
         builder
@@ -169,23 +175,19 @@ fn push_filters(builder: &mut QueryBuilder<Postgres>, request: &ListAdminPartner
     if let Some(party_id) = request.party_id {
         builder
             .push(" AND p.party_id = ")
-            .push_bind(uuid::Uuid::from(party_id));
+            .push_bind(party_id.into_uuid());
     }
     if let Some(member_user_id) = request.member_user_id {
         builder.push(
             " AND EXISTS (SELECT 1 FROM partnership_members filter_members WHERE filter_members.partnership_id = p.partnership_id AND filter_members.user_id = ",
         );
-        builder
-            .push_bind(uuid::Uuid::from(member_user_id))
-            .push(")");
+        builder.push_bind(member_user_id.into_uuid()).push(")");
     }
     if let Some(listing_source_id) = request.listing_source_id {
         builder.push(
             " AND EXISTS (SELECT 1 FROM partnership_listing_source_grants filter_grants WHERE filter_grants.partnership_id = p.partnership_id AND filter_grants.listing_source_id = ",
         );
-        builder
-            .push_bind(uuid::Uuid::from(listing_source_id))
-            .push(")");
+        builder.push_bind(listing_source_id.into_uuid()).push(")");
     }
 }
 
@@ -210,7 +212,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@partnership-reader.test"))
         .execute(pool)
         .await
@@ -221,8 +223,8 @@ mod tests {
     async fn seed_party(pool: &PgPool, name: &str) -> PartyId {
         let party_id = PartyId::new();
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::from(party_id))
-            .bind(format!("party-{party_id}"))
+            .bind(party_id.into_uuid())
+            .bind(format!("party-{}", party_id.as_uuid().simple()))
             .bind(name)
             .execute(pool)
             .await
@@ -240,8 +242,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO partnerships (partnership_id, party_id, business_state, created, updated) VALUES ($1, $2, $3, $4, $4)",
         )
-        .bind(uuid::Uuid::from(partnership_id))
-        .bind(uuid::Uuid::from(party_id))
+        .bind(partnership_id.into_uuid())
+        .bind(party_id.into_uuid())
         .bind(business_state)
         .bind(created)
         .execute(pool)
@@ -255,10 +257,10 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
-        .bind(uuid::Uuid::from(listing_source_id))
-        .bind(format!("source-{listing_source_id}"))
+        .bind(listing_source_id.into_uuid())
+        .bind(format!("source-{}", listing_source_id.as_uuid().simple()))
         .bind("Reader source")
-        .bind(uuid::Uuid::from(operator_party_id))
+        .bind(operator_party_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("failed to seed reader listing source: {error}"));
@@ -267,8 +269,8 @@ mod tests {
 
     async fn add_member(pool: &PgPool, user_id: UserId, partnership_id: PartnershipId) {
         sqlx::query("INSERT INTO partnership_members (user_id, partnership_id) VALUES ($1, $2)")
-            .bind(uuid::Uuid::from(user_id))
-            .bind(uuid::Uuid::from(partnership_id))
+            .bind(user_id.into_uuid())
+            .bind(partnership_id.into_uuid())
             .execute(pool)
             .await
             .unwrap_or_else(|error| panic!("failed to seed reader membership: {error}"));
@@ -282,8 +284,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
         )
-        .bind(uuid::Uuid::from(partnership_id))
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(partnership_id.into_uuid())
+        .bind(listing_source_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("failed to seed reader source grant: {error}"));
@@ -311,18 +313,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn should_reject_invalid_persisted_party_mapping() {
-        let result = AdminPartnershipSummary::try_from(PartnershipSearchRow {
-            partnership_id: uuid::Uuid::new_v4(),
-            party_id: uuid::Uuid::new_v4(),
-            party_slug_id: "Not a slug".to_owned(),
+    fn mapping_row() -> PartnershipSearchRow {
+        PartnershipSearchRow {
+            partnership_id: uuid::Uuid::now_v7(),
+            party_id: uuid::Uuid::now_v7(),
+            party_slug_id: "valid-party".to_owned(),
             party_name: "Valid party".to_owned(),
             member_count: 0,
             listing_source_grant_count: 0,
             created: datetime!(2026-01-01 00:00 UTC),
             updated: datetime!(2026-01-01 00:00 UTC),
-        });
+        }
+    }
+
+    #[test]
+    fn should_reject_invalid_persisted_party_mapping() {
+        let mut row = mapping_row();
+        row.party_slug_id = "Not a slug".to_owned();
+        let result = AdminPartnershipSummary::try_from(row);
 
         assert!(matches!(
             result,
@@ -332,20 +340,35 @@ mod tests {
 
     #[test]
     fn should_reject_negative_persisted_counts() {
-        let result = AdminPartnershipSummary::try_from(PartnershipSearchRow {
-            partnership_id: uuid::Uuid::new_v4(),
-            party_id: uuid::Uuid::new_v4(),
-            party_slug_id: "valid-party".to_owned(),
-            party_name: "Valid party".to_owned(),
-            member_count: -1,
-            listing_source_grant_count: 0,
-            created: datetime!(2026-01-01 00:00 UTC),
-            updated: datetime!(2026-01-01 00:00 UTC),
-        });
+        let mut row = mapping_row();
+        row.member_count = -1;
+        let result = AdminPartnershipSummary::try_from(row);
 
         assert!(matches!(
             result,
             Err(PartnershipSearchRowMappingError::MemberCount(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_wrong_version_partnership_id() {
+        let mut row = mapping_row();
+        row.partnership_id = uuid::Uuid::new_v4();
+
+        assert!(matches!(
+            AdminPartnershipSummary::try_from(row),
+            Err(PartnershipSearchRowMappingError::PartnershipId(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_wrong_version_party_id() {
+        let mut row = mapping_row();
+        row.party_id = uuid::Uuid::new_v4();
+
+        assert!(matches!(
+            AdminPartnershipSummary::try_from(row),
+            Err(PartnershipSearchRowMappingError::PartyId(_))
         ));
     }
 

@@ -32,8 +32,11 @@ async fn seed_grant_targets(pool: &PgPool) -> (PartnershipId, ListingSourceId) {
     let partnership_id = PartnershipId::new();
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(uuid::Uuid::from(party_id))
-        .bind(format!("grant-repository-party-{party_id}"))
+        .bind(party_id.into_uuid())
+        .bind(format!(
+            "grant-repository-party-{}",
+            party_id.as_uuid().simple()
+        ))
         .bind("Grant Repository Party")
         .execute(pool)
         .await
@@ -41,16 +44,19 @@ async fn seed_grant_targets(pool: &PgPool) -> (PartnershipId, ListingSourceId) {
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(format!("grant-repository-source-{listing_source_id}"))
+    .bind(listing_source_id.into_uuid())
+    .bind(format!(
+            "grant-repository-source-{}",
+            listing_source_id.as_uuid().simple()
+        ))
     .bind("Grant Repository Source")
-    .bind(uuid::Uuid::from(party_id))
+    .bind(party_id.into_uuid())
     .execute(pool)
     .await
     .unwrap_or_else(|error| panic!("seed grant repository listing source: {error}"));
     sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
-        .bind(uuid::Uuid::from(partnership_id))
-        .bind(uuid::Uuid::from(party_id))
+        .bind(partnership_id.into_uuid())
+        .bind(party_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("seed grant repository partnership: {error}"));
