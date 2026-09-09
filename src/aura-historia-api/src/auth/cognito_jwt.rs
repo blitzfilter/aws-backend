@@ -8,7 +8,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use user_core::user_id::UserId;
+use user_service::ports::{CognitoIdentity, CognitoIssuer, CognitoSubject};
+use user_service::use_cases::{
+    ResolveCognitoUserError, ResolveCognitoUserRequest, ResolveCognitoUserUseCase,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CognitoJwtConfig {
@@ -83,32 +86,39 @@ struct JwksCache {
     refreshed_at: Option<Instant>,
 }
 
-pub struct CognitoJwtAuthenticator<P> {
+pub struct CognitoJwtAuthenticator<P, R> {
     config: CognitoJwtConfig,
+    identity_issuer: CognitoIssuer,
     provider: P,
+    resolve_user: R,
     verifier: Verifier,
     cache_ttl: Duration,
     jwks_cache: Arc<RwLock<JwksCache>>,
     refresh_lock: Mutex<()>,
 }
 
-impl<P> CognitoJwtAuthenticator<P> {
-    pub fn new(config: CognitoJwtConfig, provider: P) -> Result<Self, AuthError> {
-        Self::with_cache_ttl(config, provider, DEFAULT_JWKS_CACHE_TTL)
+impl<P, R> CognitoJwtAuthenticator<P, R> {
+    pub fn new(config: CognitoJwtConfig, provider: P, resolve_user: R) -> Result<Self, AuthError> {
+        Self::with_cache_ttl(config, provider, resolve_user, DEFAULT_JWKS_CACHE_TTL)
     }
 
     fn with_cache_ttl(
         config: CognitoJwtConfig,
         provider: P,
+        resolve_user: R,
         cache_ttl: Duration,
     ) -> Result<Self, AuthError> {
+        let identity_issuer = CognitoIssuer::try_from(config.issuer.as_str())
+            .map_err(|error| AuthError::Internal(error.to_string()))?;
         let verifier = Verifier::create()
             .issuer(config.issuer.clone())
             .build()
             .map_err(|error| AuthError::Internal(error.to_string()))?;
         Ok(Self {
             config,
+            identity_issuer,
             provider,
+            resolve_user,
             verifier,
             cache_ttl,
             jwks_cache: Arc::new(RwLock::new(JwksCache {
@@ -120,7 +130,7 @@ impl<P> CognitoJwtAuthenticator<P> {
     }
 }
 
-impl<P> CognitoJwtAuthenticator<P>
+impl<P, R> CognitoJwtAuthenticator<P, R>
 where
     P: JwksProvider,
 {
@@ -195,9 +205,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<P> TokenAuthenticator for CognitoJwtAuthenticator<P>
+impl<P, R> TokenAuthenticator for CognitoJwtAuthenticator<P, R>
 where
     P: JwksProvider,
+    R: ResolveCognitoUserUseCase,
 {
     async fn authenticate(
         &self,
@@ -211,14 +222,33 @@ where
             .map_err(|_| AuthError::InvalidCredentials)?;
 
         verify_access_token(&claims, &self.config.app_client_ids)?;
-        let user_id = UserId::try_from(claim_string(&claims, "sub")?)
+        let subject = CognitoSubject::try_from(claim_string(&claims, "sub")?)
             .map_err(|_| AuthError::InvalidCredentials)?;
+        let resolved = self
+            .resolve_user
+            .execute(ResolveCognitoUserRequest {
+                identity: CognitoIdentity {
+                    issuer: self.identity_issuer.clone(),
+                    subject,
+                },
+            })
+            .await
+            .map_err(map_resolve_user_error)?;
 
         Ok(TransportPrincipal::User {
-            user_id,
+            user_id: resolved.user_id,
             auth_method: AuthMethod::CognitoJwt,
             capabilities: BTreeSet::new(),
         })
+    }
+}
+
+fn map_resolve_user_error(error: ResolveCognitoUserError) -> AuthError {
+    match error {
+        ResolveCognitoUserError::NotFound => AuthError::InvalidCredentials,
+        ResolveCognitoUserError::TemporarilyUnavailable { .. } => AuthError::TemporarilyUnavailable,
+        ResolveCognitoUserError::InvalidPersistedState { .. }
+        | ResolveCognitoUserError::Internal { .. } => AuthError::Internal(error.to_string()),
     }
 }
 
@@ -244,6 +274,7 @@ fn claim_string<'a>(claims: &'a Value, claim: &'static str) -> Result<&'a str, A
 #[cfg(test)]
 mod tests {
     use super::*;
+    use application::error::box_error;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use jsonwebtokens as jwt;
     use openssl::rsa::Rsa;
@@ -251,6 +282,10 @@ mod tests {
     use std::sync::{Mutex, MutexGuard};
     use time::OffsetDateTime;
     use tokio::sync::Notify;
+    use user_core::user_id::UserId;
+    use user_service::use_cases::ResolveCognitoUserResult;
+
+    const OPAQUE_SUBJECT: &str = "provider|opaque-user:42";
 
     #[derive(Clone)]
     struct FakeJwksProvider {
@@ -311,6 +346,53 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum ResolveOutcome {
+        Found(UserId),
+        NotFound,
+        TemporarilyUnavailable,
+        InvalidPersistedState,
+        Internal,
+    }
+
+    type ResolveCalls = Arc<Mutex<Vec<ResolveCognitoUserRequest>>>;
+
+    #[derive(Clone)]
+    struct FakeResolveCognitoUserUseCase {
+        outcome: ResolveOutcome,
+        calls: ResolveCalls,
+    }
+
+    #[async_trait::async_trait]
+    impl ResolveCognitoUserUseCase for FakeResolveCognitoUserUseCase {
+        async fn execute(
+            &self,
+            request: ResolveCognitoUserRequest,
+        ) -> Result<ResolveCognitoUserResult, ResolveCognitoUserError> {
+            lock(&self.calls).push(request);
+            match self.outcome {
+                ResolveOutcome::Found(user_id) => Ok(ResolveCognitoUserResult { user_id }),
+                ResolveOutcome::NotFound => Err(ResolveCognitoUserError::NotFound),
+                ResolveOutcome::TemporarilyUnavailable => {
+                    Err(ResolveCognitoUserError::TemporarilyUnavailable {
+                        source: box_error(std::io::Error::other("temporary")),
+                    })
+                }
+                ResolveOutcome::InvalidPersistedState => {
+                    Err(ResolveCognitoUserError::InvalidPersistedState {
+                        source: box_error(std::io::Error::other("invalid persisted mapping")),
+                    })
+                }
+                ResolveOutcome::Internal => Err(ResolveCognitoUserError::Internal {
+                    source: box_error(std::io::Error::other("internal")),
+                }),
+            }
+        }
+    }
+
+    type TestAuthenticator =
+        CognitoJwtAuthenticator<FakeJwksProvider, FakeResolveCognitoUserUseCase>;
+
     #[derive(Clone)]
     struct TestKey {
         kid: String,
@@ -353,14 +435,28 @@ mod tests {
     fn authenticator(
         keys: Vec<JsonWebKey>,
         calls: Arc<Mutex<Vec<String>>>,
-    ) -> Result<CognitoJwtAuthenticator<FakeJwksProvider>, AuthError> {
+    ) -> Result<TestAuthenticator, AuthError> {
         authenticator_with_provider_result(Ok(JsonWebKeySet { keys }), calls)
     }
 
     fn authenticator_with_provider_result(
         result: Result<JsonWebKeySet, FakeJwksError>,
         calls: Arc<Mutex<Vec<String>>>,
-    ) -> Result<CognitoJwtAuthenticator<FakeJwksProvider>, AuthError> {
+    ) -> Result<TestAuthenticator, AuthError> {
+        authenticator_with_resolution(
+            result,
+            calls,
+            ResolveOutcome::Found(UserId::new()),
+            Arc::new(Mutex::new(Vec::new())),
+        )
+    }
+
+    fn authenticator_with_resolution(
+        result: Result<JsonWebKeySet, FakeJwksError>,
+        calls: Arc<Mutex<Vec<String>>>,
+        outcome: ResolveOutcome,
+        resolve_calls: ResolveCalls,
+    ) -> Result<TestAuthenticator, AuthError> {
         CognitoJwtAuthenticator::new(
             CognitoJwtConfig::new(
                 "https://issuer.example/pool",
@@ -368,6 +464,10 @@ mod tests {
                 ["audience-1"],
             ),
             FakeJwksProvider { result, calls },
+            FakeResolveCognitoUserUseCase {
+                outcome,
+                calls: resolve_calls,
+            },
         )
     }
 
@@ -377,11 +477,11 @@ mod tests {
         Ok(jwt::encode(&header, &claims, &algorithm)?)
     }
 
-    fn jwt_claims(user_id: UserId, exp_delta_seconds: i64, client_id: Value) -> Value {
+    fn jwt_claims(subject: &str, exp_delta_seconds: i64, client_id: Value) -> Value {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         json!({
             "iss": "https://issuer.example/pool",
-            "sub": user_id.to_string(),
+            "sub": subject,
             "token_use": "access",
             "client_id": client_id,
             "iat": now,
@@ -422,9 +522,17 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let authenticator = authenticator(vec![jwk(&key)], calls.clone())?;
+        let resolve_calls = Arc::new(Mutex::new(Vec::new()));
         let user_id = UserId::new();
-        let token = signed_jwt(&key, jwt_claims(user_id, 3_600, json!("audience-1")))?;
+        let authenticator = authenticator_with_resolution(
+            Ok(JsonWebKeySet {
+                keys: vec![jwk(&key)],
+            }),
+            calls.clone(),
+            ResolveOutcome::Found(user_id),
+            resolve_calls.clone(),
+        )?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let principal = authenticator.authenticate(&token, &metadata()).await?;
 
@@ -440,6 +548,13 @@ mod tests {
             vec!["https://issuer.example/pool/.well-known/jwks.json".to_owned()],
             *lock(&calls)
         );
+        let resolve_calls = lock(&resolve_calls);
+        assert_eq!(1, resolve_calls.len());
+        assert_eq!(
+            "https://issuer.example/pool",
+            resolve_calls[0].identity.issuer.as_str()
+        );
+        assert_eq!(OPAQUE_SUBJECT, resolve_calls[0].identity.subject.as_str());
         Ok(())
     }
 
@@ -447,7 +562,7 @@ mod tests {
     async fn should_reject_cognito_id_token() -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let mut claims = jwt_claims(UserId::new(), 3_600, json!("audience-1"));
+        let mut claims = jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1"));
         claims["token_use"] = json!("id");
         claims["aud"] = json!("audience-1");
         if let Some(claims) = claims.as_object_mut() {
@@ -466,7 +581,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let mut claims = jwt_claims(UserId::new(), 3_600, json!("audience-1"));
+        let mut claims = jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1"));
         if let Some(claims) = claims.as_object_mut() {
             claims.remove("token_use");
         }
@@ -483,8 +598,7 @@ mod tests {
         let key = test_key("kid-1")?;
         let calls = Arc::new(Mutex::new(Vec::new()));
         let authenticator = authenticator(vec![jwk(&key)], calls.clone())?;
-        let user_id = UserId::new();
-        let token = signed_jwt(&key, jwt_claims(user_id, 3_600, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let _ = authenticator.authenticate(&token, &metadata()).await?;
         let _ = authenticator.authenticate(&token, &metadata()).await?;
@@ -513,9 +627,13 @@ mod tests {
                 ])),
                 calls: calls.clone(),
             },
+            FakeResolveCognitoUserUseCase {
+                outcome: ResolveOutcome::Found(UserId::new()),
+                calls: Arc::new(Mutex::new(Vec::new())),
+            },
             Duration::ZERO,
         )?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let _ = authenticator.authenticate(&token, &metadata()).await?;
         let principal = authenticator.authenticate(&token, &metadata()).await?;
@@ -546,8 +664,12 @@ mod tests {
                 entered: entered.clone(),
                 release: release.clone(),
             },
+            FakeResolveCognitoUserUseCase {
+                outcome: ResolveOutcome::Found(UserId::new()),
+                calls: Arc::new(Mutex::new(Vec::new())),
+            },
         )?);
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
         let first_authenticator = authenticator.clone();
         let first_token = token.clone();
         let first = tokio::spawn(async move {
@@ -582,7 +704,7 @@ mod tests {
     async fn should_reject_cognito_jwt_when_expired() -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), -60, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, -60, json!("audience-1")))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 
@@ -595,7 +717,7 @@ mod tests {
     {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let mut claims = jwt_claims(UserId::new(), 3_600, json!("audience-1"));
+        let mut claims = jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1"));
         claims["iss"] = json!("https://evil.example/pool");
         let token = signed_jwt(&key, claims)?;
 
@@ -612,7 +734,7 @@ mod tests {
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
         let token = signed_jwt(
             &key,
-            jwt_claims(UserId::new(), 3_600, json!("other-audience")),
+            jwt_claims(OPAQUE_SUBJECT, 3_600, json!("other-audience")),
         )?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
@@ -626,7 +748,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!(123)))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!(123)))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 
@@ -642,7 +764,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!([123])))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!([123])))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 
@@ -671,7 +793,7 @@ mod tests {
     {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let mut claims = jwt_claims(UserId::new(), 3_600, json!("audience-1"));
+        let mut claims = jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1"));
         if let Some(claims) = claims.as_object_mut() {
             claims.remove("sub");
         }
@@ -688,7 +810,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
         let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let mut claims = jwt_claims(UserId::new(), 3_600, json!("audience-1"));
+        let mut claims = jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1"));
         claims["sub"] = json!(123);
         let token = signed_jwt(&key, claims)?;
 
@@ -699,17 +821,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_reject_cognito_jwt_when_sub_not_uuid() -> Result<(), Box<dyn std::error::Error>>
-    {
+    async fn should_reject_cognito_jwt_when_opaque_identity_unknown()
+    -> Result<(), Box<dyn std::error::Error>> {
         let key = test_key("kid-1")?;
-        let authenticator = authenticator(vec![jwk(&key)], Arc::new(Mutex::new(Vec::new())))?;
-        let mut claims = jwt_claims(UserId::new(), 3_600, json!("audience-1"));
-        claims["sub"] = json!("not-a-uuid");
-        let token = signed_jwt(&key, claims)?;
+        let resolve_calls = Arc::new(Mutex::new(Vec::new()));
+        let authenticator = authenticator_with_resolution(
+            Ok(JsonWebKeySet {
+                keys: vec![jwk(&key)],
+            }),
+            Arc::new(Mutex::new(Vec::new())),
+            ResolveOutcome::NotFound,
+            resolve_calls.clone(),
+        )?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 
         assert!(matches!(result, Err(AuthError::InvalidCredentials)));
+        let resolve_calls = lock(&resolve_calls);
+        assert_eq!(1, resolve_calls.len());
+        assert_eq!(OPAQUE_SUBJECT, resolve_calls[0].identity.subject.as_str());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_cognito_identity_resolution_service_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let key = test_key("kid-1")?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
+
+        for (outcome, temporary) in [
+            (ResolveOutcome::TemporarilyUnavailable, true),
+            (ResolveOutcome::InvalidPersistedState, false),
+            (ResolveOutcome::Internal, false),
+        ] {
+            let authenticator = authenticator_with_resolution(
+                Ok(JsonWebKeySet {
+                    keys: vec![jwk(&key)],
+                }),
+                Arc::new(Mutex::new(Vec::new())),
+                outcome,
+                Arc::new(Mutex::new(Vec::new())),
+            )?;
+
+            let result = authenticator.authenticate(&token, &metadata()).await;
+
+            if temporary {
+                assert!(matches!(result, Err(AuthError::TemporarilyUnavailable)));
+            } else {
+                assert!(matches!(result, Err(AuthError::Internal(_))));
+            }
+        }
         Ok(())
     }
 
@@ -732,7 +894,7 @@ mod tests {
         let header = json!({ "alg": algorithm.name() });
         let token = jwt::encode(
             &header,
-            &jwt_claims(UserId::new(), 3_600, json!("audience-1")),
+            &jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")),
             &algorithm,
         )?;
 
@@ -751,7 +913,7 @@ mod tests {
         let header = json!({ "alg": algorithm.name(), "kid": 123 });
         let token = jwt::encode(
             &header,
-            &jwt_claims(UserId::new(), 3_600, json!("audience-1")),
+            &jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")),
             &algorithm,
         )?;
 
@@ -782,7 +944,7 @@ mod tests {
         let key = test_key("kid-1")?;
         let other_key = test_key("kid-2")?;
         let authenticator = authenticator(vec![jwk(&other_key)], Arc::new(Mutex::new(Vec::new())))?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 
@@ -796,7 +958,7 @@ mod tests {
         let mut key_record = jwk(&key);
         key_record.alg = Some("RS384".to_owned());
         let authenticator = authenticator(vec![key_record], Arc::new(Mutex::new(Vec::new())))?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 
@@ -812,7 +974,7 @@ mod tests {
             Err(FakeJwksError::Fetch),
             Arc::new(Mutex::new(Vec::new())),
         )?;
-        let token = signed_jwt(&key, jwt_claims(UserId::new(), 3_600, json!("audience-1")))?;
+        let token = signed_jwt(&key, jwt_claims(OPAQUE_SUBJECT, 3_600, json!("audience-1")))?;
 
         let result = authenticator.authenticate(&token, &metadata()).await;
 

@@ -141,7 +141,7 @@ pub(crate) const WOOCOMMERCE_PROVIDER_SOURCE_ORDER_CONFLICT: ApiErrorCode =
 pub(crate) const WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS: ApiErrorCode =
     ApiErrorCode("WOOCOMMERCE_PROVIDER_SOURCE_ORDER_AMBIGUOUS");
 pub(crate) const FORBIDDEN: ApiErrorCode = ApiErrorCode("FORBIDDEN");
-pub(crate) const INVALID_UUID: ApiErrorCode = ApiErrorCode("INVALID_UUID");
+pub(crate) const INVALID_OBJECT_ID: ApiErrorCode = ApiErrorCode("INVALID_OBJECT_ID");
 pub(crate) const LISTING_SOURCE_INTERNAL_ERROR: ApiErrorCode =
     ApiErrorCode("LISTING_SOURCE_INTERNAL_ERROR");
 pub(crate) const LISTING_SOURCE_NOT_FOUND: ApiErrorCode = ApiErrorCode("LISTING_SOURCE_NOT_FOUND");
@@ -241,6 +241,7 @@ pub(crate) struct ApiErrorSource {
 #[derive(Debug, Serialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "UPPERCASE")]
 enum ApiErrorSourceType {
+    Body,
     Header,
     Path,
     Query,
@@ -304,6 +305,14 @@ impl ApiError {
             "Service Unavailable",
             error,
         )
+    }
+
+    pub(crate) fn with_body_field(mut self, field: &'static str) -> Self {
+        self.source = Some(ApiErrorSource {
+            field,
+            source_type: ApiErrorSourceType::Body,
+        });
+        self
     }
 
     pub(crate) fn with_header_field(mut self, field: &'static str) -> Self {
@@ -463,7 +472,7 @@ impl From<UpdateNotificationsSeenError> for ApiError {
             }
             UpdateNotificationsSeenError::EmptyNotificationIds => {
                 ApiError::bad_request(BAD_BODY_VALUE)
-                    .with_detail("notificationIds must contain at least one notification UUID.")
+                    .with_detail("notificationIds must contain at least one Notification ID.")
             }
             UpdateNotificationsSeenError::UpdateFailed(_) => {
                 ApiError::service_unavailable(NOTIFICATION_TEMPORARILY_UNAVAILABLE)
@@ -3040,10 +3049,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_render_problem_json_response() -> Result<(), Box<dyn std::error::Error>> {
-        let response = ApiError::bad_request(INVALID_UUID)
-            .with_path_field("shopId")
-            .with_detail("Path parameter 'shopId' must be a UUID.")
+    async fn should_render_invalid_object_id_problem_json_response()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = ApiError::bad_request(INVALID_OBJECT_ID)
+            .with_path_field("listingSourceId")
+            .with_detail("must be a valid ListingSource ID")
             .into_response();
 
         assert_eq!(StatusCode::BAD_REQUEST, response.status());
@@ -3057,9 +3067,9 @@ mod tests {
             json!({
                 "status": 400,
                 "title": "Bad Request",
-                "error": INVALID_UUID.to_string(),
-                "source": {"field": "shopId", "type": "PATH"},
-                "detail": "Path parameter 'shopId' must be a UUID."
+                "error": INVALID_OBJECT_ID.to_string(),
+                "source": {"field": "listingSourceId", "type": "PATH"},
+                "detail": "must be a valid ListingSource ID"
             }),
             body
         );

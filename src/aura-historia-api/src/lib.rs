@@ -161,8 +161,9 @@ use user_cognito::CognitoUserSessionRevoker;
 use user_postgres::{
     SqlxAccessTokenAuthenticationReader, SqlxAccessTokenDetailsReader, SqlxAccessTokenListReader,
     SqlxAccessTokenRepositoryFactory, SqlxAdminAccessTokenListReaderFactory,
-    SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory, SqlxUserAdminReaderFactory,
-    SqlxUserAuthenticationReader, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
+    SqlxCognitoUserIdentityReader, SqlxNewsletterProfileReader, SqlxUserAccountReaderFactory,
+    SqlxUserAdminReaderFactory, SqlxUserAuthenticationReader,
+    SqlxUserCognitoIdentityRegistryFactory, SqlxUserRepositoryFactory, SqlxUserSearchReaderFactory,
     SqlxUserTierEntitlementsFactory,
 };
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
@@ -183,8 +184,8 @@ use user_service::use_cases::queries::list_access_tokens::ListAccessTokensHandle
 use user_service::use_cases::queries::list_admin_access_tokens::ListAdminAccessTokensHandler;
 use user_service::use_cases::queries::search_users::SearchUsersHandler;
 use user_service::use_cases::{
-    AuthenticateAccessTokenHandler, AuthenticateUserHandler, RevokeUserSessionsHandler,
-    SuspendUserHandler, UnsuspendUserHandler,
+    AuthenticateAccessTokenHandler, AuthenticateUserHandler, ResolveCognitoUserHandler,
+    RevokeUserSessionsHandler, SuspendUserHandler, UnsuspendUserHandler,
 };
 use user_zoho::ZohoNewsletterSubscriptionWriter;
 use watchlist_postgres::{SqlxWatchlistQuotaReaderFactory, SqlxWatchlistRepositoryFactory};
@@ -990,6 +991,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
 
     let access_token_use_case =
         AuthenticateAccessTokenHandler::new(SqlxAccessTokenAuthenticationReader::new(pool.clone()));
+    let resolve_cognito_user =
+        ResolveCognitoUserHandler::new(SqlxCognitoUserIdentityReader::new(pool.clone()));
     let authenticate_user =
         AuthenticateUserHandler::new(SqlxUserAuthenticationReader::new(pool.clone()));
     let jwks_client = reqwest::Client::builder()
@@ -1000,6 +1003,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     let authenticator = compose_authenticator(
         config,
         ReqwestJwksProvider::new(jwks_client),
+        resolve_cognito_user,
         AuraAccessTokenAuthenticator::new(access_token_use_case),
         authenticate_user,
     )
@@ -1100,7 +1104,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         revoke_user_sessions: Arc::new(RevokeUserSessionsHandler::new(
             unit_of_work.clone(),
             SqlxUserAdminReaderFactory::new(),
-            SqlxUserAccountReaderFactory::new(),
+            SqlxUserCognitoIdentityRegistryFactory::new(),
             cognito_session_revoker,
         )),
         create_access_token: Arc::new(CreateAccessTokenHandler::new(
@@ -1379,18 +1383,24 @@ fn google_application_default_credentials()
         })
 }
 
-fn compose_authenticator<P, A, U>(
+fn compose_authenticator<P, R, A, U>(
     config: &ApiConfig,
     jwks_provider: P,
+    resolve_cognito_user: R,
     access_token_authenticator: A,
     authenticate_user: U,
 ) -> Result<Arc<dyn TokenAuthenticator>, AuthError>
 where
     P: JwksProvider + 'static,
+    R: user_service::use_cases::ResolveCognitoUserUseCase + 'static,
     A: TokenAuthenticator + 'static,
     U: user_service::use_cases::AuthenticateUserUseCase + 'static,
 {
-    let cognito_jwt = CognitoJwtAuthenticator::new(config.cognito_jwt().clone(), jwks_provider)?;
+    let cognito_jwt = CognitoJwtAuthenticator::new(
+        config.cognito_jwt().clone(),
+        jwks_provider,
+        resolve_cognito_user,
+    )?;
     Ok(Arc::new(UserAuthenticationAuthenticator::new(
         ApiAuthService::new(cognito_jwt, access_token_authenticator),
         authenticate_user,
