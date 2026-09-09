@@ -93,11 +93,7 @@ fn command_from_job(job: DomainJob) -> Result<DeliverNotificationCommand, crate:
         return Err(crate::jobs::InvalidJob);
     };
     Ok(DeliverNotificationCommand {
-        notification_delivery_id: delivery
-            .notification_delivery_id
-            .as_str()
-            .try_into()
-            .map_err(|_| crate::jobs::InvalidJob)?,
+        notification_delivery_id: delivery.notification_delivery_id,
     })
 }
 
@@ -111,6 +107,7 @@ mod tests {
     };
     use notification_core::notification_delivery_id::NotificationDeliveryId;
     use std::sync::Mutex;
+    use uuid::Uuid;
     #[derive(Default)]
     struct Handler {
         commands: Mutex<Vec<DeliverNotificationCommand>>,
@@ -132,7 +129,13 @@ mod tests {
     async fn should_map_notification_delivery_job_to_delivery_command()
     -> Result<(), Box<dyn std::error::Error>> {
         let (sender, receiver) = in_memory_queue(QueueConfig::new(1))?;
-        let notification_delivery_id = NotificationDeliveryId::new();
+        let notification_delivery_id = NotificationDeliveryId::try_from(Uuid::from_u128(
+            0x0190_0000_0000_7000_8000_0000_0000_0007,
+        ))?;
+        assert_eq!(
+            "nd_01j0000000e008000000000007",
+            notification_delivery_id.to_string()
+        );
         sender
             .enqueue(DomainJob {
                 target_queue: WorkerQueue::NotificationDelivery,
@@ -144,7 +147,7 @@ mod tests {
                 )),
                 payload: DomainJobPayload::NotificationDeliveryCreated(
                     NotificationDeliveryCreatedJob {
-                        notification_delivery_id: notification_delivery_id.to_string(),
+                        notification_delivery_id,
                     },
                 ),
             })

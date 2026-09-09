@@ -3,7 +3,6 @@ use crate::{
     cdc::{CdcOperation, DomainJob, DomainJobPayload},
     queue::{JobOutcome, WorkerQueueReceiver},
 };
-use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use search_filter_service::use_cases::{
     ProjectSearchFilterChangeCommand, ProjectSearchFilterChangeError,
     ProjectSearchFilterChangeUseCase, SearchFilterProjectionOperation,
@@ -51,13 +50,11 @@ fn command_from_job(
     let DomainJobPayload::SearchFilterChanged(change) = job.payload else {
         return Err(crate::jobs::InvalidJob);
     };
-    let search_filter_id = UserSearchFilterId::try_from(change.user_search_filter_id.as_str())
-        .map_err(|_| crate::jobs::InvalidJob)?;
     if change.version <= 0 {
         return Err(crate::jobs::InvalidJob);
     }
     Ok(ProjectSearchFilterChangeCommand {
-        search_filter_id,
+        search_filter_id: change.user_search_filter_id,
         source_version: change.version,
         operation: match change.operation {
             CdcOperation::Insert | CdcOperation::Update => SearchFilterProjectionOperation::Upsert,
@@ -70,9 +67,19 @@ fn command_from_job(
 mod tests {
     use super::*;
     use crate::cdc::{IdempotencyKey, OrderingKey, SearchFilterChangedJob, WorkerQueue};
+    use search_filter_core::user_search_filter_id::UserSearchFilterId;
+    use user_core::user_id::UserId;
+    use uuid::Uuid;
+
     #[test]
-    fn should_map_insert_update_and_delete_without_inventing_projection_completion() {
-        let id = UserSearchFilterId::new();
+    fn should_map_insert_update_and_delete_without_inventing_projection_completion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_id = UserId::try_from(Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0001))?;
+        let id = UserSearchFilterId::try_from(Uuid::from_u128(
+            0x0190_0000_0000_7000_8000_0000_0000_0006,
+        ))?;
+        assert_eq!("usr_01j0000000e008000000000001", user_id.to_string());
+        assert_eq!("sf_01j0000000e008000000000006", id.to_string());
         for (operation, expected) in [
             (
                 CdcOperation::Insert,
@@ -92,8 +99,8 @@ mod tests {
                 idempotency_key: IdempotencyKey::new(format!("search-filter:{id}:3:{operation}")),
                 ordering_key: OrderingKey::new(format!("search-filter:{id}")),
                 payload: DomainJobPayload::SearchFilterChanged(SearchFilterChangedJob {
-                    user_id: "10000000-0000-0000-0000-000000000001".into(),
-                    user_search_filter_id: id.to_string(),
+                    user_id,
+                    user_search_filter_id: id,
                     version: 3,
                     operation,
                 }),
@@ -107,5 +114,6 @@ mod tests {
                 command
             );
         }
+        Ok(())
     }
 }

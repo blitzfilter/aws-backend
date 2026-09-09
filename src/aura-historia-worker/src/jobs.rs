@@ -1,10 +1,12 @@
 //! Worker-local jobs. PostgreSQL and target-side guards, not transport memory, own idempotency.
 use crate::{WorkerScope, cdc::CdcOperation};
 use domain_primitives::event_id::EventId;
+use notification_core::notification_delivery_id::NotificationDeliveryId;
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
+use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use strum::IntoEnumIterator;
-use uuid::Uuid;
+use user_core::user_id::UserId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainJob {
@@ -97,42 +99,34 @@ pub struct ProductListingRawRevisionJob {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchFilterChangedJob {
-    pub user_id: String,
-    pub user_search_filter_id: String,
+    pub user_id: UserId,
+    pub user_search_filter_id: UserSearchFilterId,
     pub version: i64,
     pub operation: CdcOperation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchFilterMatchCreatedJob {
-    pub user_id: String,
-    pub user_search_filter_id: String,
-    pub product_listing_id: String,
-    pub origin_event_id: String,
+    pub user_id: UserId,
+    pub user_search_filter_id: UserSearchFilterId,
+    pub product_listing_id: ProductListingId,
+    pub origin_event_id: EventId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserTierChangedJob {
-    pub user_id: String,
+    pub user_id: UserId,
     pub version: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationDeliveryCreatedJob {
-    pub notification_delivery_id: String,
+    pub notification_delivery_id: NotificationDeliveryId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("job identifiers, version, scope, or logical keys are invalid")]
 pub(crate) struct InvalidJob;
-
-pub(crate) fn canonical_uuid(value: &str) -> Result<Uuid, InvalidJob> {
-    let id = Uuid::parse_str(value).map_err(|_| InvalidJob)?;
-    if id.is_nil() || id.to_string() != value {
-        return Err(InvalidJob);
-    }
-    Ok(id)
-}
 
 impl DomainJob {
     pub(crate) fn validate(&self) -> Result<WorkerScope, InvalidJob> {
@@ -175,33 +169,26 @@ impl DomainJob {
 impl DomainJobPayload {
     pub(crate) fn logical_keys(&self) -> Result<(String, String), InvalidJob> {
         Ok(match self {
-            Self::ProductListingEvent(event) => {
-                canonical_uuid(&event.event_id.to_string())?;
-                canonical_uuid(&event.product_listing_id.to_string())?;
-                (
-                    format!("product-event:{}", event.event_id),
-                    format!("product:{}", event.product_listing_id),
-                )
-            }
+            Self::ProductListingEvent(event) => (
+                format!("product-event:{}", event.event_id),
+                format!("product:{}", event.product_listing_id),
+            ),
             Self::ProductListingRawRevision(revision) => {
-                let stream = revision.product_listing_raw_stream_id.as_uuid().to_string();
-                let id = revision
-                    .product_listing_raw_revision_id
-                    .as_uuid()
-                    .to_string();
-                canonical_uuid(&stream)?;
-                canonical_uuid(&id)?;
                 if revision.revision == 0 || revision.revision > i64::MAX as u64 {
                     return Err(InvalidJob);
                 }
                 (
-                    format!("product-listing-raw-revision:{id}"),
-                    format!("product-listing-raw-stream:{stream}"),
+                    format!(
+                        "product-listing-raw-revision:{}",
+                        revision.product_listing_raw_revision_id
+                    ),
+                    format!(
+                        "product-listing-raw-stream:{}",
+                        revision.product_listing_raw_stream_id
+                    ),
                 )
             }
             Self::SearchFilterChanged(change) => {
-                canonical_uuid(&change.user_id)?;
-                canonical_uuid(&change.user_search_filter_id)?;
                 if change.version <= 0 {
                     return Err(InvalidJob);
                 }
@@ -213,28 +200,17 @@ impl DomainJobPayload {
                     format!("search-filter:{}", change.user_search_filter_id),
                 )
             }
-            Self::SearchFilterMatchCreated(change) => {
-                for id in [
-                    &change.user_id,
-                    &change.user_search_filter_id,
-                    &change.product_listing_id,
-                    &change.origin_event_id,
-                ] {
-                    canonical_uuid(id)?;
-                }
-                (
-                    format!(
-                        "search-filter-match:{}:{}:{}:{}",
-                        change.user_id,
-                        change.user_search_filter_id,
-                        change.product_listing_id,
-                        change.origin_event_id
-                    ),
-                    format!("user:{}", change.user_id),
-                )
-            }
+            Self::SearchFilterMatchCreated(change) => (
+                format!(
+                    "search-filter-match:{}:{}:{}:{}",
+                    change.user_id,
+                    change.user_search_filter_id,
+                    change.product_listing_id,
+                    change.origin_event_id
+                ),
+                format!("user:{}", change.user_id),
+            ),
             Self::NotificationDeliveryCreated(delivery) => {
-                canonical_uuid(&delivery.notification_delivery_id)?;
                 let key = format!(
                     "notification-delivery:{}",
                     delivery.notification_delivery_id
