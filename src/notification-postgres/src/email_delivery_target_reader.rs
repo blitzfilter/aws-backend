@@ -38,7 +38,7 @@ impl EmailDeliveryTargetReader for SqlxEmailDeliveryTargetReader {
         let row = sqlx::query_as::<_, EmailDeliveryTargetRow>(
             "SELECT email, first_name FROM users WHERE user_id = $1",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(|source| EmailDeliveryTargetReadError::ReadFailed {

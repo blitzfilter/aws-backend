@@ -11,7 +11,7 @@ use sqlx::FromRow;
 use time::OffsetDateTime;
 use user_core::user_id::UserId;
 
-use crate::mapping::{name, user_search_filter_uuid};
+use crate::mapping::name;
 
 #[derive(Debug, Clone, Default)]
 pub struct SqlxSearchFilterMatchNotificationSourceReaderFactory;
@@ -56,11 +56,7 @@ impl SearchFilterMatchNotificationSourceReader
         Option<SearchFilterMatchNotificationSource>,
         SearchFilterMatchNotificationSourceReadError,
     > {
-        let search_filter_id = user_search_filter_uuid(search_filter_id).map_err(|source| {
-            SearchFilterMatchNotificationSourceReadError::ReadFailed {
-                source: box_error(source),
-            }
-        })?;
+        let search_filter_id = search_filter_id.into_uuid();
         let row = sqlx::query_as::<_, SearchFilterMatchNotificationSourceRow>(
             r#"
             SELECT
@@ -80,10 +76,10 @@ impl SearchFilterMatchNotificationSourceReader
                 AND matched.origin_event_id = $4
             "#,
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(search_filter_id)
-        .bind(uuid::Uuid::from(product_listing_id))
-        .bind(uuid::Uuid::from(origin_event_id))
+        .bind(product_listing_id.into_uuid())
+        .bind(origin_event_id.into_uuid())
         .fetch_optional(self.tx.connection())
         .await
         .map_err(
@@ -94,15 +90,31 @@ impl SearchFilterMatchNotificationSourceReader
 
         row.map(|row| {
             Ok(SearchFilterMatchNotificationSource {
-                user_id: UserId::from(row.user_id),
-                search_filter_id: UserSearchFilterId::from(row.user_search_filter_id),
+                user_id: UserId::try_from(row.user_id).map_err(|source| {
+                    SearchFilterMatchNotificationSourceReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    }
+                })?,
+                search_filter_id: UserSearchFilterId::try_from(row.user_search_filter_id).map_err(
+                    |source| SearchFilterMatchNotificationSourceReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    },
+                )?,
                 search_filter_name: name(row.user_search_filter_name).map_err(|source| {
                     SearchFilterMatchNotificationSourceReadError::InvalidPersistedState {
                         source: box_error(source),
                     }
                 })?,
-                product_listing_id: ProductListingId::from(row.product_listing_id),
-                origin_event_id: row.origin_event_id.into(),
+                product_listing_id: ProductListingId::try_from(row.product_listing_id).map_err(
+                    |source| SearchFilterMatchNotificationSourceReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    },
+                )?,
+                origin_event_id: EventId::try_from(row.origin_event_id).map_err(|source| {
+                    SearchFilterMatchNotificationSourceReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    }
+                })?,
                 matched_at: row.created,
                 external_delivery_requested: row.external_delivery_requested,
             })

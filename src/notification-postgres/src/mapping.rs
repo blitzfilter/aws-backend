@@ -72,6 +72,8 @@ pub(crate) enum NotificationMappingError {
     SourceShapeMismatch,
     #[error("notification kind does not match its payload")]
     KindPayloadMismatch,
+    #[error("notification contains an invalid persisted object ID")]
+    InvalidObjectId(#[source] domain_primitives::object_id::ObjectIdError),
     #[error("notification rehydration failed")]
     Rehydrate(#[source] notification_core::notification::RehydrateNotificationError),
 }
@@ -174,17 +176,21 @@ fn serialize_listing_source_id<S>(
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&listing_source_id.to_string())
+    serializer.serialize_str(&listing_source_id.as_uuid().to_string())
 }
 
 fn deserialize_listing_source_id<'de, D>(deserializer: D) -> Result<ListingSourceId, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    String::deserialize(deserializer)?
-        .parse::<uuid::Uuid>()
-        .map(ListingSourceId::from)
-        .map_err(serde::de::Error::custom)
+    let value = String::deserialize(deserializer)?;
+    let uuid = uuid::Uuid::parse_str(&value).map_err(serde::de::Error::custom)?;
+    if uuid.to_string() != value {
+        return Err(serde::de::Error::custom(
+            "persisted listing source UUID must use canonical hyphenated lowercase text",
+        ));
+    }
+    ListingSourceId::try_from(uuid).map_err(serde::de::Error::custom)
 }
 
 fn serialize_source_listing_id<S>(
@@ -462,8 +468,8 @@ impl TryFrom<&Notification> for NotificationWriteValues {
                 snapshot,
                 change,
             } => (
-                Some(uuid::Uuid::from(*origin_event_id)),
-                Some(uuid::Uuid::from(*product_listing_id)),
+                Some(origin_event_id.into_uuid()),
+                Some(product_listing_id.into_uuid()),
                 None,
                 None,
                 NotificationPayloadV1::Watchlist {
@@ -478,9 +484,9 @@ impl TryFrom<&Notification> for NotificationWriteValues {
                 snapshot,
                 user_search_filter_name,
             } => (
-                Some(uuid::Uuid::from(*origin_event_id)),
-                Some(uuid::Uuid::from(*product_listing_id)),
-                Some(uuid::Uuid::from(*user_search_filter_id)),
+                Some(origin_event_id.into_uuid()),
+                Some(product_listing_id.into_uuid()),
+                Some(user_search_filter_id.into_uuid()),
                 None,
                 NotificationPayloadV1::SearchFilter {
                     snapshot: snapshot.into(),
@@ -495,7 +501,7 @@ impl TryFrom<&Notification> for NotificationWriteValues {
                 None,
                 None,
                 None,
-                Some(uuid::Uuid::from(*partnership_application_id)),
+                Some(partnership_application_id.into_uuid()),
                 NotificationPayloadV1::PartnershipApplication {
                     snapshot: snapshot.into(),
                 },
@@ -504,8 +510,8 @@ impl TryFrom<&Notification> for NotificationWriteValues {
         let payload = serde_json::to_value(payload)
             .map_err(NotificationMappingError::PayloadSerialization)?;
         Ok(Self {
-            notification_id: uuid::Uuid::from(notification.notification_id()),
-            user_id: uuid::Uuid::from(notification.user_id()),
+            notification_id: notification.notification_id().into_uuid(),
+            user_id: notification.user_id().into_uuid(),
             kind: notification.kind().as_str(),
             origin_event_id,
             product_listing_id,
@@ -550,8 +556,10 @@ impl TryFrom<NotificationRow> for Notification {
                     return Err(NotificationMappingError::KindPayloadMismatch);
                 }
                 NotificationContent::Watchlist {
-                    origin_event_id: EventId::from(origin_event_id),
-                    product_listing_id: ProductListingId::from(product_listing_id),
+                    origin_event_id: EventId::try_from(origin_event_id)
+                        .map_err(NotificationMappingError::InvalidObjectId)?,
+                    product_listing_id: ProductListingId::try_from(product_listing_id)
+                        .map_err(NotificationMappingError::InvalidObjectId)?,
                     snapshot: snapshot.try_into()?,
                     change,
                 }
@@ -567,9 +575,12 @@ impl TryFrom<NotificationRow> for Notification {
                 Some(user_search_filter_id),
                 None,
             ) => NotificationContent::SearchFilter {
-                origin_event_id: EventId::from(origin_event_id),
-                product_listing_id: ProductListingId::from(product_listing_id),
-                user_search_filter_id: UserSearchFilterId::from(user_search_filter_id),
+                origin_event_id: EventId::try_from(origin_event_id)
+                    .map_err(NotificationMappingError::InvalidObjectId)?,
+                product_listing_id: ProductListingId::try_from(product_listing_id)
+                    .map_err(NotificationMappingError::InvalidObjectId)?,
+                user_search_filter_id: UserSearchFilterId::try_from(user_search_filter_id)
+                    .map_err(NotificationMappingError::InvalidObjectId)?,
                 snapshot: snapshot.try_into()?,
                 user_search_filter_name,
             },
@@ -582,9 +593,10 @@ impl TryFrom<NotificationRow> for Notification {
                 None,
                 Some(partnership_application_id),
             ) => NotificationContent::PartnershipApplication {
-                partnership_application_id: PartnershipApplicationId::from(
+                partnership_application_id: PartnershipApplicationId::try_from(
                     partnership_application_id,
-                ),
+                )
+                .map_err(NotificationMappingError::InvalidObjectId)?,
                 snapshot: snapshot.try_into()?,
                 decision: if kind == NotificationKind::PartnershipApplicationApproved {
                     PartnershipApplicationDecision::Approved
@@ -599,8 +611,10 @@ impl TryFrom<NotificationRow> for Notification {
             }
         };
         Notification::rehydrate(RehydratedNotificationState {
-            notification_id: NotificationId::from(row.notification_id),
-            user_id: UserId::from(row.user_id),
+            notification_id: NotificationId::try_from(row.notification_id)
+                .map_err(NotificationMappingError::InvalidObjectId)?,
+            user_id: UserId::try_from(row.user_id)
+                .map_err(NotificationMappingError::InvalidObjectId)?,
             content,
             seen: row.seen,
         })
@@ -751,8 +765,10 @@ mod tests {
     #[test]
     fn should_serialize_product_listing_snapshot_with_listing_source_vocabulary()
     -> Result<(), Box<dyn std::error::Error>> {
+        let listing_source_id = ListingSourceId::new();
+        let listing_source_uuid = listing_source_id.as_uuid().to_string();
         let snapshot = ProductListingNotificationSnapshot {
-            listing_source_id: ListingSourceId::from(uuid::Uuid::nil()),
+            listing_source_id,
             source_listing_id: SourceListingId::try_from("source-listing-42")
                 .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
             listing_source_slug_id: ListingSourceSlugId::raw("northwind-source")?,
@@ -770,7 +786,7 @@ mod tests {
 
         assert_eq!(
             serde_json::json!({
-                "listing_source_id": "00000000-0000-0000-0000-000000000000",
+                "listing_source_id": listing_source_uuid,
                 "source_listing_id": "source-listing-42",
                 "listing_source_slug_id": "northwind-source",
                 "product_listing_title_slug_id": "rare-vase-000000",
@@ -795,11 +811,65 @@ mod tests {
     fn should_reject_invalid_persisted_listing_source_name() {
         let result =
             serde_json::from_value::<ProductListingNotificationSnapshotV1>(serde_json::json!({
-                "listing_source_id": "00000000-0000-0000-0000-000000000000",
+                "listing_source_id": ListingSourceId::new().as_uuid().to_string(),
                 "source_listing_id": "source-listing-42",
                 "listing_source_slug_id": "northwind-source",
                 "product_listing_title_slug_id": "rare-vase-000000",
                 "listing_source_name": "\u{2003}",
+                "title": null,
+                "image": null,
+                "content_policy": null,
+                "url": "https://source.example/listings/42",
+                "view_url": "https://aura.example/listings/rare-vase"
+            }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_noncanonical_persisted_listing_source_id_text() {
+        let canonical = "01890a5d-ac96-774b-bf1d-d5586c639f75";
+        let noncanonical_values = [
+            canonical.to_uppercase(),
+            canonical.replace('-', ""),
+            format!("{{{canonical}}}"),
+            format!("urn:uuid:{canonical}"),
+        ];
+
+        for listing_source_id in noncanonical_values {
+            assert!(uuid::Uuid::parse_str(&listing_source_id).is_ok());
+            let result =
+                serde_json::from_value::<ProductListingNotificationSnapshotV1>(serde_json::json!({
+                    "listing_source_id": listing_source_id,
+                    "source_listing_id": "source-listing-42",
+                    "listing_source_slug_id": "northwind-source",
+                    "product_listing_title_slug_id": "rare-vase-000000",
+                    "listing_source_name": "Northwind Source",
+                    "title": null,
+                    "image": null,
+                    "content_policy": null,
+                    "url": "https://source.example/listings/42",
+                    "view_url": "https://aura.example/listings/rare-vase"
+                }));
+
+            assert!(matches!(
+                result,
+                Err(error) if error
+                    .to_string()
+                    .contains("canonical hyphenated lowercase text")
+            ));
+        }
+    }
+
+    #[test]
+    fn should_reject_v4_persisted_listing_source_id() {
+        let result =
+            serde_json::from_value::<ProductListingNotificationSnapshotV1>(serde_json::json!({
+                "listing_source_id": uuid::Uuid::new_v4().to_string(),
+                "source_listing_id": "source-listing-42",
+                "listing_source_slug_id": "northwind-source",
+                "product_listing_title_slug_id": "rare-vase-000000",
+                "listing_source_name": "Northwind Source",
                 "title": null,
                 "image": null,
                 "content_policy": null,
@@ -909,6 +979,47 @@ mod tests {
         })?;
 
         assert_eq!(notification, restored);
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_v4_notification_id_from_storage_row() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let notification = Notification::new(
+            NotificationId::new(),
+            UserId::new(),
+            NotificationContent::PartnershipApplication {
+                partnership_application_id: PartnershipApplicationId::new(),
+                snapshot: PartnershipApplicationNotificationSnapshot {
+                    party_name: PartyName::try_from("Northwind Antiques")?,
+                    listing_source_name: ListingSourceName::try_from("Northwind Source")?,
+                    image: None,
+                },
+                decision: PartnershipApplicationDecision::Approved,
+            },
+        );
+        let values = NotificationWriteValues::try_from(&notification)?;
+        let result = Notification::try_from(NotificationRow {
+            notification_id: uuid::Uuid::new_v4(),
+            user_id: values.user_id,
+            kind: values.kind.to_owned(),
+            origin_event_id: values.origin_event_id,
+            product_listing_id: values.product_listing_id,
+            user_search_filter_id: values.user_search_filter_id,
+            partnership_application_id: values.partnership_application_id,
+            payload_version: PAYLOAD_VERSION,
+            payload: values.payload,
+            seen: false,
+            created: OffsetDateTime::UNIX_EPOCH,
+            updated: OffsetDateTime::UNIX_EPOCH,
+        });
+
+        assert!(matches!(
+            result,
+            Err(NotificationMappingError::InvalidObjectId(
+                domain_primitives::object_id::ObjectIdError::UnsupportedUuidVersion { actual: 4 }
+            ))
+        ));
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use product_listing_service::ports::{
     WatchlistNotificationRecipientReader, WatchlistNotificationRecipientReaderFactory,
 };
 use time::OffsetDateTime;
+use user_core::user_id::UserId;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqlxWatchlistNotificationRecipientReaderFactory;
@@ -17,6 +18,10 @@ struct SqlxWatchlistNotificationRecipientReader<'tx> {
 #[derive(Debug, thiserror::Error)]
 #[error("watchlist notification recipient SQL query failed")]
 struct WatchlistNotificationRecipientQueryError(#[source] sqlx::Error);
+
+#[derive(Debug, thiserror::Error)]
+#[error("persisted watchlist recipient user ID is invalid")]
+struct InvalidPersistedWatchlistRecipientId(#[source] domain_primitives::object_id::ObjectIdError);
 
 impl From<WatchlistNotificationRecipientQueryError> for WatchlistNotificationRecipientReadError {
     fn from(source: WatchlistNotificationRecipientQueryError) -> Self {
@@ -52,21 +57,25 @@ impl WatchlistNotificationRecipientReader for SqlxWatchlistNotificationRecipient
                AND active_since <= $2 \
              ORDER BY user_id ASC",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .bind(event_time)
         .fetch_all(self.tx.connection())
         .await
         .map_err(WatchlistNotificationRecipientQueryError)?;
 
-        Ok(rows
-            .into_iter()
-            .map(
-                |(user_id, external_delivery_requested)| WatchlistNotificationRecipient {
-                    user_id: user_id.into(),
+        rows.into_iter()
+            .map(|(user_id, external_delivery_requested)| {
+                let user_id = UserId::try_from(user_id).map_err(|source| {
+                    WatchlistNotificationRecipientReadError::QueryFailed {
+                        source: box_error(InvalidPersistedWatchlistRecipientId(source)),
+                    }
+                })?;
+                Ok(WatchlistNotificationRecipient {
+                    user_id,
                     external_delivery_requested,
-                },
-            )
-            .collect())
+                })
+            })
+            .collect()
     }
 }
 

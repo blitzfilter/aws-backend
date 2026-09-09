@@ -124,7 +124,7 @@ impl FxRateSnapshotRepository for SqlxFxRateSnapshotRepository<'_> {
         let row = sqlx::query_as::<_, SnapshotRow>(
             "SELECT fx_rate_id, generation, captured_at, source FROM fx_rates WHERE fx_rate_id = $1",
         )
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(|source| FxRateSnapshotRepositoryError::ReadFailed {
@@ -145,7 +145,7 @@ impl FxRateSnapshotRepository for SqlxFxRateSnapshotRepository<'_> {
         let ids = ids
             .iter()
             .copied()
-            .map(uuid::Uuid::from)
+            .map(FxRateId::into_uuid)
             .collect::<Vec<_>>();
         let snapshots = sqlx::query_as::<_, SnapshotRow>(
             "SELECT fx_rate_id, generation, captured_at, source FROM fx_rates WHERE fx_rate_id = ANY($1) ORDER BY generation ASC",
@@ -198,7 +198,7 @@ impl FxRateSnapshotRepository for SqlxFxRateSnapshotRepository<'_> {
             RETURNING generation
             "#,
         )
-        .bind(uuid::Uuid::from(snapshot.id()))
+        .bind(snapshot.id().into_uuid())
         .bind(snapshot.captured_at())
         .bind(snapshot.source().as_str())
         .bind(source_event_id)
@@ -215,7 +215,7 @@ impl FxRateSnapshotRepository for SqlxFxRateSnapshotRepository<'_> {
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) ",
         );
         query.push_values(snapshot.quotes(), |mut row, quote| {
-            row.push_bind(uuid::Uuid::from(snapshot.id()))
+            row.push_bind(snapshot.id().into_uuid())
                 .push_bind(quote.currency().as_str())
                 .push_bind(quote.units_per_eur() as i64);
         });
@@ -266,8 +266,13 @@ pub(crate) fn map_snapshots(
                     source: box_error(source),
                 }
             })?;
+            let fx_rate_id = FxRateId::try_from(snapshot.fx_rate_id).map_err(|source| {
+                FxRateSnapshotRepositoryError::InvalidPersistedSnapshot {
+                    source: box_error(source),
+                }
+            })?;
             FxRateSnapshot::rehydrate(
-                FxRateId::from(snapshot.fx_rate_id),
+                fx_rate_id,
                 generation,
                 snapshot.captured_at,
                 source,
@@ -301,6 +306,50 @@ impl From<FxRateSnapshotInsertSqlxError> for FxRateSnapshotRepositoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_round_trip_v7_fx_rate_id_from_storage_rows() {
+        let fx_rate_id = FxRateId::new();
+        let snapshots = vec![SnapshotRow {
+            fx_rate_id: fx_rate_id.into_uuid(),
+            generation: 1,
+            captured_at: OffsetDateTime::UNIX_EPOCH,
+            source: FxRateSource::FxRatesApi.as_str().to_owned(),
+        }];
+        let quotes = Currency::iter()
+            .map(|currency| QuoteRow {
+                fx_rate_id: fx_rate_id.into_uuid(),
+                currency: currency.as_str().to_owned(),
+                units_per_eur: 1_000_000,
+            })
+            .collect();
+
+        let mapped = map_snapshots(snapshots, quotes)
+            .unwrap_or_else(|error| panic!("valid storage rows failed: {error}"));
+
+        assert_eq!(
+            vec![fx_rate_id],
+            mapped.iter().map(FxRateSnapshot::id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn should_reject_v4_fx_rate_id_from_storage_row() {
+        let result = map_snapshots(
+            vec![SnapshotRow {
+                fx_rate_id: uuid::Uuid::new_v4(),
+                generation: 1,
+                captured_at: OffsetDateTime::UNIX_EPOCH,
+                source: FxRateSource::FxRatesApi.as_str().to_owned(),
+            }],
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(FxRateSnapshotRepositoryError::InvalidPersistedSnapshot { .. })
+        ));
+    }
 
     #[test]
     fn should_parse_each_canonical_persisted_source() {

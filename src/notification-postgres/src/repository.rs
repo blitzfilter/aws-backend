@@ -60,7 +60,7 @@ impl NotificationRepository for SqlxNotificationRepository<'_> {
         Ok(notifications
             .iter()
             .map(|item| {
-                let id = uuid::Uuid::from(item.notification.notification_id());
+                let id = item.notification.notification_id().into_uuid();
                 if inserted.contains(&id) {
                     NotificationCreationOutcome::Inserted {
                         notification_id: item.notification.notification_id(),
@@ -157,7 +157,7 @@ mod tests {
         let inserted_user = sqlx::query(
             "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@example.test"))
         .execute(&pool)
         .await;
@@ -205,7 +205,7 @@ mod tests {
         let row = match sqlx::query_as::<_, crate::mapping::NotificationRow>(
             "SELECT notification_id, user_id, kind, origin_event_id, product_listing_id, user_search_filter_id, partnership_application_id, payload_version, payload, seen, created, updated FROM notifications WHERE notification_id = $1",
         )
-        .bind(uuid::Uuid::from(notification.notification_id()))
+        .bind(notification.notification_id().into_uuid())
         .fetch_one(&pool)
         .await
         {

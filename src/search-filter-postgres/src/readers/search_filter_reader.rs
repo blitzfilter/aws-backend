@@ -1,4 +1,4 @@
-use crate::mapping::{FILTER_COLUMNS, FilterRow, user_search_filter_uuid};
+use crate::mapping::{FILTER_COLUMNS, FilterRow};
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use search_filter_service::ports::{SearchFilterReadError, SearchFilterReader, SearchFilterView};
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -27,7 +27,7 @@ impl SearchFilterReader for SqlxSearchFilterReader {
             .push(" FROM search_filters WHERE user_id=$1 ORDER BY created DESC");
         query
             .build_query_as::<FilterRow>()
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .fetch_all(&self.pool)
             .await
             .map_err(|_| SearchFilterReadError::ReadFailed)?
@@ -41,14 +41,14 @@ impl SearchFilterReader for SqlxSearchFilterReader {
         user_id: UserId,
         id: UserSearchFilterId,
     ) -> Result<Option<SearchFilterView>, SearchFilterReadError> {
-        let id = user_search_filter_uuid(id).map_err(|_| SearchFilterReadError::ReadFailed)?;
+        let id = id.into_uuid();
         let mut query = QueryBuilder::<Postgres>::new("SELECT ");
         query
             .push(FILTER_COLUMNS)
             .push(" FROM search_filters WHERE user_id=$1 AND user_search_filter_id=$2");
         query
             .build_query_as::<FilterRow>()
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .bind(id)
             .fetch_optional(&self.pool)
             .await

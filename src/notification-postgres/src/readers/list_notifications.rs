@@ -1,6 +1,6 @@
 use crate::mapping::{NotificationRow, mapping_error};
 use application::error::box_error;
-use notification_core::{notification::Notification, notification_id::NotificationId};
+use notification_core::notification::Notification;
 use notification_service::ports::notification_list_reader::{
     NotificationListCursor, NotificationListItem, NotificationListPage, NotificationListReadError,
     NotificationListReader,
@@ -112,9 +112,9 @@ impl NotificationListReader for SqlxNotificationListReader {
         let rows = sqlx::query_as::<_, NotificationListRow>(
             "WITH notification_page AS (SELECT n.notification_id, n.user_id, n.kind, n.origin_event_id, n.product_listing_id, n.user_search_filter_id, n.partnership_application_id, n.payload_version, n.payload, n.seen, n.created, n.updated FROM notifications n WHERE n.user_id = $1 AND ($2::timestamptz IS NULL OR (n.created, n.notification_id) < ($2, $3)) ORDER BY n.created DESC, n.notification_id DESC LIMIT $4) SELECT p.notification_id, p.user_id, p.kind, p.origin_event_id, p.product_listing_id, p.user_search_filter_id, p.partnership_application_id, p.payload_version, p.payload, p.seen, p.created, p.updated, u.show_unassessed_or_sensitive_content FROM users u LEFT JOIN notification_page p ON TRUE WHERE u.user_id = $1 ORDER BY p.created DESC NULLS LAST, p.notification_id DESC NULLS LAST",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(cursor.map(|cursor| cursor.created))
-        .bind(cursor.map(|cursor| uuid::Uuid::from(cursor.notification_id)))
+        .bind(cursor.map(|cursor| cursor.notification_id.into_uuid()))
         .bind(i64::from(limit) + 1)
         .fetch_all(&self.pool)
         .await
@@ -130,16 +130,16 @@ impl NotificationListReader for SqlxNotificationListReader {
             let Some(row) = row.notification_row()? else {
                 continue;
             };
-            let notification_id = NotificationId::from(row.notification_id);
             let created = row.created;
             let updated = row.updated;
             let seen = row.seen;
-            let content = Notification::try_from(row)
-                .map_err(|error| NotificationListReadError::InvalidReadModel {
+            let notification = Notification::try_from(row).map_err(|error| {
+                NotificationListReadError::InvalidReadModel {
                     source: mapping_error(error),
-                })?
-                .content()
-                .clone();
+                }
+            })?;
+            let notification_id = notification.notification_id();
+            let content = notification.content().clone();
             items.push(NotificationListItem {
                 notification_id,
                 content,

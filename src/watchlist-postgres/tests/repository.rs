@@ -115,7 +115,7 @@ async fn should_order_user_watchlist_entries_by_created_then_product_listing_id(
 
     sqlx::query("UPDATE product_listing_watchlist SET created = $1 WHERE user_id = $2")
         .bind(created)
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to align watchlist timestamps: {error:?}"));
@@ -182,8 +182,8 @@ async fn should_preserve_and_reset_current_interval_timestamps() {
     sqlx::query(
         "UPDATE product_listing_watchlist SET active_since = $3, notifications_enabled_since = $3, created = $3, updated = $3 WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(active_product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(active_product_listing_id.into_uuid())
     .bind(old)
     .execute(&pool)
     .await
@@ -312,8 +312,8 @@ async fn should_keep_active_watch_count_and_intervals_when_product_listing_is_wi
     sqlx::query(
         "UPDATE product_listing_watchlist SET active_since = $3, notifications_enabled_since = $3 WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .bind(interval_start)
     .execute(&pool)
     .await
@@ -322,7 +322,7 @@ async fn should_keep_active_watch_count_and_intervals_when_product_listing_is_wi
     sqlx::query(
         "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to withdraw product listing: {error:?}"));
@@ -346,7 +346,7 @@ async fn should_keep_active_watch_count_and_intervals_when_product_listing_is_wi
     );
 
     sqlx::query("UPDATE product_listings SET lifecycle = 'ACTIVE' WHERE product_listing_id = $1")
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to restore product listing fixture: {error:?}"));
@@ -737,8 +737,8 @@ async fn persisted_fields(
         "SELECT state, notifications, active_since, notifications_enabled_since, updated, version \
          FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .fetch_one(pool)
     .await
     .unwrap_or_else(|error| panic!("failed to read persisted watchlist fields: {error:?}"))
@@ -772,8 +772,8 @@ async fn watchlist_state_and_intervals(
     sqlx::query_as(
         "SELECT state, active_since, notifications_enabled_since FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .fetch_one(pool)
     .await
     .unwrap_or_else(|error| panic!("failed to read watchlist state and intervals: {error:?}"))
@@ -787,8 +787,8 @@ async fn intervals(
     sqlx::query_as(
         "SELECT active_since, notifications_enabled_since FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .fetch_one(pool)
     .await
     .unwrap_or_else(|error| panic!("failed to read watchlist intervals: {error:?}"))
@@ -811,7 +811,7 @@ async fn seed_user(pool: &sqlx::PgPool, email: &str) -> UserId {
     sqlx::query(
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
-    .bind(uuid::Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(email)
     .execute(pool)
     .await
@@ -823,12 +823,12 @@ async fn seed_product(pool: &sqlx::PgPool, label: &str) -> ProductListingId {
     let product_listing_id = ProductListingId::new();
     let title_slug_id = ProductListingSlugId::from_title_and_suffix(
         label,
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &product_listing_id.into_uuid().simple().to_string()[..6],
     )
     .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
     let source_listing_id = format!("{label}-source-listing-{product_listing_id}");
-    let listing_source_id = uuid::Uuid::new_v4();
-    let event_id = uuid::Uuid::new_v4();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let event_id = uuid::Uuid::now_v7();
     let mut tx = pool
         .begin()
         .await
@@ -837,7 +837,7 @@ async fn seed_product(pool: &sqlx::PgPool, label: &str) -> ProductListingId {
         .bind(listing_source_id).bind(format!("{label}-source")).bind(format!("{label} source")).execute(&mut *tx).await.unwrap_or_else(|error| panic!("seed source failed: {error:?}"));
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
         .bind(event_id)
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .bind(serde_json::json!({
             "listingSourceId": listing_source_id.to_string(),
             "sourceListingId": source_listing_id.clone(),
@@ -853,7 +853,7 @@ async fn seed_product(pool: &sqlx::PgPool, label: &str) -> ProductListingId {
         .await
         .unwrap_or_else(|error| panic!("seed event failed: {error:?}"));
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, availability, lifecycle, url) VALUES ($1, $2, $3, $3, $3, $4, $5, NULL, 'ACTIVE', 'https://example.com/product')")
-        .bind(uuid::Uuid::from(product_listing_id)).bind(title_slug_id.as_ref()).bind(event_id).bind(listing_source_id).bind(source_listing_id)
+        .bind(product_listing_id.into_uuid()).bind(title_slug_id.as_ref()).bind(event_id).bind(listing_source_id).bind(source_listing_id)
         .execute(&mut *tx).await.unwrap_or_else(|error| panic!("seed product failed: {error:?}"));
     tx.commit()
         .await

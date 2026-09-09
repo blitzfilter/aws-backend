@@ -1,4 +1,3 @@
-use crate::mapping::user_search_filter_uuid;
 use application::error::box_error;
 use platform_postgres::SqlxTransaction;
 use search_filter_core::SearchFilterProductListingMatch;
@@ -29,12 +28,7 @@ impl SearchFilterMatchWriter for SqlxSearchFilterMatchWriter<'_> {
         &mut self,
         product_match: &SearchFilterProductListingMatch,
     ) -> Result<SearchFilterMatchPersistOutcome, SearchFilterMatchWriteError> {
-        let filter_id =
-            user_search_filter_uuid(product_match.user_search_filter_id).map_err(|source| {
-                SearchFilterMatchWriteError::WriteFailed {
-                    source: box_error(source),
-                }
-            })?;
+        let filter_id = product_match.user_search_filter_id.into_uuid();
         let inserted = sqlx::query_scalar::<_, i64>(
             r#"
             INSERT INTO search_filter_matches (
@@ -52,10 +46,10 @@ impl SearchFilterMatchWriter for SqlxSearchFilterMatchWriter<'_> {
             RETURNING 1::bigint
             "#,
         )
-        .bind(uuid::Uuid::from(product_match.user_id))
+        .bind(product_match.user_id.into_uuid())
         .bind(filter_id)
-        .bind(uuid::Uuid::from(product_match.product_listing_id))
-        .bind(uuid::Uuid::from(product_match.origin_event_id))
+        .bind(product_match.product_listing_id.into_uuid())
+        .bind(product_match.origin_event_id.into_uuid())
         .bind(
             product_match
                 .price_match_valuation
@@ -64,7 +58,7 @@ impl SearchFilterMatchWriter for SqlxSearchFilterMatchWriter<'_> {
         .bind(
             product_match
                 .price_match_valuation
-                .map(|valuation| uuid::Uuid::from(valuation.fx_rate_id)),
+                .map(|valuation| valuation.fx_rate_id.into_uuid()),
         )
         .bind(
             product_match
@@ -101,22 +95,19 @@ impl SearchFilterMatchWriter for SqlxSearchFilterMatchWriter<'_> {
 
         let user_ids = product_matches
             .iter()
-            .map(|value| uuid::Uuid::from(value.user_id))
+            .map(|value| value.user_id.into_uuid())
             .collect::<Vec<_>>();
         let filter_ids = product_matches
             .iter()
-            .map(|value| user_search_filter_uuid(value.user_search_filter_id))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|source| SearchFilterMatchWriteError::WriteFailed {
-                source: box_error(source),
-            })?;
+            .map(|value| value.user_search_filter_id.into_uuid())
+            .collect::<Vec<_>>();
         let product_listing_ids = product_matches
             .iter()
-            .map(|value| uuid::Uuid::from(value.product_listing_id))
+            .map(|value| value.product_listing_id.into_uuid())
             .collect::<Vec<_>>();
         let event_ids = product_matches
             .iter()
-            .map(|value| uuid::Uuid::from(value.origin_event_id))
+            .map(|value| value.origin_event_id.into_uuid())
             .collect::<Vec<_>>();
         let bases = product_matches
             .iter()
@@ -131,7 +122,7 @@ impl SearchFilterMatchWriter for SqlxSearchFilterMatchWriter<'_> {
             .map(|value| {
                 value
                     .price_match_valuation
-                    .map(|valuation| uuid::Uuid::from(valuation.fx_rate_id))
+                    .map(|valuation| valuation.fx_rate_id.into_uuid())
             })
             .collect::<Vec<_>>();
         let names = product_matches

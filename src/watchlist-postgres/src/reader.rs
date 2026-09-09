@@ -29,7 +29,7 @@ impl WatchlistReader for SqlxWatchlistReader<'_> {
             "SELECT user_id, product_listing_id, notifications, state, created, updated \
              FROM product_listing_watchlist WHERE user_id = $1 ORDER BY created DESC, product_listing_id ASC",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_all(self.tx.connection())
         .await
         .map_err(|_| WatchlistReadError::ReadFailed)?
@@ -45,10 +45,12 @@ impl WatchlistReader for SqlxWatchlistReader<'_> {
         sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT user_id FROM product_listing_watchlist WHERE product_listing_id = $1 ORDER BY user_id ASC",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_all(self.tx.connection())
         .await
-        .map_err(|_| WatchlistReadError::ReadFailed)
-        .map(|ids| ids.into_iter().map(UserId::from).collect())
+        .map_err(|_| WatchlistReadError::ReadFailed)?
+        .into_iter()
+        .map(|id| UserId::try_from(id).map_err(|_| WatchlistReadError::InvalidPersistedState))
+        .collect()
     }
 }

@@ -24,8 +24,8 @@ impl NotificationDeleter for SqlxNotificationDeleter {
         notification_id: NotificationId,
     ) -> Result<bool, NotificationDeleteError> {
         sqlx::query("DELETE FROM notifications WHERE user_id = $1 AND notification_id = $2")
-            .bind(uuid::Uuid::from(user_id))
-            .bind(uuid::Uuid::from(notification_id))
+            .bind(user_id.into_uuid())
+            .bind(notification_id.into_uuid())
             .execute(&self.pool)
             .await
             .map(|result| result.rows_affected() == 1)
@@ -35,7 +35,7 @@ impl NotificationDeleter for SqlxNotificationDeleter {
     }
     async fn delete_all(&self, user_id: UserId) -> Result<u64, NotificationDeleteError> {
         sqlx::query("DELETE FROM notifications WHERE user_id = $1")
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .execute(&self.pool)
             .await
             .map(|result| result.rows_affected())

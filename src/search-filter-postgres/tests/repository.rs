@@ -299,7 +299,7 @@ async fn should_reject_evaluated_candidates_when_filter_changes_before_final_loc
             let count: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM search_filter_matches WHERE user_search_filter_id = $1",
             )
-            .bind(uuid::Uuid::try_from(filter.id().to_string())?)
+            .bind(filter.id().into_uuid())
             .fetch_one(&pool)
             .await?;
             assert_eq!(0, count);
@@ -343,7 +343,7 @@ async fn should_hold_filter_lock_through_match_commit_and_allow_unrelated_filter
         assert_eq!(filter.name(), &candidates[0].search_filter_name);
         let deactivate = async {
             sqlx::query("UPDATE search_filters SET state = 'INACTIVE_BY_USER', version = version + 1 WHERE user_search_filter_id = $1")
-                .bind(uuid::Uuid::try_from(filter.id().to_string())?).execute(&pool).await?;
+                .bind(filter.id().into_uuid()).execute(&pool).await?;
             Ok::<_, Box<dyn std::error::Error>>(())
         };
         tokio::pin!(deactivate);
@@ -558,7 +558,7 @@ async fn seed_user(pool: &sqlx::PgPool, email: &str) -> UserId {
     sqlx::query(
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
-    .bind(uuid::Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(email)
     .execute(pool)
     .await
@@ -571,8 +571,8 @@ async fn seed_product(pool: &sqlx::PgPool, source_listing_id: &str) -> ProductLi
     let title_slug_id = ProductListingSlugId::raw("search-filter-match-product-a1b2c3")
         .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
     let slug = source_listing_id;
-    let listing_source_id = uuid::Uuid::new_v4();
-    let event_id = uuid::Uuid::new_v4();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let event_id = uuid::Uuid::now_v7();
     let discovery_payload = serde_json::json!({
         "listingSourceId": listing_source_id,
         "sourceListingId": source_listing_id,
@@ -595,9 +595,9 @@ async fn seed_product(pool: &sqlx::PgPool, source_listing_id: &str) -> ProductLi
     sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, $3, party_id FROM operator")
         .bind(listing_source_id).bind(format!("{slug}-source")).bind(format!("{slug} source")).execute(&mut *tx).await.unwrap_or_else(|error| panic!("seed source failed: {error:?}"));
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
-        .bind(event_id).bind(uuid::Uuid::from(product_listing_id)).bind(discovery_payload).execute(&mut *tx).await.unwrap_or_else(|error| panic!("seed event failed: {error:?}"));
+        .bind(event_id).bind(product_listing_id.into_uuid()).bind(discovery_payload).execute(&mut *tx).await.unwrap_or_else(|error| panic!("seed event failed: {error:?}"));
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, availability, lifecycle, url) VALUES ($1, $2, $3, $3, $3, $4, $5, NULL, 'ACTIVE', 'https://example.com/product')")
-        .bind(uuid::Uuid::from(product_listing_id)).bind(title_slug_id.as_ref()).bind(event_id).bind(listing_source_id).bind(slug)
+        .bind(product_listing_id.into_uuid()).bind(title_slug_id.as_ref()).bind(event_id).bind(listing_source_id).bind(slug)
         .execute(&mut *tx).await.unwrap_or_else(|error| panic!("seed product failed: {error:?}"));
     tx.commit()
         .await
@@ -610,8 +610,8 @@ async fn seed_fx_rate(pool: &sqlx::PgPool) -> FxRateId {
     sqlx::query(
         "INSERT INTO fx_rates (fx_rate_id, captured_at, source, source_event_id) VALUES ($1, now(), 'fxratesapi', $2)",
     )
-    .bind(uuid::Uuid::from(fx_rate_id))
-    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(fx_rate_id.into_uuid())
+    .bind(uuid::Uuid::now_v7().to_string())
     .execute(pool)
     .await
     .unwrap_or_else(|error| panic!("seed FX rate failed: {error:?}"));
@@ -621,14 +621,14 @@ async fn seed_fx_rate(pool: &sqlx::PgPool) -> FxRateId {
 async fn seed_product_event(pool: &sqlx::PgPool, product_listing_id: ProductListingId) -> EventId {
     let event_id = EventId::new();
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, '{\"availability\": {\"previous\": null, \"current\": \"AVAILABLE\"}}', now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("seed product event failed: {error:?}"));
     sqlx::query("UPDATE product_listings SET current_event_id = $1, availability = 'AVAILABLE', version = version + 1, projection_version = projection_version + 1, updated = now() WHERE product_listing_id = $2")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("advance product event fixture failed: {error:?}"));

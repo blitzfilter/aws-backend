@@ -49,8 +49,8 @@ impl NotificationDeliveryIntentRepository for SqlxNotificationDeliveryIntentRepo
                 "INSERT INTO notification_deliveries (notification_delivery_id, notification_id, channel, target_key) ",
             );
             query.push_values(deliveries, |mut row, delivery| {
-                row.push_bind(uuid::Uuid::from(delivery.notification_delivery_id))
-                    .push_bind(uuid::Uuid::from(delivery.notification_id))
+                row.push_bind(delivery.notification_delivery_id.into_uuid())
+                    .push_bind(delivery.notification_id.into_uuid())
                     .push_bind(channel_to_persisted(delivery.plan.channel))
                     .push_bind(delivery.plan.target_key.as_str());
             });

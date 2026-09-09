@@ -1,4 +1,3 @@
-use crate::mapping::user_search_filter_uuid;
 use application::error::box_error;
 use platform_postgres::SqlxTransaction;
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
@@ -35,11 +34,7 @@ impl PeriodicSearchFilterProgress for SqlxPeriodicSearchFilterProgress<'_> {
         created: OffsetDateTime,
         window_end: OffsetDateTime,
     ) -> Result<PeriodicSearchFilterProgressLockOutcome, PeriodicSearchFilterProgressError> {
-        let id = user_search_filter_uuid(search_filter_id).map_err(|source| {
-            PeriodicSearchFilterProgressError::PersistenceFailed {
-                source: box_error(source),
-            }
-        })?;
+        let id = search_filter_id.into_uuid();
         let version = sqlx::query_scalar::<_, i64>(
             "SELECT version FROM search_filters WHERE user_search_filter_id = $1 AND state = 'ACTIVE' FOR UPDATE",
         )
@@ -69,11 +64,7 @@ impl PeriodicSearchFilterProgress for SqlxPeriodicSearchFilterProgress<'_> {
         if matched_through <= expected {
             return Ok(PeriodicSearchFilterProgressWriteOutcome::AlreadyCovered);
         }
-        let id = user_search_filter_uuid(search_filter_id).map_err(|source| {
-            PeriodicSearchFilterProgressError::PersistenceFailed {
-                source: box_error(source),
-            }
-        })?;
+        let id = search_filter_id.into_uuid();
         let changed = sqlx::query_scalar::<_, uuid::Uuid>(
             r#"
             INSERT INTO search_filter_periodic_match_state (user_search_filter_id, matched_through)

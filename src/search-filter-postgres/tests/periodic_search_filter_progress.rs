@@ -135,7 +135,7 @@ async fn begin(unit: &SqlxUnitOfWork) -> platform_postgres::SqlxTransaction {
 
 async fn filter_created(pool: &sqlx::PgPool, filter_id: UserSearchFilterId) -> OffsetDateTime {
     sqlx::query_scalar("SELECT created FROM search_filters WHERE user_search_filter_id = $1")
-        .bind(uuid::Uuid::from(filter_id))
+        .bind(filter_id.into_uuid())
         .fetch_one(pool)
         .await
         .unwrap_or_else(|error| panic!("read filter creation failed: {error:?}"))
@@ -145,7 +145,7 @@ async fn checkpoint(pool: &sqlx::PgPool, filter_id: UserSearchFilterId) -> Optio
     sqlx::query_scalar(
         "SELECT matched_through FROM search_filter_periodic_match_state WHERE user_search_filter_id = $1",
     )
-    .bind(uuid::Uuid::from(filter_id))
+    .bind(filter_id.into_uuid())
     .fetch_optional(pool)
     .await
     .unwrap_or_else(|error| panic!("read checkpoint failed: {error:?}"))
@@ -156,7 +156,7 @@ async fn seed_user(pool: &sqlx::PgPool, email: &str) -> UserId {
     sqlx::query(
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
-    .bind(uuid::Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(email)
     .execute(pool)
     .await

@@ -51,9 +51,9 @@ impl SearchFilterMonthlyMatchQuotaReader for SqlxSearchFilterMonthlyMatchQuotaRe
             WHERE (created, origin_event_id) <= ($2, $3)
             "#,
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(matched_at)
-        .bind(uuid::Uuid::from(origin_event_id))
+        .bind(origin_event_id.into_uuid())
         .fetch_one(self.tx.connection())
         .await
         .map_err(
