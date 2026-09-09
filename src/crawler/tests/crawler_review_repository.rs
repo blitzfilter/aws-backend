@@ -1,7 +1,6 @@
-use crawler::CrawlerDomainId;
 use crawler::review::model::{
     PAGE_ROLE_PRIMARY, PAGE_ROLE_TRIGGERING_GENERATION_PAGE, STATUS_APPROVED,
-    STATUS_PENDING_REVIEW, SchemaReviewPageInput,
+    STATUS_PENDING_REVIEW, SchemaPageReference, SchemaReviewPageInput,
 };
 use crawler::review::model::{UrlPatternDecision, UrlPatternReviewCandidate};
 use crawler::review::repository::{
@@ -14,6 +13,7 @@ use crawler::scraper::css_selector::product_schema_repository::{
     ListingSourceProductSchemaRepository, ListingSourceProductSchemaRepositoryImpl,
 };
 use crawler::scraper::css_selector::rule::{ExtractionCardinality, ExtractionKind, ExtractionRule};
+use crawler::{CrawlerDomainId, CrawlerReviewId};
 use listing_source_core::ListingSourceId;
 use regex::Regex;
 use serde_json::json;
@@ -60,14 +60,14 @@ fn schema(title_selector: &str) -> ProductCssSelectorSchema {
 
 async fn insert_listing_source(pool: &PgPool, listing_source_id: ListingSourceId) {
     sqlx::query(
-            "INSERT INTO listing_sources \
-             (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, created, updated) \
-             VALUES ($1, 'Test source', 'test-source', TRUE, NOW(), NOW())",
-        )
-        .bind(Uuid::from(listing_source_id))
-        .execute(pool)
-        .await
-        .unwrap();
+        "INSERT INTO listing_sources \
+         (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, created, updated) \
+         VALUES ($1, 'Test source', 'test-source', TRUE, NOW(), NOW())",
+    )
+    .bind(listing_source_id.as_uuid())
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 async fn insert_domain(
@@ -75,16 +75,18 @@ async fn insert_domain(
     listing_source_id: ListingSourceId,
     domain: &str,
 ) -> CrawlerDomainId {
-    sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO listing_source_domains (listing_source_id, listing_source_domain, crawl_root_host) \
-         VALUES ($1, $2, $2) RETURNING domain_id",
+    let domain_id = CrawlerDomainId::new();
+    sqlx::query(
+        "INSERT INTO listing_source_domains (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+         VALUES ($1, $2, $3, $3)",
     )
-    .bind(Uuid::from(listing_source_id))
+    .bind(domain_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
     .bind(domain)
-    .fetch_one(pool)
+    .execute(pool)
     .await
-    .unwrap()
-    .into()
+    .unwrap();
+    domain_id
 }
 
 fn review_pages() -> Vec<SchemaReviewPageInput> {
@@ -122,6 +124,178 @@ async fn fresh_generation_review_page_role_is_persisted() {
     assert_eq!(review_page_count(&pool, review_id).await, 1);
 }
 
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_not_define_database_defaults_for_crawler_object_ids() {
+    let pool = get_postgres_client().await;
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*)::bigint, COUNT(column_default)::bigint \
+         FROM information_schema.columns \
+         WHERE table_schema = current_schema() \
+           AND (table_name, column_name) IN ( \
+             ('listing_source_domains', 'domain_id'), \
+             ('crawler_reviews', 'review_id'), \
+             ('crawler_review_pages', 'review_page_id'), \
+             ('crawler_review_urls', 'review_url_id') \
+           )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(counts, (4, 0));
+}
+
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_persist_uuid_v7_for_generated_review_page_and_url_ids() {
+    let pool = get_postgres_client().await;
+    let repository = CrawlerReviewRepository::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    insert_listing_source(&pool, listing_source_id).await;
+    let domain_id = insert_domain(&pool, listing_source_id, "generated-ids.example.com").await;
+
+    let schema_review_id = repository
+        .create_schema_review(
+            &listing_source_id,
+            "initial_schema_generation",
+            &[schema("h1")],
+            review_pages(),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    let schema_detail = repository.get_review(schema_review_id).await.unwrap();
+
+    assert_eq!(
+        7,
+        schema_detail.review.review_id.as_uuid().get_version_num()
+    );
+    assert_eq!(
+        7,
+        schema_detail.pages[0]
+            .review_page_id
+            .as_uuid()
+            .get_version_num()
+    );
+
+    let pattern_review_id = repository
+        .create_url_pattern_review(
+            &listing_source_id,
+            &domain_id,
+            "url_pattern_generation",
+            Some(&Regex::new("/product/").unwrap()),
+            &["https://generated-ids.example.com/product/1".to_owned()],
+            None,
+        )
+        .await
+        .unwrap();
+    let pattern_detail = repository.get_review(pattern_review_id).await.unwrap();
+
+    assert_eq!(
+        7,
+        pattern_detail.review.review_id.as_uuid().get_version_num()
+    );
+    assert_eq!(
+        7,
+        pattern_detail.urls[0]
+            .review_url_id
+            .as_uuid()
+            .get_version_num()
+    );
+}
+
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_surface_invalid_persisted_v4_review_id() {
+    let pool = get_postgres_client().await;
+    let repository = CrawlerReviewRepository::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    insert_listing_source(&pool, listing_source_id).await;
+    let invalid_persisted_review_id =
+        Uuid::parse_str("00000000-0000-4000-8000-000000000001").unwrap();
+    sqlx::query(
+        "INSERT INTO crawler_reviews (review_id, listing_source_id, artifact_type, status, reason, candidate_payload, validation_summary) \
+         VALUES ($1, $2, 'PRODUCT_SCHEMA', 'PENDING_REVIEW', 'corrupt test row', '{}'::jsonb, '{}'::jsonb)",
+    )
+    .bind(invalid_persisted_review_id)
+    .bind(listing_source_id.as_uuid())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = repository.list_reviews(10).await;
+
+    assert!(matches!(result, Err(sqlx::Error::Decode(_))));
+}
+
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_surface_invalid_persisted_v4_review_page_id() {
+    let pool = get_postgres_client().await;
+    let repository = CrawlerReviewRepository::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    insert_listing_source(&pool, listing_source_id).await;
+    let review_id = repository
+        .create_schema_review(
+            &listing_source_id,
+            "initial_schema_generation",
+            &[schema("h1")],
+            review_pages(),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    let invalid_persisted_page_id =
+        Uuid::parse_str("00000000-0000-4000-8000-000000000002").unwrap();
+    sqlx::query(
+        "INSERT INTO crawler_review_pages (review_page_id, review_id, url, role, html_hash) \
+         VALUES ($1, $2, 'https://example.com/products/corrupt', 'SEED', 'corrupt')",
+    )
+    .bind(invalid_persisted_page_id)
+    .bind(review_id.as_uuid())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = repository.get_review_pages(review_id).await;
+
+    assert!(matches!(result, Err(sqlx::Error::Decode(_))));
+}
+
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_surface_invalid_persisted_v4_review_url_id() {
+    let pool = get_postgres_client().await;
+    let repository = CrawlerReviewRepository::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    insert_listing_source(&pool, listing_source_id).await;
+    let domain_id = insert_domain(&pool, listing_source_id, "corrupt-review-url.example.com").await;
+    let review_id = repository
+        .create_url_pattern_review(
+            &listing_source_id,
+            &domain_id,
+            "url_pattern_generation",
+            Some(&Regex::new("/product/").unwrap()),
+            &["https://corrupt-review-url.example.com/product/1".to_owned()],
+            None,
+        )
+        .await
+        .unwrap();
+    let invalid_persisted_url_id = Uuid::parse_str("00000000-0000-4000-8000-000000000003").unwrap();
+    sqlx::query(
+        "INSERT INTO crawler_review_urls (review_url_id, review_id, url) \
+         VALUES ($1, $2, 'https://corrupt-review-url.example.com/product/corrupt')",
+    )
+    .bind(invalid_persisted_url_id)
+    .bind(review_id.as_uuid())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = repository.get_review(review_id).await;
+
+    assert!(matches!(
+        result,
+        Err(ReviewRepositoryError::Database(sqlx::Error::Decode(_)))
+    ));
+}
+
 async fn pending_review_count(
     pool: &PgPool,
     listing_source_id: ListingSourceId,
@@ -132,24 +306,24 @@ async fn pending_review_count(
          FROM crawler_reviews
          WHERE listing_source_id = $1 AND artifact_type = $2 AND status = 'PENDING_REVIEW'",
     )
-    .bind(Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(artifact_type)
     .fetch_one(pool)
     .await
     .unwrap()
 }
 
-async fn review_page_count(pool: &PgPool, review_id: Uuid) -> i64 {
+async fn review_page_count(pool: &PgPool, review_id: CrawlerReviewId) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM crawler_review_pages WHERE review_id = $1")
-        .bind(review_id)
+        .bind(review_id.as_uuid())
         .fetch_one(pool)
         .await
         .unwrap()
 }
 
-async fn review_url_count(pool: &PgPool, review_id: Uuid) -> i64 {
+async fn review_url_count(pool: &PgPool, review_id: CrawlerReviewId) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM crawler_review_urls WHERE review_id = $1")
-        .bind(review_id)
+        .bind(review_id.as_uuid())
         .fetch_one(pool)
         .await
         .unwrap()
@@ -157,7 +331,7 @@ async fn review_url_count(pool: &PgPool, review_id: Uuid) -> i64 {
 
 async fn review_count(pool: &PgPool, listing_source_id: ListingSourceId) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM crawler_reviews WHERE listing_source_id = $1")
-        .bind(Uuid::from(listing_source_id))
+        .bind(listing_source_id.as_uuid())
         .fetch_one(pool)
         .await
         .unwrap()
@@ -393,6 +567,7 @@ async fn schema_matrix_write_skips_stale_candidate_snapshot() {
         .unwrap();
 
     let pages = repository.get_review_pages(review_id).await.unwrap();
+    let review_page_id = pages[0].review_page_id;
     let matrix = repository
         .evaluate_schema_matrix_for_live_pages(
             review_id,
@@ -408,13 +583,18 @@ async fn schema_matrix_write_skips_stale_candidate_snapshot() {
         )
         .await
         .unwrap();
+    assert_eq!(matrix.matrix.review_id, Some(review_id));
+    assert_eq!(
+        matrix.matrix.candidates[0].pages[0].page_reference,
+        SchemaPageReference::Persisted { review_page_id }
+    );
     repository
         .update_candidate_payload(review_id, json!({ "schemas": [schema("h2")] }))
         .await
         .unwrap();
     let candidate_version: i64 =
         sqlx::query_scalar("SELECT candidate_version FROM crawler_reviews WHERE review_id = $1")
-            .bind(review_id)
+            .bind(review_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -430,7 +610,7 @@ async fn schema_matrix_write_skips_stale_candidate_snapshot() {
 
     let validation_summary: serde_json::Value =
         sqlx::query_scalar("SELECT validation_summary FROM crawler_reviews WHERE review_id = $1")
-            .bind(review_id)
+            .bind(review_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -465,11 +645,22 @@ async fn schema_matrix_write_skips_stale_candidate_snapshot() {
 
     let validation_summary: serde_json::Value =
         sqlx::query_scalar("SELECT validation_summary FROM crawler_reviews WHERE review_id = $1")
-            .bind(review_id)
+            .bind(review_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(validation_summary.get("schema_matrix").is_some());
+    assert_eq!(
+        validation_summary["schema_matrix"]["review_id"],
+        json!(review_id)
+    );
+    assert_eq!(
+        validation_summary["schema_matrix"]["candidates"][0]["pages"][0]["page_reference"]["kind"],
+        "persisted"
+    );
+    assert_eq!(
+        validation_summary["schema_matrix"]["candidates"][0]["pages"][0]["page_reference"]["review_page_id"],
+        json!(review_page_id)
+    );
     assert_eq!(
         validation_summary["auto_schema_evaluation"]["decision"],
         "APPROVE"
@@ -621,7 +812,7 @@ async fn invalid_edited_url_pattern_is_rejected_without_changing_live_pattern() 
     ));
     let live_pattern: Option<String> =
         sqlx::query_scalar("SELECT url_pattern FROM listing_source_domains WHERE domain_id = $1")
-            .bind(Uuid::from(domain_id))
+            .bind(domain_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -639,7 +830,7 @@ async fn should_roll_back_pattern_approval_when_status_update_fails() {
         "UPDATE listing_source_domains SET url_pattern = '/old/', url_pattern_state = 'MATCHED' \
          WHERE domain_id = $1",
     )
-    .bind(Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -664,12 +855,12 @@ async fn should_roll_back_pattern_approval_when_status_update_fails() {
     .execute(&pool)
     .await
     .unwrap();
-    // `review_id` is generated by this test and UUID-formatted, so this audited DDL is safe.
+    // The backing UUID comes from a generated typed ID, so this audited DDL is safe.
     sqlx::query(AssertSqlSafe(format!(
         "CREATE TRIGGER fail_review_approval BEFORE UPDATE ON crawler_reviews \
          FOR EACH ROW WHEN (NEW.review_id = '{}'::uuid) \
          EXECUTE FUNCTION fail_review_approval()",
-        review_id
+        review_id.as_uuid()
     )))
     .execute(&pool)
     .await
@@ -681,14 +872,14 @@ async fn should_roll_back_pattern_approval_when_status_update_fails() {
     let pattern: (Option<String>, String) = sqlx::query_as(
         "SELECT url_pattern, url_pattern_state FROM listing_source_domains WHERE domain_id = $1",
     )
-    .bind(Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(pattern, (Some("/old/".to_owned()), "MATCHED".to_owned()));
     let status: String =
         sqlx::query_scalar("SELECT status FROM crawler_reviews WHERE review_id = $1")
-            .bind(review_id)
+            .bind(review_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -737,7 +928,7 @@ async fn should_allow_only_one_concurrent_review_approval() {
     ));
     let status: String =
         sqlx::query_scalar("SELECT status FROM crawler_reviews WHERE review_id = $1")
-            .bind(review_id)
+            .bind(review_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -754,7 +945,7 @@ async fn approved_no_pattern_clears_stale_live_pattern_and_sets_no_pattern_state
     sqlx::query(
         "UPDATE listing_source_domains SET url_pattern = '/stale/', url_pattern_state = 'MATCHED' WHERE domain_id = $1",
     )
-    .bind(Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -775,7 +966,7 @@ async fn approved_no_pattern_clears_stale_live_pattern_and_sets_no_pattern_state
     let row: (Option<String>, String) = sqlx::query_as(
         "SELECT url_pattern, url_pattern_state FROM listing_source_domains WHERE domain_id = $1",
     )
-    .bind(Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();

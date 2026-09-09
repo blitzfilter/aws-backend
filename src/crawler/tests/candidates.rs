@@ -7,6 +7,7 @@ use crawler::spider::classification::url_metadata::{
 use crawler::spider::classification::url_metadata_repository::{
     UrlMetadataRepository, UrlMetadataRepositoryImpl,
 };
+use listing_source_core::ListingSourceId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use test_api::*;
@@ -25,39 +26,41 @@ fn raw_input_hash() -> Vec<u8> {
 /// Inserts a ListingSource and its first domain; returns the generated domain ID.
 async fn insert_listing_source_with_domain(
     pool: &sqlx::PgPool,
-    listing_source_id_uuid: uuid::Uuid,
+    listing_source_id: ListingSourceId,
     domain: &str,
 ) -> CrawlerDomainId {
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, created, updated) \
          VALUES ($1, $2, $3, TRUE, NOW(), NOW())",
     )
-    .bind(listing_source_id_uuid)
+    .bind(listing_source_id.as_uuid())
     .bind("Test source")
     .bind("test-source")
     .execute(pool)
     .await
     .unwrap();
 
-    insert_domain_for_listing_source(pool, listing_source_id_uuid, domain).await
+    insert_domain_for_listing_source(pool, listing_source_id, domain).await
 }
 
 /// Inserts an additional domain row for an already-existing ListingSource.
 async fn insert_domain_for_listing_source(
     pool: &sqlx::PgPool,
-    listing_source_id_uuid: uuid::Uuid,
+    listing_source_id: ListingSourceId,
     domain: &str,
 ) -> CrawlerDomainId {
-    let row: (uuid::Uuid,) = sqlx::query_as(
-        "INSERT INTO listing_source_domains (listing_source_id, listing_source_domain, crawl_root_host) VALUES ($1, $2, $2) RETURNING domain_id",
+    let domain_id = CrawlerDomainId::new();
+    sqlx::query(
+        "INSERT INTO listing_source_domains (domain_id, listing_source_id, listing_source_domain, crawl_root_host) VALUES ($1, $2, $3, $3)",
     )
-    .bind(listing_source_id_uuid)
+    .bind(domain_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
     .bind(domain)
-    .fetch_one(pool)
+    .execute(pool)
     .await
     .unwrap();
 
-    row.0.into()
+    domain_id
 }
 
 // ============================================================================
@@ -93,10 +96,10 @@ async fn spider_should_return_candidate_with_correct_domain_id_when_never_crawle
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "spider-never-crawled.example.com",
     )
     .await;
@@ -124,16 +127,13 @@ async fn spider_should_not_return_candidate_when_recently_crawled() {
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "spider-recent.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "spider-recent.example.com")
+            .await;
 
     sqlx::query("UPDATE listing_source_domains SET last_crawled = NOW() WHERE domain_id = $1")
-        .bind(uuid::Uuid::from(domain_id))
+        .bind(domain_id.as_uuid())
         .execute(&pool)
         .await
         .unwrap();
@@ -156,18 +156,15 @@ async fn spider_should_return_candidate_when_crawled_more_than_7_days_ago() {
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "spider-stale.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "spider-stale.example.com")
+            .await;
 
     sqlx::query(
         "UPDATE listing_source_domains SET last_crawled = NOW() - INTERVAL '8 days' WHERE domain_id = $1",
     )
-    .bind(uuid::Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -190,16 +187,13 @@ async fn spider_should_not_return_candidate_when_listing_source_crawl_is_disable
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "spider-inactive.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "spider-inactive.example.com")
+            .await;
 
     sqlx::query("UPDATE listing_sources SET crawl_enabled = FALSE WHERE listing_source_id = $1")
-        .bind(listing_source_id_uuid)
+        .bind(listing_source_id.as_uuid())
         .execute(&pool)
         .await
         .unwrap();
@@ -223,10 +217,10 @@ async fn spider_should_respect_limit_when_multiple_candidates_exist() {
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
     for i in 0..3u32 {
-        let listing_source_id_uuid = uuid::Uuid::new_v4();
+        let listing_source_id = ListingSourceId::new();
         insert_listing_source_with_domain(
             &pool,
-            listing_source_id_uuid,
+            listing_source_id,
             &format!("spider-limit-{}.example.com", i),
         )
         .await;
@@ -252,30 +246,24 @@ async fn spider_should_return_each_domain_separately_for_listing_source_with_mul
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, created, updated) \
          VALUES ($1, $2, $3, TRUE, NOW(), NOW())",
     )
-    .bind(listing_source_id_uuid)
+    .bind(listing_source_id.as_uuid())
     .bind("Test source")
     .bind("test-source")
     .execute(&pool)
     .await
     .unwrap();
 
-    let domain_id_a = insert_domain_for_listing_source(
-        &pool,
-        listing_source_id_uuid,
-        "spider-multi-a.example.com",
-    )
-    .await;
-    let domain_id_b = insert_domain_for_listing_source(
-        &pool,
-        listing_source_id_uuid,
-        "spider-multi-b.example.com",
-    )
-    .await;
+    let domain_id_a =
+        insert_domain_for_listing_source(&pool, listing_source_id, "spider-multi-a.example.com")
+            .await;
+    let domain_id_b =
+        insert_domain_for_listing_source(&pool, listing_source_id, "spider-multi-b.example.com")
+            .await;
 
     let candidates = service.get_candidates(10, &[]).await.unwrap();
 
@@ -294,13 +282,10 @@ async fn spider_should_return_correct_listing_source_id_on_candidate() {
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "spider-source-id.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "spider-source-id.example.com")
+            .await;
 
     let candidates = service.get_candidates(10, &[]).await.unwrap();
 
@@ -309,9 +294,8 @@ async fn spider_should_return_correct_listing_source_id_on_candidate() {
         .find(|c| c.domain_id == domain_id)
         .expect("candidate for the inserted domain should be present");
 
-    let candidate_listing_source_uuid: uuid::Uuid = candidate.listing_source_id.into();
     assert_eq!(
-        candidate_listing_source_uuid, listing_source_id_uuid,
+        candidate.listing_source_id, listing_source_id,
         "candidate.listing_source_id must match the owning ListingSource"
     );
 }
@@ -326,10 +310,10 @@ async fn spider_should_return_crawl_failure_metadata_on_candidate() {
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "spider-failure-meta.example.com",
     )
     .await;
@@ -340,7 +324,7 @@ async fn spider_should_return_crawl_failure_metadata_on_candidate() {
              last_crawl_error_kind = 'InsufficientInferenceSample'
          WHERE domain_id = $1",
     )
-    .bind(uuid::Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -368,10 +352,10 @@ async fn spider_mark_crawl_failure_should_store_count_kind_and_next_crawl_at() {
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "spider-mark-failure.example.com",
     )
     .await;
@@ -387,7 +371,7 @@ async fn spider_mark_crawl_failure_should_store_count_kind_and_next_crawl_at() {
          FROM listing_source_domains
          WHERE domain_id = $1",
     )
-    .bind(uuid::Uuid::from(domain_id))
+    .bind(domain_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -411,8 +395,8 @@ async fn spider_should_order_never_crawled_before_stale_crawled() {
     let pool = get_postgres_client().await;
     let service = SpiderCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_stale = uuid::Uuid::new_v4();
-    let listing_source_id_never = uuid::Uuid::new_v4();
+    let listing_source_id_stale = ListingSourceId::new();
+    let listing_source_id_never = ListingSourceId::new();
 
     let domain_id_stale = insert_listing_source_with_domain(
         &pool,
@@ -430,7 +414,7 @@ async fn spider_should_order_never_crawled_before_stale_crawled() {
     sqlx::query(
         "UPDATE listing_source_domains SET last_crawled = NOW() - INTERVAL '10 days' WHERE domain_id = $1",
     )
-    .bind(uuid::Uuid::from(domain_id_stale))
+    .bind(domain_id_stale.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -459,11 +443,10 @@ async fn spider_should_order_never_crawled_before_stale_crawled() {
 /// Helper: inserts a product URL into listing_source_urls for the given ListingSource/domain.
 async fn insert_product_url(
     pool: &sqlx::PgPool,
-    listing_source_id_uuid: uuid::Uuid,
+    listing_source_id: ListingSourceId,
     domain_id: CrawlerDomainId,
     url: &str,
 ) {
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let parsed = url::Url::parse(url).unwrap();
     let repo = UrlMetadataRepositoryImpl::new(pool.clone());
     repo.upsert_link(
@@ -504,16 +487,13 @@ async fn scraper_should_return_candidate_when_product_url_never_scraped() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-never.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-never.example.com")
+            .await;
     insert_product_url(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         domain_id,
         "https://scraper-never.example.com/p/1",
     )
@@ -539,16 +519,13 @@ async fn scraper_should_not_return_candidate_when_recently_scraped() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-recent.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-recent.example.com")
+            .await;
     let url = "https://scraper-recent.example.com/p/1";
     let hash = "b".repeat(64);
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url).await;
 
     // Mark as scraped just now
     sqlx::query("UPDATE listing_source_urls SET last_scraped = NOW(), last_scraped_hash = $1 WHERE url = $2")
@@ -576,15 +553,12 @@ async fn scraper_should_return_candidate_when_scraped_more_than_1_day_ago() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-stale.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-stale.example.com")
+            .await;
     let url = "https://scraper-stale.example.com/p/1";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url).await;
 
     // Mark as scraped 2 days ago to isolate the time-based filter.
     let old_hash = "old_hash_differs";
@@ -615,16 +589,12 @@ async fn scraper_should_not_return_candidate_when_url_class_is_not_product() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-class.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-class.example.com")
+            .await;
 
     // Insert as a category URL (not product)
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let url = url::Url::parse("https://scraper-class.example.com/category/1").unwrap();
     let repo = UrlMetadataRepositoryImpl::new(pool.clone());
     repo.upsert_link(&listing_source_id, &domain_id, &url, &UrlClass::Category)
@@ -649,16 +619,15 @@ async fn scraper_should_persist_url_class_other_and_exclude_candidate_when_set_c
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-set-class.example.com",
     )
     .await;
     let target_url = url::Url::parse("https://scraper-set-class.example.com/p/target").unwrap();
     let other_url = url::Url::parse("https://scraper-set-class.example.com/p/other").unwrap();
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let repo = UrlMetadataRepositoryImpl::new(pool.clone());
     repo.upsert_link(
         &listing_source_id,
@@ -688,7 +657,7 @@ async fn scraper_should_persist_url_class_other_and_exclude_candidate_when_set_c
     let target_class: String = sqlx::query_scalar(
         "SELECT url_class FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(listing_source_id_uuid)
+    .bind(listing_source_id.as_uuid())
     .bind(target_url.to_string())
     .fetch_one(&pool)
     .await
@@ -696,7 +665,7 @@ async fn scraper_should_persist_url_class_other_and_exclude_candidate_when_set_c
     let other_class: String = sqlx::query_scalar(
         "SELECT url_class FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(listing_source_id_uuid)
+    .bind(listing_source_id.as_uuid())
     .bind(other_url.to_string())
     .fetch_one(&pool)
     .await
@@ -715,18 +684,15 @@ async fn scraper_should_not_return_candidate_when_listing_source_crawl_is_disabl
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-inactive.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-inactive.example.com")
+            .await;
     let url = "https://scraper-inactive.example.com/p/1";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url).await;
 
     sqlx::query("UPDATE listing_sources SET crawl_enabled = FALSE WHERE listing_source_id = $1")
-        .bind(listing_source_id_uuid)
+        .bind(listing_source_id.as_uuid())
         .execute(&pool)
         .await
         .unwrap();
@@ -748,14 +714,13 @@ async fn scraper_should_not_return_candidate_when_listing_source_crawl_is_disabl
 async fn scraper_should_return_candidate_when_disposition_is_dormant_sold() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-disposition.example.com",
     )
     .await;
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let sold_url = url::Url::parse("https://scraper-disposition.example.com/p/sold").unwrap();
     let present_url =
         url::Url::parse("https://scraper-disposition.example.com/p/out-of-stock").unwrap();
@@ -799,14 +764,13 @@ async fn scraper_should_return_candidate_when_disposition_is_dormant_sold() {
 async fn scraper_mark_removed_should_reactivate_sold_url_after_durable_capture() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-removed-reactivation.example.com",
     )
     .await;
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let url = url::Url::parse("https://scraper-removed-reactivation.example.com/p/1").unwrap();
     let repository = UrlMetadataRepositoryImpl::new(pool.clone());
     repository
@@ -836,7 +800,7 @@ async fn scraper_mark_removed_should_reactivate_sold_url_after_durable_capture()
         "SELECT crawler_disposition, last_captured_raw_input_sha256, last_scraped \
          FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(listing_source_id_uuid)
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
@@ -865,18 +829,15 @@ async fn scraper_should_respect_limit_when_multiple_candidates_exist() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-limit.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-limit.example.com")
+            .await;
 
     for i in 0..5u32 {
         insert_product_url(
             &pool,
-            listing_source_id_uuid,
+            listing_source_id,
             domain_id,
             &format!("https://scraper-limit.example.com/p/{}", i),
         )
@@ -902,17 +863,14 @@ async fn scraper_should_cap_domains_and_urls_per_domain_when_fetching_candidates
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let hot_listing_source_id_uuid = uuid::Uuid::new_v4();
-    let hot_domain = insert_listing_source_with_domain(
-        &pool,
-        hot_listing_source_id_uuid,
-        "fair-hot.example.com",
-    )
-    .await;
+    let hot_listing_source_id = ListingSourceId::new();
+    let hot_domain =
+        insert_listing_source_with_domain(&pool, hot_listing_source_id, "fair-hot.example.com")
+            .await;
     for i in 0..10u32 {
         insert_product_url(
             &pool,
-            hot_listing_source_id_uuid,
+            hot_listing_source_id,
             hot_domain,
             &format!("https://fair-hot.example.com/p/{i}"),
         )
@@ -920,14 +878,14 @@ async fn scraper_should_cap_domains_and_urls_per_domain_when_fetching_candidates
     }
 
     for domain_idx in 0..4u32 {
-        let listing_source_id_uuid = uuid::Uuid::new_v4();
+        let listing_source_id = ListingSourceId::new();
         let domain_name = format!("fair-cold-{domain_idx}.example.com");
         let domain_id =
-            insert_listing_source_with_domain(&pool, listing_source_id_uuid, &domain_name).await;
+            insert_listing_source_with_domain(&pool, listing_source_id, &domain_name).await;
         for url_idx in 0..4u32 {
             insert_product_url(
                 &pool,
-                listing_source_id_uuid,
+                listing_source_id,
                 domain_id,
                 &format!("https://{domain_name}/p/{url_idx}"),
             )
@@ -980,13 +938,13 @@ async fn scraper_should_randomize_selected_domains_across_repeated_fetches() {
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
     for i in 0..10u32 {
-        let listing_source_id_uuid = uuid::Uuid::new_v4();
+        let listing_source_id = ListingSourceId::new();
         let domain_name = format!("random-domain-{i}.example.com");
         let domain_id =
-            insert_listing_source_with_domain(&pool, listing_source_id_uuid, &domain_name).await;
+            insert_listing_source_with_domain(&pool, listing_source_id, &domain_name).await;
         insert_product_url(
             &pool,
-            listing_source_id_uuid,
+            listing_source_id,
             domain_id,
             &format!("https://{domain_name}/p/1"),
         )
@@ -1021,16 +979,15 @@ async fn scraper_should_order_urls_within_selected_domain_by_oldest_work_first()
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id =
-        insert_listing_source_with_domain(&pool, listing_source_id_uuid, "fair-order.example.com")
-            .await;
+        insert_listing_source_with_domain(&pool, listing_source_id, "fair-order.example.com").await;
     let never_url = "https://fair-order.example.com/p/never";
     let oldest_url = "https://fair-order.example.com/p/oldest";
     let newer_url = "https://fair-order.example.com/p/newer";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, newer_url).await;
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, never_url).await;
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, oldest_url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, newer_url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, never_url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, oldest_url).await;
 
     sqlx::query(
         "UPDATE listing_source_urls
@@ -1072,31 +1029,31 @@ async fn scraper_should_not_return_candidate_when_domain_is_excluded() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let blocked_listing_source_id_uuid = uuid::Uuid::new_v4();
+    let blocked_listing_source_id = ListingSourceId::new();
     let blocked_domain = insert_listing_source_with_domain(
         &pool,
-        blocked_listing_source_id_uuid,
+        blocked_listing_source_id,
         "scraper-blocked.example.com",
     )
     .await;
     insert_product_url(
         &pool,
-        blocked_listing_source_id_uuid,
+        blocked_listing_source_id,
         blocked_domain,
         "https://scraper-blocked.example.com/p/1",
     )
     .await;
 
-    let open_listing_source_id_uuid = uuid::Uuid::new_v4();
+    let open_listing_source_id = ListingSourceId::new();
     let open_domain = insert_listing_source_with_domain(
         &pool,
-        open_listing_source_id_uuid,
+        open_listing_source_id,
         "scraper-open.example.com",
     )
     .await;
     insert_product_url(
         &pool,
-        open_listing_source_id_uuid,
+        open_listing_source_id,
         open_domain,
         "https://scraper-open.example.com/p/1",
     )
@@ -1132,18 +1089,15 @@ async fn scraper_should_order_never_scraped_before_stale() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-order.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-order.example.com")
+            .await;
 
     let url_never = "https://scraper-order.example.com/p/never";
     let url_stale = "https://scraper-order.example.com/p/stale";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url_stale).await;
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url_never).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url_stale).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url_never).await;
 
     // Make the stale one old — scraped 5 days ago with a different hash so it qualifies
     sqlx::query(
@@ -1183,17 +1137,13 @@ async fn scraper_mark_as_scraped_should_set_last_scraped_and_hash() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "scraper-mark.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "scraper-mark.example.com")
+            .await;
     let url_str = "https://scraper-mark.example.com/p/1";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url_str).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url_str).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let url = url::Url::parse(url_str).unwrap();
     let scraped_hash = "m".repeat(64);
 
@@ -1231,17 +1181,16 @@ async fn scraper_mark_as_scraped_should_set_last_scraped_and_hash() {
 async fn scraper_completion_should_not_overwrite_newer_dormant_scrape_metadata() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-competing-completion.example.com",
     )
     .await;
     let url = url::Url::parse("https://scraper-competing-completion.example.com/p/1").unwrap();
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url.as_str()).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let dormant_raw_input_hash = vec![9; 32];
     assert_eq!(
         service
@@ -1295,17 +1244,16 @@ async fn scraper_completion_should_not_overwrite_newer_dormant_scrape_metadata()
 async fn scraper_newer_active_completion_should_fence_delayed_active_completion_and_touch() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-active-fence.example.com",
     )
     .await;
     let url = url::Url::parse("https://scraper-active-fence.example.com/p/1").unwrap();
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url.as_str()).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let observed_raw_input_sha256: Option<&[u8]> = None;
     let newer_raw_input_sha256 = vec![9; 32];
 
@@ -1374,17 +1322,16 @@ async fn scraper_newer_active_completion_should_fence_delayed_active_completion_
 async fn scraper_newer_active_completion_should_fence_delayed_sold_completion() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-sold-fence.example.com",
     )
     .await;
     let url = url::Url::parse("https://scraper-sold-fence.example.com/p/1").unwrap();
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url.as_str()).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let observed_raw_input_sha256 = vec![1; 32];
     assert_eq!(
         service
@@ -1455,17 +1402,16 @@ async fn scraper_newer_active_completion_should_fence_delayed_sold_completion() 
 async fn scraper_newer_active_completion_should_fence_delayed_disposition_change() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-removal-fence.example.com",
     )
     .await;
     let url = url::Url::parse("https://scraper-removal-fence.example.com/p/1").unwrap();
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url.as_str()).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let observed_raw_input_sha256 = vec![4; 32];
     assert_eq!(
         service
@@ -1546,17 +1492,16 @@ struct DelayedObserverUrlState {
 async fn scraper_should_fence_delayed_observer_local_writes_when_newer_active_capture_commits() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-delayed-observer-fence.example.com",
     )
     .await;
     let url = url::Url::parse("https://scraper-delayed-observer-fence.example.com/p/1").unwrap();
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url.as_str()).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url.as_str()).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let observed_raw_input_sha256 = vec![6; 32];
     assert_eq!(
         service
@@ -1715,16 +1660,16 @@ async fn scraper_mark_as_scraped_should_exclude_url_from_subsequent_get_candidat
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id = insert_listing_source_with_domain(
         &pool,
-        listing_source_id_uuid,
+        listing_source_id,
         "scraper-roundtrip.example.com",
     )
     .await;
     let url_str = "https://scraper-roundtrip.example.com/p/1";
     let hash = "n".repeat(64);
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, url_str).await;
+    insert_product_url(&pool, listing_source_id, domain_id, url_str).await;
 
     // Confirm it is returned before marking
     let before = service.get_candidates(10, 100, &[]).await.unwrap();
@@ -1733,7 +1678,6 @@ async fn scraper_mark_as_scraped_should_exclude_url_from_subsequent_get_candidat
         "URL should appear before mark_as_scraped"
     );
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let url = url::Url::parse(url_str).unwrap();
     service
         .mark_as_scraped(
@@ -1766,20 +1710,16 @@ async fn scraper_seed_urls_should_exclude_current_url() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
-    let domain_id = insert_listing_source_with_domain(
-        &pool,
-        listing_source_id_uuid,
-        "seed-exclude.example.com",
-    )
-    .await;
+    let listing_source_id = ListingSourceId::new();
+    let domain_id =
+        insert_listing_source_with_domain(&pool, listing_source_id, "seed-exclude.example.com")
+            .await;
 
     let exclude_url = "https://seed-exclude.example.com/p/current";
     let other_url = "https://seed-exclude.example.com/p/other";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, exclude_url).await;
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, other_url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, exclude_url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, other_url).await;
 
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
     let exclude = url::Url::parse(exclude_url).unwrap();
     let sampled = service
         .get_random_product_urls_for_schema_seed(&listing_source_id, &exclude, 5)
@@ -1806,15 +1746,13 @@ async fn scraper_seed_urls_should_include_same_listing_source_sold_product_urls(
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let seed_listing_source_uuid = uuid::Uuid::new_v4();
+    let seed_listing_source_id = ListingSourceId::new();
     let seed_domain_id = insert_listing_source_with_domain(
         &pool,
-        seed_listing_source_uuid,
+        seed_listing_source_id,
         "seed-filters.example.com",
     )
     .await;
-    let seed_listing_source_id =
-        listing_source_core::ListingSourceId::from(seed_listing_source_uuid);
     let repo = UrlMetadataRepositoryImpl::new(pool.clone());
 
     let current_url = url::Url::parse("https://seed-filters.example.com/p/current").unwrap();
@@ -1882,15 +1820,13 @@ async fn scraper_seed_urls_should_include_same_listing_source_sold_product_urls(
     .await
     .unwrap();
 
-    let other_listing_source_uuid = uuid::Uuid::new_v4();
+    let other_listing_source_id = ListingSourceId::new();
     let other_domain_id = insert_listing_source_with_domain(
         &pool,
-        other_listing_source_uuid,
+        other_listing_source_id,
         "seed-other-source.example.com",
     )
     .await;
-    let other_listing_source_id =
-        listing_source_core::ListingSourceId::from(other_listing_source_uuid);
     let other_listing_source_url =
         url::Url::parse("https://seed-other-source.example.com/p/other").unwrap();
     repo.upsert_link(
@@ -1943,19 +1879,17 @@ async fn scraper_seed_urls_should_respect_limit() {
     let pool = get_postgres_client().await;
     let service = ScraperCandidateServiceImpl::new(pool.clone());
 
-    let listing_source_id_uuid = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let domain_id =
-        insert_listing_source_with_domain(&pool, listing_source_id_uuid, "seed-limit.example.com")
-            .await;
-    let listing_source_id = listing_source_core::ListingSourceId::from(listing_source_id_uuid);
+        insert_listing_source_with_domain(&pool, listing_source_id, "seed-limit.example.com").await;
 
     let current_url = "https://seed-limit.example.com/p/current";
-    insert_product_url(&pool, listing_source_id_uuid, domain_id, current_url).await;
+    insert_product_url(&pool, listing_source_id, domain_id, current_url).await;
 
     for i in 0..6u32 {
         insert_product_url(
             &pool,
-            listing_source_id_uuid,
+            listing_source_id,
             domain_id,
             &format!("https://seed-limit.example.com/p/{i}"),
         )

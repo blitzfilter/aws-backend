@@ -9,4 +9,6 @@ pub mod service;
 pub mod spider;
 pub mod vertex_ai;
 
-pub use crawler_domain_id::CrawlerDomainId;
+pub use crawler_domain_id::{
+    CrawlerDomainId, CrawlerReviewId, CrawlerReviewPageId, CrawlerReviewUrlId,
+};

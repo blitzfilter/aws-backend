@@ -38,8 +38,10 @@ impl FromRow<'_, sqlx::postgres::PgRow> for SpiderUrlRecord {
             .parse()
             .map_err(|error: String| sqlx::Error::Decode(error.into()))?;
         Ok(Self {
-            listing_source_id: listing_source_id.into(),
-            domain_id: domain_id.into(),
+            listing_source_id: ListingSourceId::try_from(listing_source_id)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
+            domain_id: CrawlerDomainId::try_from(domain_id)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
             url,
             url_class,
             disposition,
@@ -138,7 +140,7 @@ impl UrlMetadataRepositoryImpl {
              FOR KEY SHARE",
         )
         .bind(uuid::Uuid::from(listing_source_id))
-        .bind(uuid::Uuid::from(domain_id))
+        .bind(domain_id.as_uuid())
         .fetch_optional(&mut **transaction)
         .await
         .map_err(database_error)?;
@@ -170,10 +172,13 @@ impl UrlMetadataRepositoryImpl {
                     source: sqlx::Error::Decode(Box::new(error)),
                 }
             })?;
-            let current_listing_source_id: ListingSourceId = row
-                .try_get::<uuid::Uuid, _>("listing_source_id")
-                .map_err(database_error)?
-                .into();
+            let current_listing_source_id = ListingSourceId::try_from(
+                row.try_get::<uuid::Uuid, _>("listing_source_id")
+                    .map_err(database_error)?,
+            )
+            .map_err(|error| UrlMetadataRepositoryError::Database {
+                source: sqlx::Error::Decode(Box::new(error)),
+            })?;
             if current_listing_source_id != listing_source_id {
                 return Err(UrlMetadataRepositoryError::UrlOwnedByAnotherListingSource {
                     url,
@@ -181,10 +186,13 @@ impl UrlMetadataRepositoryImpl {
                     current_listing_source_id,
                 });
             }
-            let current_domain_id = row
-                .try_get::<uuid::Uuid, _>("domain_id")
-                .map_err(database_error)?
-                .into();
+            let current_domain_id = CrawlerDomainId::try_from(
+                row.try_get::<uuid::Uuid, _>("domain_id")
+                    .map_err(database_error)?,
+            )
+            .map_err(|error| UrlMetadataRepositoryError::Database {
+                source: sqlx::Error::Decode(Box::new(error)),
+            })?;
             if current_domain_id != domain_id {
                 return Err(UrlMetadataRepositoryError::UrlOwnedByAnotherDomain {
                     url,
@@ -261,7 +269,7 @@ impl UrlMetadataRepository for UrlMetadataRepositoryImpl {
              RETURNING listing_source_id, domain_id, url, url_class, crawler_disposition, last_scraped_hash, last_scraped, created, updated",
         )
         .bind(uuid::Uuid::from(*listing_source_id))
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .bind(url.as_str())
         .bind(url_class.to_string())
         .fetch_optional(&mut *transaction)
@@ -331,7 +339,7 @@ impl UrlMetadataRepository for UrlMetadataRepositoryImpl {
              RETURNING listing_source_id, domain_id, url, url_class, crawler_disposition, last_scraped_hash, last_scraped, created, updated",
         )
         .bind(uuid::Uuid::from(*listing_source_id))
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .bind(&url_strings)
         .bind(url_classes.iter().map(ToString::to_string).collect::<Vec<_>>())
         .fetch_all(&mut *transaction)

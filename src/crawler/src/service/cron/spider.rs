@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn next_failure_count_increments_for_same_error_kind() {
-        let mut candidate = spider_candidate(CrawlerDomainId::from(uuid::Uuid::new_v4()));
+        let mut candidate = spider_candidate(CrawlerDomainId::new());
         candidate.crawl_failure_count = 2;
         candidate.last_crawl_error_kind = Some("InsufficientInferenceSample".to_string());
 
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn next_failure_count_resets_for_changed_error_kind() {
-        let mut candidate = spider_candidate(CrawlerDomainId::from(uuid::Uuid::new_v4()));
+        let mut candidate = spider_candidate(CrawlerDomainId::new());
         candidate.crawl_failure_count = 2;
         candidate.last_crawl_error_kind = Some("TinyCrawl".to_string());
 
@@ -552,7 +552,7 @@ mod tests {
     #[tokio::test]
     async fn should_run_spider_candidates() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -600,9 +600,9 @@ mod tests {
 
     #[tokio::test]
     async fn should_refill_spider_slot_while_slow_crawl_is_running() {
-        let slow_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
-        let fast_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
-        let refill_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let slow_domain_id = CrawlerDomainId::new();
+        let fast_domain_id = CrawlerDomainId::new();
+        let refill_domain_id = CrawlerDomainId::new();
 
         let mut spider_candidates = MockSpiderCandidateService::new();
         spider_candidates
@@ -697,7 +697,7 @@ mod tests {
     #[tokio::test]
     async fn should_mark_crawl_failure_when_spider_run_errors() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -749,7 +749,7 @@ mod tests {
     #[tokio::test]
     async fn should_mark_tiny_crawl_failure_with_specific_error_kind() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -799,7 +799,7 @@ mod tests {
     #[tokio::test]
     async fn should_mark_empty_crawl_failure_with_specific_error_kind() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -848,7 +848,7 @@ mod tests {
     #[tokio::test]
     async fn should_mark_insufficient_inference_sample_failure_with_specific_error_kind() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -902,7 +902,7 @@ mod tests {
     #[tokio::test]
     async fn should_use_long_cooldown_after_repeated_empty_crawl_failures() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -956,7 +956,7 @@ mod tests {
     #[tokio::test]
     async fn should_use_long_cooldown_after_repeated_insufficient_inference_sample_failures() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -1018,7 +1018,7 @@ mod tests {
         expected_error_kind: &'static str,
     ) {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -1094,7 +1094,7 @@ mod tests {
     #[tokio::test]
     async fn should_use_long_cooldown_after_repeated_diagnostic_failures() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let expected_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let expected_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {
@@ -1156,7 +1156,7 @@ mod tests {
     #[tokio::test]
     async fn should_skip_spider_candidate_when_domain_lock_is_already_held() {
         let mut spider_candidates = MockSpiderCandidateService::new();
-        let locked_domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let locked_domain_id = CrawlerDomainId::new();
         spider_candidates
             .expect_get_candidates()
             .returning(move |_, _| {

@@ -1,59 +1,65 @@
-use std::fmt::{Display, Formatter};
-
-use uuid::Uuid;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct CrawlerDomainId(Uuid);
-
-impl Display for CrawlerDomainId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl From<Uuid> for CrawlerDomainId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-
-impl From<CrawlerDomainId> for Uuid {
-    fn from(value: CrawlerDomainId) -> Self {
-        value.0
-    }
-}
-
-impl TryFrom<String> for CrawlerDomainId {
-    type Error = uuid::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Uuid::parse_str(&value).map(Self)
-    }
-}
-
-impl TryFrom<&str> for CrawlerDomainId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Uuid::parse_str(value).map(Self)
-    }
-}
+domain_primitives::object_id_newtype!(CrawlerDomainId, "cd");
+domain_primitives::object_id_newtype!(CrawlerReviewId, "cr");
+domain_primitives::object_id_newtype!(CrawlerReviewPageId, "crp");
+domain_primitives::object_id_newtype!(CrawlerReviewUrlId, "cru");
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
-    fn should_serialize_as_a_uuid_string() {
-        let uuid = Uuid::new_v4();
-        let id = CrawlerDomainId::from(uuid);
+    fn should_generate_canonical_crawler_object_ids() {
+        for (prefix, value) in [
+            (CrawlerDomainId::PREFIX, CrawlerDomainId::new().to_string()),
+            (CrawlerReviewId::PREFIX, CrawlerReviewId::new().to_string()),
+            (
+                CrawlerReviewPageId::PREFIX,
+                CrawlerReviewPageId::new().to_string(),
+            ),
+            (
+                CrawlerReviewUrlId::PREFIX,
+                CrawlerReviewUrlId::new().to_string(),
+            ),
+        ] {
+            assert!(value.starts_with(&format!("{prefix}_")));
+        }
+    }
 
-        assert_eq!(serde_json::to_string(&id).unwrap(), format!("\"{uuid}\""));
+    #[test]
+    fn should_reject_bare_uuid_and_wrong_prefix() {
+        let id = CrawlerDomainId::new();
+        let suffix = id.to_string();
+        let suffix = suffix.strip_prefix("cd_").expect("domain TypeID prefix");
+
+        assert!(CrawlerDomainId::from_str(id.as_uuid().to_string().as_str()).is_err());
+        assert!(CrawlerDomainId::from_str(&format!("cr_{suffix}")).is_err());
+    }
+
+    #[test]
+    fn should_roundtrip_crawler_object_ids_through_uuid_storage() {
+        let domain_id = CrawlerDomainId::new();
+        let review_id = CrawlerReviewId::new();
+        let review_page_id = CrawlerReviewPageId::new();
+        let review_url_id = CrawlerReviewUrlId::new();
+
         assert_eq!(
-            serde_json::from_str::<CrawlerDomainId>(&format!("\"{uuid}\"")).unwrap(),
-            id
+            CrawlerDomainId::try_from(*domain_id.as_uuid()).expect("valid domain UUIDv7"),
+            domain_id
+        );
+        assert_eq!(
+            CrawlerReviewId::try_from(*review_id.as_uuid()).expect("valid review UUIDv7"),
+            review_id
+        );
+        assert_eq!(
+            CrawlerReviewPageId::try_from(*review_page_id.as_uuid())
+                .expect("valid review-page UUIDv7"),
+            review_page_id
+        );
+        assert_eq!(
+            CrawlerReviewUrlId::try_from(*review_url_id.as_uuid())
+                .expect("valid review-URL UUIDv7"),
+            review_url_id
         );
     }
 }

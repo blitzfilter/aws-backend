@@ -10,7 +10,6 @@ use sqlx::PgPool;
 
 use test_api::*;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 const POSTGRES: Postgres = Postgres::new("src/crawler/migrations");
 
@@ -139,7 +138,7 @@ async fn insert_listing_source(pool: &PgPool, listing_source_id: ListingSourceId
              (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled, created, updated) \
              VALUES ($1, 'Test source', 'test-source', TRUE, NOW(), NOW())",
         )
-        .bind(Uuid::from(listing_source_id))
+        .bind(listing_source_id.as_uuid())
         .execute(pool)
         .await
         .unwrap();
@@ -549,7 +548,7 @@ async fn should_delete_product_schema_when_parent_listing_source_is_deleted() {
         .unwrap();
 
     sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
-        .bind(Uuid::from(listing_source_id))
+        .bind(listing_source_id.as_uuid())
         .execute(&pool)
         .await
         .unwrap();

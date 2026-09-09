@@ -153,8 +153,9 @@ async fn main() {
             url_repository,
         );
 
-        let listing_source_id: ListingSourceId =
-            uuid::Uuid::from_u128(0xa2000000000000000000000000000001).into();
+        let listing_source_id: ListingSourceId = "ls_01h455vb4pex5ty7enb1p677vg"
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid demo ListingSource TypeID: {error}"));
         let crawl_root_url_parsed = url::Url::parse(&crawl_root_url)
             .unwrap_or_else(|_| url::Url::parse("https://demo.invalid").unwrap());
         let demo_domain = crawl_root_url_parsed

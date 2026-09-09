@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS crawler_reviews (
-    review_id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_id          UUID        PRIMARY KEY,
     listing_source_id            UUID        NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
     domain_id          UUID        REFERENCES listing_source_domains(domain_id) ON DELETE SET NULL,
     artifact_type      TEXT        NOT NULL CHECK (artifact_type IN ('URL_PATTERN', 'PRODUCT_SCHEMA')),
@@ -32,7 +32,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS crawler_reviews_pending_product_schema_per_sou
       AND artifact_type = 'PRODUCT_SCHEMA';
 
 CREATE TABLE IF NOT EXISTS crawler_review_pages (
-    review_page_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_page_id UUID        PRIMARY KEY,
     review_id      UUID        NOT NULL REFERENCES crawler_reviews(review_id) ON DELETE CASCADE,
     url            TEXT        NOT NULL,
     role           TEXT        NOT NULL CHECK (role IN ('PRIMARY', 'SEED', 'TRIGGERING_REPAIR_PAGE')),
@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_crawler_review_pages_review
     ON crawler_review_pages (review_id);
 
 CREATE TABLE IF NOT EXISTS crawler_review_urls (
-    review_url_id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_url_id          UUID        PRIMARY KEY,
     review_id              UUID        NOT NULL REFERENCES crawler_reviews(review_id) ON DELETE CASCADE,
     url                    TEXT        NOT NULL,
     previous_class         TEXT,

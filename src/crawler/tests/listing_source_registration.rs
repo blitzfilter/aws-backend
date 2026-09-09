@@ -1,3 +1,4 @@
+use crawler::CrawlerDomainId;
 use crawler::service::listing_source_registration::{
     ListingSourceRegistrationRepository, ListingSourceRegistrationRepositoryImpl,
     RegisteredListingSource,
@@ -53,7 +54,7 @@ async fn should_persist_and_clear_fallback_currency_from_listing_source_snapshot
     let persisted: Option<String> = sqlx::query_scalar(
         "SELECT fallback_currency FROM listing_sources WHERE listing_source_id = $1",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -64,7 +65,7 @@ async fn should_persist_and_clear_fallback_currency_from_listing_source_snapshot
     let cleared: Option<String> = sqlx::query_scalar(
         "SELECT fallback_currency FROM listing_sources WHERE listing_source_id = $1",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -82,10 +83,12 @@ async fn should_disable_absent_sources_without_deleting_local_domain_configurati
         .apply_snapshot(&[listing_source(kept, true), listing_source(removed, true)])
         .await
         .unwrap();
+    let removed_domain_id = CrawlerDomainId::new();
     sqlx::query(
-        "INSERT INTO listing_source_domains (listing_source_id, listing_source_domain, crawl_root_host) VALUES ($1, $2, $2)",
+        "INSERT INTO listing_source_domains (domain_id, listing_source_id, listing_source_domain, crawl_root_host) VALUES ($1, $2, $3, $3)",
     )
-    .bind(uuid::Uuid::from(removed))
+    .bind(removed_domain_id.as_uuid())
+    .bind(removed.as_uuid())
     .bind("removed.example.com")
     .execute(&pool)
     .await
@@ -99,7 +102,7 @@ async fn should_disable_absent_sources_without_deleting_local_domain_configurati
     let enabled: bool = sqlx::query_scalar(
         "SELECT crawl_enabled FROM listing_sources WHERE listing_source_id = $1",
     )
-    .bind(uuid::Uuid::from(removed))
+    .bind(removed.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -107,7 +110,7 @@ async fn should_disable_absent_sources_without_deleting_local_domain_configurati
     let domain_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM listing_source_domains WHERE listing_source_id = $1",
     )
-    .bind(uuid::Uuid::from(removed))
+    .bind(removed.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -123,14 +126,14 @@ async fn should_default_ad_hoc_listing_sources_to_crawl_disabled() {
         "INSERT INTO listing_sources (listing_source_id, listing_source_name, listing_source_slug) \
          VALUES ($1, 'Ad hoc', 'ad-hoc')",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
     let enabled: bool = sqlx::query_scalar(
         "SELECT crawl_enabled FROM listing_sources WHERE listing_source_id = $1",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -153,23 +156,27 @@ async fn should_roll_back_snapshot_when_final_disable_update_fails_and_retry_aft
          ($1, 'Old kept source', 'old-kept-source', TRUE, NOW(), NOW()), \
          ($2, 'Removed source', 'removed-source', TRUE, NOW(), NOW())",
     )
-    .bind(uuid::Uuid::from(kept))
-    .bind(uuid::Uuid::from(removed))
+    .bind(kept.as_uuid())
+    .bind(removed.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
+    let kept_domain_id = CrawlerDomainId::new();
+    let removed_domain_id = CrawlerDomainId::new();
     sqlx::query(
         "INSERT INTO listing_source_domains \
-         (listing_source_id, listing_source_domain, crawl_root_host, url_pattern, url_pattern_state, last_crawled, \
+         (domain_id, listing_source_id, listing_source_domain, crawl_root_host, url_pattern, url_pattern_state, last_crawled, \
           crawl_failure_count, last_crawl_error_kind, next_crawl_at) \
          VALUES \
-         ($1, 'kept.example.com', 'kept.example.com', '/products/', 'MATCHED', NOW() - INTERVAL '1 day', \
+         ($1, $2, 'kept.example.com', 'kept.example.com', '/products/', 'MATCHED', NOW() - INTERVAL '1 day', \
           3, 'HTTP_500', NOW() + INTERVAL '1 hour'), \
-         ($2, 'removed.example.com', 'removed.example.com', '/stock/', 'MATCHED', NOW() - INTERVAL '2 days', \
+         ($3, $4, 'removed.example.com', 'removed.example.com', '/stock/', 'MATCHED', NOW() - INTERVAL '2 days', \
           4, 'TIMEOUT', NOW() + INTERVAL '2 hours')",
     )
-    .bind(uuid::Uuid::from(kept))
-    .bind(uuid::Uuid::from(removed))
+    .bind(kept_domain_id.as_uuid())
+    .bind(kept.as_uuid())
+    .bind(removed_domain_id.as_uuid())
+    .bind(removed.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -255,8 +262,8 @@ async fn should_roll_back_snapshot_when_final_disable_update_fails_and_retry_aft
     .fetch_all(&pool)
     .await
     .unwrap();
-    let kept_uuid = uuid::Uuid::from(kept);
-    let removed_uuid = uuid::Uuid::from(removed);
+    let kept_uuid = *kept.as_uuid();
+    let removed_uuid = *removed.as_uuid();
     assert!(source_rows_after_retry.contains(&(
         kept_uuid,
         "Test source".to_owned(),

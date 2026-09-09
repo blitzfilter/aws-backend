@@ -1,11 +1,11 @@
-use crate::CrawlerDomainId;
+use crate::{CrawlerDomainId, CrawlerReviewId};
 use listing_source_core::ListingSourceId;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlerReview {
-    pub review_id: uuid::Uuid,
+    pub review_id: CrawlerReviewId,
     pub listing_source_id: ListingSourceId,
     pub listing_source_name: Option<String>,
     pub domain_id: Option<CrawlerDomainId>,

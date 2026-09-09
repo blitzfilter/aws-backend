@@ -296,7 +296,8 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
                 })
                 .transpose()?;
             candidates.push(ScraperCandidate {
-                listing_source_id: ListingSourceId::from(row.listing_source_id),
+                listing_source_id: ListingSourceId::try_from(row.listing_source_id)
+                    .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
                 listing_source_name: row.listing_source_name,
                 fallback_currency,
                 url_pattern: row.url_pattern,
@@ -708,15 +709,30 @@ impl ScraperCandidateService for ScraperCandidateServiceImpl {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(id, name, llm_calls_count)| ListingSourceLlmUsage {
-                listing_source_id: id.into(),
-                listing_source_name: name.unwrap_or_else(|| id.to_string()),
-                llm_calls_count,
+        rows.into_iter()
+            .map(|(id, name, llm_calls_count)| {
+                let listing_source_id = ListingSourceId::try_from(id).map_err(|source| {
+                    sqlx::Error::Decode(Box::new(PersistedListingSourceIdError {
+                        value: id,
+                        source,
+                    }))
+                })?;
+                Ok(ListingSourceLlmUsage {
+                    listing_source_id,
+                    listing_source_name: name.unwrap_or_else(|| listing_source_id.to_string()),
+                    llm_calls_count,
+                })
             })
-            .collect())
+            .collect()
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid persisted ListingSourceId UUID `{value}`")]
+struct PersistedListingSourceIdError {
+    value: uuid::Uuid,
+    #[source]
+    source: domain_primitives::object_id::ObjectIdError,
 }
 
 #[cfg(test)]

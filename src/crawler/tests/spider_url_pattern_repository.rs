@@ -12,7 +12,7 @@ async fn insert_source(pool: &sqlx::PgPool, listing_source_id: ListingSourceId) 
         "INSERT INTO listing_sources (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled) \
          VALUES ($1, 'Test source', 'test-source', TRUE)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .execute(pool)
     .await
     .unwrap();
@@ -23,16 +23,18 @@ async fn insert_domain(
     listing_source_id: ListingSourceId,
     domain: &str,
 ) -> CrawlerDomainId {
-    sqlx::query_scalar::<_, uuid::Uuid>(
-        "INSERT INTO listing_source_domains (listing_source_id, listing_source_domain, crawl_root_host) \
-         VALUES ($1, $2, $2) RETURNING domain_id",
+    let domain_id = CrawlerDomainId::new();
+    sqlx::query(
+        "INSERT INTO listing_source_domains (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+         VALUES ($1, $2, $3, $3)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(domain_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
     .bind(domain)
-    .fetch_one(pool)
+    .execute(pool)
     .await
-    .unwrap()
-    .into()
+    .unwrap();
+    domain_id
 }
 
 #[serial_test::serial]
@@ -44,10 +46,7 @@ async fn should_return_none_when_domain_is_missing_for_listing_source() {
     insert_source(&pool, listing_source_id).await;
 
     let found = repository
-        .find_pattern(
-            &listing_source_id,
-            &CrawlerDomainId::from(uuid::Uuid::new_v4()),
-        )
+        .find_pattern(&listing_source_id, &CrawlerDomainId::new())
         .await
         .unwrap();
 
@@ -226,7 +225,7 @@ async fn should_reject_pattern_write_for_domain_owned_by_another_listing_source(
     assert!(matches!(result, Err(sqlx::Error::RowNotFound)));
     let stored: Option<String> =
         sqlx::query_scalar("SELECT url_pattern FROM listing_source_domains WHERE domain_id = $1")
-            .bind(uuid::Uuid::from(domain_id))
+            .bind(domain_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -248,7 +247,7 @@ async fn should_reject_crawl_mark_for_domain_owned_by_another_listing_source() {
     assert!(matches!(result, Err(sqlx::Error::RowNotFound)));
     let crawled: Option<time::OffsetDateTime> =
         sqlx::query_scalar("SELECT last_crawled FROM listing_source_domains WHERE domain_id = $1")
-            .bind(uuid::Uuid::from(domain_id))
+            .bind(domain_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();

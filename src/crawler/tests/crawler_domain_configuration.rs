@@ -1,4 +1,3 @@
-use crawler::CrawlerDomainId;
 use crawler::local_db::crawler_domain_configuration_repository::CrawlerDomainConfigurationRepositoryImpl;
 use crawler::service::crawler_domain_configuration::{
     CrawlerDomainConfigurationError, CrawlerDomainConfigurationRepository,
@@ -8,6 +7,7 @@ use crawler::service::listing_source_registration::{
     RegisteredListingSource,
 };
 use crawler::spider::candidate_service::{SpiderCandidateService, SpiderCandidateServiceImpl};
+use crawler::{CrawlerDomainId, CrawlerReviewId};
 use listing_source_core::{Domain, ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use test_api::*;
 
@@ -28,18 +28,20 @@ async fn insert_pending_review(
     listing_source_id: ListingSourceId,
     domain_id: Option<CrawlerDomainId>,
     artifact_type: &str,
-) -> Result<uuid::Uuid, sqlx::Error> {
-    sqlx::query_scalar::<_, uuid::Uuid>(
+) -> Result<CrawlerReviewId, sqlx::Error> {
+    let review_id = CrawlerReviewId::new();
+    sqlx::query(
         "INSERT INTO crawler_reviews ( \
-            listing_source_id, domain_id, artifact_type, status, reason, candidate_payload, validation_summary \
-         ) VALUES ($1, $2, $3, 'PENDING_REVIEW', 'test', '{}'::jsonb, '{}'::jsonb) \
-         RETURNING review_id",
+            review_id, listing_source_id, domain_id, artifact_type, status, reason, candidate_payload, validation_summary \
+         ) VALUES ($1, $2, $3, $4, 'PENDING_REVIEW', 'test', '{}'::jsonb, '{}'::jsonb)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(domain_id.map(uuid::Uuid::from))
+    .bind(review_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
+    .bind(domain_id.map(|id| *id.as_uuid()))
     .bind(artifact_type)
-    .fetch_one(pool)
-    .await
+    .execute(pool)
+    .await?;
+    Ok(review_id)
 }
 
 #[serial_test::serial]
@@ -66,6 +68,7 @@ async fn should_onboard_enabled_source_then_preserve_domain_while_disabled_and_r
         .await
         .unwrap();
     assert_eq!(configured.domain_id, repeated.domain_id);
+    assert_eq!(7, configured.domain_id.as_uuid().get_version_num());
     assert_eq!(candidates.get_candidates(10, &[]).await.unwrap().len(), 1);
 
     registration
@@ -89,6 +92,38 @@ async fn should_onboard_enabled_source_then_preserve_domain_while_disabled_and_r
     let candidates = candidates.get_candidates(10, &[]).await.unwrap();
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].domain_id, configured.domain_id);
+}
+
+#[serial_test::serial]
+#[aura_integration_test(services = [POSTGRES])]
+async fn should_surface_invalid_persisted_v4_domain_id() {
+    let pool = get_postgres_client().await;
+    let registration = ListingSourceRegistrationRepositoryImpl::new(pool.clone());
+    let domains = CrawlerDomainConfigurationRepositoryImpl::new(pool.clone());
+    let listing_source_id = ListingSourceId::new();
+    registration
+        .apply_snapshot(&[source(listing_source_id, true)])
+        .await
+        .unwrap();
+    let invalid_persisted_domain_id =
+        uuid::Uuid::parse_str("00000000-0000-4000-8000-000000000004").unwrap();
+    sqlx::query(
+        "INSERT INTO listing_source_domains \
+         (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+         VALUES ($1, $2, 'corrupt-domain.example.com', 'corrupt-domain.example.com')",
+    )
+    .bind(invalid_persisted_domain_id)
+    .bind(listing_source_id.as_uuid())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = domains.list_for_source(listing_source_id).await;
+
+    assert!(matches!(
+        result,
+        Err(CrawlerDomainConfigurationError::Database { .. })
+    ));
 }
 
 #[serial_test::serial]
@@ -231,12 +266,14 @@ async fn should_reject_repeated_www_prefix_and_mismatched_raw_sql_crawl_root() {
         ("example.com", "unrelated.example"),
         ("example.com", "www.www.example.com"),
     ] {
+        let domain_id = CrawlerDomainId::new();
         assert!(
             sqlx::query(
                 "INSERT INTO listing_source_domains \
-             (listing_source_id, listing_source_domain, crawl_root_host) VALUES ($1, $2, $3)",
+             (domain_id, listing_source_id, listing_source_domain, crawl_root_host) VALUES ($1, $2, $3, $4)",
             )
-            .bind(uuid::Uuid::from(listing_source_id))
+            .bind(domain_id.as_uuid())
+            .bind(listing_source_id.as_uuid())
             .bind(owner)
             .bind(root)
             .execute(&pool)
@@ -347,7 +384,7 @@ async fn should_remove_pending_url_pattern_review_and_preserve_product_schema_re
         !sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM crawler_reviews WHERE review_id = $1)",
         )
-        .bind(url_pattern_review_id)
+        .bind(url_pattern_review_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap()
@@ -356,7 +393,7 @@ async fn should_remove_pending_url_pattern_review_and_preserve_product_schema_re
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM crawler_reviews WHERE review_id = $1)",
         )
-        .bind(product_schema_review_id)
+        .bind(product_schema_review_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap()

@@ -52,16 +52,18 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
 
         rows.into_iter()
             .map(|(domain_id, raw_domain)| {
-                Domain::try_from(raw_domain)
-                    .map(|domain| CrawlerDomainConfiguration {
-                        domain_id: domain_id.into(),
-                        listing_source_id,
-                        domain,
-                        created: false,
-                    })
-                    .map_err(|source| CrawlerDomainConfigurationError::Database {
+                let domain_id = persisted_domain_id(domain_id)?;
+                let domain = Domain::try_from(raw_domain).map_err(|source| {
+                    CrawlerDomainConfigurationError::Database {
                         source: box_error(source),
-                    })
+                    }
+                })?;
+                Ok(CrawlerDomainConfiguration {
+                    domain_id,
+                    listing_source_id,
+                    domain,
+                    created: false,
+                })
             })
             .collect()
     }
@@ -124,6 +126,7 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
         .fetch_optional(&mut *transaction)
         .await
         .map_err(database_error)?;
+        let requested_domain_id = CrawlerDomainId::new();
         let (domain_id, registered_root_host, created) = match existing_owner {
             Some(owner) if owner == listing_source_id_uuid => {
                 let (domain_id, root_host) = sqlx::query_as::<_, (uuid::Uuid, String)>(
@@ -139,37 +142,37 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
                         source: box_error(source),
                     }
                 })?;
-                (domain_id, root_host, false)
+                (persisted_domain_id(domain_id)?, root_host, false)
             }
             Some(owner) => {
                 return Err(
                     CrawlerDomainConfigurationError::DomainOwnedByAnotherListingSource {
                         domain,
                         requested_listing_source_id: listing_source_id,
-                        current_listing_source_id: owner.into(),
+                        current_listing_source_id: persisted_listing_source_id(owner)?,
                     },
                 );
             }
-            None => (
-                sqlx::query_scalar::<_, uuid::Uuid>(
+            None => {
+                sqlx::query(
                     "INSERT INTO listing_source_domains \
-                     (listing_source_id, listing_source_domain, crawl_root_host) \
-                     VALUES ($1, $2, $3) RETURNING domain_id",
+                     (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+                     VALUES ($1, $2, $3, $4)",
                 )
+                .bind(requested_domain_id.as_uuid())
                 .bind(listing_source_id_uuid)
                 .bind(canonical_domain.as_str())
                 .bind(crawl_root_host.as_str())
-                .fetch_one(&mut *transaction)
+                .execute(&mut *transaction)
                 .await
-                .map_err(database_error)?,
-                crawl_root_host,
-                true,
-            ),
+                .map_err(database_error)?;
+                (requested_domain_id, crawl_root_host, true)
+            }
         };
 
         transaction.commit().await.map_err(database_error)?;
         Ok(CrawlerDomainConfiguration {
-            domain_id: domain_id.into(),
+            domain_id,
             listing_source_id,
             domain: registered_root_host,
             created,
@@ -189,10 +192,12 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
              FOR UPDATE",
         )
         .bind(listing_source_id_uuid)
-        .bind(uuid::Uuid::from(domain_id))
+        .bind(domain_id.as_uuid())
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(database_error)?;
+        .map_err(database_error)?
+        .map(persisted_domain_id)
+        .transpose()?;
         if owned_domain.is_none() {
             return Err(
                 CrawlerDomainConfigurationError::DomainNotOwnedByListingSource {
@@ -207,7 +212,7 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
              WHERE listing_source_id = $1 AND domain_id = $2",
         )
         .bind(listing_source_id_uuid)
-        .bind(uuid::Uuid::from(domain_id))
+        .bind(domain_id.as_uuid())
         .fetch_one(&mut *transaction)
         .await
         .map_err(database_error)?;
@@ -217,7 +222,7 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
                AND artifact_type = 'URL_PATTERN'",
         )
         .bind(listing_source_id_uuid)
-        .bind(uuid::Uuid::from(domain_id))
+        .bind(domain_id.as_uuid())
         .fetch_one(&mut *transaction)
         .await
         .map_err(database_error)?;
@@ -227,7 +232,7 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
              WHERE listing_source_id = $1 AND domain_id = $2",
         )
         .bind(listing_source_id_uuid)
-        .bind(uuid::Uuid::from(domain_id))
+        .bind(domain_id.as_uuid())
         .execute(&mut *transaction)
         .await
         .map_err(database_error)?;
@@ -239,6 +244,22 @@ impl CrawlerDomainConfigurationRepository for CrawlerDomainConfigurationReposito
             removed_url_pattern_review_count,
         })
     }
+}
+
+fn persisted_listing_source_id(
+    value: uuid::Uuid,
+) -> Result<ListingSourceId, CrawlerDomainConfigurationError> {
+    ListingSourceId::try_from(value).map_err(|source| CrawlerDomainConfigurationError::Database {
+        source: box_error(source),
+    })
+}
+
+fn persisted_domain_id(
+    value: uuid::Uuid,
+) -> Result<CrawlerDomainId, CrawlerDomainConfigurationError> {
+    CrawlerDomainId::try_from(value).map_err(|source| CrawlerDomainConfigurationError::Database {
+        source: box_error(source),
+    })
 }
 
 fn database_error(source: sqlx::Error) -> CrawlerDomainConfigurationError {

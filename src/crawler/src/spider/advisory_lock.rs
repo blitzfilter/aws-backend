@@ -14,11 +14,8 @@ use std::time::Instant;
 /// XOR-folds the 128-bit UUID into 64 bits so that every distinct UUID maps to a
 /// distinct key with high probability.
 pub fn domain_id_to_advisory_key(id: CrawlerDomainId) -> i64 {
-    let uuid = uuid::Uuid::from(id);
-    let bytes = uuid.as_bytes();
-    let hi = i64::from_be_bytes(bytes[..8].try_into().unwrap());
-    let lo = i64::from_be_bytes(bytes[8..].try_into().unwrap());
-    hi ^ lo
+    let value = u128::from_be_bytes(*id.as_uuid().as_bytes());
+    ((value >> 64) as u64 ^ value as u64) as i64
 }
 
 /// FNV-1a 64-bit offset basis and prime (no external crate needed).
@@ -137,23 +134,26 @@ mod tests {
 
     #[test]
     fn domain_key_is_stable_for_same_uuid() {
-        let id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let id = CrawlerDomainId::new();
         assert_eq!(domain_id_to_advisory_key(id), domain_id_to_advisory_key(id));
     }
 
     #[test]
     fn domain_key_differs_for_different_uuids() {
-        let a = CrawlerDomainId::from(uuid::Uuid::new_v4());
-        let b = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let a = CrawlerDomainId::new();
+        let b = CrawlerDomainId::new();
         assert_ne!(domain_id_to_advisory_key(a), domain_id_to_advisory_key(b));
     }
 
     #[test]
-    fn nil_uuid_produces_zero_key() {
-        assert_eq!(
-            domain_id_to_advisory_key(CrawlerDomainId::from(uuid::Uuid::nil())),
-            0i64
-        );
+    fn domain_key_uses_backing_uuid_bytes() {
+        let backing_uuid = uuid::uuid!("01890a5d-ac96-774b-bf1d-d5586c639f75");
+        let bytes = backing_uuid.as_bytes();
+        let high = i64::from_be_bytes(bytes[..8].try_into().expect("eight high UUID bytes"));
+        let low = i64::from_be_bytes(bytes[8..].try_into().expect("eight low UUID bytes"));
+        let id = CrawlerDomainId::try_from(backing_uuid).expect("valid deterministic UUIDv7");
+
+        assert_eq!(domain_id_to_advisory_key(id), high ^ low);
     }
 
     // --- url_to_advisory_key ---
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn should_lock_and_unlock_domain_key_via_drop() {
         let manager = LocalLockManager::new();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let domain_id = CrawlerDomainId::new();
 
         let first = DomainLock::try_acquire(&manager, domain_id);
         assert!(first.is_some());

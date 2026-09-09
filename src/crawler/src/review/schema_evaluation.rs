@@ -1,13 +1,14 @@
+use crate::CrawlerReviewId;
 use crate::review::model::{
     CrawlerReviewPage, SchemaCandidateEvaluation, SchemaMatrix, SchemaPageEvaluation,
-    SchemaReviewPageInput, SelectorFieldEvaluation,
+    SchemaPageReference, SchemaReviewPageInput, SelectorFieldEvaluation,
 };
 use crate::scraper::css_selector::product_schema::{ProductCssSelectorSchema, RawExtractedProduct};
 use crate::scraper::scraper_service::extraction::engine::apply_schema_to_document;
 use scraper::{Html, Selector};
 
 pub(crate) fn evaluate_schema_matrix_for_live_review_pages(
-    review_id: uuid::Uuid,
+    review_id: CrawlerReviewId,
     schemas: &[ProductCssSelectorSchema],
     pages: &[(CrawlerReviewPage, String)],
 ) -> SchemaMatrix {
@@ -24,7 +25,7 @@ pub(crate) fn evaluate_schema_matrix_for_live_review_pages(
     }
 
     SchemaMatrix {
-        review_id,
+        review_id: Some(review_id),
         candidates,
     }
 }
@@ -46,7 +47,7 @@ pub(crate) fn evaluate_schema_matrix_for_inputs(
     }
 
     SchemaMatrix {
-        review_id: uuid::Uuid::nil(),
+        review_id: None,
         candidates,
     }
 }
@@ -64,7 +65,7 @@ pub(crate) fn schema_matrix_has_required_coverage(matrix: &SchemaMatrix) -> bool
             candidate
                 .pages
                 .iter()
-                .find(|page| page.page_id == target_page.page_id)
+                .find(|page| page.page_reference == target_page.page_reference)
                 .is_some_and(page_has_required_extraction)
         })
     })
@@ -86,7 +87,9 @@ fn evaluate_schema_review_page(
 ) -> SchemaPageEvaluation {
     evaluate_schema_page(
         schema,
-        page.review_page_id,
+        SchemaPageReference::Persisted {
+            review_page_id: page.review_page_id,
+        },
         page.url.clone(),
         page.role.clone(),
         raw_html,
@@ -100,7 +103,7 @@ fn evaluate_schema_input_page(
 ) -> SchemaPageEvaluation {
     evaluate_schema_page(
         schema,
-        uuid::Uuid::from_u128(page_index as u128 + 1),
+        SchemaPageReference::Input { page_index },
         page.url.clone(),
         page.role.clone(),
         &page.raw_html,
@@ -109,7 +112,7 @@ fn evaluate_schema_input_page(
 
 fn evaluate_schema_page(
     schema: &ProductCssSelectorSchema,
-    page_id: uuid::Uuid,
+    page_reference: SchemaPageReference,
     url: String,
     role: String,
     raw_html: &str,
@@ -120,7 +123,7 @@ fn evaluate_schema_page(
 
     match apply_result {
         Ok(extracted) => SchemaPageEvaluation {
-            page_id,
+            page_reference,
             url,
             role,
             apply_ok: true,
@@ -129,7 +132,7 @@ fn evaluate_schema_page(
             fields,
         },
         Err(err) => SchemaPageEvaluation {
-            page_id,
+            page_reference,
             url,
             role,
             apply_ok: false,

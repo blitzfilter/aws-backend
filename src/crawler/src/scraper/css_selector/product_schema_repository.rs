@@ -54,7 +54,8 @@ fn row_to_schema(row: sqlx::postgres::PgRow) -> Result<ListingSourceProductSchem
         ],
     };
     Ok(ListingSourceProductSchema {
-        listing_source_id: ListingSourceId::from(listing_source_id_uuid),
+        listing_source_id: ListingSourceId::try_from(listing_source_id_uuid)
+            .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
         product_schemas,
         created,
         updated,
