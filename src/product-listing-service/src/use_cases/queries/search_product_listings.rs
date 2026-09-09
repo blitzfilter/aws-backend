@@ -22,7 +22,6 @@ use fxrate_service::ports::{
 };
 use localization::Language;
 use localization::Localized;
-use money::Price;
 
 use product_listing_core::content_policy::{
     ContentPolicyDecision, may_show_product_listing_images,
@@ -30,6 +29,7 @@ use product_listing_core::content_policy::{
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
 use product_listing_core::product_listing_id::ProductListingId;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 
 use crate::ports::ListingSourceSummary;
@@ -75,7 +75,7 @@ pub struct ProductListingSearchItem {
     pub listing_source_id: ListingSourceId,
     pub source_listing_id: SourceListingId,
     pub title: Option<Localized<Language, Title>>,
-    pub display_price: Option<Price>,
+    pub display_price: Option<ProductListingPrice>,
     pub price_valuation: ProductListingSummaryPriceValuation,
     pub availability: Option<ListingAvailability>,
     pub lifecycle: ListingLifecycle,
@@ -92,7 +92,7 @@ pub struct ProductListingSummary {
     pub source: ListingSourceSummary,
     pub source_listing_id: SourceListingId,
     pub title: Option<Localized<Language, Title>>,
-    pub display_price: Option<Price>,
+    pub display_price: Option<ProductListingPrice>,
     pub price_valuation: ProductListingSummaryPriceValuation,
     pub availability: Option<ListingAvailability>,
     pub lifecycle: ListingLifecycle,
@@ -568,8 +568,7 @@ mod tests {
     };
     use fxrate_service::ports::FxRateSnapshotRepositoryFactory;
     use localization::Language;
-    use money::Currency;
-    use money::MonetaryAmount;
+    use money::{Currency, MonetaryAmount, Price};
     use product_listing_core::{
         content_policy::{ContentPolicyDecision, SensitiveContentCategory},
         listing_availability::ListingAvailability,
@@ -980,7 +979,10 @@ mod tests {
                     localization: Language::En,
                     payload: Title::from("Cabinet"),
                 }),
-                display_price: Some(Price::new(MonetaryAmount::from(100_u64), Currency::Eur)),
+                display_price: Some(ProductListingPrice::from(Price::new(
+                    MonetaryAmount::from(100_u64),
+                    Currency::Eur,
+                ))),
                 price_valuation: ProductListingSummaryPriceValuation::Current {
                     fx_rate_id: FxRateId::new(),
                     captured_at: OffsetDateTime::UNIX_EPOCH,

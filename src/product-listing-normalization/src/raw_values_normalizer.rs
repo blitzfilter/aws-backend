@@ -6,14 +6,14 @@ use crate::{
     ImageUrlNormalizationError, ListingAvailabilityQuickCheck, NormalizationError, PriceField,
     PriceNormalizationError, ProductListingNormalizationInput, RawProductListingOperation,
     detect_language, normalize_date_time, normalize_description, normalize_image_urls,
-    normalize_price, normalize_source_listing_id_with_url_sha_fallback, normalize_title,
-    quick_check_availability,
+    normalize_price, normalize_product_listing_price,
+    normalize_source_listing_id_with_url_sha_fallback, normalize_title, quick_check_availability,
 };
 use localization::{Language, Localized};
 use money::{Currency, Price};
 use product_listing_core::{
     description::Description, product_listing_image::ProductListingImage,
-    source_listing_id::SourceListingId, title::Title,
+    product_listing_price::ProductListingPrice, source_listing_id::SourceListingId, title::Title,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use std::collections::BTreeMap;
@@ -196,7 +196,7 @@ pub struct ProductListingRawValuesResolved {
     pub source_listing_id: SourceListingId,
     pub title: ProductListingRawValuesPatch<Localized<Language, Title>>,
     pub description: ProductListingRawValuesPatch<Localized<Language, Description>>,
-    pub price: ProductListingRawValuesPatch<Price>,
+    pub price: ProductListingRawValuesPatch<ProductListingPrice>,
     pub price_estimate_min: ProductListingRawValuesPatch<Price>,
     pub price_estimate_max: ProductListingRawValuesPatch<Price>,
     pub availability: ProductListingRawValuesPatch<ListingAvailabilityQuickCheck>,
@@ -361,7 +361,7 @@ impl ProductListingRawValuesNormalizer {
             raw.description,
             title_language(&title).or(fallback_language),
         )?;
-        let price = normalize_price_patch(
+        let price = normalize_product_listing_price_patch(
             raw.price,
             fallback_currency,
             price_format,
@@ -447,6 +447,43 @@ fn normalize_description_patch(
                 None => ProductListingRawValuesPatch::Clear,
             })
             .map_err(ProductListingRawValuesNormalizationError::Text),
+        ProductListingRawValuesPatch::Clear => Ok(ProductListingRawValuesPatch::Clear),
+        ProductListingRawValuesPatch::Unchanged => Ok(ProductListingRawValuesPatch::Unchanged),
+    }
+}
+
+fn normalize_product_listing_price_patch(
+    patch: ProductListingRawValuesPatch<String>,
+    fallback_currency: Option<Currency>,
+    price_format: ProductListingRawValuesPriceFormat,
+    field: PriceField,
+) -> Result<
+    ProductListingRawValuesPatch<ProductListingPrice>,
+    ProductListingRawValuesNormalizationError,
+> {
+    match patch {
+        ProductListingRawValuesPatch::Set(raw) if raw.trim().is_empty() => {
+            Ok(ProductListingRawValuesPatch::Clear)
+        }
+        ProductListingRawValuesPatch::Set(raw) => match price_format {
+            ProductListingRawValuesPriceFormat::DisplayText => {
+                normalize_product_listing_price(Some(raw.as_str()), fallback_currency)
+                    .map(|price| match price {
+                        Some(price) => ProductListingRawValuesPatch::Set(price),
+                        None => ProductListingRawValuesPatch::Clear,
+                    })
+                    .map_err(|error| map_price_error(error, field))
+            }
+            ProductListingRawValuesPriceFormat::MachineDecimal => {
+                let currency = fallback_currency.ok_or(
+                    ProductListingRawValuesNormalizationError::MachineDecimalFallbackCurrencyRequired,
+                )?;
+                normalize_machine_decimal_price(raw.as_str(), currency)
+                    .map(ProductListingPrice::from)
+                    .map(ProductListingRawValuesPatch::Set)
+                    .map_err(|error| map_price_error(error, field))
+            }
+        },
         ProductListingRawValuesPatch::Clear => Ok(ProductListingRawValuesPatch::Clear),
         ProductListingRawValuesPatch::Unchanged => Ok(ProductListingRawValuesPatch::Unchanged),
     }
@@ -790,7 +827,10 @@ mod tests {
         assert_eq!(resolved.source_listing_id.to_string(), "listing-123");
         assert_eq!(
             resolved.price,
-            ProductListingRawValuesPatch::Set(Price::new(10_000u64.into(), Currency::Eur))
+            ProductListingRawValuesPatch::Set(ProductListingPrice::from(Price::new(
+                10_000u64.into(),
+                Currency::Eur,
+            )))
         );
         assert_eq!(
             resolved.availability,
@@ -844,10 +884,40 @@ mod tests {
             panic!("V1 crawler display price should resolve");
         };
         assert_eq!(
-            ProductListingRawValuesPatch::Set(Price::new(
+            ProductListingRawValuesPatch::Set(ProductListingPrice::from(Price::new(
                 expected_minor_units.into(),
-                expected_currency
-            )),
+                expected_currency,
+            ))),
+            resolved.price
+        );
+        Ok(())
+    }
+
+    #[rstest]
+    #[case("Price on request")]
+    #[case("POA")]
+    #[case("Preis auf Anfrage")]
+    #[case("Prix sur demande")]
+    #[case("Prezzo su richiesta")]
+    #[case("Precio a consultar")]
+    fn should_resolve_display_price_on_request_markers(
+        #[case] raw_price: &str,
+    ) -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = upsert_values();
+        raw_values["price"] = set(raw_price);
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            raw_values,
+            context(),
+        )?;
+
+        let outcome = ProductListingRawValuesNormalizer::new().normalize(&input);
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) = outcome else {
+            panic!("display marker should resolve");
+        };
+        assert_eq!(
+            ProductListingRawValuesPatch::Set(ProductListingPrice::OnRequest),
             resolved.price
         );
         Ok(())
@@ -870,7 +940,10 @@ mod tests {
             panic!("V2 display text should resolve");
         };
         assert_eq!(
-            ProductListingRawValuesPatch::Set(Price::new(123_456_u64.into(), Currency::Eur)),
+            ProductListingRawValuesPatch::Set(ProductListingPrice::from(Price::new(
+                123_456_u64.into(),
+                Currency::Eur,
+            ))),
             resolved.price
         );
         Ok(())
@@ -895,7 +968,10 @@ mod tests {
             panic!("V2 machine decimals should resolve");
         };
         assert_eq!(
-            ProductListingRawValuesPatch::Set(Price::new(4_200_u64.into(), Currency::Eur)),
+            ProductListingRawValuesPatch::Set(ProductListingPrice::from(Price::new(
+                4_200_u64.into(),
+                Currency::Eur,
+            ))),
             resolved.price
         );
         assert_eq!(

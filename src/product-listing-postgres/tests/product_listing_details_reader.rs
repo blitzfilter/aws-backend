@@ -860,7 +860,7 @@ fn sample_product(
         title,
         description,
         pricing: ProductListingPricing {
-            price: Some(Price::new(MonetaryAmount::from(1_200_u64), Currency::Eur)),
+            price: Some(Price::new(MonetaryAmount::from(1_200_u64), Currency::Eur).into()),
             price_estimate_min: None,
             price_estimate_max: None,
         },

@@ -208,6 +208,9 @@
             "sourcePrice": {
                 "type": "object",
                 "properties": {
+                    "type": {
+                        "type": "keyword"
+                    },
                     "amount": {
                         "type": "unsigned_long"
                     },

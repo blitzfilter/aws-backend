@@ -3,6 +3,7 @@ use crate::listing_availability::ListingAvailability;
 use crate::product_listing::{
     ListingSaleObservation, ProductListingAuction, ProductListingPricing,
 };
+use crate::product_listing_price::ProductListingPrice;
 use crate::source_listing_id::SourceListingId;
 use crate::title::Title;
 use listing_source_core::ListingSourceId;
@@ -136,7 +137,7 @@ pub struct RehydratedProductListingDiscovered {
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RehydratedProductListingChanged {
-    pub price: Option<(Option<Price>, Option<Price>)>,
+    pub price: Option<(Option<ProductListingPrice>, Option<ProductListingPrice>)>,
     pub price_estimate_min: Option<(Option<Price>, Option<Price>)>,
     pub price_estimate_max: Option<(Option<Price>, Option<Price>)>,
     pub availability: Option<(Option<ListingAvailability>, Option<ListingAvailability>)>,
@@ -318,7 +319,7 @@ pub enum ProductListingLifecycleChange {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductListingChanged {
-    price: Option<ValueChange<Option<Price>>>,
+    price: Option<ValueChange<Option<ProductListingPrice>>>,
     price_estimate_min: Option<ValueChange<Option<Price>>>,
     price_estimate_max: Option<ValueChange<Option<Price>>>,
     availability: Option<ValueChange<Option<ListingAvailability>>>,
@@ -344,7 +345,11 @@ impl ProductListingChanged {
         }
     }
 
-    pub(crate) fn change_price(&mut self, previous: Option<Price>, current: Option<Price>) {
+    pub(crate) fn change_price(
+        &mut self,
+        previous: Option<ProductListingPrice>,
+        current: Option<ProductListingPrice>,
+    ) {
         coalesce_value_change(&mut self.price, previous, current);
     }
 
@@ -455,7 +460,7 @@ impl ProductListingChanged {
             && self.sale_observation.is_none()
     }
 
-    pub const fn price(&self) -> Option<&ValueChange<Option<Price>>> {
+    pub const fn price(&self) -> Option<&ValueChange<Option<ProductListingPrice>>> {
         self.price.as_ref()
     }
 
@@ -654,7 +659,10 @@ mod tests {
         assert_eq!(
             Err(RehydrateProductListingEventError::EqualValues { field: "price" }),
             ProductListingEventPayload::rehydrate_changed(RehydratedProductListingChanged {
-                price: Some((Some(price), Some(price))),
+                price: Some((
+                    Some(ProductListingPrice::from(price)),
+                    Some(ProductListingPrice::from(price)),
+                )),
                 price_estimate_min: None,
                 price_estimate_max: None,
                 availability: None,
@@ -665,6 +673,31 @@ mod tests {
                 sale_observation: None,
             })
         );
+    }
+
+    #[test]
+    fn should_rehydrate_on_request_price_change() {
+        let payload =
+            ProductListingEventPayload::rehydrate_changed(RehydratedProductListingChanged {
+                price: Some((Some(ProductListingPrice::OnRequest), None)),
+                price_estimate_min: None,
+                price_estimate_max: None,
+                availability: None,
+                url: None,
+                images: None,
+                auction: None,
+                lifecycle: None,
+                sale_observation: None,
+            });
+
+        assert!(matches!(
+            payload,
+            Ok(ProductListingEventPayload::Changed(changed))
+                if changed.price().is_some_and(|price| {
+                    *price.previous() == Some(ProductListingPrice::OnRequest)
+                        && price.current().is_none()
+                })
+        ));
     }
 
     #[test]

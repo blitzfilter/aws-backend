@@ -7,6 +7,7 @@ use localization::Language;
 use money::Currency;
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::product_listing_id::ProductListingId;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 use product_listing_core::source_listing_id::SourceListingId;
 use serde::{Deserialize, Serialize};
@@ -187,12 +188,38 @@ impl TextDocument {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SourcePriceDocument {
-    pub(crate) amount: u64,
-    #[serde(with = "currency")]
-    pub(crate) currency: Currency,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub(crate) enum SourcePriceDocument {
+    Monetary {
+        amount: u64,
+        #[serde(with = "currency")]
+        currency: Currency,
+    },
+    OnRequest,
+}
+
+impl From<ProductListingPrice> for SourcePriceDocument {
+    fn from(value: ProductListingPrice) -> Self {
+        match value {
+            ProductListingPrice::Monetary(price) => Self::Monetary {
+                amount: u64::from(price.monetary_amount),
+                currency: price.currency,
+            },
+            ProductListingPrice::OnRequest => Self::OnRequest,
+        }
+    }
+}
+
+impl From<SourcePriceDocument> for ProductListingPrice {
+    fn from(value: SourcePriceDocument) -> Self {
+        match value {
+            SourcePriceDocument::Monetary { amount, currency } => {
+                Self::Monetary(money::Price::new(amount.into(), currency))
+            }
+            SourcePriceDocument::OnRequest => Self::OnRequest,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,10 +357,8 @@ impl ProductListingDocument {
         }
     }
 
-    pub(crate) fn source_price(&self) -> Option<(u64, Currency)> {
-        self.source_price
-            .as_ref()
-            .map(|price| (price.amount, price.currency))
+    pub(crate) fn source_price(&self) -> Option<ProductListingPrice> {
+        self.source_price.map(Into::into)
     }
 
     pub(crate) fn sale_price(&self, currency: Currency) -> Option<u64> {
@@ -368,7 +393,7 @@ mod tests {
             title_fr: None,
             title_es: None,
             title_it: None,
-            source_price: Some(SourcePriceDocument {
+            source_price: Some(SourcePriceDocument::Monetary {
                 amount: 100,
                 currency: Currency::Eur,
             }),
@@ -411,6 +436,10 @@ mod tests {
         let value = serde_json::to_value(document()?)?;
 
         assert_eq!(
+            Some(&serde_json::json!("MONETARY")),
+            value.pointer("/sourcePrice/type")
+        );
+        assert_eq!(
             Some(&serde_json::json!(100)),
             value.pointer("/sourcePrice/amount")
         );
@@ -447,6 +476,20 @@ mod tests {
             serde_json::to_value(document)?
                 .get("availability")
                 .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_roundtrip_on_request_source_price() -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(document()?)?;
+        value["sourcePrice"] = serde_json::json!({ "type": "ON_REQUEST" });
+
+        let restored = serde_json::from_value::<ProductListingDocument>(value)?;
+
+        assert_eq!(
+            Some(ProductListingPrice::OnRequest),
+            restored.source_price()
         );
         Ok(())
     }

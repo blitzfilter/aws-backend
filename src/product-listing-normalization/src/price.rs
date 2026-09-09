@@ -1,4 +1,5 @@
 use money::{Currency, HasMinorUnitExponent, MonetaryAmount, Price};
+use product_listing_core::product_listing_price::ProductListingPrice;
 use regex::regex;
 
 // ---------------------------------------------------------------------------
@@ -120,19 +121,46 @@ fn parse_price_number(number: &str, currency: &Currency) -> Result<MonetaryAmoun
 // Public field-level helper
 // ---------------------------------------------------------------------------
 
-/// Parses an optional raw price string with explicit fallback currency context.
-/// Blank values and deliberate price-on-request markers produce no assertion.
+/// Parses an optional raw monetary price with explicit fallback currency context.
+/// Blank values and deliberate price-on-request markers produce no monetary assertion.
 pub fn normalize_price(
     raw: Option<&str>,
     fallback_currency: Option<Currency>,
 ) -> Result<Option<Price>, PriceNormalizationError> {
     let Some(raw) = raw else { return Ok(None) };
     let trimmed = raw.trim();
-    if trimmed.is_empty() || is_price_on_request_marker(trimmed) {
+    if trimmed.is_empty() {
         return Ok(None);
     }
-    parse_price(trimmed, fallback_currency)
-        .map(|(amount, currency)| Some(Price::new(amount, currency)))
+
+    match parse_price(trimmed, fallback_currency) {
+        Ok((amount, currency)) => Ok(Some(Price::new(amount, currency))),
+        Err(_) if is_price_on_request_marker(trimmed) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Parses the main ProductListing asking-price assertion.
+///
+/// A valid monetary price takes precedence over generic contact wording. Price-on-request
+/// markers become an explicit ProductListing domain assertion rather than an absence.
+pub fn normalize_product_listing_price(
+    raw: Option<&str>,
+    fallback_currency: Option<Currency>,
+) -> Result<Option<ProductListingPrice>, PriceNormalizationError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    match parse_price(trimmed, fallback_currency) {
+        Ok((amount, currency)) => Ok(Some(ProductListingPrice::Monetary(Price::new(
+            amount, currency,
+        )))),
+        Err(_) if is_price_on_request_marker(trimmed) => Ok(Some(ProductListingPrice::OnRequest)),
+        Err(error) => Err(error),
+    }
 }
 
 /// Parses one machine-supplied decimal with no display-text interpretation.
@@ -510,11 +538,12 @@ fn is_price_on_request_marker(raw: &str) -> bool {
 mod tests {
     use rstest::rstest;
 
-    use money::Currency;
+    use money::{Currency, Price};
 
     use super::{
         PriceError, detect_currency, extract_price_number_candidate, is_price_on_request_marker,
-        normalise_fraction, normalize_machine_decimal_price, parse_price, split_decimal,
+        normalise_fraction, normalize_machine_decimal_price, normalize_product_listing_price,
+        parse_price, split_decimal,
     };
 
     // -----------------------------------------------------------------------
@@ -799,6 +828,34 @@ mod tests {
     // -----------------------------------------------------------------------
     // is_price_on_request_marker
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn should_preserve_on_request_and_prefer_explicit_monetary_prices() {
+        use product_listing_core::product_listing_price::ProductListingPrice;
+
+        assert_eq!(
+            Ok(Some(ProductListingPrice::OnRequest)),
+            normalize_product_listing_price(Some("Price on request"), None)
+        );
+        assert_eq!(
+            Ok(Some(ProductListingPrice::OnRequest)),
+            normalize_product_listing_price(Some("Preis auf Anfrage"), None)
+        );
+        assert_eq!(
+            Ok(Some(ProductListingPrice::Monetary(Price::new(
+                1_250_000_u64.into(),
+                Currency::Eur,
+            )))),
+            normalize_product_listing_price(Some("€12,500 – contact us to buy"), None)
+        );
+        assert_eq!(
+            Ok(Some(ProductListingPrice::Monetary(Price::new(
+                900_000_u64.into(),
+                Currency::Usd,
+            )))),
+            normalize_product_listing_price(Some("$9,000, call for more information"), None)
+        );
+    }
 
     #[rstest]
     // English

@@ -60,6 +60,7 @@ struct SourceRow {
     product_title_language: Option<String>,
     product_description_text: Option<String>,
     product_description_language: Option<String>,
+    price_kind: Option<String>,
     price_amount: Option<i64>,
     price_currency: Option<String>,
     price_estimate_min_amount: Option<i64>,
@@ -200,6 +201,7 @@ impl ProductListingSearchFilterMatchSourceReader
                 product.title_language AS product_title_language,
                 product.description_text AS product_description_text,
                 product.description_language AS product_description_language,
+                product.price_kind,
                 product.price_amount,
                 product.price_currency,
                 product.price_estimate_min_amount,
@@ -295,7 +297,11 @@ fn source_from_rows(
     let (titles, descriptions) =
         translations(&rows, product_title.as_ref(), product_description.as_ref())?;
     let pricing = ProductListingPricing {
-        price: price(row.price_amount, row.price_currency.as_deref())?,
+        price: product_listing_price(
+            row.price_kind.as_deref(),
+            row.price_amount,
+            row.price_currency.as_deref(),
+        )?,
         price_estimate_min: price(
             row.price_estimate_min_amount,
             row.price_estimate_min_currency.as_deref(),
@@ -477,6 +483,35 @@ fn description(value: &str) -> Result<Description, SourceRowMappingError> {
                 "persisted product search-filter match description is invalid",
             )
         })
+}
+
+fn product_listing_price(
+    kind: Option<&str>,
+    amount: Option<i64>,
+    currency_value: Option<&str>,
+) -> Result<
+    Option<product_listing_core::product_listing_price::ProductListingPrice>,
+    SourceRowMappingError,
+> {
+    match (kind, amount, currency_value) {
+        (None, None, None) => Ok(None),
+        (Some("MONETARY"), Some(amount), Some(currency_value)) => Ok(Some(
+            product_listing_core::product_listing_price::ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(u64::try_from(amount).map_err(|_| {
+                    SourceRowMappingError::invalid(
+                        "persisted product search-filter match price amount is invalid",
+                    )
+                })?),
+                currency(currency_value)?,
+            )),
+        )),
+        (Some("ON_REQUEST"), None, None) => Ok(Some(
+            product_listing_core::product_listing_price::ProductListingPrice::OnRequest,
+        )),
+        _ => Err(SourceRowMappingError::invalid(
+            "persisted product search-filter match main price is invalid",
+        )),
+    }
 }
 
 fn price(

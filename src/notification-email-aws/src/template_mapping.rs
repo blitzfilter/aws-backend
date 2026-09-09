@@ -1,5 +1,5 @@
 use localization::Language;
-use money::Price;
+
 use notification_core::{
     notification::{
         LocalizedNotificationContent, LocalizedNotificationWatchlistChange, NotificationContent,
@@ -9,7 +9,8 @@ use notification_core::{
 };
 use notification_service::ports::notification_delivery_repository::NotificationDeliverySource;
 use product_listing_core::{
-    listing_availability::ListingAvailability, product_listing_slug_id::ProductListingSlugId,
+    listing_availability::ListingAvailability, product_listing_price::ProductListingPrice,
+    product_listing_slug_id::ProductListingSlugId,
 };
 use serde_json::{Value, json};
 
@@ -238,8 +239,8 @@ pub(crate) fn template_data(
                     old_price,
                     new_price,
                 } => {
-                    data["old_price"] = json!(price_text(old_price));
-                    data["new_price"] = json!(price_text(new_price));
+                    data["old_price"] = json!(price_text(old_price, email_language));
+                    data["new_price"] = json!(price_text(new_price, email_language));
                     data["notification_type"] = json!("price_change");
                 }
                 LocalizedNotificationWatchlistChange::AvailabilityChange {
@@ -315,8 +316,18 @@ fn product_template_data(
 fn product_listing_url(product_listing_title_slug_id: &ProductListingSlugId) -> String {
     format!("https://aura-historia.com/product-listings/{product_listing_title_slug_id}")
 }
-fn price_text(price: Option<Price>) -> Option<String> {
-    price.map(|price| price.format_human_readable())
+fn price_text(price: Option<ProductListingPrice>, language: EmailLanguage) -> Option<String> {
+    price.map(|price| match price {
+        ProductListingPrice::Monetary(price) => price.format_human_readable(),
+        ProductListingPrice::OnRequest => match language {
+            EmailLanguage::De => "Preis auf Anfrage",
+            EmailLanguage::En => "Price on request",
+            EmailLanguage::Fr => "Prix sur demande",
+            EmailLanguage::Es => "Precio a consultar",
+            EmailLanguage::It => "Prezzo su richiesta",
+        }
+        .to_owned(),
+    })
 }
 
 fn availability_text(availability: ListingAvailability, language: Language) -> &'static str {
@@ -672,14 +683,42 @@ mod tests {
             );
         };
         *change = NotificationWatchlistChange::PriceChange {
-            old_price: Some(Price::new(MonetaryAmount::from(1000_u64), currency)),
-            new_price: Some(Price::new(MonetaryAmount::from(900_u64), currency)),
+            old_price: Some(Price::new(MonetaryAmount::from(1000_u64), currency).into()),
+            new_price: Some(Price::new(MonetaryAmount::from(900_u64), currency).into()),
         };
 
         let data = template_data(&source, EmailLanguage::En, None);
 
         assert_eq!(Some(expected_old_price), data["old_price"].as_str());
         assert_eq!(Some(expected_new_price), data["new_price"].as_str());
+        Ok(())
+    }
+
+    #[rstest]
+    #[case(EmailLanguage::De, "Preis auf Anfrage")]
+    #[case(EmailLanguage::En, "Price on request")]
+    #[case(EmailLanguage::Fr, "Prix sur demande")]
+    #[case(EmailLanguage::Es, "Precio a consultar")]
+    #[case(EmailLanguage::It, "Prezzo su richiesta")]
+    fn should_localize_on_request_watchlist_prices(
+        #[case] language: EmailLanguage,
+        #[case] expected: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut source = source(false, None)?;
+        let NotificationContent::Watchlist { change, .. } = &mut source.content else {
+            return Err(
+                std::io::Error::other("test source is not a watchlist notification").into(),
+            );
+        };
+        *change = NotificationWatchlistChange::PriceChange {
+            old_price: None,
+            new_price: Some(ProductListingPrice::OnRequest),
+        };
+
+        let data = template_data(&source, language, None);
+
+        assert!(data["old_price"].is_null());
+        assert_eq!(Some(expected), data["new_price"].as_str());
         Ok(())
     }
 
@@ -694,7 +733,7 @@ mod tests {
         };
         *change = NotificationWatchlistChange::PriceChange {
             old_price: None,
-            new_price: Some(Price::new(MonetaryAmount::from(0_u64), Currency::Eur)),
+            new_price: Some(Price::new(MonetaryAmount::from(0_u64), Currency::Eur).into()),
         };
 
         let data = template_data(&source, EmailLanguage::En, None);

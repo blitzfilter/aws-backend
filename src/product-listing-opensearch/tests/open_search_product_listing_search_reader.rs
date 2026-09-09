@@ -7,6 +7,7 @@ use money::Currency;
 use money::MonetaryAmount;
 use opensearch::IndexParts;
 use product_listing_core::product_listing_id::ProductListingId;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_search::ProductListingSearch;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 use product_listing_core::source_listing_id::SourceListingId;
@@ -59,10 +60,10 @@ async fn should_search_active_and_sold_products_with_one_pinned_price_plan_impl(
     assert_eq!(2, result.items.len());
     assert!(result.items.iter().all(|item| {
         item.display_price
-            == Some(money::Price::new(
+            == Some(ProductListingPrice::Monetary(money::Price::new(
                 MonetaryAmount::from(110_u64),
                 Currency::Usd,
-            ))
+            )))
     }));
     Ok(())
 }
@@ -290,7 +291,11 @@ fn product_listing_document(
         "eventId": EventId::new(),
         "title": { "text": "Blue vase", "language": "EN" },
         "titleEn": "Blue vase",
-        "sourcePrice": seed.source_price.map(|amount| json!({ "amount": amount, "currency": "EUR" })),
+        "sourcePrice": seed.source_price.map(|amount| json!({
+                    "type": "MONETARY",
+                    "amount": amount,
+                    "currency": "EUR"
+                })),
         "salePrices": sale_prices,
         "saleObservationFxRateId": seed.has_sale_observation.then(FxRateId::new),
         "saleObservedAt": sale_observed_at,

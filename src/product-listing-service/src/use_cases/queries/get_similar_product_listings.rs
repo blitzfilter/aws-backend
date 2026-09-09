@@ -712,7 +712,12 @@ mod tests {
             source_listing_id: SourceListingId::try_from("cabinet-1")
                 .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
             title: Some(Localized::new(Language::En, Title::from("Cabinet"))),
-            display_price: Some(Price::new(MonetaryAmount::from(100_u64), Currency::Eur)),
+            display_price: Some(
+                product_listing_core::product_listing_price::ProductListingPrice::from(Price::new(
+                    MonetaryAmount::from(100_u64),
+                    Currency::Eur,
+                )),
+            ),
             price_valuation: ProductListingSummaryPriceValuation::Current {
                 fx_rate_id: FxRateId::new(),
                 captured_at: OffsetDateTime::UNIX_EPOCH,

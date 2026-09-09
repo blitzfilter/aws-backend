@@ -1,6 +1,6 @@
 use crate::error::{ApiError, ApiErrorCode, BAD_BODY_VALUE};
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
-use crate::values::{LocalizedTextData, PriceData};
+use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 
 use listing_source_core::ListingSourceId;
 use money::Price;
@@ -27,7 +27,7 @@ pub(super) struct CreateProductListingData {
     pub(super) title: LocalizedTextData,
     pub(super) description: LocalizedTextData,
     #[serde(default)]
-    pub(super) price: Option<PriceData>,
+    pub(super) price: Option<ProductListingPriceData>,
     #[serde(default)]
     pub(super) price_estimate_min: Option<PriceData>,
     #[serde(default)]
@@ -47,7 +47,7 @@ pub(super) struct CreateProductListingData {
 pub(super) struct UpdateProductListingData {
     pub(super) source_listing_id: String,
     #[serde(default)]
-    pub(super) price: PatchValue<PriceData>,
+    pub(super) price: PatchValue<ProductListingPriceData>,
     #[serde(default)]
     pub(super) price_estimate_min: PatchValue<PriceData>,
     #[serde(default)]
@@ -74,7 +74,7 @@ pub(super) struct UpsertProductListingData {
     #[serde(default)]
     pub(super) description: Option<LocalizedTextData>,
     #[serde(default)]
-    pub(super) price: PatchValue<PriceData>,
+    pub(super) price: PatchValue<ProductListingPriceData>,
     #[serde(default)]
     pub(super) price_estimate_min: PatchValue<PriceData>,
     #[serde(default)]
@@ -135,7 +135,7 @@ impl CreateProductListingData {
             title: Some(title(self.title)),
             description: Some(description(self.description)),
             pricing: ProductListingPricing {
-                price: self.price.map(price),
+                price: self.price.map(product_listing_price),
                 price_estimate_min: self.price_estimate_min.map(price),
                 price_estimate_max: self.price_estimate_max.map(price),
             },
@@ -160,7 +160,7 @@ impl UpdateProductListingData {
             source_listing_id(self.source_listing_id)?,
         );
         let command = UpdateProductListingCommand {
-            price: clearable(self.price.map(price)),
+            price: clearable(self.price.map(product_listing_price)),
             price_estimate_min: clearable(self.price_estimate_min.map(price)),
             price_estimate_max: clearable(self.price_estimate_max.map(price)),
             availability: clearable(self.availability),
@@ -183,7 +183,7 @@ impl UpsertProductListingData {
             source_listing_id: source_listing_id(self.source_listing_id)?,
             title: self.title.map(title),
             description: self.description.map(description),
-            price: clearable(self.price.map(price)),
+            price: clearable(self.price.map(product_listing_price)),
             price_estimate_min: clearable(self.price_estimate_min.map(price)),
             price_estimate_max: clearable(self.price_estimate_max.map(price)),
             availability: clearable(self.availability),
@@ -232,6 +232,12 @@ fn description(
 }
 
 fn price(value: PriceData) -> Price {
+    value.into()
+}
+
+fn product_listing_price(
+    value: ProductListingPriceData,
+) -> product_listing_core::product_listing_price::ProductListingPrice {
     value.into()
 }
 

@@ -20,12 +20,13 @@ use product_listing_core::product_listing::{
 };
 use product_listing_core::product_listing_id::{ProductListingId, ProductListingKey};
 use product_listing_core::product_listing_image::ProductListingImage;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use url::Url;
 use user_core::user_id::UserId;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct UpdateProductListingCommand {
-    pub price: PatchField<Price>,
+    pub price: PatchField<ProductListingPrice>,
     pub price_estimate_min: PatchField<Price>,
     pub price_estimate_max: PatchField<Price>,
     pub availability: PatchField<ListingAvailability>,
@@ -288,7 +289,7 @@ fn apply_command(
     Ok(())
 }
 
-fn apply_price_patch(field: &mut Option<Price>, patch: PatchField<Price>) -> bool {
+fn apply_price_patch<T>(field: &mut Option<T>, patch: PatchField<T>) -> bool {
     match patch {
         PatchField::Unchanged => false,
         PatchField::Set(value) => {
@@ -440,12 +441,12 @@ mod tests {
     #[test]
     fn should_emit_one_price_event_with_final_pricing_for_combined_leaf_patches() {
         let old_pricing = ProductListingPricing {
-            price: Some(price(100)),
+            price: Some(ProductListingPrice::from(price(100))),
             price_estimate_min: Some(price(110)),
             price_estimate_max: Some(price(120)),
         };
         let new_pricing = ProductListingPricing {
-            price: Some(price(200)),
+            price: Some(ProductListingPrice::from(price(200))),
             price_estimate_min: Some(price(210)),
             price_estimate_max: Some(price(220)),
         };
@@ -471,7 +472,7 @@ mod tests {
         apply_command(
             &mut listing,
             UpdateProductListingCommand {
-                price: PatchField::Set(price(200)),
+                price: PatchField::Set(ProductListingPrice::from(price(200))),
                 price_estimate_min: PatchField::Set(price(210)),
                 price_estimate_max: PatchField::Set(price(220)),
                 ..Default::default()

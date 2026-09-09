@@ -1,5 +1,6 @@
 use localization::{Language, Localized};
 use money::{Currency, MonetaryAmount, Price};
+use product_listing_core::product_listing_price::ProductListingPrice;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +49,40 @@ impl From<Price> for PriceData {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub(crate) enum ProductListingPriceData {
+    Monetary {
+        #[serde(with = "crate::wire::currency")]
+        currency: Currency,
+        amount: u64,
+    },
+    OnRequest,
+}
+
+impl From<ProductListingPriceData> for ProductListingPrice {
+    fn from(value: ProductListingPriceData) -> Self {
+        match value {
+            ProductListingPriceData::Monetary { currency, amount } => {
+                Self::Monetary(Price::new(MonetaryAmount::from(amount), currency))
+            }
+            ProductListingPriceData::OnRequest => Self::OnRequest,
+        }
+    }
+}
+
+impl From<ProductListingPrice> for ProductListingPriceData {
+    fn from(value: ProductListingPrice) -> Self {
+        match value {
+            ProductListingPrice::Monetary(price) => Self::Monetary {
+                currency: price.currency,
+                amount: price.monetary_amount.into(),
+            },
+            ProductListingPrice::OnRequest => Self::OnRequest,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +101,10 @@ mod tests {
         assert_eq!(
             Currency::Usd,
             serde_json::from_str::<PriceData>(r#"{"currency":"USD","amount":1}"#)?.currency
+        );
+        assert_eq!(
+            serde_json::json!({ "type": "ON_REQUEST" }),
+            serde_json::to_value(ProductListingPriceData::OnRequest)?
         );
         assert_eq!(
             Language::De,

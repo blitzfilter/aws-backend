@@ -2,9 +2,10 @@ use crate::{notification_id::NotificationId, notification_kind::NotificationKind
 use domain_primitives::event_id::EventId;
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use localization::Localized;
-use money::Price;
+
 use partnership_core::partnership_application_id::PartnershipApplicationId;
 use party_core::party_name::PartyName;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::{
     content_policy::ContentPolicyDecision, listing_availability::ListingAvailability,
     product_listing_id::ProductListingId, product_listing_slug_id::ProductListingSlugId,
@@ -251,8 +252,8 @@ pub enum PartnershipApplicationDecision {
 #[derive(Debug, Clone, PartialEq)]
 pub enum NotificationWatchlistChange {
     PriceChange {
-        old_price: Option<Price>,
-        new_price: Option<Price>,
+        old_price: Option<ProductListingPrice>,
+        new_price: Option<ProductListingPrice>,
     },
     AvailabilityChange {
         old_availability: Option<ListingAvailability>,
@@ -318,8 +319,8 @@ pub struct LocalizedProductListingNotificationSnapshot {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LocalizedNotificationWatchlistChange {
     PriceChange {
-        old_price: Option<Price>,
-        new_price: Option<Price>,
+        old_price: Option<ProductListingPrice>,
+        new_price: Option<ProductListingPrice>,
     },
     AvailabilityChange {
         old_availability: Option<ListingAvailability>,

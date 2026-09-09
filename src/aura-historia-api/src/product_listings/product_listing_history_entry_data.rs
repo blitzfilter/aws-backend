@@ -1,4 +1,4 @@
-use crate::values::{LocalizedTextData, PriceData};
+use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use domain_primitives::event_id::EventId;
 use fxrate_core::FxRateId;
 use listing_source_core::ListingSourceId;
@@ -66,8 +66,8 @@ struct ProductListingChangedHistoryData {
 )]
 enum ProductListingHistoryChangeData {
     MainPriceChanged {
-        previous: Option<PriceData>,
-        current: Option<PriceData>,
+        previous: Option<ProductListingPriceData>,
+        current: Option<ProductListingPriceData>,
     },
     MinimumEstimateChanged {
         previous: Option<PriceData>,
@@ -112,7 +112,7 @@ enum ProductListingHistoryChangeData {
 #[serde(rename_all = "camelCase")]
 struct ProductListingPricingData {
     #[serde(skip_serializing_if = "Option::is_none")]
-    price: Option<PriceData>,
+    price: Option<ProductListingPriceData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     price_estimate_min: Option<PriceData>,
     #[serde(skip_serializing_if = "Option::is_none")]

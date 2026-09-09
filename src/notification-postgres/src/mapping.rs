@@ -17,6 +17,7 @@ use product_listing_core::{
     content_policy::{ContentPolicyDecision, SensitiveContentCategory},
     listing_availability::ListingAvailability,
     product_listing_id::ProductListingId,
+    product_listing_price::ProductListingPrice,
     product_listing_slug_id::ProductListingSlugId,
     source_listing_id::SourceListingId,
     title::Title,
@@ -124,9 +125,13 @@ enum PersistedCurrency {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct PersistedPrice {
-    currency: PersistedCurrency,
-    amount: u64,
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+enum PersistedProductListingPrice {
+    Monetary {
+        currency: PersistedCurrency,
+        amount: u64,
+    },
+    OnRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,8 +250,8 @@ where
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 enum NotificationWatchlistChangeV1 {
     PriceChange {
-        old_price: Option<PersistedPrice>,
-        new_price: Option<PersistedPrice>,
+        old_price: Option<PersistedProductListingPrice>,
+        new_price: Option<PersistedProductListingPrice>,
     },
     #[serde(rename = "AVAILABILITY_CHANGE")]
     AvailabilityChange {
@@ -608,7 +613,10 @@ impl TryFrom<NotificationRow> for Notification {
     }
 }
 
-fn price_data_from_price(price: Price) -> PersistedPrice {
+fn price_data_from_price(price: ProductListingPrice) -> PersistedProductListingPrice {
+    let ProductListingPrice::Monetary(price) = price else {
+        return PersistedProductListingPrice::OnRequest;
+    };
     let currency = match price.currency {
         Currency::Eur => PersistedCurrency::Eur,
         Currency::Gbp => PersistedCurrency::Gbp,
@@ -630,14 +638,17 @@ fn price_data_from_price(price: Price) -> PersistedPrice {
         Currency::Chf => PersistedCurrency::Chf,
         Currency::Zar => PersistedCurrency::Zar,
     };
-    PersistedPrice {
+    PersistedProductListingPrice::Monetary {
         currency,
         amount: price.monetary_amount.into(),
     }
 }
 
-fn price_from_data(price: PersistedPrice) -> Price {
-    let currency = match price.currency {
+fn price_from_data(price: PersistedProductListingPrice) -> ProductListingPrice {
+    let PersistedProductListingPrice::Monetary { currency, amount } = price else {
+        return ProductListingPrice::OnRequest;
+    };
+    let currency = match currency {
         PersistedCurrency::Eur => Currency::Eur,
         PersistedCurrency::Gbp => Currency::Gbp,
         PersistedCurrency::Usd => Currency::Usd,
@@ -658,7 +669,7 @@ fn price_from_data(price: PersistedPrice) -> Price {
         PersistedCurrency::Chf => Currency::Chf,
         PersistedCurrency::Zar => Currency::Zar,
     };
-    Price::new(MonetaryAmount::from(price.amount), currency)
+    ProductListingPrice::Monetary(Price::new(MonetaryAmount::from(amount), currency))
 }
 
 fn serialize_optional_listing_availability<S>(
@@ -958,19 +969,55 @@ mod tests {
     #[test]
     fn should_serialize_source_currency_explicitly() -> Result<(), Box<dyn std::error::Error>> {
         let change = NotificationWatchlistChange::PriceChange {
-            old_price: Some(Price::new(MonetaryAmount::from(1000_u64), Currency::Eur)),
-            new_price: Some(Price::new(MonetaryAmount::from(900_u64), Currency::Eur)),
+            old_price: Some(Price::new(MonetaryAmount::from(1000_u64), Currency::Eur).into()),
+            new_price: Some(Price::new(MonetaryAmount::from(900_u64), Currency::Eur).into()),
         };
         let persisted = NotificationWatchlistChangeV1::from(&change);
 
         assert_eq!(
             serde_json::json!({
                 "type": "PRICE_CHANGE",
-                "old_price": { "currency": "EUR", "amount": 1000 },
-                "new_price": { "currency": "EUR", "amount": 900 },
+                "old_price": {
+                    "type": "MONETARY",
+                    "currency": "EUR",
+                    "amount": 1000
+                },
+                "new_price": {
+                    "type": "MONETARY",
+                    "currency": "EUR",
+                    "amount": 900
+                },
             }),
             serde_json::to_value(persisted)?
         );
+        Ok(())
+    }
+
+    #[test]
+    fn should_serialize_and_rehydrate_on_request_watchlist_prices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let change = NotificationWatchlistChange::PriceChange {
+            old_price: Some(ProductListingPrice::OnRequest),
+            new_price: None,
+        };
+        let persisted = NotificationWatchlistChangeV1::from(&change);
+        let value = serde_json::to_value(&persisted)?;
+
+        assert_eq!(
+            serde_json::json!({
+                "type": "PRICE_CHANGE",
+                "old_price": { "type": "ON_REQUEST" },
+                "new_price": null,
+            }),
+            value
+        );
+        assert!(matches!(
+            NotificationWatchlistChange::from(persisted),
+            NotificationWatchlistChange::PriceChange {
+                old_price: Some(ProductListingPrice::OnRequest),
+                new_price: None,
+            }
+        ));
         Ok(())
     }
 }

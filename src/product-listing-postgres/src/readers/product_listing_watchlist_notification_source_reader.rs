@@ -327,7 +327,9 @@ fn parse_language(
 mod tests {
     use super::*;
     use money::Currency;
-    use product_listing_core::listing_availability::ListingAvailability;
+    use product_listing_core::{
+        listing_availability::ListingAvailability, product_listing_price::ProductListingPrice,
+    };
 
     #[test]
     fn should_read_price_and_availability_from_composite_changed_payload()
@@ -339,8 +341,16 @@ mod tests {
             &serde_json::json!({
                 "pricing": {
                     "price": {
-                        "previous": { "amount": 1200, "currency": "USD" },
-                        "current": { "amount": 900, "currency": "USD" }
+                        "previous": {
+                            "type": "MONETARY",
+                            "amount": 1200,
+                            "currency": "USD"
+                        },
+                        "current": {
+                            "type": "MONETARY",
+                            "amount": 900,
+                            "currency": "USD"
+                        }
                     }
                 },
                 "availability": { "previous": "IN_STOCK", "current": "SOLD_OUT" }
@@ -359,10 +369,17 @@ mod tests {
                     old_availability: Some(ListingAvailability::InStock),
                     new_availability: Some(ListingAvailability::SoldOut),
                 }
-            ] if u64::from(old_price.monetary_amount) == 1200
-                && old_price.currency == Currency::Usd
-                && u64::from(new_price.monetary_amount) == 900
-                && new_price.currency == Currency::Usd
+            ] if matches!(
+                old_price,
+                ProductListingPrice::Monetary(price)
+                    if u64::from(price.monetary_amount) == 1200
+                        && price.currency == Currency::Usd
+            ) && matches!(
+                new_price,
+                ProductListingPrice::Monetary(price)
+                    if u64::from(price.monetary_amount) == 900
+                        && price.currency == Currency::Usd
+            )
         ));
         Ok(())
     }

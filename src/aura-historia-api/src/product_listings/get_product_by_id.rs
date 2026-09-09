@@ -511,11 +511,15 @@ mod tests {
                 description: None,
                 pricing: ProductListingPricingPresentation {
                     source: ProductListingPricing {
-                        price: Some(Price::new(MonetaryAmount::from(100_u64), Currency::Eur)),
+                        price: Some(
+                            Price::new(MonetaryAmount::from(100_u64), Currency::Eur).into(),
+                        ),
                         ..Default::default()
                     },
                     display: DisplayProductListingPricing {
-                        price: Some(Price::new(MonetaryAmount::from(100_u64), Currency::Eur)),
+                        price: Some(
+                            Price::new(MonetaryAmount::from(100_u64), Currency::Eur).into(),
+                        ),
                         price_estimate_min: None,
                         price_estimate_max: None,
                     },

@@ -316,7 +316,7 @@ fn maximal_percolation_input() -> Result<ProductListingPercolationInput, Box<dyn
         (Language::Es, Title::from("gabinete de percolación máximo")),
         (Language::It, Title::from("mobile di percolazione massimo")),
     ]);
-    source.pricing.price = Some(source_price);
+    source.pricing.price = Some(source_price.into());
     source.availability = Some(ListingAvailability::InStock);
     source.images = IndexSet::from([ProductListingImage::new(Url::parse(
         "https://shop.example.test/product_listings/sku-1/image.jpg",

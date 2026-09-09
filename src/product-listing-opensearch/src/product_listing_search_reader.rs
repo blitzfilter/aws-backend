@@ -18,6 +18,7 @@ use opensearch::http::request::JsonBody;
 use opensearch::{OpenSearch, SearchParts};
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_search::{
     ListingAvailabilityQuery, ProductListingSearch,
 };
@@ -178,7 +179,7 @@ fn map_summary(
 fn map_summary_fields(
     document: ProductListingDocument,
     preferred_language: Language,
-    display_price: Option<Price>,
+    display_price: Option<ProductListingPrice>,
     price_valuation: ProductListingSummaryPriceValuation,
 ) -> Result<ProductListingSearchItem, ProductListingSearchReadError> {
     let title = resolve_title(&document, preferred_language);
@@ -247,26 +248,34 @@ fn price_valuation(
 fn resolve_price(
     document: &ProductListingDocument,
     price_filter: &ProductListingPriceFilterPlan,
-) -> Result<Option<Price>, ProductListingSearchReadError> {
+) -> Result<Option<ProductListingPrice>, ProductListingSearchReadError> {
     document
         .validate()
         .map_err(|_| ProductListingSearchReadError::ProductListingSearchReadModelInvalid)?;
 
     if document.has_sale_observation() {
-        return Ok(document
-            .sale_price(price_filter.target_currency)
-            .map(|amount| Price::new(amount.into(), price_filter.target_currency)));
+        return Ok(match document.sale_price(price_filter.target_currency) {
+            Some(amount) => Some(ProductListingPrice::Monetary(Price::new(
+                amount.into(),
+                price_filter.target_currency,
+            ))),
+            None => document.source_price(),
+        });
     }
 
-    document
-        .source_price()
-        .map(|(amount, currency)| {
-            price_filter
-                .convert_active_source_amount(currency, amount)
-                .map(|amount| Price::new(amount.into(), price_filter.target_currency))
-                .map_err(|_| ProductListingSearchReadError::ProductListingSearchReadModelInvalid)
-        })
-        .transpose()
+    match document.source_price() {
+        None => Ok(None),
+        Some(ProductListingPrice::OnRequest) => Ok(Some(ProductListingPrice::OnRequest)),
+        Some(ProductListingPrice::Monetary(price)) => price_filter
+            .convert_active_source_amount(price.currency, u64::from(price.monetary_amount))
+            .map(|amount| {
+                Some(ProductListingPrice::Monetary(Price::new(
+                    amount.into(),
+                    price_filter.target_currency,
+                )))
+            })
+            .map_err(|_| ProductListingSearchReadError::ProductListingSearchReadModelInvalid),
+    }
 }
 
 fn map_hybrid_search_response(
@@ -869,7 +878,7 @@ mod tests {
             title_fr: None,
             title_es: None,
             title_it: None,
-            source_price: Some(SourcePriceDocument {
+            source_price: Some(SourcePriceDocument::Monetary {
                 amount: 100,
                 currency: Currency::Eur,
             }),
@@ -1141,8 +1150,23 @@ mod tests {
 
         assert_eq!(
             price,
-            Some(Price::new(MonetaryAmount::from(110_u64), Currency::Usd))
+            Some(ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(110_u64),
+                Currency::Usd,
+            )))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn should_preserve_on_request_price_without_fx_conversion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = document()?;
+        document.source_price = Some(SourcePriceDocument::OnRequest);
+
+        let price = resolve_price(&document, &price_filter(Currency::Usd, Some(110))?)?;
+
+        assert_eq!(Some(ProductListingPrice::OnRequest), price);
         Ok(())
     }
 
@@ -1177,7 +1201,10 @@ mod tests {
 
         assert_eq!(
             price,
-            Some(Price::new(MonetaryAmount::from(777_u64), Currency::Usd))
+            Some(ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(777_u64),
+                Currency::Usd,
+            )))
         );
         Ok(())
     }

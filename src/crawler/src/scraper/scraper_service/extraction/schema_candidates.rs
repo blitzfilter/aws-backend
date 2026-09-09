@@ -392,7 +392,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(score_prepared_product(&raw, &prepared).as_usize(), 2);
+        assert_eq!(score_prepared_product(&raw, &prepared).as_usize(), 3);
 
         raw.source_listing_id = "SKU-1".to_string();
         let prepared =
@@ -402,7 +402,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(score_prepared_product(&raw, &prepared).as_usize(), 3);
+        assert_eq!(score_prepared_product(&raw, &prepared).as_usize(), 4);
     }
 
     #[test]

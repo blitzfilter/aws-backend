@@ -2,7 +2,7 @@ use crate::ports::ListingSourceSummary;
 use application::error::BoxError;
 use domain_primitives::event_id::EventId;
 use localization::Language;
-use money::Price;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::{
     content_policy::ContentPolicyDecision, listing_availability::ListingAvailability,
     listing_lifecycle::ListingLifecycle, product_listing_id::ProductListingId,
@@ -33,8 +33,8 @@ pub struct ProductListingWatchlistNotificationSource {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProductListingWatchlistNotificationChange {
     PriceChanged {
-        old_price: Option<Price>,
-        new_price: Option<Price>,
+        old_price: Option<ProductListingPrice>,
+        new_price: Option<ProductListingPrice>,
     },
     AvailabilityChanged {
         old_availability: Option<ListingAvailability>,
