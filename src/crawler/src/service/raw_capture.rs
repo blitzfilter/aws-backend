@@ -332,9 +332,7 @@ mod tests {
                 return Err(product_listing_service::use_cases::CaptureProductListingRawObservationError::ListingSourceNotFound);
             }
             let product_listing_raw_stream_id =
-                product_listing_service::ports::ProductListingRawStreamId::from_uuid(
-                    uuid::Uuid::new_v4(),
-                );
+                product_listing_service::ports::ProductListingRawStreamId::new();
             Ok(match self.outcome {
                 FakeCaptureOutcome::Unchanged => {
                     CaptureProductListingRawObservationResult::Unchanged {
