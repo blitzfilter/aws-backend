@@ -1,7 +1,7 @@
 use super::{HEADER_READ_TIMEOUT, MAX_HTTP_CONNECTIONS, MAX_HTTP_HEADER_BYTES, MAX_HTTP_HEADERS};
 use crate::{
     QueueConfig, WorkerRuntime,
-    cdc::{MAX_CDC_BODY_BYTES, WorkerQueue},
+    cdc::{DomainJobPayload, MAX_CDC_BODY_BYTES, WorkerQueue},
     serve_with_runtime,
 };
 use std::time::Duration;
@@ -106,6 +106,138 @@ async fn should_read_fragmented_and_chunked_full_bodies_before_any_publication()
         server.await.unwrap().unwrap();
     }
 }
+#[tokio::test]
+async fn should_accept_request_when_headers_and_body_are_fragmented_across_tcp_writes() {
+    let (runtime, mut receivers) =
+        WorkerRuntime::with_notification_delivery_queue(QueueConfig::new(1)).unwrap();
+    let (address, stop, server) = server(runtime).await;
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let body = body(0);
+
+    stream
+        .write_all(b"POST /cdc/sequin HTTP/1.1\r\nhost: local")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    stream
+        .write_all(
+            format!(
+                "host\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let (first, last) = body.split_at(body.len() / 2);
+    stream.write_all(first.as_bytes()).await.unwrap();
+    assert!(
+        receivers
+            .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))
+            .await
+            .is_err()
+    );
+    stream.write_all(last.as_bytes()).await.unwrap();
+
+    assert!(
+        response(&mut stream)
+            .await
+            .starts_with("HTTP/1.1 202 Accepted")
+    );
+    let job = receivers
+        .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_secs(1))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(WorkerQueue::NotificationDelivery, job.target_queue);
+    assert!(matches!(
+        job.payload,
+        DomainJobPayload::NotificationDeliveryCreated(ref job)
+            if job.notification_delivery_id == "10000000-0000-0000-0000-000000000001"
+    ));
+    assert!(
+        receivers
+            .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))
+            .await
+            .is_err()
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn should_accept_valid_cdc_body_at_configured_size_limit() {
+    let base_body_len = body(0).len();
+    let padding = MAX_CDC_BODY_BYTES.checked_sub(base_body_len).unwrap();
+    let body = body(padding);
+    assert_eq!(MAX_CDC_BODY_BYTES, body.len());
+
+    let (runtime, mut receivers) =
+        WorkerRuntime::with_notification_delivery_queue(QueueConfig::new(1)).unwrap();
+    let (address, stop, server) = server(runtime).await;
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "POST /cdc/sequin HTTP/1.1\r\nhost: localhost\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    stream.write_all(body.as_bytes()).await.unwrap();
+
+    assert!(
+        response(&mut stream)
+            .await
+            .starts_with("HTTP/1.1 202 Accepted")
+    );
+    let job = receivers
+        .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_secs(1))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(WorkerQueue::NotificationDelivery, job.target_queue);
+    assert!(matches!(
+        job.payload,
+        DomainJobPayload::NotificationDeliveryCreated(ref job)
+            if job.notification_delivery_id == "10000000-0000-0000-0000-000000000001"
+    ));
+    assert!(
+        receivers
+            .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))
+            .await
+            .is_err()
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn should_reject_malformed_http_headers_without_publication() {
+    let (runtime, mut receivers) =
+        WorkerRuntime::with_notification_delivery_queue(QueueConfig::new(1)).unwrap();
+    let (address, stop, server) = server(runtime).await;
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    stream
+        .write_all(
+            b"POST /cdc/sequin HTTP/1.1\r\nhost: localhost\r\nbad header: value\r\ncontent-length: 0\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+    assert!(!response(&mut stream).await.contains("202 Accepted"));
+    assert!(
+        receivers
+            .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))
+            .await
+            .is_err()
+    );
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn should_reject_oversize_and_excessive_change_batches_without_publication() {
     let (runtime, mut receivers) =
