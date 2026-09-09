@@ -45,6 +45,7 @@ use partnership_service::use_cases::{
     },
 };
 use party_service::use_cases::commands::create_party::CreatePartyUseCase;
+use party_service::use_cases::commands::delete_party::DeletePartyUseCase;
 use party_service::use_cases::commands::update_party::UpdatePartyUseCase;
 use party_service::use_cases::queries::get_party::GetPartyUseCase;
 use party_service::use_cases::queries::search_parties::SearchPartiesUseCase;
@@ -506,6 +507,7 @@ pub struct PartiesState {
     pub(crate) get_party: Arc<dyn GetPartyUseCase>,
     pub(crate) search_parties: Arc<dyn SearchPartiesUseCase>,
     pub(crate) update_party: Arc<dyn UpdatePartyUseCase>,
+    pub(crate) delete_party: Arc<dyn DeletePartyUseCase>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
@@ -515,6 +517,7 @@ impl PartiesState {
         get_party: Arc<dyn GetPartyUseCase>,
         search_parties: Arc<dyn SearchPartiesUseCase>,
         update_party: Arc<dyn UpdatePartyUseCase>,
+        delete_party: Arc<dyn DeletePartyUseCase>,
         authenticator: Arc<dyn TokenAuthenticator>,
     ) -> Self {
         Self {
@@ -522,6 +525,7 @@ impl PartiesState {
             get_party,
             search_parties,
             update_party,
+            delete_party,
             authenticator,
         }
     }

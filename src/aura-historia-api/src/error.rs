@@ -43,6 +43,7 @@ use partnership_service::use_cases::{
     },
 };
 use party_service::use_cases::commands::create_party::CreatePartyError;
+use party_service::use_cases::commands::delete_party::DeletePartyError;
 use party_service::use_cases::commands::update_party::UpdatePartyError;
 use party_service::use_cases::queries::get_party::GetPartyError;
 use party_service::use_cases::queries::search_parties::SearchPartiesError;
@@ -1493,6 +1494,46 @@ impl From<CreatePartyError> for ApiError {
             CreatePartyError::InvalidPersistedState { .. } | CreatePartyError::Internal { .. } => {
                 ApiError::internal_server_error(PARTY_INTERNAL_ERROR)
                     .with_detail("Party create failed internally.")
+            }
+        }
+    }
+}
+
+impl From<DeletePartyError> for ApiError {
+    fn from(error: DeletePartyError) -> Self {
+        match error {
+            DeletePartyError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            DeletePartyError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            DeletePartyError::NotFound => {
+                ApiError::not_found(PARTY_NOT_FOUND).with_detail("Party was not found.")
+            }
+            DeletePartyError::DependencyConflict { blocker } => ApiError::conflict(CONFLICT)
+                .with_detail(match blocker {
+                    party_service::ports::PartyDeletionBlocker::ListingSources => {
+                        "Party operates one or more ListingSources."
+                    }
+                    party_service::ports::PartyDeletionBlocker::Partnership => {
+                        "Party has a retained Partnership."
+                    }
+                }),
+            DeletePartyError::ConcurrencyConflict => {
+                ApiError::conflict(CONFLICT).with_detail("Party conflicts with current state.")
+            }
+            DeletePartyError::TemporarilyUnavailable { .. }
+            | DeletePartyError::BeginTransactionFailed
+            | DeletePartyError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PARTY_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Party could not be deleted right now.")
+            }
+            DeletePartyError::InvalidPersistedState { .. } | DeletePartyError::Internal { .. } => {
+                ApiError::internal_server_error(PARTY_INTERNAL_ERROR)
+                    .with_detail("Party deletion failed internally.")
             }
         }
     }
