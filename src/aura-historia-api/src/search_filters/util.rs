@@ -1,4 +1,5 @@
-use crate::error::{ApiError, BAD_BODY_VALUE, BAD_QUERY_PARAMETER_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE, BAD_QUERY_PARAMETER_VALUE};
+use crate::wire::parse_path_object_id;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use product_listing_core::product_listing_id::ProductListingId;
@@ -47,20 +48,12 @@ pub(super) fn parse_json_query<T: DeserializeOwned>(
 
 #[allow(clippy::result_large_err)]
 pub(super) fn parse_search_filter_id(raw: &str) -> Result<UserSearchFilterId, Response> {
-    UserSearchFilterId::try_from(raw).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field("userSearchFilterId")
-            .with_detail("Path parameter 'userSearchFilterId' must be a UUID.")
-            .into_response()
-    })
+    parse_path_object_id(raw, "userSearchFilterId", "UserSearchFilter")
+        .map_err(IntoResponse::into_response)
 }
 
 #[allow(clippy::result_large_err)]
 pub(super) fn parse_product_listing_id(raw: &str) -> Result<ProductListingId, Response> {
-    ProductListingId::try_from(raw).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field("productListingId")
-            .with_detail("Path parameter 'productListingId' must be a UUID.")
-            .into_response()
-    })
+    parse_path_object_id(raw, "productListingId", "ProductListing")
+        .map_err(IntoResponse::into_response)
 }

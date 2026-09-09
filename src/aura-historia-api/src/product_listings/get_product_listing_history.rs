@@ -1,7 +1,8 @@
 use crate::auth::{OptionalAuthExtractor, request_metadata};
-use crate::error::{ApiError, INVALID_UUID, PRODUCT_LISTING_INTERNAL_ERROR};
+use crate::error::{ApiError, PRODUCT_LISTING_INTERNAL_ERROR};
 use crate::product_listings::product_listing_history_entry_data::ProductListingHistoryEntryData;
 use crate::state::ProductListingsState;
+use crate::wire::parse_path_object_id;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -18,14 +19,13 @@ pub async fn get_product_listing_history_by_id(
     headers: HeaderMap,
     Path(raw_product_listing_id): Path<String>,
 ) -> Response {
-    let product_listing_id = match ProductListingId::try_from(raw_product_listing_id.as_str()) {
+    let product_listing_id = match parse_path_object_id::<ProductListingId>(
+        &raw_product_listing_id,
+        "productListingId",
+        "ProductListing",
+    ) {
         Ok(id) => id,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("productListingId")
-                .with_detail("Path parameter 'productListingId' must be a UUID.")
-                .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
     history_response(
         state,

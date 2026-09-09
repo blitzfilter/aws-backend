@@ -1,9 +1,17 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
-use api_support::{assert_problem, json_response, seed_access_token_for, seed_product, seed_user};
+use api_support::{
+    assert_problem, json_response, seed_access_token_for, seed_product, seed_user,
+    seed_user_with_tier,
+};
+use listing_source_core::ListingSourceId;
 use product_listing_core::product_listing_id::ProductListingId;
+use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
-use user_core::access_token::{RawAccessToken, Scope};
+use user_core::{
+    access_token::{RawAccessToken, Scope},
+    tier::UserTier,
+};
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_create_owned_search_filter() {
@@ -39,6 +47,7 @@ async fn should_create_owned_search_filter() {
     );
     assert_eq!(Some("en"), content_language.as_deref());
     assert!(has_last_modified);
+    assert!(filter_id.starts_with("sf_"));
     assert_eq!(serde_json::json!(user_id.to_string()), body["userId"]);
     assert_eq!(serde_json::json!("desk"), body["search"]["productQuery"][0]);
 }
@@ -201,6 +210,21 @@ async fn should_list_search_filter_matches() {
         "CURRENT",
         body["items"][0]["item"]["pricing"]["valuation"]["type"]
     );
+    assert!(
+        body["items"][0]["item"]["eventId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("evt_"))
+    );
+    assert!(
+        body["items"][0]["item"]["source"]["listingSourceId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ls_"))
+    );
+    assert!(
+        body["items"][0]["item"]["pricing"]["valuation"]["fxRateId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("fx_"))
+    );
     assert_eq!(
         serde_json::json!(false),
         body["items"][0]["userState"]["searchFilter"]["matchFeedback"]
@@ -291,14 +315,16 @@ async fn should_serialize_concurrent_search_filter_reactivations_at_free_quota()
     let client = reqwest::Client::new();
     let first_filter_id = create_search_filter(&client, &token).await;
     let pool = get_postgres_client().await;
-    let second_filter_id = uuid::Uuid::new_v4();
+    let second_filter_id = UserSearchFilterId::new();
 
     sqlx::query(
         "UPDATE search_filters SET state = 'INACTIVE_BY_USER' WHERE user_search_filter_id = $1",
     )
     .bind(
-        uuid::Uuid::parse_str(&first_filter_id)
-            .unwrap_or_else(|error| panic!("invalid first search filter identifier: {error}")),
+        first_filter_id
+            .parse::<UserSearchFilterId>()
+            .unwrap_or_else(|error| panic!("invalid first search filter identifier: {error}"))
+            .as_uuid(),
     )
     .execute(&pool)
     .await
@@ -306,10 +332,13 @@ async fn should_serialize_concurrent_search_filter_reactivations_at_free_quota()
     sqlx::query(
         "INSERT INTO search_filters (user_search_filter_id, user_id, name, notifications, state, search, enhanced_search_description, embedding, language, currency, version, created, updated) SELECT $1, user_id, 'Second alerts', notifications, 'INACTIVE_BY_USER', search, enhanced_search_description, embedding, language, currency, version, created, updated FROM search_filters WHERE user_search_filter_id = $2",
     )
-    .bind(second_filter_id)
-    .bind(uuid::Uuid::parse_str(&first_filter_id).unwrap_or_else(|error| {
-        panic!("invalid first search filter identifier: {error}")
-    }))
+    .bind(second_filter_id.as_uuid())
+    .bind(
+        first_filter_id
+            .parse::<UserSearchFilterId>()
+            .unwrap_or_else(|error| panic!("invalid first search filter identifier: {error}"))
+            .as_uuid(),
+    )
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to seed second inactive search filter: {error}"));
@@ -394,6 +423,11 @@ async fn should_update_search_filter_match_feedback() {
         serde_json::json!(product_listing_id.to_string()),
         body["productListingId"]
     );
+    assert!(
+        body["originEventId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("evt_"))
+    );
     assert_eq!(serde_json::json!(true), body["feedback"]);
 }
 
@@ -431,27 +465,103 @@ async fn should_reject_search_filter_routes_without_required_scope() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_search_filter_identifier() {
+async fn should_reject_noncanonical_search_filter_identifier() {
     let user_id = seed_user("USER").await;
     let token = search_filters_token(user_id).await;
+    let search_filter_id = UserSearchFilterId::new();
+
+    for invalid_id in [
+        ProductListingId::new().to_string(),
+        search_filter_id.as_uuid().to_string(),
+        "sf_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/me/search-filters/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to get invalid search filter: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_accept_typed_object_ids_in_search_filter_body_and_response() {
+    let user_id = seed_user_with_tier("USER", UserTier::Pro).await;
+    let token = search_filters_token(user_id).await;
+    let listing_source_id = ListingSourceId::new();
+    let product_listing_id = ProductListingId::new();
+    let mut body = search_filter_body();
+    body["search"]["listingSourceId"] = serde_json::json!([listing_source_id]);
+    body["search"]["excludeProductId"] = serde_json::json!([product_listing_id]);
 
     let response = reqwest::Client::new()
-        .get(format!(
-            "{}/api/v1/me/search-filters/not-a-uuid",
-            AURA_API.base_url()
-        ))
+        .post(format!("{}/api/v1/me/search-filters", AURA_API.base_url()))
         .bearer_auth(String::from(token))
+        .json(&body)
         .send()
         .await
-        .unwrap_or_else(|error| panic!("failed to get invalid search filter: {error}"));
-    let (status, body) = json_response(response).await;
+        .unwrap_or_else(|error| panic!("failed to create typed search filter: {error}"));
+    let (status, response_body) = json_response(response).await;
 
-    assert_problem(
+    assert_eq!(
+        reqwest::StatusCode::CREATED,
         status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "response body: {response_body}"
     );
+    assert_eq!(
+        serde_json::json!([listing_source_id]),
+        response_body["search"]["listingSourceId"]
+    );
+    assert_eq!(
+        serde_json::json!([product_listing_id]),
+        response_body["search"]["excludeProductId"]
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_object_ids_in_search_filter_body() {
+    let user_id = seed_user("USER").await;
+    let token = search_filters_token(user_id).await;
+    let listing_source_id = ListingSourceId::new();
+    let product_listing_id = ProductListingId::new();
+
+    for (field, invalid_id) in [
+        ("listingSourceId", ProductListingId::new().to_string()),
+        ("listingSourceId", listing_source_id.as_uuid().to_string()),
+        ("listingSourceId", "ls_not-a-typeid".to_owned()),
+        ("excludeProductId", ListingSourceId::new().to_string()),
+        ("excludeProductId", product_listing_id.as_uuid().to_string()),
+        ("excludeProductId", "pl_not-a-typeid".to_owned()),
+    ] {
+        let mut body = search_filter_body();
+        body["search"][field] = serde_json::json!([invalid_id]);
+        let response = reqwest::Client::new()
+            .post(format!("{}/api/v1/me/search-filters", AURA_API.base_url()))
+            .bearer_auth(String::from(token.clone()))
+            .json(&body)
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to post invalid search filter: {error}"));
+        let (status, response_body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &response_body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
 }
 
 async fn search_filters_token(user_id: user_core::user_id::UserId) -> RawAccessToken {
@@ -490,14 +600,15 @@ async fn seed_search_filter_match(
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to read product match fixture: {error}"));
-    let filter_id = uuid::Uuid::parse_str(filter_id)
+    let filter_id = filter_id
+        .parse::<UserSearchFilterId>()
         .unwrap_or_else(|error| panic!("invalid search filter fixture ID: {error}"));
 
     sqlx::query(
         "INSERT INTO search_filter_matches (user_id, user_search_filter_id, product_listing_id, origin_event_id, user_search_filter_name, feedback) VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(uuid::Uuid::from(user_id))
-    .bind(filter_id)
+    .bind(filter_id.as_uuid())
     .bind(uuid::Uuid::from(product_listing_id))
     .bind(origin_event_id)
     .bind("Desk alerts")
@@ -508,7 +619,9 @@ async fn seed_search_filter_match(
 
     (
         product_listing_id,
-        listing_source_id.to_string(),
+        ListingSourceId::try_from(listing_source_id)
+            .unwrap_or_else(|error| panic!("invalid listing source fixture ID: {error}"))
+            .to_string(),
         source_listing_id,
     )
 }

@@ -3,6 +3,7 @@ use super::util::parse_json;
 use crate::auth::protected_context;
 use crate::error::ApiError;
 use crate::state::WatchlistState;
+use crate::wire::parse_body_object_id;
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -22,13 +23,21 @@ pub async fn post_watchlist(
         Ok(v) => v,
         Err(r) => return r,
     };
+    let product_listing_id = match parse_body_object_id(
+        &data.product_listing_id,
+        "productListingId",
+        "ProductListing",
+    ) {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
     match state
         .watch_product
         .execute(
             &ctx,
             WatchProductListingCommand {
                 user_id,
-                product_listing_id: data.product_listing_id,
+                product_listing_id,
                 notifications: data.notifications.unwrap_or(true),
             },
         )

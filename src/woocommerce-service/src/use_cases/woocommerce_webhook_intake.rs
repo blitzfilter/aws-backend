@@ -578,9 +578,7 @@ mod tests {
             Ok(
                 product_listing_service::use_cases::CaptureProductListingRawObservationResult::Unchanged {
                     product_listing_raw_stream_id:
-                        product_listing_service::ports::ProductListingRawStreamId::from_uuid(
-                            uuid::Uuid::new_v4(),
-                        ),
+                        product_listing_service::ports::ProductListingRawStreamId::new(),
                     latest_revision: 0,
                 },
             )

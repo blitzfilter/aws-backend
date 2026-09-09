@@ -1,14 +1,14 @@
 use super::types::{
-    PartnerProductFailureData, UpsertProductListingData, parse_partner_product_batch,
+    PartnerProductFailureData, UpsertProductListingData, parse_listing_source_id,
+    parse_partner_product_batch,
 };
 use crate::auth::protected_context;
-use crate::error::{ApiError, INVALID_UUID};
+use crate::error::ApiError;
 use crate::state::PartnerProductListingsState;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use listing_source_core::ListingSourceId;
 
 pub async fn upsert_products(
     State(state): State<PartnerProductListingsState>,
@@ -69,16 +69,6 @@ pub async fn upsert_products(
     }
 
     (StatusCode::OK, Json(failures)).into_response()
-}
-
-fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ApiError> {
-    uuid::Uuid::parse_str(value)
-        .map(ListingSourceId::from)
-        .map_err(|_| {
-            ApiError::bad_request(INVALID_UUID)
-                .with_path_field("listingSourceId")
-                .with_detail("Path parameter 'listingSourceId' must be a UUID.")
-        })
 }
 
 #[cfg(test)]

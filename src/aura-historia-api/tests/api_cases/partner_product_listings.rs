@@ -1,9 +1,11 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
-    json_response, seed_access_token_for, seed_current_fx_snapshot, seed_listing_source,
-    seed_operator_partnership_listing_source_grant, seed_partnership_membership, seed_user,
+    assert_problem, json_response, seed_access_token_for, seed_current_fx_snapshot,
+    seed_listing_source, seed_operator_partnership_listing_source_grant,
+    seed_partnership_membership, seed_user,
 };
+use listing_source_core::ListingSourceId;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -63,6 +65,12 @@ async fn should_return_duplicate_product_as_partial_create_failure() -> TestResu
             json!([failure(&auth.listing_source_id, duplicate_id, "CONFLICT")]),
             body
         );
+        assert!(
+            body[0]["listingSourceId"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("ls_"))
+        );
+        assert_eq!(json!(duplicate_id), body[0]["sourceListingId"]);
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;
@@ -379,7 +387,7 @@ async fn should_reject_unrelated_partner_from_product_batch() -> TestResult {
 
         let response = send_json(
             reqwest::Method::POST,
-            products_path(&listing_source_id.to_string()),
+            products_path(&listing_source_type_id(listing_source_id)),
             Some(&token),
             &json!([product("unrelated-partner")]),
         )
@@ -425,7 +433,7 @@ async fn should_reject_partner_product_batch_without_authorization() -> TestResu
 
         let response = send_json(
             reqwest::Method::POST,
-            products_path(&listing_source_id.to_string()),
+            products_path(&listing_source_type_id(listing_source_id)),
             None,
             &json!([product("missing-authorization")]),
         )
@@ -459,6 +467,38 @@ async fn should_not_expose_legacy_partner_product_item_delete_route() -> TestRes
     assert_test_result(result);
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_listing_source_id() -> TestResult {
+    let result: TestResult = async {
+        let auth = partner_auth(product_listings_write_scope()).await?;
+        let listing_source_id = listing_source_core::ListingSourceId::new();
+
+        for invalid_id in [
+            product_listing_core::product_listing_id::ProductListingId::new().to_string(),
+            listing_source_id.as_uuid().to_string(),
+            "ls_not-a-typeid".to_owned(),
+        ] {
+            let response = send_json(
+                reqwest::Method::POST,
+                products_path(&invalid_id),
+                Some(&auth.token),
+                &json!([product("invalid-source")]),
+            )
+            .await?;
+            let (status, body) = response_json(response).await?;
+            assert_problem(
+                status,
+                &body,
+                reqwest::StatusCode::BAD_REQUEST,
+                "INVALID_OBJECT_ID",
+            );
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    }
+    .await;
+    assert_test_result(result);
+}
+
 async fn partner_auth(scopes: HashSet<Scope>) -> Result<PartnerAuth, Infallible> {
     let pool = get_postgres_client().await;
     seed_current_fx_snapshot(&pool).await;
@@ -469,7 +509,7 @@ async fn partner_auth(scopes: HashSet<Scope>) -> Result<PartnerAuth, Infallible>
     let token = String::from(seed_access_token_for(user_id, scopes).await);
 
     Ok(PartnerAuth {
-        listing_source_id: listing_source_id.to_string(),
+        listing_source_id: listing_source_type_id(listing_source_id),
         token,
     })
 }
@@ -526,6 +566,12 @@ fn product_listings_write_scope() -> HashSet<Scope> {
 
 fn products_path(listing_source_id: &str) -> String {
     format!("/api/v1/listing-sources/{listing_source_id}/product-listings")
+}
+
+fn listing_source_type_id(listing_source_id: uuid::Uuid) -> String {
+    ListingSourceId::try_from(listing_source_id)
+        .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"))
+        .to_string()
 }
 
 fn product(source_listing_id: &str) -> Value {

@@ -49,6 +49,11 @@ async fn should_add_product_to_watchlist_when_authenticated() {
         serde_json::json!(product_listing_id.to_string()),
         body["productListingId"]
     );
+    assert!(
+        body["productListingId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pl_"))
+    );
     assert_eq!(serde_json::json!(true), body["notifications"]);
     assert_eq!(serde_json::json!("ACTIVE"), body["state"]);
     assert!(body.get("item").is_none());
@@ -429,32 +434,72 @@ async fn should_delete_watchlist_entry() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_watchlist_update_when_product_listing_id_is_invalid() {
+async fn should_reject_noncanonical_product_listing_id_in_watchlist_path() {
     let user_id = seed_user("USER").await;
     let token = seed_access_token_for(
         user_id,
         std::collections::HashSet::from([Scope::WatchlistWrite]),
     )
     .await;
+    let product_listing_id = ProductListingId::new();
 
-    let response = reqwest::Client::new()
-        .patch(format!(
-            "{}/api/v1/me/watchlist/not-a-uuid",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
-        .json(&serde_json::json!({"notifications": true}))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to patch invalid watchlist API: {error}"));
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        listing_source_core::ListingSourceId::new().to_string(),
+        product_listing_id.as_uuid().to_string(),
+        "pl_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .patch(format!(
+                "{}/api/v1/me/watchlist/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .json(&serde_json::json!({"notifications": true}))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to patch invalid watchlist API: {error}"));
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_product_listing_id_in_watchlist_body() {
+    let user_id = seed_user("USER").await;
+    let token = seed_access_token_for(
+        user_id,
+        std::collections::HashSet::from([Scope::WatchlistWrite]),
+    )
+    .await;
+    let product_listing_id = ProductListingId::new();
+
+    for invalid_id in [
+        listing_source_core::ListingSourceId::new().to_string(),
+        product_listing_id.as_uuid().to_string(),
+        "pl_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .post(format!("{}/api/v1/me/watchlist", AURA_API.base_url()))
+            .bearer_auth(String::from(token.clone()))
+            .json(&serde_json::json!({ "productListingId": invalid_id }))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to post invalid watchlist API: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]

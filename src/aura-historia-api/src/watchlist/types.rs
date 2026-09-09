@@ -68,7 +68,7 @@ pub(crate) fn watchlist_state(state: PatchWatchlistStateData) -> WatchlistState 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PostWatchlistData {
-    pub(crate) product_listing_id: ProductListingId,
+    pub(crate) product_listing_id: String,
     pub(crate) notifications: Option<bool>,
 }
 #[derive(Debug, Deserialize)]

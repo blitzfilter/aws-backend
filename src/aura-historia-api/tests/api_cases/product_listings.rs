@@ -6,8 +6,11 @@ use api_support::{
 };
 use application::transaction::{Transaction, UnitOfWork};
 
+use domain_primitives::event_id::EventId;
+use fxrate_core::FxRateId;
 use indexmap::IndexSet;
 use listing_source_core::ListingSourceId;
+use party_core::party_id::PartyId;
 
 use localization::{Language, Localized};
 use opensearch::{IndexParts, indices::IndicesPutMappingParts};
@@ -30,6 +33,7 @@ use product_listing_service::ports::{
     ProductListingEventAppender, ProductListingEventAppenderFactory, ProductListingRepository,
     ProductListingRepositoryFactory, ProductListingWriteEffects, stamp_product_listing_event,
 };
+use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use test_api::{
@@ -61,6 +65,26 @@ async fn should_get_product_details_by_id() {
         json!(product_listing_id.to_string()),
         body["item"]["productListingId"]
     );
+    assert!(
+        body["item"]["productListingId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pl_"))
+    );
+    assert!(
+        body["item"]["eventId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("evt_"))
+    );
+    assert!(
+        body["item"]["source"]["listingSourceId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ls_"))
+    );
+    assert!(
+        body["item"]["pricing"]["valuation"]["fxRateId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("fx_"))
+    );
     assert_eq!("CURRENT", body["item"]["pricing"]["valuation"]["type"]);
     assert!(body["item"]["pricing"].get("source").is_some());
     assert!(body["item"]["pricing"].get("display").is_some());
@@ -88,6 +112,8 @@ async fn should_apply_listing_source_referral_policy_changes_to_product_listing_
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to load product listing fixture: {error}"));
+    let listing_source_id = ListingSourceId::try_from(listing_source_id)
+        .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"));
     let raw_url = "https://api-acceptance.example/product";
     let aura_url =
         "https://api-acceptance.example/product?utm_source=aura_historia&utm_medium=referral";
@@ -107,7 +133,7 @@ async fn should_apply_listing_source_referral_policy_changes_to_product_listing_
         "Referral Listing Source",
         "2025-01-01T00:00:00Z",
     );
-    candidate["listingSourceId"] = json!(listing_source_id.to_string());
+    candidate["listingSourceId"] = json!(listing_source_id);
     candidate["url"] = json!(raw_url);
     candidate = with_embedding(candidate, vec![1.0; embedding::EMBEDDING_DIMENSIONS]);
     index_existing_listing_source_document(candidate).await;
@@ -278,7 +304,7 @@ async fn should_resolve_same_normalized_title_slugs_to_their_respective_product_
     for product_listing_id in [first_product_listing_id, second_product_listing_id] {
         let title_slug = ProductListingSlugId::from_title_and_suffix(
             "acceptance product",
-            &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+            &uuid::Uuid::from(product_listing_id).simple().to_string()[26..],
         )
         .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
         let (response, _) =
@@ -326,7 +352,7 @@ async fn should_return_not_found_for_withdrawn_product_by_id_or_title_slug() {
     let product_listing_id = seed_product().await;
     let title_slug = ProductListingSlugId::from_title_and_suffix(
         "acceptance product",
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &uuid::Uuid::from(product_listing_id).simple().to_string()[26..],
     )
     .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
     let pool = get_postgres_client().await;
@@ -358,12 +384,12 @@ async fn should_return_not_found_for_withdrawn_product_by_id_or_title_slug() {
 async fn should_omit_title_slug_for_hidden_product_when_looked_up_by_slug_or_id() {
     let user_id = api_support::seed_user_with_tier("USER", user_core::tier::UserTier::Free).await;
     let token = api_support::seed_access_token_for(user_id, HashSet::new()).await;
-    let filter_id = uuid::Uuid::new_v4();
+    let filter_id = UserSearchFilterId::new();
     let pool = get_postgres_client().await;
     sqlx::query(
         "INSERT INTO search_filters (user_search_filter_id, user_id, name, notifications, state, search, language, currency) VALUES ($1, $2, 'Hidden listing alerts', true, 'ACTIVE', '{}', 'en', 'EUR')",
     )
-    .bind(filter_id)
+    .bind(filter_id.as_uuid())
     .bind(uuid::Uuid::from(user_id))
     .execute(&pool)
     .await
@@ -383,7 +409,7 @@ async fn should_omit_title_slug_for_hidden_product_when_looked_up_by_slug_or_id(
             "INSERT INTO search_filter_matches (user_id, user_search_filter_id, product_listing_id, origin_event_id, user_search_filter_name, created) VALUES ($1, $2, $3, $4, 'Hidden listing alerts', now() - ($5 * interval '1 minute'))",
         )
         .bind(uuid::Uuid::from(user_id))
-        .bind(filter_id)
+        .bind(filter_id.as_uuid())
         .bind(uuid::Uuid::from(product_listing_id))
         .bind(event_id)
         .bind(10 - position)
@@ -398,7 +424,7 @@ async fn should_omit_title_slug_for_hidden_product_when_looked_up_by_slug_or_id(
         .unwrap_or_else(|| panic!("hidden product fixture is missing"));
     let title_slug = ProductListingSlugId::from_title_and_suffix(
         "acceptance product",
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &uuid::Uuid::from(product_listing_id).simple().to_string()[26..],
     )
     .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
     let client = reqwest::Client::new();
@@ -420,6 +446,15 @@ async fn should_omit_title_slug_for_hidden_product_when_looked_up_by_slug_or_id(
             json!(product_listing_id.to_string()),
             body["item"]["productListingId"]
         );
+        assert!(
+            body["item"]["productListingId"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("pl_"))
+        );
+        assert_ne!(
+            json!("pl_00000000000000000000000000"),
+            body["item"]["productListingId"]
+        );
         assert!(body["item"].get("productListingTitleSlugId").is_none());
         assert_eq!(json!(true), body["userState"]["searchFilter"]["hidden"]);
     }
@@ -436,6 +471,8 @@ async fn should_not_expose_retired_source_composite_product_route() {
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to read product source identity: {error}"));
+    let listing_source_id = ListingSourceId::try_from(listing_source_id)
+        .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"));
 
     let response = reqwest::Client::new()
         .get(format!(
@@ -470,6 +507,16 @@ async fn should_get_product_listing_history_by_id() {
         json!(product_listing_id.to_string()),
         body[0]["productListingId"]
     );
+    assert!(
+        body[0]["eventId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("evt_"))
+    );
+    assert!(
+        body[0]["payload"]["listingSourceId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ls_"))
+    );
     assert_eq!(
         Some("public, max-age=180, s-maxage=900".to_owned()),
         cache_control
@@ -494,7 +541,8 @@ async fn should_get_product_listing_history_with_timestamped_event_payloads() {
             "a1b2c3",
         )
         .unwrap_or_else(|error| panic!("valid product listing title slug: {error}")),
-        listing_source_id: ListingSourceId::from(listing_source_id),
+        listing_source_id: ListingSourceId::try_from(listing_source_id)
+            .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}")),
         source_listing_id: SourceListingId::try_from(format!(
             "timestamped-history-{product_listing_id}"
         ))
@@ -698,7 +746,11 @@ async fn should_page_product_search_without_duplicates_when_using_cursor() {
         product_listing_ids(&first_body)
     );
     assert!(first_body["searchAfter"].is_object());
-    assert!(first_body["searchAfter"]["fxRateId"].is_string());
+    assert!(
+        first_body["searchAfter"]["fxRateId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("fx_"))
+    );
     assert!(first_body["searchAfter"]["searchAfter"].is_array());
     assert_eq!(
         Some("public, max-age=60, s-maxage=300".to_owned()),
@@ -1105,16 +1157,66 @@ async fn should_filter_product_search_by_created_date_range() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_product_listing_id() {
-    let (response, _) = get_json("/api/v1/product-listings/not-a-uuid".to_owned()).await;
-    let (status, body) = json_response(response).await;
+async fn should_reject_noncanonical_product_listing_ids() {
+    let product_listing_id = ProductListingId::new();
+    for invalid_id in [
+        ListingSourceId::new().to_string(),
+        product_listing_id.as_uuid().to_string(),
+        "pl_not-a-typeid".to_owned(),
+    ] {
+        let (response, _) = get_json(format!("/api/v1/product-listings/{invalid_id}")).await;
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_object_ids_in_product_search_query_and_cursor() {
+    let listing_source_id = ListingSourceId::new();
+    for invalid_id in [
+        ProductListingId::new().to_string(),
+        listing_source_id.as_uuid().to_string(),
+        "ls_not-a-typeid".to_owned(),
+    ] {
+        let (response, _) = get_json(format!(
+            "/api/v1/product-listings?listingSourceId[0]={invalid_id}"
+        ))
+        .await;
+        let (status, body) = json_response(response).await;
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
+
+    let fx_rate_id = FxRateId::new();
+    for invalid_id in [
+        ProductListingId::new().to_string(),
+        fx_rate_id.as_uuid().to_string(),
+        "fx_not-a-typeid".to_owned(),
+    ] {
+        let cursor = json!({ "fxRateId": invalid_id, "searchAfter": ["next"] }).to_string();
+        let (response, _) = get_json(format!(
+            "/api/v1/product-listings?searchAfter={}",
+            url_encode(&cursor)
+        ))
+        .await;
+        let (status, body) = json_response(response).await;
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -1169,16 +1271,16 @@ async fn get_json_from(base_url: &str, path: &str) -> (reqwest::Response, String
     (response, url)
 }
 
-async fn capture_fx_snapshot(captured_at: OffsetDateTime, usd_units_per_eur: i64) -> uuid::Uuid {
-    let fx_rate_id = uuid::Uuid::new_v4();
+async fn capture_fx_snapshot(captured_at: OffsetDateTime, usd_units_per_eur: i64) -> FxRateId {
+    let fx_rate_id = FxRateId::new();
     let pool = get_postgres_client().await;
     sqlx::query(
         "INSERT INTO fx_rates (fx_rate_id, captured_at, source, source_event_id) VALUES ($1, $2, $3, $4)",
     )
-    .bind(fx_rate_id)
+    .bind(fx_rate_id.as_uuid())
     .bind(captured_at)
     .bind("fxratesapi")
-    .bind(fx_rate_id.to_string())
+    .bind(fx_rate_id.as_uuid().to_string())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to capture FX snapshot: {error}"));
@@ -1195,7 +1297,7 @@ async fn capture_fx_snapshot(captured_at: OffsetDateTime, usd_units_per_eur: i64
         sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, $3)",
         )
-        .bind(fx_rate_id)
+        .bind(fx_rate_id.as_uuid())
         .bind(currency)
         .bind(units_per_eur)
         .execute(&pool)
@@ -1267,17 +1369,19 @@ async fn seed_search_listing_sources(pool: &sqlx::PgPool, documents: &[Value]) {
             .as_str()
             .unwrap_or_else(|| panic!("search fixture has no listingSourceId"));
         listing_source_ids.insert(
-            uuid::Uuid::parse_str(listing_source_id).unwrap_or_else(|error| {
-                panic!("invalid search fixture listing source ID: {error}")
-            }),
+            listing_source_id
+                .parse::<ListingSourceId>()
+                .unwrap_or_else(|error| {
+                    panic!("invalid search fixture listing source ID: {error}")
+                }),
         );
     }
 
     for listing_source_id in listing_source_ids {
-        let party_id = uuid::Uuid::new_v4();
+        let party_id = PartyId::new();
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(party_id)
-            .bind(format!("search-party-{party_id}"))
+            .bind(party_id.as_uuid())
+            .bind(format!("search-party-{}", party_id.as_uuid()))
             .bind(format!("Search Party {party_id}"))
             .execute(pool)
             .await
@@ -1285,10 +1389,10 @@ async fn seed_search_listing_sources(pool: &sqlx::PgPool, documents: &[Value]) {
         sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
-        .bind(listing_source_id)
-        .bind(format!("search-source-{listing_source_id}"))
+        .bind(listing_source_id.as_uuid())
+        .bind(format!("search-source-{}", listing_source_id.as_uuid()))
         .bind(format!("Search Listing Source {listing_source_id}"))
-        .bind(party_id)
+        .bind(party_id.as_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("failed to seed search listing source: {error}"));
@@ -1342,12 +1446,15 @@ fn search_document_with_source(
     _listing_source_slug_id: &str,
     created: &str,
 ) -> (String, Value) {
-    let product_listing_id = uuid::Uuid::new_v4().to_string();
-    let event_id = uuid::Uuid::new_v4().to_string();
-    let listing_source_id = uuid::Uuid::new_v4().to_string();
-    let product_listing_title_slug_id = format!("search-{}", &product_listing_id[..6]);
+    let product_listing_id = ProductListingId::new();
+    let event_id = EventId::new();
+    let listing_source_id = ListingSourceId::new();
+    let product_listing_title_slug_id = format!(
+        "search-{}",
+        &product_listing_id.as_uuid().simple().to_string()[26..]
+    );
     (
-        product_listing_id.clone(),
+        product_listing_id.to_string(),
         json!({
             "productListingId": product_listing_id,
             "productListingTitleSlugId": product_listing_title_slug_id,

@@ -1,6 +1,7 @@
 use crate::error::{ApiError, ApiErrorCode, BAD_BODY_VALUE};
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
 use crate::values::{LocalizedTextData, PriceData};
+use crate::wire::parse_path_object_id;
 
 use listing_source_core::ListingSourceId;
 use money::Price;
@@ -101,9 +102,13 @@ pub(super) struct WithdrawProductListingData {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PartnerProductFailureData {
-    listing_source_id: uuid::Uuid,
+    listing_source_id: ListingSourceId,
     source_listing_id: String,
     error: ApiErrorCode,
+}
+
+pub(super) fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ApiError> {
+    parse_path_object_id(value, "listingSourceId", "ListingSource")
 }
 
 pub(super) fn parse_partner_product_batch<T: DeserializeOwned>(
@@ -214,7 +219,7 @@ impl PartnerProductFailureData {
         error: ApiErrorCode,
     ) -> Self {
         Self {
-            listing_source_id: listing_source_id.into(),
+            listing_source_id,
             source_listing_id,
             error,
         }
@@ -246,9 +251,10 @@ fn source_listing_id(value: String) -> Result<SourceListingId, ApiError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{WithdrawProductListingData, source_listing_id};
-    use crate::error::BAD_BODY_VALUE;
+    use super::{WithdrawProductListingData, parse_listing_source_id, source_listing_id};
+    use crate::error::{BAD_BODY_VALUE, INVALID_OBJECT_ID};
     use listing_source_core::ListingSourceId;
+    use product_listing_core::product_listing_id::ProductListingId;
 
     #[test]
     fn should_parse_source_listing_id_without_slugifying_it() {
@@ -261,6 +267,26 @@ mod tests {
             .unwrap_or_else(|error| panic!("valid source listing ID: {error}"));
 
         assert_eq!(key.source_listing_id.as_ref(), "SKU  #42/Blue");
+    }
+
+    #[test]
+    fn should_parse_only_canonical_listing_source_object_ids() {
+        let listing_source_id = ListingSourceId::new();
+        assert!(matches!(
+            parse_listing_source_id(&listing_source_id.to_string()),
+            Ok(parsed) if parsed == listing_source_id
+        ));
+
+        for invalid_id in [
+            ProductListingId::new().to_string(),
+            listing_source_id.as_uuid().to_string(),
+            "ls_not-a-typeid".to_owned(),
+        ] {
+            let error = parse_listing_source_id(&invalid_id)
+                .err()
+                .unwrap_or_else(|| panic!("noncanonical ListingSource ID was accepted"));
+            assert_eq!(INVALID_OBJECT_ID, error.code());
+        }
     }
 
     #[test]
