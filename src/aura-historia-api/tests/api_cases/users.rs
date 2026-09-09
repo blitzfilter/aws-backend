@@ -2,12 +2,13 @@ use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
     assert_problem, fail_session_revocation_for, json_response, seed_access_token_for, seed_user,
-    seed_user_with_tier, set_user_search_fields, set_user_stripe_customer_id,
+    seed_user_cognito_identity, seed_user_with_tier, set_user_search_fields,
+    set_user_stripe_customer_id,
 };
 
 use test_api::{IntegrationTestService, aura_integration_test};
 use time::macros::datetime;
-use user_core::access_token::Scope;
+use user_core::access_token::{AccessTokenId, Scope};
 use user_core::tier::UserTier;
 use user_core::user_id::UserId;
 
@@ -27,6 +28,7 @@ async fn should_return_current_user_account_when_authenticated() {
 
     assert_eq!(reqwest::StatusCode::OK, status);
     assert_eq!(serde_json::json!(user_id.to_string()), body["userId"]);
+    assert_id_prefix(&body["userId"], "usr_");
     assert_eq!(serde_json::json!("USER"), body["role"]);
 }
 
@@ -324,6 +326,7 @@ async fn should_follow_admin_user_search_cursor() {
 
     assert_eq!(reqwest::StatusCode::OK, first_status);
     assert_eq!(Some(2), first_body["items"].as_array().map(Vec::len));
+    assert_id_prefix(&first_body["searchAfter"], "usr_");
     let cursor = first_body["searchAfter"]
         .as_str()
         .unwrap_or_else(|| panic!("missing admin user search cursor"))
@@ -351,6 +354,43 @@ async fn should_follow_admin_user_search_cursor() {
         second_body["items"][0]["userId"]
     );
     assert!(second_body.get("searchAfter").is_none());
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_admin_user_search_cursors() {
+    let admin_id = seed_user("ADMIN").await;
+    let token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::UsersRead]),
+    )
+    .await;
+    let user_id = UserId::new();
+
+    for invalid_id in [
+        "usr_not-a-typeid".to_owned(),
+        user_id.as_uuid().to_string(),
+        AccessTokenId::new().to_string(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!("{}/api/v1/admin/users", AURA_API.base_url()))
+            .bearer_auth(String::from(token.clone()))
+            .query(&[("searchAfter", invalid_id)])
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate admin user cursor: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "searchAfter", "type": "QUERY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -813,7 +853,7 @@ async fn should_return_not_found_when_admin_deletes_missing_user() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_admin_user_delete_when_user_id_is_invalid() {
+async fn should_reject_admin_user_delete_when_user_id_is_malformed() {
     let admin_id = seed_user("ADMIN").await;
     let token = seed_access_token_for(
         admin_id,
@@ -823,7 +863,7 @@ async fn should_reject_admin_user_delete_when_user_id_is_invalid() {
 
     let response = reqwest::Client::new()
         .delete(format!(
-            "{}/api/v1/admin/users/not-a-uuid",
+            "{}/api/v1/admin/users/usr_not-a-typeid",
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(token))
@@ -836,7 +876,7 @@ async fn should_reject_admin_user_delete_when_user_id_is_invalid() {
         status,
         &body,
         reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "INVALID_OBJECT_ID",
     );
 }
 
@@ -922,31 +962,42 @@ async fn should_reject_admin_user_read_when_actor_is_not_admin() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_admin_user_read_when_user_id_is_invalid() {
+async fn should_reject_noncanonical_admin_user_read_ids() {
     let admin_id = seed_user("ADMIN").await;
     let token = seed_access_token_for(
         admin_id,
         std::collections::HashSet::from([Scope::UsersRead]),
     )
     .await;
+    let user_id = UserId::new();
 
-    let response = reqwest::Client::new()
-        .get(format!(
-            "{}/api/v1/admin/users/not-a-uuid",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to get invalid user API: {error}"));
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        "usr_not-a-typeid".to_owned(),
+        user_id.as_uuid().to_string(),
+        AccessTokenId::new().to_string(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/admin/users/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to get noncanonical user ID: {error}"));
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "userId", "type": "PATH"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -972,6 +1023,8 @@ async fn should_create_access_token_for_current_user() {
 
     assert_eq!(reqwest::StatusCode::CREATED, status);
     assert_eq!(serde_json::json!(user_id.to_string()), body["userId"]);
+    assert_id_prefix(&body["userId"], "usr_");
+    assert_id_prefix(&body["accessTokenId"], "at_");
     assert!(
         body["accessToken"]
             .as_str()
@@ -997,7 +1050,14 @@ async fn should_list_access_tokens_for_current_user() {
     let (status, body) = json_response(response).await;
 
     assert_eq!(reqwest::StatusCode::OK, status);
-    assert!(body.as_array().is_some_and(|items| !items.is_empty()));
+    let items = body
+        .as_array()
+        .unwrap_or_else(|| panic!("access-token response must be an array: {body}"));
+    assert!(!items.is_empty());
+    for item in items {
+        assert_id_prefix(&item["userId"], "usr_");
+        assert_id_prefix(&item["accessTokenId"], "at_");
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -1077,11 +1137,16 @@ async fn should_list_admin_user_access_tokens_with_cursor_without_secrets() {
                 && item.get("tokenHash").is_none()
                 && item.get("hash").is_none()
         }));
+        for item in items {
+            assert_id_prefix(&item["userId"], "usr_");
+            assert_id_prefix(&item["accessTokenId"], "at_");
+        }
 
         if body["searchAfter"].is_null() {
             assert_eq!(2, page);
             break;
         }
+        assert_id_prefix(&body["searchAfter"][1], "at_");
         search_after = Some(
             serde_json::to_string(&body["searchAfter"])
                 .unwrap_or_else(|error| panic!("admin access-token cursor serializes: {error}")),
@@ -1097,6 +1162,50 @@ async fn should_list_admin_user_access_tokens_with_cursor_without_secrets() {
         item["name"] == "current admin inspection token"
             && item["expires"] == "2099-01-01T00:00:00Z"
     }));
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_admin_access_token_cursors() {
+    let target_user_id = seed_user("USER").await;
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(
+        admin_id,
+        std::collections::HashSet::from([Scope::AccessTokensRead]),
+    )
+    .await;
+    let access_token_id = AccessTokenId::new();
+
+    for invalid_id in [
+        "at_not-a-typeid".to_owned(),
+        access_token_id.as_uuid().to_string(),
+        UserId::new().to_string(),
+    ] {
+        let cursor = serde_json::json!(["2026-09-04T12:00:00Z", invalid_id]).to_string();
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/admin/users/{target_user_id}/access-tokens",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(admin_token.clone()))
+            .query(&[("searchAfter", cursor)])
+            .send()
+            .await
+            .unwrap_or_else(|error| {
+                panic!("failed to validate admin access-token cursor: {error}")
+            });
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "searchAfter", "type": "QUERY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -1195,7 +1304,7 @@ async fn should_reject_admin_access_token_list_for_non_admin_missing_and_invalid
 
     let response = client
         .get(format!(
-            "{}/api/v1/admin/users/not-a-uuid/access-tokens",
+            "{}/api/v1/admin/users/usr_not-a-typeid/access-tokens",
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(admin_token))
@@ -1212,7 +1321,7 @@ async fn should_reject_admin_access_token_list_for_non_admin_missing_and_invalid
         status,
         &body,
         reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "INVALID_OBJECT_ID",
     );
     assert_eq!(serde_json::json!("userId"), body["source"]["field"]);
     assert_eq!(Some("no-store".to_owned()), cache_control);
@@ -1241,6 +1350,13 @@ async fn should_get_access_token_for_current_user() {
     let (status, body) = json_response(response).await;
 
     assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(serde_json::json!(user_id.to_string()), body["userId"]);
+    assert_eq!(
+        serde_json::json!(access_token_id.to_string()),
+        body["accessTokenId"]
+    );
+    assert_id_prefix(&body["userId"], "usr_");
+    assert_id_prefix(&body["accessTokenId"], "at_");
     assert_eq!(serde_json::json!("editable token"), body["name"]);
 }
 
@@ -1268,7 +1384,54 @@ async fn should_update_access_token_for_current_user() {
     let (status, body) = json_response(response).await;
 
     assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(serde_json::json!(user_id.to_string()), body["userId"]);
+    assert_eq!(
+        serde_json::json!(access_token_id.to_string()),
+        body["accessTokenId"]
+    );
+    assert_id_prefix(&body["userId"], "usr_");
+    assert_id_prefix(&body["accessTokenId"], "at_");
     assert_eq!(serde_json::json!("renamed token"), body["name"]);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_access_token_ids_in_update_body() {
+    let user_id = seed_user("USER").await;
+    let token = seed_access_token_for(
+        user_id,
+        std::collections::HashSet::from([Scope::AccessTokensWrite]),
+    )
+    .await;
+    let access_token_id = AccessTokenId::new();
+
+    for invalid_id in [
+        "at_not-a-typeid".to_owned(),
+        access_token_id.as_uuid().to_string(),
+        UserId::new().to_string(),
+    ] {
+        let response = reqwest::Client::new()
+            .patch(format!("{}/api/v1/me/access-tokens", AURA_API.base_url()))
+            .bearer_auth(String::from(token.clone()))
+            .json(&serde_json::json!({
+                "accessTokenId": invalid_id,
+                "name": "renamed token"
+            }))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate access-token body ID: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "accessTokenId", "type": "BODY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -1457,6 +1620,12 @@ async fn should_return_not_found_when_bulk_revoke_target_user_is_missing() {
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_revoke_admin_target_cognito_sessions_idempotently() {
     let target_user_id = seed_user("USER").await;
+    seed_user_cognito_identity(
+        target_user_id,
+        "https://issuer.api-acceptance.test/pool",
+        "provider|opaque:successful-session-revocation",
+    )
+    .await;
     let admin_id = seed_user("ADMIN").await;
     let admin_token = seed_access_token_for(
         admin_id,
@@ -1490,6 +1659,12 @@ async fn should_revoke_admin_target_cognito_sessions_idempotently() {
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_map_temporary_cognito_session_revocation_failure() {
     let target_user_id = seed_user("USER").await;
+    seed_user_cognito_identity(
+        target_user_id,
+        "https://issuer.api-acceptance.test/pool",
+        "provider|opaque:temporary-session-revocation-failure",
+    )
+    .await;
     fail_session_revocation_for(target_user_id);
     let admin_id = seed_user("ADMIN").await;
     let admin_token = seed_access_token_for(
@@ -1642,7 +1817,7 @@ async fn should_reject_bulk_revoke_without_valid_auth_or_user_id() {
 
     let response = client
         .delete(format!(
-            "{}/api/v1/admin/users/not-a-uuid/access-tokens",
+            "{}/api/v1/admin/users/usr_not-a-typeid/access-tokens",
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(admin_token))
@@ -1659,7 +1834,7 @@ async fn should_reject_bulk_revoke_without_valid_auth_or_user_id() {
         status,
         &body,
         reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "INVALID_OBJECT_ID",
     );
     assert_eq!(serde_json::json!("userId"), body["source"]["field"]);
     assert_eq!(Some("no-store".to_owned()), cache_control);
@@ -1737,7 +1912,7 @@ async fn should_allow_admin_to_revoke_access_token_and_make_it_unusable() {
             "{}/api/v1/admin/users/{}/access-tokens/{}",
             AURA_API.base_url(),
             target_user_id,
-            UserId::new()
+            AccessTokenId::new()
         ))
         .bearer_auth(String::from(
             seed_access_token_for(
@@ -1801,7 +1976,7 @@ async fn should_reject_admin_access_token_revoke_for_non_admin_and_invalid_auth(
         std::collections::HashSet::from([Scope::AccessTokensWrite]),
     )
     .await;
-    let access_token_id = UserId::new();
+    let access_token_id = AccessTokenId::new();
 
     let response = reqwest::Client::new()
         .delete(format!(
@@ -1845,25 +2020,60 @@ async fn should_validate_both_admin_access_token_revoke_path_ids() {
         std::collections::HashSet::from([Scope::AccessTokensWrite]),
     )
     .await;
+    let user_id = UserId::new();
+    let access_token_id = AccessTokenId::new();
+    let valid_access_token_id = AccessTokenId::new();
 
-    for (path, field) in [
+    let cases = [
         (
             format!(
-                "{}/api/v1/admin/users/not-a-uuid/access-tokens/{}",
-                AURA_API.base_url(),
-                UserId::new()
+                "{}/api/v1/admin/users/usr_not-a-typeid/access-tokens/{valid_access_token_id}",
+                AURA_API.base_url()
             ),
             "userId",
         ),
         (
             format!(
-                "{}/api/v1/admin/users/{}/access-tokens/not-a-uuid",
+                "{}/api/v1/admin/users/{}/access-tokens/{valid_access_token_id}",
                 AURA_API.base_url(),
-                target_user_id
+                user_id.as_uuid()
+            ),
+            "userId",
+        ),
+        (
+            format!(
+                "{}/api/v1/admin/users/{}/access-tokens/{valid_access_token_id}",
+                AURA_API.base_url(),
+                AccessTokenId::new()
+            ),
+            "userId",
+        ),
+        (
+            format!(
+                "{}/api/v1/admin/users/{target_user_id}/access-tokens/at_not-a-typeid",
+                AURA_API.base_url()
             ),
             "accessTokenId",
         ),
-    ] {
+        (
+            format!(
+                "{}/api/v1/admin/users/{target_user_id}/access-tokens/{}",
+                AURA_API.base_url(),
+                access_token_id.as_uuid()
+            ),
+            "accessTokenId",
+        ),
+        (
+            format!(
+                "{}/api/v1/admin/users/{target_user_id}/access-tokens/{}",
+                AURA_API.base_url(),
+                UserId::new()
+            ),
+            "accessTokenId",
+        ),
+    ];
+
+    for (path, field) in cases {
         let response = reqwest::Client::new()
             .delete(path)
             .bearer_auth(String::from(admin_token.clone()))
@@ -1875,9 +2085,12 @@ async fn should_validate_both_admin_access_token_revoke_path_ids() {
             status,
             &body,
             reqwest::StatusCode::BAD_REQUEST,
-            "INVALID_UUID",
+            "INVALID_OBJECT_ID",
         );
-        assert_eq!(serde_json::json!(field), body["source"]["field"]);
+        assert_eq!(
+            serde_json::json!({"field": field, "type": "PATH"}),
+            body["source"]
+        );
     }
 }
 
@@ -1892,7 +2105,7 @@ async fn should_reject_admin_access_token_revoke_without_admin_scope() {
             "{}/api/v1/admin/users/{}/access-tokens/{}",
             AURA_API.base_url(),
             target_user_id,
-            UserId::new()
+            AccessTokenId::new()
         ))
         .bearer_auth(String::from(admin_token))
         .send()
@@ -1910,7 +2123,7 @@ async fn should_reject_access_token_revoke_with_invalid_bearer_credentials() {
             "{}/api/v1/admin/users/{}/access-tokens/{}",
             AURA_API.base_url(),
             target_user_id,
-            UserId::new()
+            AccessTokenId::new()
         ))
         .bearer_auth("not-a-valid-token")
         .send()
@@ -1928,31 +2141,42 @@ async fn should_reject_access_token_revoke_with_invalid_bearer_credentials() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_access_token_read_when_id_is_invalid() {
+async fn should_reject_noncanonical_access_token_read_ids() {
     let user_id = seed_user("USER").await;
     let token = seed_access_token_for(
         user_id,
         std::collections::HashSet::from([Scope::AccessTokensRead]),
     )
     .await;
+    let access_token_id = AccessTokenId::new();
 
-    let response = reqwest::Client::new()
-        .get(format!(
-            "{}/api/v1/me/access-tokens/not-a-uuid",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to get invalid access token API: {error}"));
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        "at_not-a-typeid".to_owned(),
+        access_token_id.as_uuid().to_string(),
+        UserId::new().to_string(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/me/access-tokens/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to get noncanonical access-token ID: {error}"));
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "accessTokenId", "type": "PATH"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -2134,7 +2358,7 @@ async fn should_return_not_found_for_missing_user_reactivation() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_user_id_for_reactivation() {
+async fn should_reject_malformed_user_id_for_reactivation() {
     let admin_id = seed_user("ADMIN").await;
     let admin_token = seed_access_token_for(
         admin_id,
@@ -2144,20 +2368,20 @@ async fn should_reject_invalid_user_id_for_reactivation() {
 
     let response = reqwest::Client::new()
         .delete(format!(
-            "{}/api/v1/admin/users/not-a-uuid/suspension",
+            "{}/api/v1/admin/users/usr_not-a-typeid/suspension",
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(admin_token))
         .send()
         .await
-        .unwrap_or_else(|error| panic!("failed to reject invalid reactivation target: {error}"));
+        .unwrap_or_else(|error| panic!("failed to reject malformed reactivation target: {error}"));
     let (status, body) = json_response(response).await;
 
     assert_problem(
         status,
         &body,
         reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "INVALID_OBJECT_ID",
     );
 }
 
@@ -2314,7 +2538,7 @@ async fn should_reject_suspended_user_aura_token_on_later_request() {
     );
 }
 
-async fn create_access_token(token: &user_core::access_token::RawAccessToken) -> String {
+async fn create_access_token(token: &user_core::access_token::RawAccessToken) -> AccessTokenId {
     create_access_token_with_raw(token, &["product-listings:write"])
         .await
         .0
@@ -2323,7 +2547,7 @@ async fn create_access_token(token: &user_core::access_token::RawAccessToken) ->
 async fn create_access_token_with_raw(
     token: &user_core::access_token::RawAccessToken,
     scopes: &[&str],
-) -> (String, String) {
+) -> (AccessTokenId, String) {
     let response = reqwest::Client::new()
         .post(format!("{}/api/v1/me/access-tokens", AURA_API.base_url()))
         .bearer_auth(String::from(token.clone()))
@@ -2333,14 +2557,24 @@ async fn create_access_token_with_raw(
         .unwrap_or_else(|error| panic!("failed to create access token API: {error}"));
     let (status, body) = json_response(response).await;
     assert_eq!(reqwest::StatusCode::CREATED, status, "{body}");
-    (
-        body["accessTokenId"]
-            .as_str()
-            .unwrap_or_else(|| panic!("missing accessTokenId"))
-            .to_owned(),
-        body["accessToken"]
-            .as_str()
-            .unwrap_or_else(|| panic!("missing accessToken"))
-            .to_owned(),
-    )
+    assert_id_prefix(&body["accessTokenId"], "at_");
+    let access_token_id = body["accessTokenId"]
+        .as_str()
+        .and_then(|value| AccessTokenId::try_from(value).ok())
+        .unwrap_or_else(|| panic!("missing canonical accessTokenId"));
+    let raw_access_token = body["accessToken"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing accessToken"))
+        .to_owned();
+    (access_token_id, raw_access_token)
+}
+
+fn assert_id_prefix(value: &serde_json::Value, prefix: &str) {
+    let value = value
+        .as_str()
+        .unwrap_or_else(|| panic!("expected object ID string, got {value}"));
+    assert!(
+        value.starts_with(prefix),
+        "expected object ID prefix {prefix}, got {value}"
+    );
 }

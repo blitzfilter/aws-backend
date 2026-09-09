@@ -1,7 +1,8 @@
 use super::parse_scope_string;
 use crate::auth::protected_context;
-use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE};
 use crate::state::OAuthState;
+use crate::wire::parse_query_object_id;
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode, header},
@@ -58,11 +59,9 @@ fn request(query: HashMap<String, String>) -> Result<AuthorizeRequest, Response>
                 .into_response());
         }
     };
-    let client_id = OAuthClientId::try_from(required(&query, "client_id")?).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_query_field("client_id")
-            .into_response()
-    })?;
+    let client_id: OAuthClientId =
+        parse_query_object_id(required(&query, "client_id")?, "client_id", "OAuthClient")
+            .map_err(IntoResponse::into_response)?;
     let redirect_uri = url::Url::parse(required(&query, "redirect_uri")?).map_err(|error| {
         ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("redirect_uri")

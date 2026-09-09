@@ -1,4 +1,5 @@
-use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE};
+use crate::wire::parse_path_object_id;
 
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
@@ -28,10 +29,5 @@ pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, 
 
 #[allow(clippy::result_large_err)]
 pub(crate) fn parse_user_id(raw: &str, field: &'static str) -> Result<UserId, Response> {
-    UserId::try_from(raw).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field(field)
-            .with_detail(format!("Path parameter '{field}' must be a UUID."))
-            .into_response()
-    })
+    parse_path_object_id(raw, field, "User").map_err(IntoResponse::into_response)
 }

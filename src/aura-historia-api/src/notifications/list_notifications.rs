@@ -3,6 +3,7 @@ use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE};
 use crate::pagination_data::JsonCursoredData;
 use crate::state::NotificationsState;
+use crate::wire::parse_query_object_id;
 use application::pagination::{Cursor, CursoredResult};
 use axum::Json;
 use axum::extract::{RawQuery, State};
@@ -16,7 +17,6 @@ use notification_service::use_cases::queries::list_notifications::ListNotificati
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,21 +117,18 @@ fn parse_notification_cursor(value: &str) -> Result<NotificationListCursor, ApiE
     let [Value::String(created), Value::String(notification_id)] = values.as_slice() else {
         return Err(ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("searchAfter")
-            .with_detail("searchAfter must contain an RFC3339 timestamp and notification UUID."));
+            .with_detail("searchAfter must contain an RFC3339 timestamp and Notification ID."));
     };
     let created = OffsetDateTime::parse(created, &Rfc3339).map_err(|error| {
         ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("searchAfter")
             .with_detail(error.to_string())
     })?;
-    let notification_id = Uuid::parse_str(notification_id).map_err(|error| {
-        ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
-            .with_query_field("searchAfter")
-            .with_detail(error.to_string())
-    })?;
+    let notification_id: NotificationId =
+        parse_query_object_id(notification_id, "searchAfter", "Notification")?;
     Ok(NotificationListCursor {
         created,
-        notification_id: NotificationId::from(notification_id),
+        notification_id,
     })
 }
 
@@ -139,7 +136,7 @@ fn notification_cursor_value(cursor: NotificationListCursor) -> Result<Value, Ap
     cursor
         .created
         .format(&Rfc3339)
-        .map(|created| json!([created, Uuid::from(cursor.notification_id)]))
+        .map(|created| json!([created, cursor.notification_id]))
         .map_err(|_| {
             ApiError::internal_server_error(BAD_QUERY_PARAMETER_VALUE)
                 .with_detail("Notification cursor failed internally.")
@@ -158,14 +155,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_parse_opaque_notification_cursor() {
+    fn should_parse_notification_cursor_with_type_id() {
         let created = "2026-08-19T12:00:00Z";
-        let notification_id = Uuid::new_v4();
+        let notification_id = NotificationId::new();
         let cursor = parse_notification_cursor(&format!(r#"["{created}","{notification_id}"]"#));
 
-        assert!(
-            matches!(cursor, Ok(cursor) if cursor.notification_id == NotificationId::from(notification_id))
-        );
+        assert!(matches!(cursor, Ok(cursor) if cursor.notification_id == notification_id));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use super::{no_store, parse_form, required_form, scope_string};
-use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE};
 use crate::state::OAuthState;
+use crate::wire::parse_body_object_id;
 use axum::{
     Json,
     extract::State,
@@ -17,9 +18,9 @@ pub(crate) struct IntrospectionResponseData {
     #[serde(skip_serializing_if = "Option::is_none")]
     scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    client_id: Option<String>,
+    client_id: Option<OAuthClientId>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sub: Option<String>,
+    sub: Option<user_core::user_id::UserId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     token_type: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,8 +34,8 @@ impl From<IntrospectTokenResponse> for IntrospectionResponseData {
         Self {
             active: response.active,
             scope: response.scopes.as_ref().map(scope_string),
-            client_id: response.client_id.map(Into::into),
-            sub: response.subject.map(|user_id| user_id.to_string()),
+            client_id: response.client_id,
+            sub: response.subject,
             token_type: response.token_type.map(|token_type| match token_type {
                 OAuthTokenType::Bearer => "Bearer",
             }),
@@ -67,11 +68,12 @@ fn request(
                 .with_detail(error.to_string())
                 .into_response()
         })?;
-    let client_id = OAuthClientId::try_from(required_form(form, "client_id")?).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_detail("Form field 'client_id' must be a UUID.")
-            .into_response()
-    })?;
+    let client_id: OAuthClientId = parse_body_object_id(
+        required_form(form, "client_id")?,
+        "client_id",
+        "OAuthClient",
+    )
+    .map_err(IntoResponse::into_response)?;
     let client_secret = RawOAuthClientSecret::try_from(
         required_form(form, "client_secret")?.to_owned(),
     )

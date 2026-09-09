@@ -1,11 +1,12 @@
 use super::util::{no_store, parse_json, parse_user_id};
 use crate::auth::protected_context;
 use crate::error::{
-    ACCESS_TOKEN_INTERNAL_ERROR, ApiError, BAD_BODY_VALUE, BAD_QUERY_PARAMETER_VALUE, INVALID_UUID,
+    ACCESS_TOKEN_INTERNAL_ERROR, ApiError, BAD_BODY_VALUE, BAD_QUERY_PARAMETER_VALUE,
 };
 use crate::pagination_data::JsonCursoredData;
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
 use crate::state::UsersState;
+use crate::wire::{parse_body_object_id, parse_path_object_id, parse_query_object_id};
 use application::pagination::{Cursor, CursoredResult};
 use axum::Json;
 use axum::extract::{Path, RawQuery, State};
@@ -40,7 +41,7 @@ struct PostTokenData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PatchTokenData {
-    access_token_id: AccessTokenId,
+    access_token_id: String,
     #[serde(default)]
     name: PatchValue<String>,
     #[serde(default)]
@@ -222,26 +223,25 @@ fn parse_access_token_search_after(value: &str) -> Result<AccessTokenSearchCurso
         bad_query(
             "searchAfter",
             format!(
-                "searchAfter must be a JSON array containing timestamp and access-token UUID: {error}"
+                "searchAfter must be a JSON array containing timestamp and AccessToken ID: {error}"
             ),
         )
     })?;
     let Value::Array(values) = value else {
         return Err(bad_query(
             "searchAfter",
-            "searchAfter must contain an RFC3339 timestamp and access-token UUID.",
+            "searchAfter must contain an RFC3339 timestamp and AccessToken ID.",
         ));
     };
     let [Value::String(position), Value::String(access_token_id)] = values.as_slice() else {
         return Err(bad_query(
             "searchAfter",
-            "searchAfter must contain an RFC3339 timestamp and access-token UUID.",
+            "searchAfter must contain an RFC3339 timestamp and AccessToken ID.",
         ));
     };
     let position = OffsetDateTime::parse(position, &Rfc3339)
         .map_err(|error| bad_query("searchAfter", error))?;
-    let access_token_id = AccessTokenId::try_from(access_token_id.as_str())
-        .map_err(|error| bad_query("searchAfter", error))?;
+    let access_token_id = parse_query_object_id(access_token_id, "searchAfter", "AccessToken")?;
 
     Ok(AccessTokenSearchCursor {
         position,
@@ -275,7 +275,7 @@ fn serialize_access_token_search_after(cursor: AccessTokenSearchCursor) -> Resul
         .position
         .format(&Rfc3339)
         .map_err(|_| ApiError::internal_server_error(ACCESS_TOKEN_INTERNAL_ERROR))?;
-    Ok(json!([position, cursor.access_token_id.to_string()]))
+    Ok(json!([position, cursor.access_token_id]))
 }
 
 fn bad_query(field: &'static str, detail: impl std::fmt::Display) -> ApiError {
@@ -293,14 +293,9 @@ pub async fn get_access_token(
         Ok(v) => v,
         Err(r) => return *r,
     };
-    let access_token_id = match AccessTokenId::try_from(raw.as_str()) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("accessTokenId")
-                .with_detail("Path parameter 'accessTokenId' must be a UUID.")
-                .into_response();
-        }
+    let access_token_id = match parse_path_object_id(&raw, "accessTokenId", "AccessToken") {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
     };
     match state
         .get_access_token
@@ -348,14 +343,9 @@ pub async fn delete_access_token(
         Ok(v) => v,
         Err(r) => return *r,
     };
-    let access_token_id = match AccessTokenId::try_from(raw.as_str()) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("accessTokenId")
-                .with_detail("Path parameter 'accessTokenId' must be a UUID.")
-                .into_response();
-        }
+    let access_token_id = match parse_path_object_id(&raw, "accessTokenId", "AccessToken") {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
     };
     match state
         .delete_access_token
@@ -410,17 +400,11 @@ pub async fn delete_admin_access_token(
         Ok(v) => v,
         Err(r) => return no_store(r),
     };
-    let access_token_id = match AccessTokenId::try_from(raw_access_token_id.as_str()) {
-        Ok(v) => v,
-        Err(_) => {
-            return no_store(
-                ApiError::bad_request(INVALID_UUID)
-                    .with_path_field("accessTokenId")
-                    .with_detail("Path parameter 'accessTokenId' must be a UUID.")
-                    .into_response(),
-            );
-        }
-    };
+    let access_token_id =
+        match parse_path_object_id(&raw_access_token_id, "accessTokenId", "AccessToken") {
+            Ok(value) => value,
+            Err(error) => return no_store(error.into_response()),
+        };
 
     match state
         .admin_delete_access_token
@@ -442,7 +426,11 @@ impl PatchTokenData {
     fn into_command(self, user_id: UserId) -> Result<UpdateAccessTokenCommand, ApiError> {
         Ok(UpdateAccessTokenCommand {
             user_id,
-            access_token_id: self.access_token_id,
+            access_token_id: parse_body_object_id(
+                &self.access_token_id,
+                "accessTokenId",
+                "AccessToken",
+            )?,
             name: non_nullable_patch(
                 self.name.map(|name| AccessTokenName::from(name.as_str())),
                 "name",
@@ -518,7 +506,7 @@ mod tests {
         for query in [
             "size=not-a-number",
             "searchAfter=not-json",
-            "searchAfter=%5B%22not-a-timestamp%22%2C%22not-a-uuid%22%5D",
+            "searchAfter=%5B%22not-a-timestamp%22%2C%22not-an-object-id%22%5D",
         ] {
             assert!(
                 parse_list_admin_access_tokens_query(UserId::new(), Some(query)).is_err(),

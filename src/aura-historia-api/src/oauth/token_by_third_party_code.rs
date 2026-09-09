@@ -1,6 +1,6 @@
 use super::no_store;
 use super::token::TokenResponseData;
-use crate::error::{ApiError, INVALID_UUID};
+use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE};
 use crate::state::OAuthState;
 use axum::{
     Json,
@@ -16,8 +16,9 @@ pub async fn token_by_third_party_code(
     let code = match ThirdPartyExchangeCode::try_from(raw.as_str()) {
         Ok(value) => value,
         Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
+            return ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
                 .with_path_field("thirdPartyCode")
+                .with_detail("Path parameter 'thirdPartyCode' is invalid.")
                 .into_response();
         }
     };
