@@ -1,6 +1,7 @@
 use money::{Currency, HasMinorUnitExponent, MonetaryAmount, Price};
 use product_listing_core::product_listing_price::ProductListingPrice;
 use regex::regex;
+use strum::IntoEnumIterator;
 
 // ---------------------------------------------------------------------------
 // Internal error type
@@ -24,27 +25,14 @@ pub type PriceError = PriceNormalizationError;
 
 /// Detects the currency from a raw price string.
 ///
-/// Returns `None` if no recognized currency symbol or ISO code is present.
-/// Multi-character symbols (`NZD`, `AUD`, `CAD`) are checked before the plain
-/// `$` to avoid false matches.
+/// Returns `None` if no recognized currency symbol or canonical ISO code is
+/// present. ISO codes require token boundaries to avoid matching text within
+/// other words.
 pub fn detect_currency(raw: &str) -> Option<Currency> {
-    if raw.contains("ZAR") {
-        Some(Currency::Zar)
-    } else if raw.contains("NZD") || raw.contains("NZ$") {
-        Some(Currency::Nzd)
-    } else if raw.contains("AUD") || raw.contains("A$") {
-        Some(Currency::Aud)
-    } else if raw.contains("CAD") || raw.contains("C$") {
-        Some(Currency::Cad)
-    } else if raw.contains("USD") || raw.contains('$') {
-        Some(Currency::Usd)
-    } else if raw.contains("GBP") || raw.contains('£') {
-        Some(Currency::Gbp)
-    } else if raw.contains("EUR") || raw.contains('€') {
-        Some(Currency::Eur)
-    } else {
-        None
-    }
+    currency_markers(raw)
+        .into_iter()
+        .next()
+        .map(|marker| marker.currency)
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +328,7 @@ fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
         .iter()
         .filter(|candidate| {
             currency_markers.iter().any(|marker| {
-                distance_between_spans((candidate.start, candidate.end), *marker) <= 2
+                has_benign_currency_amount_gap(raw, (candidate.start, candidate.end), *marker)
             })
         })
         .cloned()
@@ -468,11 +456,110 @@ fn first_currency_marker_span(raw: &str) -> Option<(usize, usize)> {
     currency_marker_spans(raw).into_iter().next()
 }
 
+// Bare `¥` and `R` are ambiguous; `$` remains a USD marker for compatibility.
+const CURRENCY_SYMBOLS: &[(Currency, &str)] = &[
+    (Currency::Eur, "€"),
+    (Currency::Gbp, "£"),
+    (Currency::Usd, "$"),
+    (Currency::Aud, "A$"),
+    (Currency::Cad, "C$"),
+    (Currency::Nzd, "NZ$"),
+    (Currency::Cny, "CN¥"),
+    (Currency::Brl, "R$"),
+    (Currency::Pln, "zł"),
+    (Currency::Try, "₺"),
+    (Currency::Czk, "Kč"),
+    (Currency::Rub, "₽"),
+    (Currency::Aed, "د.إ"),
+    (Currency::Sar, "﷼"),
+    (Currency::Hkd, "HK$"),
+    (Currency::Sgd, "S$"),
+];
+
+#[derive(Clone, Copy)]
+struct CurrencyMarker {
+    currency: Currency,
+    start: usize,
+    end: usize,
+}
+
+fn currency_markers(raw: &str) -> Vec<CurrencyMarker> {
+    let mut markers = Vec::new();
+
+    for currency in Currency::iter() {
+        markers.extend(
+            raw.match_indices(currency.as_str())
+                .filter(|(start, code)| is_currency_code_token(raw, *start, code.len()))
+                .map(|(start, code)| CurrencyMarker {
+                    currency,
+                    start,
+                    end: start + code.len(),
+                }),
+        );
+    }
+
+    for &(currency, symbol) in CURRENCY_SYMBOLS {
+        markers.extend(
+            raw.match_indices(symbol)
+                .map(|(start, symbol)| CurrencyMarker {
+                    currency,
+                    start,
+                    end: start + symbol.len(),
+                }),
+        );
+    }
+
+    markers.sort_by(|left, right| {
+        left.start
+            .cmp(&right.start)
+            .then_with(|| right.end.cmp(&left.end))
+    });
+
+    let mut non_overlapping_markers = Vec::new();
+    for marker in markers {
+        if non_overlapping_markers
+            .last()
+            .is_none_or(|previous: &CurrencyMarker| previous.end <= marker.start)
+        {
+            non_overlapping_markers.push(marker);
+        }
+    }
+    non_overlapping_markers
+}
+
+fn is_currency_code_token(raw: &str, start: usize, code_len: usize) -> bool {
+    let before = raw[..start].chars().next_back();
+    let after = raw[start + code_len..].chars().next();
+
+    before.is_none_or(is_currency_code_token_boundary)
+        && after.is_none_or(is_currency_code_token_boundary)
+}
+
+fn is_currency_code_token_boundary(ch: char) -> bool {
+    !ch.is_alphanumeric() && ch != '_'
+}
+
 fn currency_marker_spans(raw: &str) -> Vec<(usize, usize)> {
-    regex!(r"(?i)(EUR|USD|GBP|AUD|CAD|NZD|NZ\$|A\$|C\$|\$|\x{00A3}|\x{20AC})")
-        .find_iter(raw)
-        .map(|m| (m.start(), m.end()))
+    currency_markers(raw)
+        .into_iter()
+        .map(|marker| (marker.start, marker.end))
         .collect()
+}
+
+fn has_benign_currency_amount_gap(raw: &str, left: (usize, usize), right: (usize, usize)) -> bool {
+    let gap = if left.1 <= right.0 {
+        &raw[left.1..right.0]
+    } else if right.1 <= left.0 {
+        &raw[right.1..left.0]
+    } else {
+        return false;
+    };
+
+    gap.chars().count() <= 3 && gap.chars().all(is_benign_currency_amount_separator)
+}
+
+fn is_benign_currency_amount_separator(ch: char) -> bool {
+    ch.is_ascii_whitespace() || matches!(ch, '\u{00a0}' | '\u{202f}')
 }
 
 fn distance_between_spans(left: (usize, usize), right: (usize, usize)) -> usize {
@@ -565,11 +652,13 @@ mod tests {
     use rstest::rstest;
 
     use money::{Currency, Price};
+    use strum::IntoEnumIterator;
 
     use super::{
-        PriceError, PriceOnRequestEvidence, detect_currency, extract_price_number_candidate,
-        normalise_fraction, normalize_machine_decimal_price, normalize_price,
-        normalize_product_listing_price, parse_price, price_on_request_evidence, split_decimal,
+        CURRENCY_SYMBOLS, PriceError, PriceOnRequestEvidence, currency_marker_spans,
+        detect_currency, extract_price_number_candidate, normalise_fraction,
+        normalize_machine_decimal_price, normalize_price, normalize_product_listing_price,
+        parse_price, price_on_request_evidence, split_decimal,
     };
 
     // -----------------------------------------------------------------------
@@ -590,14 +679,37 @@ mod tests {
     #[case("NZ$100", Some(Currency::Nzd))]
     #[case("NZD 100", Some(Currency::Nzd))]
     #[case("ZAR 100", Some(Currency::Zar))]
+    #[case("CHF 100", Some(Currency::Chf))]
     #[case("100", None)]
-    #[case("CHF 100", None)]
     #[case("", None)]
     fn should_detect_currency_when_symbol_or_code_present(
         #[case] raw: &str,
         #[case] expected: Option<Currency>,
     ) {
         assert_eq!(detect_currency(raw), expected);
+    }
+
+    #[test]
+    fn should_recognize_every_canonical_currency_code_as_a_token() {
+        for currency in Currency::iter() {
+            let raw = format!("{} 12", currency.as_str());
+            assert_eq!(Some(currency), detect_currency(&raw));
+            assert_eq!(
+                vec![(0, currency.as_str().len())],
+                currency_marker_spans(&raw)
+            );
+        }
+
+        assert_eq!(None, detect_currency("priceEURvalue"));
+        assert!(currency_marker_spans("priceEURvalue").is_empty());
+    }
+
+    #[test]
+    fn should_recognize_supported_currency_symbols() {
+        for &(currency, symbol) in CURRENCY_SYMBOLS {
+            assert_eq!(Some(currency), detect_currency(symbol));
+            assert_eq!(vec![(0, symbol.len())], currency_marker_spans(symbol));
+        }
     }
 
     #[test]
@@ -626,6 +738,9 @@ mod tests {
     #[case("6\u{202f}900\u{00a0}€", 690000, Currency::Eur)]
     #[case("100 EUR", 10000, Currency::Eur)]
     #[case("€ 50,00", 5000, Currency::Eur)]
+    #[case("€ 12,500", 1_250_000, Currency::Eur)]
+    #[case("EUR 12,500", 1_250_000, Currency::Eur)]
+    #[case("12\u{202f}500 €", 1_250_000, Currency::Eur)]
     #[case("$9.99", 999, Currency::Usd)]
     #[case("A$12.50", 1250, Currency::Aud)]
     #[case("C$99.99", 9999, Currency::Cad)]
@@ -675,6 +790,7 @@ mod tests {
     #[case("no numbers here USD")]
     #[case("$100.00$80.00")]
     #[case("€")]
+    #[case("CHF")]
     fn should_return_parse_failure_when_price_has_currency_but_no_number(#[case] raw: &str) {
         assert!(
             matches!(parse_price(raw, None), Err(PriceError::ParseFailure)),
@@ -683,11 +799,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn should_reject_punctuation_between_currency_and_amount() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            parse_price("EUR: 12,500", None)
+        );
+    }
+
     #[rstest]
     #[case("")]
     #[case("   ")]
     #[case("no numbers here")]
-    #[case("1234.56 CHF")]
+    #[case("currency unavailable")]
     fn should_return_unknown_currency_when_no_currency_symbol_or_known_code(#[case] raw: &str) {
         assert!(
             matches!(parse_price(raw, None), Err(PriceError::UnknownCurrency)),
@@ -947,6 +1071,7 @@ mod tests {
     #[case("Prix sur demande – réf. 2025")]
     #[case("Price on request – phone 1234567")]
     #[case("€ Preis auf Anfrage · Ref 1234")]
+    #[case("EUR price on request · SKU 1234")]
     fn should_prefer_explicit_request_price_over_incidental_numbers(#[case] raw: &str) {
         assert_eq!(
             Ok(Some(
@@ -970,6 +1095,13 @@ mod tests {
         assert_eq!(
             Err(PriceError::ParseFailure),
             normalize_product_listing_price(Some("€12,500 – price on request"), None)
+        );
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(
+                Some("CHF 12'000 – price on request"),
+                Some(Currency::Chf),
+            )
         );
     }
 }

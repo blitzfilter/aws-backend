@@ -905,7 +905,12 @@ fn validate_discovered_payload(value: &Value) -> Result<(), CdcRouteError> {
         &["price", "priceEstimateMin", "priceEstimateMax"],
         "pricing",
     )?;
-    for field in ["price", "priceEstimateMin", "priceEstimateMax"] {
+    validate_product_listing_price(
+        pricing
+            .get("price")
+            .ok_or(CdcRouteError::MissingColumn("price"))?,
+    )?;
+    for field in ["priceEstimateMin", "priceEstimateMax"] {
         validate_price(
             pricing
                 .get(field)
@@ -1793,6 +1798,44 @@ mod tests {
                 ))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn should_route_discovered_events_with_tagged_main_prices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for price in [
+            serde_json::json!({"type": "MONETARY", "amount": 10_000, "currency": "EUR"}),
+            serde_json::json!({"type": "ON_REQUEST"}),
+        ] {
+            let mut change = product_event_change("PRODUCT_LISTING_DISCOVERED", "DOMAIN");
+            if let Some(pricing) = change
+                .record
+                .as_mut()
+                .and_then(|record| record.get_mut("payload"))
+                .and_then(|payload| payload.get_mut("pricing"))
+            {
+                pricing["price"] = price;
+            }
+
+            let jobs = route_change(&change)?;
+            assert_eq!(5, jobs.len());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_untagged_discovered_main_price_before_fanout() {
+        let mut change = product_event_change("PRODUCT_LISTING_DISCOVERED", "DOMAIN");
+        if let Some(pricing) = change
+            .record
+            .as_mut()
+            .and_then(|record| record.get_mut("payload"))
+            .and_then(|payload| payload.get_mut("pricing"))
+        {
+            pricing["price"] = serde_json::json!({"amount": 10_000, "currency": "EUR"});
+        }
+
+        assert!(route_change(&change).is_err());
     }
 
     #[test]
