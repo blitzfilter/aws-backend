@@ -13,7 +13,8 @@ use localization::Language;
 use money::Currency;
 use product_listing_core::{
     listing_availability::ListingAvailability, product_listing_id::ProductListingId,
-    product_listing_slug_id::ProductListingSlugId, source_listing_id::SourceListingId,
+    product_listing_price::ProductListingPrice, product_listing_slug_id::ProductListingSlugId,
+    source_listing_id::SourceListingId,
 };
 use product_listing_service::ports::{
     ProductListingPercolationInput, ProductListingPricesByCurrency,
@@ -218,10 +219,7 @@ pub(crate) fn product_listing_document(
         title_fr: translated_title(product, Language::Fr),
         title_es: translated_title(product, Language::Es),
         title_it: translated_title(product, Language::It),
-        source_price: product.pricing.price.map(|price| SourcePriceDocument {
-            amount: price.monetary_amount.into(),
-            currency: price.currency,
-        }),
+        source_price: product.pricing.price.map(SourcePriceDocument::from),
         sale_prices,
         sale_observation_fx_rate_id,
         sale_observed_at,
@@ -259,27 +257,43 @@ fn sale_projection(
     match (observation, sale_snapshot) {
         (None, None) => Ok((None, None, None)),
         (None, Some(_)) => Err(ProductListingPercolationDocumentError::UnexpectedSaleSnapshot),
-        (Some(observation), None) if product.pricing.price.is_none() => Ok((
-            None,
-            Some(observation.fx_rate_id()),
-            Some(observation.observed_at()),
-        )),
+        (Some(observation), None)
+            if !matches!(
+                product.pricing.price,
+                Some(ProductListingPrice::Monetary(_))
+            ) =>
+        {
+            Ok((
+                None,
+                Some(observation.fx_rate_id()),
+                Some(observation.observed_at()),
+            ))
+        }
         (Some(_), None) => Err(ProductListingPercolationDocumentError::MissingSaleSnapshot),
+        (Some(_), Some(_))
+            if !matches!(
+                product.pricing.price,
+                Some(ProductListingPrice::Monetary(_))
+            ) =>
+        {
+            Err(ProductListingPercolationDocumentError::UnexpectedSaleSnapshot)
+        }
         (Some(observation), Some(snapshot)) if observation.fx_rate_id() != snapshot.id() => Err(
             ProductListingPercolationDocumentError::SaleSnapshotMismatch {
                 valuation_fx_rate_id: observation.fx_rate_id(),
                 snapshot_fx_rate_id: snapshot.id(),
             },
         ),
-        (Some(observation), Some(snapshot)) => Ok((
-            product
-                .pricing
-                .price
-                .map(|price| sale_prices(snapshot, price))
-                .transpose()?,
-            Some(observation.fx_rate_id()),
-            Some(observation.observed_at()),
-        )),
+        (Some(observation), Some(snapshot)) => {
+            let Some(ProductListingPrice::Monetary(source_price)) = product.pricing.price else {
+                return Err(ProductListingPercolationDocumentError::MissingSaleSnapshot);
+            };
+            Ok((
+                Some(sale_prices(snapshot, source_price)?),
+                Some(observation.fx_rate_id()),
+                Some(observation.observed_at()),
+            ))
+        }
     }
 }
 
@@ -537,7 +551,7 @@ mod tests {
         let source_price = money::Price::new(12_500_u64.into(), Currency::Gbp);
         let prices = ProductListingPricesByCurrency::convert_all(&snapshot, source_price)?;
         let mut product = source()?;
-        product.pricing.price = Some(source_price);
+        product.pricing.price = Some(source_price.into());
         product.titles = HashMap::from([
             (Language::De, Title::from("Blaue Vase")),
             (Language::En, Title::from("Blue vase")),
@@ -699,7 +713,7 @@ mod tests {
         .into_persisted(FxRateGeneration::try_from(1)?);
         let mut product = source()?;
         let source_price = money::Price::new(12_500_u64.into(), Currency::Gbp);
-        product.pricing.price = Some(source_price);
+        product.pricing.price = Some(source_price.into());
         product.sale_observation = Some(ListingSaleObservation::new(
             OffsetDateTime::UNIX_EPOCH,
             snapshot.id(),
@@ -776,10 +790,37 @@ mod tests {
     }
 
     #[test]
+    fn should_project_sold_on_request_product_without_sale_prices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut product = source()?;
+        product.pricing.price = Some(ProductListingPrice::OnRequest);
+        product.sale_observation = Some(ListingSaleObservation::new(
+            OffsetDateTime::UNIX_EPOCH,
+            FxRateId::new(),
+        ));
+        product.availability = Some(ListingAvailability::SoldOut);
+
+        let persistent = serde_json::to_value(product_listing_document(&product, None)?)?;
+        let temporary = product_listing_percolation_document(&ProductListingPercolationInput {
+            source: product,
+            valuation: None,
+        })?;
+
+        assert_eq!(
+            Some(&serde_json::json!("ON_REQUEST")),
+            persistent.pointer("/sourcePrice/type")
+        );
+        assert!(persistent.get("salePrices").is_none());
+        assert!(persistent.get("saleObservationFxRateId").is_some());
+        assert!(temporary.get("priceByCurrency").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn should_omit_sale_observation_metadata_for_active_relisted_product()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut product = source()?;
-        product.pricing.price = Some(money::Price::new(12_500_u64.into(), Currency::Gbp));
+        product.pricing.price = Some(money::Price::new(12_500_u64.into(), Currency::Gbp).into());
         product.sale_observation = Some(ListingSaleObservation::new(
             OffsetDateTime::UNIX_EPOCH,
             FxRateId::new(),
@@ -851,7 +892,7 @@ mod tests {
                         let prices =
                             ProductListingPricesByCurrency::convert_all(&snapshot, source_price)?;
                         let mut product = source()?;
-                        product.pricing.price = Some(source_price);
+                        product.pricing.price = Some(source_price.into());
                         let product_listing_percolation_document =
                             product_listing_percolation_document(
                                 &ProductListingPercolationInput {

@@ -11,6 +11,7 @@ use product_listing_core::{
         ProductListingEventType, ProductListingImageCount, ProductListingLifecycleChange,
         RehydratedProductListingChanged, RehydratedProductListingDiscovered,
     },
+    product_listing_price::ProductListingPrice,
     source_listing_id::SourceListingId,
     title::Title,
 };
@@ -366,7 +367,10 @@ impl TryFrom<&ProductListingChanged> for ChangedDto {
 
     fn try_from(value: &ProductListingChanged) -> Result<Self, Self::Error> {
         let pricing = PricingChangesDto {
-            price: value.price().map(price_change_dto).transpose()?,
+            price: value
+                .price()
+                .map(product_listing_price_change_dto)
+                .transpose()?,
             price_estimate_min: value
                 .price_estimate_min()
                 .map(price_change_dto)
@@ -466,7 +470,7 @@ impl ChangedDto {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PricingChangesDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    price: Option<ValueChangeDto<Option<PriceDto>>>,
+    price: Option<ValueChangeDto<Option<ProductListingPriceDto>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     price_estimate_min: Option<ValueChangeDto<Option<PriceDto>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -484,7 +488,7 @@ impl PricingChangesDto {
         Ok(PricingChanges {
             price: self
                 .price
-                .map(|change| parse_price_change(change, "pricing.price"))
+                .map(|change| parse_product_listing_price_change(change, "pricing.price"))
                 .transpose()?,
             price_estimate_min: self
                 .price_estimate_min
@@ -499,7 +503,7 @@ impl PricingChangesDto {
 }
 
 struct PricingChanges {
-    price: Option<(Option<Price>, Option<Price>)>,
+    price: Option<(Option<ProductListingPrice>, Option<ProductListingPrice>)>,
     price_estimate_min: Option<(Option<Price>, Option<Price>)>,
     price_estimate_max: Option<(Option<Price>, Option<Price>)>,
 }
@@ -681,7 +685,7 @@ impl LocalizedTextDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PricingDto {
-    price: Option<PriceDto>,
+    price: Option<ProductListingPriceDto>,
     price_estimate_min: Option<PriceDto>,
     price_estimate_max: Option<PriceDto>,
 }
@@ -701,7 +705,7 @@ impl TryFrom<PricingDto> for ProductListingPricing {
 
     fn try_from(value: PricingDto) -> Result<Self, Self::Error> {
         Ok(Self {
-            price: parse_price(value.price, "pricing.price")?,
+            price: parse_product_listing_price(value.price, "pricing.price")?,
             price_estimate_min: parse_price(value.price_estimate_min, "pricing.priceEstimateMin")?,
             price_estimate_max: parse_price(value.price_estimate_max, "pricing.priceEstimateMax")?,
         })
@@ -713,6 +717,25 @@ impl TryFrom<PricingDto> for ProductListingPricing {
 struct PriceDto {
     amount: u64,
     currency: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+enum ProductListingPriceDto {
+    Monetary { amount: u64, currency: String },
+    OnRequest,
+}
+
+impl From<ProductListingPrice> for ProductListingPriceDto {
+    fn from(value: ProductListingPrice) -> Self {
+        match value {
+            ProductListingPrice::Monetary(price) => Self::Monetary {
+                amount: u64::from(price.monetary_amount),
+                currency: price.currency.as_str().to_owned(),
+            },
+            ProductListingPrice::OnRequest => Self::OnRequest,
+        }
+    }
 }
 
 impl From<Price> for PriceDto {
@@ -804,6 +827,15 @@ impl TryFrom<SaleObservationDto> for ListingSaleObservation {
             fx_rate_id,
         ))
     }
+}
+
+fn product_listing_price_change_dto(
+    value: &product_listing_core::product_listing_event::ValueChange<Option<ProductListingPrice>>,
+) -> Result<ValueChangeDto<Option<ProductListingPriceDto>>, ProductListingEventCodecError> {
+    Ok(ValueChangeDto {
+        previous: value.previous().map(ProductListingPriceDto::from),
+        current: value.current().map(ProductListingPriceDto::from),
+    })
 }
 
 fn price_change_dto(
@@ -903,6 +935,39 @@ fn parse_price(
         .transpose()
 }
 
+fn parse_product_listing_price(
+    value: Option<ProductListingPriceDto>,
+    field: &'static str,
+) -> Result<Option<ProductListingPrice>, ProductListingEventCodecError> {
+    value
+        .map(|value| match value {
+            ProductListingPriceDto::Monetary { amount, currency } => {
+                let parsed_currency = Currency::from_code(&currency)
+                    .ok_or_else(|| invalid_field(field, "unknown currency code"))?;
+                if parsed_currency.as_str() != currency {
+                    return Err(ProductListingEventCodecError::NonCanonicalField { field });
+                }
+                Ok(ProductListingPrice::Monetary(Price::new(
+                    MonetaryAmount::from(amount),
+                    parsed_currency,
+                )))
+            }
+            ProductListingPriceDto::OnRequest => Ok(ProductListingPrice::OnRequest),
+        })
+        .transpose()
+}
+
+fn parse_product_listing_price_change(
+    value: ValueChangeDto<Option<ProductListingPriceDto>>,
+    field: &'static str,
+) -> Result<(Option<ProductListingPrice>, Option<ProductListingPrice>), ProductListingEventCodecError>
+{
+    Ok((
+        parse_product_listing_price(value.previous, field)?,
+        parse_product_listing_price(value.current, field)?,
+    ))
+}
+
 fn parse_price_change(
     value: ValueChangeDto<Option<PriceDto>>,
     field: &'static str,
@@ -979,7 +1044,13 @@ fn validate_discovered_shape(value: &Value) -> Result<(), ProductListingEventCod
         &["price", "priceEstimateMin", "priceEstimateMax"],
         "pricing",
     )?;
-    for field in ["price", "priceEstimateMin", "priceEstimateMax"] {
+    validate_product_listing_price_shape(
+        pricing
+            .get("price")
+            .ok_or_else(|| missing_field("pricing.price"))?,
+        "pricing.price",
+    )?;
+    for field in ["priceEstimateMin", "priceEstimateMax"] {
         validate_price_shape(
             pricing
                 .get(field)
@@ -1016,7 +1087,13 @@ fn validate_changed_shape(value: &Value) -> Result<(), ProductListingEventCodecE
                 }
                 for (pricing_field, pricing_change) in pricing {
                     match pricing_field.as_str() {
-                        "price" | "priceEstimateMin" | "priceEstimateMax" => {
+                        "price" => {
+                            validate_product_listing_price_change_shape(
+                                pricing_change,
+                                "pricing.price",
+                            )?;
+                        }
+                        "priceEstimateMin" | "priceEstimateMax" => {
                             validate_price_change_shape(pricing_change, "pricing change")?;
                         }
                         _ => {
@@ -1113,6 +1190,42 @@ fn validate_price_change_shape(
         )?;
     }
     Ok(())
+}
+
+fn validate_product_listing_price_change_shape(
+    value: &Value,
+    field: &'static str,
+) -> Result<(), ProductListingEventCodecError> {
+    let object = required_object(value, field)?;
+    require_exact_keys(object, &["previous", "current"], field)?;
+    for endpoint in ["previous", "current"] {
+        validate_product_listing_price_shape(
+            object
+                .get(endpoint)
+                .ok_or_else(|| missing_field(format!("{field}.{endpoint}")))?,
+            field,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_product_listing_price_shape(
+    value: &Value,
+    field: &'static str,
+) -> Result<(), ProductListingEventCodecError> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let object = required_object(value, field)?;
+    let kind = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| missing_field(format!("{field}.type")))?;
+    match kind {
+        "MONETARY" => require_exact_keys(object, &["type", "amount", "currency"], field),
+        "ON_REQUEST" => require_exact_keys(object, &["type"], field),
+        _ => Err(invalid_field(field, "unknown ProductListing price type")),
+    }
 }
 
 fn validate_price_shape(
@@ -1589,7 +1702,7 @@ mod tests {
     #[test]
     fn should_accept_product_listing_v1_positive_contract_matrix() {
         let valid_changed = json!({
-            "pricing": {"price": {"previous": null, "current": {"amount": 10, "currency": "EUR"}}},
+            "pricing": {"price": {"previous": null, "current": {"type": "MONETARY", "amount": 10, "currency": "EUR"}}},
             "availability": {"previous": null, "current": "AVAILABLE"},
             "images": {"previousCount": 1, "currentCount": 1}
         });
@@ -1658,7 +1771,7 @@ mod tests {
                 Description::from("Codec description"),
             )),
             pricing: ProductListingPricing {
-                price: Some(price(10)),
+                price: Some(ProductListingPrice::from(price(10))),
                 price_estimate_min: None,
                 price_estimate_max: None,
             },
@@ -1679,7 +1792,7 @@ mod tests {
         let observation =
             ListingSaleObservation::new(OffsetDateTime::UNIX_EPOCH, fxrate_core::FxRateId::new());
         changed_payload(RehydratedProductListingChanged {
-            price: Some((None, Some(price(20)))),
+            price: Some((None, Some(ProductListingPrice::from(price(20))))),
             price_estimate_min: Some((None, Some(price(15)))),
             price_estimate_max: Some((None, Some(price(25)))),
             availability: Some((Some(ListingAvailability::Available), None)),

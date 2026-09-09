@@ -62,6 +62,10 @@ pub enum ProductListingRepositoryError {
     IncompleteDescriptionPersisted,
     #[error("persisted description language is invalid")]
     InvalidDescriptionLanguagePersisted,
+    #[error("persisted product listing price state is invalid")]
+    InvalidProductListingPricePersisted,
+    #[error("persisted product listing price kind is invalid")]
+    InvalidProductListingPriceKindPersisted,
     #[error("persisted price is incomplete")]
     IncompletePricePersisted,
     #[error("persisted price amount is negative")]

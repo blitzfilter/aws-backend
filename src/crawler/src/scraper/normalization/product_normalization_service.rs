@@ -5,7 +5,7 @@ use money::Currency;
 use product_listing_normalization::{
     AvailabilityNormalizationError, DateTimeField, DateTimeNormalizationError,
     ImageUrlNormalizationError, PriceField, PriceNormalizationError, normalize_date_time,
-    normalize_description, normalize_image_urls, normalize_price,
+    normalize_description, normalize_image_urls, normalize_price, normalize_product_listing_price,
     normalize_source_listing_id_with_url_sha_fallback, normalize_title, quick_check_availability,
 };
 use tracing::warn;
@@ -54,7 +54,7 @@ pub struct PreparedProduct {
             product_listing_core::description::Description,
         >,
     >,
-    pub price: Option<money::Price>,
+    pub price: Option<product_listing_core::product_listing_price::ProductListingPrice>,
     pub price_estimate_min: Option<money::Price>,
     pub price_estimate_max: Option<money::Price>,
     pub images: Vec<product_listing_core::product_listing_image::ProductListingImage>,
@@ -85,7 +85,7 @@ pub fn prepare_product(
     )?;
     let description = normalize_description(raw.description, title_language)?;
 
-    let price = normalize_price_or_skip_missing_currency(
+    let price = normalize_product_listing_price_or_skip_missing_currency(
         raw.price.as_deref(),
         fallback_currency,
         PriceField::Price,
@@ -157,6 +157,24 @@ fn failure(error: NormalizationError) -> NormalizationFailure {
     NormalizationFailure {
         error,
         llm_calls_used: 0,
+    }
+}
+
+fn normalize_product_listing_price_or_skip_missing_currency(
+    raw: Option<&str>,
+    fallback_currency: Option<Currency>,
+    field: PriceField,
+) -> Result<
+    Option<product_listing_core::product_listing_price::ProductListingPrice>,
+    NormalizationError,
+> {
+    match normalize_product_listing_price(raw, fallback_currency) {
+        Ok(price) => Ok(price),
+        Err(PriceNormalizationError::UnknownCurrency) => {
+            warn!(price_field = ?field, "Skipping price extraction because no currency was detected");
+            Ok(None)
+        }
+        Err(error) => Err(map_price_error(error, field)),
     }
 }
 
@@ -275,9 +293,11 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("source fallback must normalize the price: {error}"));
 
-        let price = prepared
-            .price
-            .unwrap_or_else(|| panic!("price must be extracted with fallback currency"));
+        let Some(product_listing_core::product_listing_price::ProductListingPrice::Monetary(price)) =
+            prepared.price
+        else {
+            panic!("a numeric price must be extracted with fallback currency");
+        };
         assert_eq!(Currency::Zar, price.currency);
         assert_eq!(
             money::MonetaryAmount::from(550_000_u64),

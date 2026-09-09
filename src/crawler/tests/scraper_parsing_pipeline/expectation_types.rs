@@ -1,5 +1,7 @@
 use money::Price;
-use product_listing_core::listing_availability::ListingAvailability;
+use product_listing_core::{
+    listing_availability::ListingAvailability, product_listing_price::ProductListingPrice,
+};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,7 +23,7 @@ pub struct NormalizedExpectation {
     pub source_listing_id: String,
     pub title: String,
     pub description: Option<String>,
-    pub price: Option<Price>,
+    pub price: Option<ProductListingPrice>,
     pub price_estimate_min: Option<Price>,
     pub price_estimate_max: Option<Price>,
     pub availability: Option<ListingAvailability>,

@@ -400,6 +400,7 @@ CREATE TABLE product_listings (
     title_language text,
     description_text text,
     description_language text,
+    price_kind text,
     price_amount bigint,
     price_currency text,
     price_estimate_min_amount bigint,
@@ -437,7 +438,12 @@ CREATE TABLE product_listings (
     CONSTRAINT product_listings_description_pair_check CHECK ((description_text IS NULL) = (description_language IS NULL)),
     CONSTRAINT product_listings_title_language_check CHECK (title_language IS NULL OR title_language IN ('de', 'en', 'fr', 'es', 'it', 'zh', 'pt', 'pl', 'tr', 'nl', 'cs', 'ja', 'ru', 'ar')),
     CONSTRAINT product_listings_description_language_check CHECK (description_language IS NULL OR description_language IN ('de', 'en', 'fr', 'es', 'it', 'zh', 'pt', 'pl', 'tr', 'nl', 'cs', 'ja', 'ru', 'ar')),
-    CONSTRAINT product_listings_price_pair_check CHECK ((price_amount IS NULL) = (price_currency IS NULL)),
+    CONSTRAINT product_listings_price_shape_check CHECK (
+        (price_kind IS NULL AND price_amount IS NULL AND price_currency IS NULL)
+        OR (price_kind = 'MONETARY' AND price_amount IS NOT NULL AND price_currency IS NOT NULL)
+        OR (price_kind = 'ON_REQUEST' AND price_amount IS NULL AND price_currency IS NULL)
+    ),
+    CONSTRAINT product_listings_price_kind_check CHECK (price_kind IS NULL OR price_kind IN ('MONETARY', 'ON_REQUEST')),
     CONSTRAINT product_listings_price_estimate_min_pair_check CHECK ((price_estimate_min_amount IS NULL) = (price_estimate_min_currency IS NULL)),
     CONSTRAINT product_listings_price_estimate_max_pair_check CHECK ((price_estimate_max_amount IS NULL) = (price_estimate_max_currency IS NULL)),
     CONSTRAINT product_listings_price_amount_nonnegative CHECK (price_amount IS NULL OR price_amount >= 0),

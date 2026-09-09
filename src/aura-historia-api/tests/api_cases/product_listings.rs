@@ -759,7 +759,7 @@ async fn should_keep_product_search_fx_snapshot_pinned_across_pages_when_newer_s
         product_listing_ids(&first_body)
     );
     assert_eq!(
-        json!({ "amount": 50, "currency": "EUR" }),
+        json!({ "type": "MONETARY", "amount": 50, "currency": "EUR" }),
         first_body["items"][0]["item"]["displayPrice"]
     );
     assert_eq!(
@@ -785,7 +785,7 @@ async fn should_keep_product_search_fx_snapshot_pinned_across_pages_when_newer_s
         product_listing_ids(&second_body)
     );
     assert_eq!(
-        json!({ "amount": 50, "currency": "EUR" }),
+        json!({ "type": "MONETARY", "amount": 50, "currency": "EUR" }),
         second_body["items"][0]["item"]["displayPrice"]
     );
     assert_eq!(
@@ -811,7 +811,6 @@ async fn should_keep_sold_display_when_fx_snapshot_changes() {
         "Sold FX Listing Source",
         "2025-01-01T00:00:00Z",
     );
-    document["sourcePrice"] = Value::Null;
     document["salePrices"] = json!({
         "eur": 40, "gbp": 40, "usd": 40, "aud": 40,
         "cad": 40, "nzd": 40, "cny": 40, "brl": 40,
@@ -837,7 +836,7 @@ async fn should_keep_sold_display_when_fx_snapshot_changes() {
         before_body["items"][0]["item"]["availability"]
     );
     assert_eq!(
-        json!({ "amount": 40, "currency": "EUR" }),
+        json!({ "type": "MONETARY", "amount": 40, "currency": "EUR" }),
         before_body["items"][0]["item"]["displayPrice"]
     );
 
@@ -848,7 +847,7 @@ async fn should_keep_sold_display_when_fx_snapshot_changes() {
     assert_eq!(reqwest::StatusCode::OK, after_status);
     assert_eq!(vec![product_listing_id], product_listing_ids(&after_body));
     assert_eq!(
-        json!({ "amount": 40, "currency": "EUR" }),
+        json!({ "type": "MONETARY", "amount": 40, "currency": "EUR" }),
         after_body["items"][0]["item"]["displayPrice"]
     );
 }
@@ -1360,7 +1359,7 @@ fn search_document_with_source(
             "titleFr": null,
             "titleEs": null,
             "titleIt": null,
-            "sourcePrice": { "amount": price_usd, "currency": "USD" },
+            "sourcePrice": { "type": "MONETARY", "amount": price_usd, "currency": "USD" },
             "availability": availability,
             "url": "https://listing-source.example/product",
             "images": [],

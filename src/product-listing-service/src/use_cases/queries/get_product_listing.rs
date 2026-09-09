@@ -34,6 +34,7 @@ use product_listing_core::product_listing::{
     ListingSaleObservation, ProductListingAuction, ProductListingPricing,
 };
 use product_listing_core::product_listing_image::ProductListingImage;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::title::Title;
 use time::OffsetDateTime;
 use url::Url;
@@ -60,7 +61,7 @@ pub struct ProductListingPricingPresentation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayProductListingPricing {
-    pub price: Option<money::Price>,
+    pub price: Option<ProductListingPrice>,
     pub price_estimate_min: Option<money::Price>,
     pub price_estimate_max: Option<money::Price>,
 }
@@ -118,8 +119,19 @@ pub fn present_product_pricing(
                 |source| ProductListingPricingPresentationError::PriceConversionFailed { source },
             )
     };
+    let price = match source.price {
+        None => None,
+        Some(ProductListingPrice::OnRequest) => Some(ProductListingPrice::OnRequest),
+        Some(ProductListingPrice::Monetary(price)) => Some(ProductListingPrice::Monetary(
+            snapshot
+                .convert(price, display_currency, RoundingMode::HalfUp)
+                .map_err(|source| {
+                    ProductListingPricingPresentationError::PriceConversionFailed { source }
+                })?,
+        )),
+    };
     let display = DisplayProductListingPricing {
-        price: convert(source.price)?,
+        price,
         price_estimate_min: convert(source.price_estimate_min)?,
         price_estimate_max: convert(source.price_estimate_max)?,
     };
@@ -805,7 +817,10 @@ mod tests {
                     Description::from("Description"),
                 )),
                 pricing: ProductListingPricing {
-                    price: Some(Price::new(MonetaryAmount::from(100_u64), Currency::Eur)),
+                    price: Some(ProductListingPrice::from(Price::new(
+                        MonetaryAmount::from(100_u64),
+                        Currency::Eur,
+                    ))),
                     price_estimate_min: Some(Price::new(
                         MonetaryAmount::from(80_u64),
                         Currency::Eur,
@@ -879,7 +894,10 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let snapshot = snapshot()?;
         let source = ProductListingPricing {
-            price: Some(Price::new(MonetaryAmount::from(1_u64), Currency::Eur)),
+            price: Some(ProductListingPrice::from(Price::new(
+                MonetaryAmount::from(1_u64),
+                Currency::Eur,
+            ))),
             price_estimate_min: Some(Price::new(MonetaryAmount::from(2_u64), Currency::Eur)),
             price_estimate_max: Some(Price::new(MonetaryAmount::from(3_u64), Currency::Eur)),
         };
@@ -889,7 +907,10 @@ mod tests {
         assert_eq!(source, presentation.source);
         assert_eq!(
             DisplayProductListingPricing {
-                price: Some(Price::new(MonetaryAmount::from(1_u64), Currency::Usd)),
+                price: Some(ProductListingPrice::from(Price::new(
+                    MonetaryAmount::from(1_u64),
+                    Currency::Usd,
+                ))),
                 price_estimate_min: Some(Price::new(MonetaryAmount::from(3_u64), Currency::Usd)),
                 price_estimate_max: Some(Price::new(MonetaryAmount::from(4_u64), Currency::Usd)),
             },
@@ -901,6 +922,27 @@ mod tests {
                 captured_at: snapshot.captured_at(),
             },
             presentation.valuation
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_preserve_on_request_without_fx_conversion() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let snapshot = snapshot()?;
+        let presentation = present_product_pricing(
+            ProductListingPricing {
+                price: Some(ProductListingPrice::OnRequest),
+                ..Default::default()
+            },
+            None,
+            &snapshot,
+            Currency::Usd,
+        )?;
+
+        assert_eq!(
+            Some(ProductListingPrice::OnRequest),
+            presentation.display.price
         );
         Ok(())
     }
@@ -944,7 +986,10 @@ mod tests {
             .await?;
 
         assert_eq!(
-            Some(Price::new(MonetaryAmount::from(125_u64), Currency::Usd)),
+            Some(ProductListingPrice::from(Price::new(
+                MonetaryAmount::from(125_u64),
+                Currency::Usd,
+            ))),
             result.item.pricing.display.price
         );
         assert_eq!(1, lock_state(&state).commit_count);

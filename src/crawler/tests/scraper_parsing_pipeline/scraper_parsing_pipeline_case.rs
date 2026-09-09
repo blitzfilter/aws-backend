@@ -97,7 +97,7 @@ fn normalized_from_json(data: NormalizedExpectationJson) -> NormalizedExpectatio
         description: data.description.map(|description| {
             product_listing_core::description::Description::from(description.as_str()).to_string()
         }),
-        price: price_from_parts(data.price, data.price_currency.as_deref()),
+        price: product_listing_price_from_parts(data.price, data.price_currency.as_deref()),
         price_estimate_min: price_from_parts(
             data.price_estimate_min,
             data.price_estimate_min_currency.as_deref(),
@@ -113,6 +113,13 @@ fn normalized_from_json(data: NormalizedExpectationJson) -> NormalizedExpectatio
         auction_start: parse_optional_rfc3339(data.auction_start.as_deref()),
         auction_end: parse_optional_rfc3339(data.auction_end.as_deref()),
     }
+}
+
+fn product_listing_price_from_parts(
+    minor: Option<u64>,
+    currency: Option<&str>,
+) -> Option<product_listing_core::product_listing_price::ProductListingPrice> {
+    price_from_parts(minor, currency).map(Into::into)
 }
 
 fn price_from_parts(minor: Option<u64>, currency: Option<&str>) -> Option<Price> {

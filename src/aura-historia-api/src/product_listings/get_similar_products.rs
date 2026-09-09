@@ -479,7 +479,9 @@ mod tests {
                     localization: Language::En,
                     payload: Title::from("Cabinet"),
                 }),
-                display_price: Some(Price::new(MonetaryAmount::from(100_u64), Currency::Eur)),
+                display_price: Some(
+                    Price::new(MonetaryAmount::from(100_u64), Currency::Eur).into(),
+                ),
                 price_valuation: ProductListingSummaryPriceValuation::Current {
                     fx_rate_id: fxrate_core::FxRateId::new(),
                     captured_at: OffsetDateTime::UNIX_EPOCH,

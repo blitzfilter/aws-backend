@@ -5,6 +5,7 @@ pub mod listing_lifecycle;
 pub mod listing_orderability;
 pub mod product_listing;
 pub mod product_listing_event;
+pub mod product_listing_price;
 
 pub mod product_listing_id;
 pub mod product_listing_image;

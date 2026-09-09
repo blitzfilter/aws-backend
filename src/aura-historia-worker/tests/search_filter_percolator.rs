@@ -1427,7 +1427,7 @@ async fn insert_cross_currency_product_with_event(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, price_amount, price_currency, price_estimate_min_amount, price_estimate_min_currency, price_estimate_max_amount, price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, $6, 'en', 'Cross currency worker description', 'en', $7, $8, $9, $10, $11, $12, $13, CASE WHEN $13 IS NULL THEN NULL ELSE $14 END, $15, 'ACTIVE', 'https://example.test/cross-currency-product', '[]')",
+        "INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, price_kind, price_amount, price_currency, price_estimate_min_amount, price_estimate_min_currency, price_estimate_max_amount, price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, $6, 'en', 'Cross currency worker description', 'en', CASE WHEN $7 IS NULL THEN NULL ELSE 'MONETARY' END, $7, $8, $9, $10, $11, $12, $13, CASE WHEN $13 IS NULL THEN NULL ELSE $14 END, $15, 'ACTIVE', 'https://example.test/cross-currency-product', '[]')",
     )
     .bind(product_uuid)
     .bind(format!("cross-currency-worker-product-{product_slug_suffix}"))
@@ -1453,7 +1453,7 @@ async fn insert_cross_currency_product_with_event(
         "title": {"language": "en", "text": title},
         "description": {"language": "en", "text": "Cross currency worker description"},
         "pricing": {
-            "price": price.map(|(amount, currency)| serde_json::json!({"amount": amount, "currency": currency})),
+            "price": price.map(|(amount, currency)| serde_json::json!({"type": "MONETARY", "amount": amount, "currency": currency})),
             "priceEstimateMin": price_estimate_min.map(|(amount, currency)| serde_json::json!({"amount": amount, "currency": currency})),
             "priceEstimateMax": price_estimate_max.map(|(amount, currency)| serde_json::json!({"amount": amount, "currency": currency}))
         },

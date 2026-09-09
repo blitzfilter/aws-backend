@@ -1,5 +1,7 @@
 use money::{Currency, HasMinorUnitExponent, MonetaryAmount, Price};
+use product_listing_core::product_listing_price::ProductListingPrice;
 use regex::regex;
+use strum::IntoEnumIterator;
 
 // ---------------------------------------------------------------------------
 // Internal error type
@@ -23,27 +25,14 @@ pub type PriceError = PriceNormalizationError;
 
 /// Detects the currency from a raw price string.
 ///
-/// Returns `None` if no recognized currency symbol or ISO code is present.
-/// Multi-character symbols (`NZD`, `AUD`, `CAD`) are checked before the plain
-/// `$` to avoid false matches.
+/// Returns `None` if no recognized currency symbol or canonical ISO code is
+/// present. ISO codes require token boundaries to avoid matching text within
+/// other words.
 pub fn detect_currency(raw: &str) -> Option<Currency> {
-    if raw.contains("ZAR") {
-        Some(Currency::Zar)
-    } else if raw.contains("NZD") || raw.contains("NZ$") {
-        Some(Currency::Nzd)
-    } else if raw.contains("AUD") || raw.contains("A$") {
-        Some(Currency::Aud)
-    } else if raw.contains("CAD") || raw.contains("C$") {
-        Some(Currency::Cad)
-    } else if raw.contains("USD") || raw.contains('$') {
-        Some(Currency::Usd)
-    } else if raw.contains("GBP") || raw.contains('£') {
-        Some(Currency::Gbp)
-    } else if raw.contains("EUR") || raw.contains('€') {
-        Some(Currency::Eur)
-    } else {
-        None
-    }
+    currency_markers(raw)
+        .into_iter()
+        .next()
+        .map(|marker| marker.currency)
 }
 
 // ---------------------------------------------------------------------------
@@ -62,18 +51,51 @@ pub fn detect_currency(raw: &str) -> Option<Currency> {
 ///   - `"1234.5"`       (single decimal digit)
 ///   - `"1'234.56"`     (apostrophe-thousands)
 ///
-/// If no currency marker is found in `raw` the optional `fallback_currency` is
-/// used (e.g. inferred from the ListingSource domain TLD). If neither is present
-/// [`PriceError::UnknownCurrency`] is returned.
+/// If no amount is adjacent to a currency marker, the optional `fallback_currency` is used
+/// (e.g. inferred from the ListingSource domain TLD). Ambiguous explicit currency-and-amount
+/// pairs fail closed. If neither currency source is present, [`PriceError::UnknownCurrency`] is
+/// returned.
 pub fn parse_price(
     raw: &str,
     fallback_currency: Option<Currency>,
 ) -> Result<(MonetaryAmount, Currency), PriceNormalizationError> {
-    let currency = detect_currency(raw)
-        .or(fallback_currency)
-        .ok_or(PriceError::UnknownCurrency)?;
+    let pairs = price_currency_pairs(raw);
+    let (number, currency) = if let Some(first_pair) = pairs.first() {
+        let currency = first_pair.currency;
+        if pairs.iter().any(|pair| pair.currency != currency) {
+            return Err(PriceError::ParseFailure);
+        }
 
-    let number = extract_price_number_candidate(raw, &currency)?;
+        let mut candidates = Vec::new();
+        for pair in pairs {
+            if !candidates.iter().any(|candidate: &PriceNumberCandidate| {
+                candidate.start == pair.candidate.start && candidate.end == pair.candidate.end
+            }) {
+                candidates.push(pair.candidate);
+            }
+        }
+
+        (
+            extract_price_number_candidate_from_candidates(raw, &currency, candidates)?,
+            currency,
+        )
+    } else {
+        let currency = fallback_currency.ok_or_else(|| {
+            if currency_markers(raw).is_empty() {
+                PriceError::UnknownCurrency
+            } else {
+                PriceError::ParseFailure
+            }
+        })?;
+        (
+            extract_price_number_candidate_from_candidates(
+                raw,
+                &currency,
+                extract_price_number_candidates(raw),
+            )?,
+            currency,
+        )
+    };
 
     let amount = parse_price_number(&number, &currency)?;
 
@@ -120,19 +142,93 @@ fn parse_price_number(number: &str, currency: &Currency) -> Result<MonetaryAmoun
 // Public field-level helper
 // ---------------------------------------------------------------------------
 
-/// Parses an optional raw price string with explicit fallback currency context.
-/// Blank values and deliberate price-on-request markers produce no assertion.
+/// Parses an optional raw monetary price with explicit fallback currency context.
+/// Blank values and deliberate price-on-request markers produce no monetary assertion.
 pub fn normalize_price(
     raw: Option<&str>,
     fallback_currency: Option<Currency>,
 ) -> Result<Option<Price>, PriceNormalizationError> {
     let Some(raw) = raw else { return Ok(None) };
     let trimmed = raw.trim();
-    if trimmed.is_empty() || is_price_on_request_marker(trimmed) {
+    if trimmed.is_empty() {
         return Ok(None);
     }
-    parse_price(trimmed, fallback_currency)
-        .map(|(amount, currency)| Some(Price::new(amount, currency)))
+
+    let request_evidence = price_on_request_evidence(trimmed);
+    match parse_display_price(trimmed, fallback_currency) {
+        Ok(_) if request_evidence == PriceOnRequestEvidence::Explicit => Ok(None),
+        Ok(parsed) => Ok(Some(parsed.price)),
+        Err(_) if request_evidence == PriceOnRequestEvidence::Explicit => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Parses the main ProductListing asking-price assertion.
+///
+/// A valid monetary price takes precedence over generic contact wording. Price-on-request
+/// markers become an explicit ProductListing domain assertion rather than an absence.
+pub fn normalize_product_listing_price(
+    raw: Option<&str>,
+    fallback_currency: Option<Currency>,
+) -> Result<Option<ProductListingPrice>, PriceNormalizationError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let request_evidence = price_on_request_evidence(trimmed);
+    let has_explicit_monetary_evidence = !price_currency_pairs(trimmed).is_empty();
+    match parse_display_price(trimmed, fallback_currency) {
+        Ok(parsed)
+            if request_evidence == PriceOnRequestEvidence::Explicit
+                && parsed.currency_evidence == PriceCurrencyEvidence::Fallback =>
+        {
+            Ok(Some(ProductListingPrice::OnRequest))
+        }
+        Ok(_) if request_evidence == PriceOnRequestEvidence::Explicit => {
+            Err(PriceNormalizationError::ParseFailure)
+        }
+        Ok(parsed) => Ok(Some(ProductListingPrice::Monetary(parsed.price))),
+        Err(error) if has_explicit_monetary_evidence => Err(error),
+        Err(_) if request_evidence != PriceOnRequestEvidence::None => {
+            Ok(Some(ProductListingPrice::OnRequest))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriceOnRequestEvidence {
+    None,
+    Explicit,
+    GenericContact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriceCurrencyEvidence {
+    ExplicitMarker,
+    Fallback,
+}
+
+struct ParsedDisplayPrice {
+    price: Price,
+    currency_evidence: PriceCurrencyEvidence,
+}
+
+fn parse_display_price(
+    raw: &str,
+    fallback_currency: Option<Currency>,
+) -> Result<ParsedDisplayPrice, PriceNormalizationError> {
+    let (amount, currency) = parse_price(raw, fallback_currency)?;
+    Ok(ParsedDisplayPrice {
+        price: Price::new(amount, currency),
+        currency_evidence: if price_currency_pairs(raw).is_empty() {
+            PriceCurrencyEvidence::Fallback
+        } else {
+            PriceCurrencyEvidence::ExplicitMarker
+        },
+    })
 }
 
 /// Parses one machine-supplied decimal with no display-text interpretation.
@@ -236,8 +332,21 @@ struct ParsedPriceNumberCandidate {
     quality: PriceNumberCandidateQuality,
 }
 
+struct PriceCurrencyPair {
+    candidate: PriceNumberCandidate,
+    currency: Currency,
+}
+
+#[cfg(test)]
 fn extract_price_number_candidate(raw: &str, currency: &Currency) -> Result<String, PriceError> {
-    let candidates = price_like_number_candidates(raw);
+    extract_price_number_candidate_from_candidates(raw, currency, price_like_number_candidates(raw))
+}
+
+fn extract_price_number_candidate_from_candidates(
+    raw: &str,
+    currency: &Currency,
+    candidates: Vec<PriceNumberCandidate>,
+) -> Result<String, PriceError> {
     let mut parsed = Vec::new();
 
     for candidate in candidates {
@@ -255,6 +364,7 @@ fn extract_price_number_candidate(raw: &str, currency: &Currency) -> Result<Stri
     }
 }
 
+#[cfg(test)]
 fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
     let candidates = extract_price_number_candidates(raw);
     let currency_markers = currency_marker_spans(raw);
@@ -263,21 +373,38 @@ fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
         return candidates;
     }
 
-    let currency_bearing_candidates: Vec<_> = candidates
+    candidates
         .iter()
         .filter(|candidate| {
             currency_markers.iter().any(|marker| {
-                distance_between_spans((candidate.start, candidate.end), *marker) <= 2
+                has_benign_currency_amount_gap(raw, (candidate.start, candidate.end), *marker)
             })
         })
         .cloned()
-        .collect();
+        .collect()
+}
 
-    if currency_bearing_candidates.is_empty() {
-        candidates
-    } else {
-        currency_bearing_candidates
+fn price_currency_pairs(raw: &str) -> Vec<PriceCurrencyPair> {
+    let candidates = extract_price_number_candidates(raw);
+    let markers = currency_markers(raw);
+    let mut pairs = Vec::new();
+
+    for candidate in candidates {
+        for marker in &markers {
+            if has_benign_currency_amount_gap(
+                raw,
+                (candidate.start, candidate.end),
+                (marker.start, marker.end),
+            ) {
+                pairs.push(PriceCurrencyPair {
+                    candidate: candidate.clone(),
+                    currency: marker.currency,
+                });
+            }
+        }
     }
+
+    pairs
 }
 
 fn select_price_number_candidate(
@@ -397,11 +524,110 @@ fn first_currency_marker_span(raw: &str) -> Option<(usize, usize)> {
     currency_marker_spans(raw).into_iter().next()
 }
 
+// Bare `¥` and `R` are ambiguous; `$` remains a USD marker for compatibility.
+const CURRENCY_SYMBOLS: &[(Currency, &str)] = &[
+    (Currency::Eur, "€"),
+    (Currency::Gbp, "£"),
+    (Currency::Usd, "$"),
+    (Currency::Aud, "A$"),
+    (Currency::Cad, "C$"),
+    (Currency::Nzd, "NZ$"),
+    (Currency::Cny, "CN¥"),
+    (Currency::Brl, "R$"),
+    (Currency::Pln, "zł"),
+    (Currency::Try, "₺"),
+    (Currency::Czk, "Kč"),
+    (Currency::Rub, "₽"),
+    (Currency::Aed, "د.إ"),
+    (Currency::Sar, "﷼"),
+    (Currency::Hkd, "HK$"),
+    (Currency::Sgd, "S$"),
+];
+
+#[derive(Clone, Copy)]
+struct CurrencyMarker {
+    currency: Currency,
+    start: usize,
+    end: usize,
+}
+
+fn currency_markers(raw: &str) -> Vec<CurrencyMarker> {
+    let mut markers = Vec::new();
+
+    for currency in Currency::iter() {
+        markers.extend(
+            raw.match_indices(currency.as_str())
+                .filter(|(start, code)| is_currency_code_token(raw, *start, code.len()))
+                .map(|(start, code)| CurrencyMarker {
+                    currency,
+                    start,
+                    end: start + code.len(),
+                }),
+        );
+    }
+
+    for &(currency, symbol) in CURRENCY_SYMBOLS {
+        markers.extend(
+            raw.match_indices(symbol)
+                .map(|(start, symbol)| CurrencyMarker {
+                    currency,
+                    start,
+                    end: start + symbol.len(),
+                }),
+        );
+    }
+
+    markers.sort_by(|left, right| {
+        left.start
+            .cmp(&right.start)
+            .then_with(|| right.end.cmp(&left.end))
+    });
+
+    let mut non_overlapping_markers = Vec::new();
+    for marker in markers {
+        if non_overlapping_markers
+            .last()
+            .is_none_or(|previous: &CurrencyMarker| previous.end <= marker.start)
+        {
+            non_overlapping_markers.push(marker);
+        }
+    }
+    non_overlapping_markers
+}
+
+fn is_currency_code_token(raw: &str, start: usize, code_len: usize) -> bool {
+    let before = raw[..start].chars().next_back();
+    let after = raw[start + code_len..].chars().next();
+
+    before.is_none_or(is_currency_code_token_boundary)
+        && after.is_none_or(is_currency_code_token_boundary)
+}
+
+fn is_currency_code_token_boundary(ch: char) -> bool {
+    !ch.is_alphanumeric() && ch != '_'
+}
+
 fn currency_marker_spans(raw: &str) -> Vec<(usize, usize)> {
-    regex!(r"(?i)(EUR|USD|GBP|AUD|CAD|NZD|NZ\$|A\$|C\$|\$|\x{00A3}|\x{20AC})")
-        .find_iter(raw)
-        .map(|m| (m.start(), m.end()))
+    currency_markers(raw)
+        .into_iter()
+        .map(|marker| (marker.start, marker.end))
         .collect()
+}
+
+fn has_benign_currency_amount_gap(raw: &str, left: (usize, usize), right: (usize, usize)) -> bool {
+    let gap = if left.1 <= right.0 {
+        &raw[left.1..right.0]
+    } else if right.1 <= left.0 {
+        &raw[right.1..left.0]
+    } else {
+        return false;
+    };
+
+    gap.chars().count() <= 3 && gap.chars().all(is_benign_currency_amount_separator)
+}
+
+fn is_benign_currency_amount_separator(ch: char) -> bool {
+    ch.is_ascii_whitespace() || matches!(ch, '\u{00a0}' | '\u{202f}')
 }
 
 fn distance_between_spans(left: (usize, usize), right: (usize, usize)) -> usize {
@@ -457,49 +683,32 @@ fn split_decimal(s: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn is_price_on_request_marker(raw: &str) -> bool {
-    // Keywords that, when present anywhere in the price string, indicate that
-    // the seller intentionally has not set a price, and it must be requested.
-    // Covers: EN, DE, FR, IT, ES, PT, NL, PL, RU, ZH, JA, AR
-    const KEYWORDS: &[&str] = &[
-        // English
-        "request", // "on request", "price on request", "price upon request"
-        "enquire", // "please enquire"
-        "inquire", // "please inquire"
-        "contact us",
-        "call for price",
-        "ask for price",
-        "poa",
-        // German
-        "anfrage", // "auf Anfrage", "Preis auf Anfrage"
-        // French
-        "demande", // "sur demande", "prix sur demande"
-        // Italian
-        "richiesta", // "su richiesta", "prezzo su richiesta"
-        // Spanish
-        "consultar", // "precio a consultar"
-        "bajo pedido",
-        // Portuguese
-        "consulte",     // "consulte-nos"
-        "sob consulta", // "preço sob consulta"
-        // Dutch
-        "aanvraag", // "op aanvraag", "prijs op aanvraag"
-        // Polish
-        "zapytanie", // "na zapytanie", "cena na zapytanie"
-        // Russian
-        "по запросу", // "цена по запросу"
-        // Chinese
-        "询价",
-        "面议",
-        // Japanese
-        "お問い合わせ", // "価格はお問い合わせ"
-        // Arabic
-        "بالتفاوض",
-        "عند الطلب",
-    ];
-
-    let lower = raw.to_lowercase();
-    KEYWORDS.iter().any(|kw| lower.contains(kw))
+fn price_on_request_evidence(raw: &str) -> PriceOnRequestEvidence {
+    // Phrase-level matching prevents substring false positives such as a word
+    // containing `poa`. CJK/Arabic forms are explicit phrases by themselves.
+    let explicit = regex!(
+        r"(?ix)
+        \b(?:price\s+(?:on|upon)\s+request|price\s+available\s+on\s+request|on\s+request|call\s+for\s+price|ask\s+for\s+price|p\.?o\.?a\.?)\b|
+        \b(?:preis\s+auf\s+anfrage|auf\s+anfrage)\b|
+        \b(?:prix\s+sur\s+demande|sur\s+demande)\b|
+        \b(?:prezzo\s+su\s+richiesta|su\s+richiesta)\b|
+        \b(?:precio\s+a\s+consultar|consultar\s+precio)\b|
+        \b(?:preço\s+sob\s+consulta|preco\s+sob\s+consulta|sob\s+consulta)\b|
+        \b(?:prijs\s+op\s+aanvraag|op\s+aanvraag)\b|
+        \b(?:cena\s+na\s+zapytanie|na\s+zapytanie)\b|
+        цена\s+по\s+запросу|по\s+запросу|询价|面议|
+        価格(?:は)?(?:お問い合わせ|要問い合わせ)|بالتفاوض|عند\s+الطلب
+    "
+    );
+    if explicit.is_match(raw) {
+        PriceOnRequestEvidence::Explicit
+    } else if regex!(r"(?i)\b(?:contact\s+us|please\s+contact|enquir(?:e|ies)|inquir(?:e|ies))\b")
+        .is_match(raw)
+    {
+        PriceOnRequestEvidence::GenericContact
+    } else {
+        PriceOnRequestEvidence::None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -510,11 +719,14 @@ fn is_price_on_request_marker(raw: &str) -> bool {
 mod tests {
     use rstest::rstest;
 
-    use money::Currency;
+    use money::{Currency, Price};
+    use strum::IntoEnumIterator;
 
     use super::{
-        PriceError, detect_currency, extract_price_number_candidate, is_price_on_request_marker,
-        normalise_fraction, normalize_machine_decimal_price, parse_price, split_decimal,
+        CURRENCY_SYMBOLS, PriceError, PriceOnRequestEvidence, currency_marker_spans,
+        detect_currency, extract_price_number_candidate, normalise_fraction,
+        normalize_machine_decimal_price, normalize_price, normalize_product_listing_price,
+        parse_price, price_on_request_evidence, split_decimal,
     };
 
     // -----------------------------------------------------------------------
@@ -535,14 +747,37 @@ mod tests {
     #[case("NZ$100", Some(Currency::Nzd))]
     #[case("NZD 100", Some(Currency::Nzd))]
     #[case("ZAR 100", Some(Currency::Zar))]
+    #[case("CHF 100", Some(Currency::Chf))]
     #[case("100", None)]
-    #[case("CHF 100", None)]
     #[case("", None)]
     fn should_detect_currency_when_symbol_or_code_present(
         #[case] raw: &str,
         #[case] expected: Option<Currency>,
     ) {
         assert_eq!(detect_currency(raw), expected);
+    }
+
+    #[test]
+    fn should_recognize_every_canonical_currency_code_as_a_token() {
+        for currency in Currency::iter() {
+            let raw = format!("{} 12", currency.as_str());
+            assert_eq!(Some(currency), detect_currency(&raw));
+            assert_eq!(
+                vec![(0, currency.as_str().len())],
+                currency_marker_spans(&raw)
+            );
+        }
+
+        assert_eq!(None, detect_currency("priceEURvalue"));
+        assert!(currency_marker_spans("priceEURvalue").is_empty());
+    }
+
+    #[test]
+    fn should_recognize_supported_currency_symbols() {
+        for &(currency, symbol) in CURRENCY_SYMBOLS {
+            assert_eq!(Some(currency), detect_currency(symbol));
+            assert_eq!(vec![(0, symbol.len())], currency_marker_spans(symbol));
+        }
     }
 
     #[test]
@@ -571,6 +806,9 @@ mod tests {
     #[case("6\u{202f}900\u{00a0}€", 690000, Currency::Eur)]
     #[case("100 EUR", 10000, Currency::Eur)]
     #[case("€ 50,00", 5000, Currency::Eur)]
+    #[case("€ 12,500", 1_250_000, Currency::Eur)]
+    #[case("EUR 12,500", 1_250_000, Currency::Eur)]
+    #[case("12\u{202f}500 €", 1_250_000, Currency::Eur)]
     #[case("$9.99", 999, Currency::Usd)]
     #[case("A$12.50", 1250, Currency::Aud)]
     #[case("C$99.99", 9999, Currency::Cad)]
@@ -598,6 +836,7 @@ mod tests {
     )]
     #[case("\u{00a3}3,90000\u{00a3}3,900.00", 390000, Currency::Gbp)]
     #[case("$3,900$3,900.00", 390000, Currency::Usd)]
+    #[case("EUR reference; USD 100", 10000, Currency::Usd)]
     fn should_parse_price_when_valid_string_provided(
         #[case] raw: &str,
         #[case] expected_amount: u64,
@@ -620,6 +859,7 @@ mod tests {
     #[case("no numbers here USD")]
     #[case("$100.00$80.00")]
     #[case("€")]
+    #[case("CHF")]
     fn should_return_parse_failure_when_price_has_currency_but_no_number(#[case] raw: &str) {
         assert!(
             matches!(parse_price(raw, None), Err(PriceError::ParseFailure)),
@@ -628,11 +868,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn should_reject_punctuation_between_currency_and_amount() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            parse_price("EUR: 12,500", None)
+        );
+    }
+
+    #[test]
+    fn should_fail_closed_when_distinct_explicit_price_pairs_are_present() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            parse_price("USD 100 / EUR 90", None)
+        );
+    }
+
     #[rstest]
     #[case("")]
     #[case("   ")]
     #[case("no numbers here")]
-    #[case("1234.56 CHF")]
+    #[case("currency unavailable")]
     fn should_return_unknown_currency_when_no_currency_symbol_or_known_code(#[case] raw: &str) {
         assert!(
             matches!(parse_price(raw, None), Err(PriceError::UnknownCurrency)),
@@ -647,6 +903,7 @@ mod tests {
 
     #[rstest]
     #[case("18,00", Currency::Eur, 1800u64)]
+    #[case("EUR reference; 100", Currency::Usd, 10000u64)]
     #[case("1590", Currency::Eur, 159000u64)]
     #[case("1590", Currency::Gbp, 159000u64)]
     #[case("1.234,56", Currency::Eur, 123456u64)]
@@ -797,15 +1054,52 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // is_price_on_request_marker
+    // price-on-request evidence
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn should_preserve_on_request_and_prefer_explicit_monetary_prices() {
+        use product_listing_core::product_listing_price::ProductListingPrice;
+
+        assert_eq!(
+            Ok(Some(ProductListingPrice::OnRequest)),
+            normalize_product_listing_price(Some("Price on request"), None)
+        );
+        assert_eq!(
+            Ok(Some(ProductListingPrice::OnRequest)),
+            normalize_product_listing_price(Some("Preis auf Anfrage"), None)
+        );
+        assert_eq!(
+            Ok(Some(ProductListingPrice::Monetary(Price::new(
+                1_250_000_u64.into(),
+                Currency::Eur,
+            )))),
+            normalize_product_listing_price(Some("€12,500 – contact us to buy"), None)
+        );
+        assert_eq!(
+            Ok(Some(ProductListingPrice::Monetary(Price::new(
+                900_000_u64.into(),
+                Currency::Usd,
+            )))),
+            normalize_product_listing_price(Some("$9,000, call for more information"), None)
+        );
+        assert_eq!(
+            Err(PriceError::UnknownCurrency),
+            normalize_product_listing_price(Some("Request a callback"), None)
+        );
+    }
+
+    #[test]
+    fn should_clear_monetary_only_price_when_display_text_is_request_marker() {
+        assert_eq!(Ok(None), normalize_price(Some("Price on request"), None));
+    }
 
     #[rstest]
     // English
     #[case("Price on Request", true)]
     #[case("POA", true)]
     #[case("price available on request", true)]
-    #[case("Please enquire", true)]
+    #[case("Please enquire", false)]
     #[case("Call for price", true)]
     // German
     #[case("Preis auf Anfrage", true)]
@@ -818,7 +1112,7 @@ mod tests {
     #[case("Su Richiesta", true)]
     // Spanish
     #[case("Precio a consultar", true)]
-    #[case("Consultar", true)]
+    #[case("Consultar", false)]
     // Portuguese
     #[case("Preço sob consulta", true)]
     // Dutch
@@ -834,11 +1128,66 @@ mod tests {
     #[case("価格はお問い合わせ", true)]
     // Arabic
     #[case("عند الطلب", true)]
+    // Generic request or contact wording is not enough evidence.
+    #[case("Request a callback", false)]
+    #[case("Contact us about delivery", false)]
+    #[case("Product enquiries welcome", false)]
     // Not markers
     #[case("$1200", false)]
     #[case("EUR 45", false)]
     #[case("1.500,00 €", false)]
-    fn should_detect_price_on_request_markers(#[case] raw: &str, #[case] expected: bool) {
-        assert_eq!(is_price_on_request_marker(raw), expected);
+    fn should_detect_explicit_price_on_request_markers(#[case] raw: &str, #[case] expected: bool) {
+        assert_eq!(
+            price_on_request_evidence(raw) == PriceOnRequestEvidence::Explicit,
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case("Price on request · Ref. 2025")]
+    #[case("Preis auf Anfrage – Art.-Nr. 12345")]
+    #[case("Prix sur demande – réf. 2025")]
+    #[case("Price on request – phone 1234567")]
+    #[case("€ Preis auf Anfrage · Ref 1234")]
+    #[case("EUR price on request · SKU 1234")]
+    fn should_prefer_explicit_request_price_over_incidental_numbers(#[case] raw: &str) {
+        assert_eq!(
+            Ok(Some(
+                product_listing_core::product_listing_price::ProductListingPrice::OnRequest
+            )),
+            normalize_product_listing_price(Some(raw), Some(Currency::Eur))
+        );
+        assert_eq!(Ok(None), normalize_price(Some(raw), Some(Currency::Eur)));
+    }
+
+    #[test]
+    fn should_not_treat_bajo_pedido_as_price_on_request() {
+        assert_eq!(
+            Err(PriceError::UnknownCurrency),
+            normalize_product_listing_price(Some("bajo pedido"), None)
+        );
+    }
+
+    #[test]
+    fn should_reject_contradictory_or_ambiguous_explicit_price_assertions() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(Some("€12,500 – price on request"), None)
+        );
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(
+                Some("CHF 12'000 – price on request"),
+                Some(Currency::Chf),
+            )
+        );
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(Some("USD 100 / EUR 90 — contact us"), None)
+        );
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(Some("USD 100 / EUR 90 — price on request"), None)
+        );
     }
 }
