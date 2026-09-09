@@ -102,6 +102,11 @@ impl<U: UnitOfWork, R: PartnershipApplicationRepositoryFactory<U::Tx>>
 impl From<PartnershipApplicationRepositoryError> for GetOwnPartnershipApplicationError {
     fn from(v: PartnershipApplicationRepositoryError) -> Self {
         match v {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound => {
+                Self::InvalidPersistedState {
+                    source: application::error::static_error("missing existing listing source"),
+                }
+            }
             PartnershipApplicationRepositoryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
             }

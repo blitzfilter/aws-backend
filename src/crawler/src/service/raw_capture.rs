@@ -48,14 +48,28 @@ impl ProductListingRawCaptureItem {
     }
 }
 
-/// Captures input positions independently and reports only durable outcomes.
+/// Crawler-local disposition of one capture attempt.
 ///
+/// `DiscardedMissingSource` is terminal for this queued observation, but never claims that raw
+/// business data was persisted. The next complete ListingSource sync disables stale local work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProductListingRawCaptureOutcome {
+    Persisted,
+    DiscardedMissingSource,
+    #[default]
+    RetryableFailure,
+}
+
+/// Captures input positions independently and reports durable, terminal, and retryable outcomes.
 /// Results retain input order. Observations from one raw stream execute in enqueue order; only
 /// independent streams run concurrently.
 #[async_trait]
 #[mockall::automock]
 pub trait ProductListingRawCaptureService: Send + Sync {
-    async fn capture(&self, observations: Vec<ProductListingRawCaptureItem>) -> Vec<bool>;
+    async fn capture(
+        &self,
+        observations: Vec<ProductListingRawCaptureItem>,
+    ) -> Vec<ProductListingRawCaptureOutcome>;
 }
 
 /// Calls the ProductListing service raw-capture use case with bounded stream-aware concurrency.
@@ -83,8 +97,12 @@ impl ProductListingRawCaptureService for ProductListingRawCaptureServiceImpl {
         skip(self, observations),
         fields(total = observations.len())
     )]
-    async fn capture(&self, observations: Vec<ProductListingRawCaptureItem>) -> Vec<bool> {
-        let mut results = vec![false; observations.len()];
+    async fn capture(
+        &self,
+        observations: Vec<ProductListingRawCaptureItem>,
+    ) -> Vec<ProductListingRawCaptureOutcome> {
+        let mut results =
+            vec![ProductListingRawCaptureOutcome::RetryableFailure; observations.len()];
         let mut streams = Vec::<Vec<(usize, ProductListingRawCaptureItem)>>::new();
         let mut stream_indices = HashMap::<(ListingSourceId, String), usize>::new();
 
@@ -113,11 +131,21 @@ impl ProductListingRawCaptureService for ProductListingRawCaptureServiceImpl {
                 for (input_index, observation) in stream_items {
                     let context = crawler_operation_context(observation.command.listing_source_id);
                     let listing_source_id = observation.command.listing_source_id;
-                    let succeeded = match capture_observation.execute(&context, observation.command).await {
+                    let outcome = match capture_observation.execute(&context, observation.command).await {
                         Ok(CaptureProductListingRawObservationResult::Changed { .. })
                         | Ok(CaptureProductListingRawObservationResult::Unchanged { .. })
                         | Ok(CaptureProductListingRawObservationResult::Duplicate { .. })
-                        | Ok(CaptureProductListingRawObservationResult::Stale { .. }) => true,
+                        | Ok(CaptureProductListingRawObservationResult::Stale { .. }) => ProductListingRawCaptureOutcome::Persisted,
+                        Err(product_listing_service::use_cases::CaptureProductListingRawObservationError::ListingSourceNotFound) => {
+                            tracing::info!(
+                                listing_source_id = %listing_source_id,
+                                request_id = %context.request_id,
+                                correlation_id = %context.correlation_id,
+                                outcome = "discarded_missing_source",
+                                "Discarded stale crawler raw observation for deleted ListingSource"
+                            );
+                            ProductListingRawCaptureOutcome::DiscardedMissingSource
+                        }
                         Err(error) => {
                             warn!(
                                 error = %error,
@@ -126,10 +154,10 @@ impl ProductListingRawCaptureService for ProductListingRawCaptureServiceImpl {
                                 correlation_id = %context.correlation_id,
                                 "Crawler raw ProductListing capture failed; observation remains retryable"
                             );
-                            false
+                            ProductListingRawCaptureOutcome::RetryableFailure
                         }
                     };
-                    stream_results.push((input_index, succeeded));
+                    stream_results.push((input_index, outcome));
                 }
                 stream_results
             }
@@ -139,8 +167,8 @@ impl ProductListingRawCaptureService for ProductListingRawCaptureServiceImpl {
         .await;
 
         for stream_results in outcomes {
-            for (input_index, succeeded) in stream_results {
-                results[input_index] = succeeded;
+            for (input_index, outcome) in stream_results {
+                results[input_index] = outcome;
             }
         }
 
@@ -207,7 +235,10 @@ impl From<&ProductListingRawCaptureItem> for RawCaptureSnapshot {
 
 #[async_trait]
 impl ProductListingRawCaptureService for FileProductListingRawCaptureService {
-    async fn capture(&self, observations: Vec<ProductListingRawCaptureItem>) -> Vec<bool> {
+    async fn capture(
+        &self,
+        observations: Vec<ProductListingRawCaptureItem>,
+    ) -> Vec<ProductListingRawCaptureOutcome> {
         if observations.is_empty() {
             return Vec::new();
         }
@@ -218,7 +249,12 @@ impl ProductListingRawCaptureService for FileProductListingRawCaptureService {
                 .and_then(|content| serde_json::from_str(&content).ok())
             {
                 Some(snapshots) => snapshots,
-                None => return vec![false; observations.len()],
+                None => {
+                    return vec![
+                        ProductListingRawCaptureOutcome::RetryableFailure;
+                        observations.len()
+                    ];
+                }
             }
         } else {
             Vec::new()
@@ -230,21 +266,25 @@ impl ProductListingRawCaptureService for FileProductListingRawCaptureService {
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(snapshots) => snapshots,
-            Err(_) => return vec![false; observations.len()],
+            Err(_) => {
+                return vec![ProductListingRawCaptureOutcome::RetryableFailure; observations.len()];
+            }
         };
         snapshots.extend(new_snapshots);
         let json = match serde_json::to_string_pretty(&snapshots) {
             Ok(json) => json,
-            Err(_) => return vec![false; observations.len()],
+            Err(_) => {
+                return vec![ProductListingRawCaptureOutcome::RetryableFailure; observations.len()];
+            }
         };
         match std::fs::write(&self.output_path, json) {
             Ok(()) => {
                 debug!(count = observations.len(), path = %self.output_path.display(), "Wrote raw capture snapshots to file");
-                vec![true; observations.len()]
+                vec![ProductListingRawCaptureOutcome::Persisted; observations.len()]
             }
             Err(error) => {
                 warn!(error = %error, path = %self.output_path.display(), "Failed to write raw capture snapshots");
-                vec![false; observations.len()]
+                vec![ProductListingRawCaptureOutcome::RetryableFailure; observations.len()]
             }
         }
     }
@@ -350,7 +390,13 @@ mod tests {
             ])
             .await;
 
-        assert_eq!(vec![true, true], outcome);
+        assert_eq!(
+            vec![
+                ProductListingRawCaptureOutcome::Persisted,
+                ProductListingRawCaptureOutcome::Persisted,
+            ],
+            outcome
+        );
         let commands = commands
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -380,7 +426,7 @@ mod tests {
             );
 
             assert_eq!(
-                vec![true],
+                vec![ProductListingRawCaptureOutcome::Persisted],
                 service
                     .capture(vec![item(
                         ListingSourceId::new(),
@@ -392,7 +438,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_leave_failed_capture_retryable() {
+    async fn should_discard_capture_when_listing_source_is_missing() {
         let service = ProductListingRawCaptureServiceImpl::new(
             Arc::new(FakeCaptureUseCase {
                 fail: true,
@@ -401,7 +447,7 @@ mod tests {
             1,
         );
         assert_eq!(
-            vec![false],
+            vec![ProductListingRawCaptureOutcome::DiscardedMissingSource],
             service
                 .capture(vec![item(
                     ListingSourceId::new(),

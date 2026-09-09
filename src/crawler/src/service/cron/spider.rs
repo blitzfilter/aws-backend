@@ -274,6 +274,9 @@ impl CrawlerCronJob {
             );
             return;
         }
+        if !self.admit_authoritative_scope_for_work("spider").await {
+            return;
+        }
 
         let pass_start = tokio::time::Instant::now();
         let mut excluded_domain_ids: HashSet<CrawlerDomainId> = HashSet::new();
@@ -384,6 +387,10 @@ mod tests {
     use crate::scraper::scraper_service::MockScraperService;
     use crate::service::cron::config::CrawlerCronConfig;
     use crate::service::cron::test_support::{noop_listing_source_registration, noop_raw_capture};
+    use crate::service::listing_source_registration::{
+        ListingSourceRegistrationService, ListingSourceSyncError,
+        MockListingSourceRegistrationRepository, MockListingSourceRegistrationSource,
+    };
     use crate::spider::advisory_lock::LocalLockManager;
     use crate::spider::candidate_service::{MockSpiderCandidateService, SpiderCandidate};
     use crate::spider::discovery::website_spider::CrawlFailureKind;
@@ -508,6 +515,38 @@ mod tests {
             cooldown_for_spider_failure("spider_run_error", LONG_COOLDOWN_FAILURE_COUNT),
             durable_retry_cooldown_for(NetworkErrorKind::Unknown)
         );
+    }
+
+    #[tokio::test]
+    async fn should_skip_spider_candidates_when_authoritative_scope_refresh_fails() {
+        let mut source = MockListingSourceRegistrationSource::new();
+        source
+            .expect_fetch_registered_listing_sources()
+            .once()
+            .returning(|| {
+                Box::pin(async {
+                    Err(ListingSourceSyncError::FetchError(
+                        "business unavailable".to_owned(),
+                    ))
+                })
+            });
+        let registration = ListingSourceRegistrationService::new(
+            Box::new(source),
+            Box::new(MockListingSourceRegistrationRepository::new()),
+        );
+
+        let job = CrawlerCronJob::new(
+            CrawlerCronConfig::default(),
+            Arc::new(LocalLockManager::new()),
+            Box::new(MockSpiderCandidateService::new()),
+            Box::new(MockSpiderService::new()),
+            Box::new(MockScraperCandidateService::new()),
+            Box::new(MockScraperService::new()),
+            registration,
+            noop_raw_capture(),
+        );
+
+        job.run_spider_once().await;
     }
 
     #[tokio::test]

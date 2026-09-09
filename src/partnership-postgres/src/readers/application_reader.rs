@@ -270,6 +270,7 @@ mod tests {
         created: OffsetDateTime,
         updated: OffsetDateTime,
     ) -> PartnershipApplicationId {
+        ensure_existing_listing_source_proposal(pool, &proposal).await;
         let application_id = PartnershipApplicationId::new();
         sqlx::query(
             "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal, created, updated) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -308,6 +309,48 @@ mod tests {
             }
             Err(error) => panic!("reader failed: {error}"),
         }
+    }
+
+    async fn ensure_existing_listing_source_proposal(pool: &PgPool, proposal: &serde_json::Value) {
+        if proposal.get("type").and_then(serde_json::Value::as_str)
+            != Some("EXISTING_LISTING_SOURCE")
+        {
+            return;
+        }
+        let listing_source_id = proposal
+            .get("listing_source_id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|listing_source_id| listing_source_id.parse::<uuid::Uuid>().ok())
+            .unwrap_or_else(|| panic!("existing proposal must contain a ListingSource UUID"));
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+        )
+        .bind(listing_source_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to check reader ListingSource: {error}"));
+        if exists {
+            return;
+        }
+
+        let party_id = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(party_id)
+            .bind(format!("reader-party-{party_id}"))
+            .bind(format!("Reader Party {party_id}"))
+            .execute(pool)
+            .await
+            .unwrap_or_else(|error| panic!("failed to seed reader Party: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(listing_source_id)
+        .bind(format!("reader-source-{listing_source_id}"))
+        .bind(format!("Reader ListingSource {listing_source_id}"))
+        .bind(party_id)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to seed reader ListingSource: {error}"));
     }
 
     fn existing_proposal(listing_source_id: uuid::Uuid) -> serde_json::Value {

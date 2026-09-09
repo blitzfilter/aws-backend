@@ -8030,6 +8030,80 @@ paths:
                 status: 500
                 title: Internal Server Error
                 error: LISTING_SOURCE_INTERNAL_ERROR
+    delete:
+      summary: Delete an unused ListingSource as admin
+      description: |
+        Physically removes a ListingSource only when it has no ProductListings, raw-ingestion
+        streams, approved PartnershipApplication reference, or retained existing-source proposal.
+        The committed transaction explicitly removes its Partnership grants and owned ingestion
+        configuration, including provider/webhook secrets. Enabled `WEB_CRAWL` is not a blocker:
+        every new spider or scraper pass refreshes authoritative ListingSource scope before candidate
+        selection, and a failed refresh skips that pass. Already-running work can race with deletion;
+        the business raw-capture fence discards that missing-source result without recreating state.
+        This operation does not retire or purge a used source. A repeated delete returns `404`.
+      operationId: adminDeleteListingSource
+      tags:
+        - ListingSources
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: listingSourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: ListingSource removed. The response body is empty.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Invalid ListingSource UUID (`INVALID_UUID`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid bearer credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Administrator authority is required (`FORBIDDEN`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: ListingSource was not found (`LISTING_SOURCE_NOT_FOUND`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: A protected dependency or concurrent mutation blocks deletion (`CONFLICT`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Invalid persisted state or internal deletion failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Temporary authorization or persistence failure.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /api/v1/oauth/authorize:
     get:
       summary: OAuth2 authorization endpoint
@@ -9794,6 +9868,12 @@ paths:
                 $ref: "#/components/schemas/ApiError"
         "403":
           description: Problem response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: "PARTNERSHIP_APPLICATION_LISTING_SOURCE_NOT_FOUND when an existing ListingSource proposal references a missing source"
           content:
             application/json:
               schema:

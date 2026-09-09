@@ -514,6 +514,33 @@ mod tests {
             })
         }
 
+        async fn find_by_id_for_update(
+            &mut self,
+            listing_source_id: ListingSourceId,
+        ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
+            self.find_by_id(listing_source_id).await
+        }
+
+        async fn find_deletion_blocker(
+            &mut self,
+            _: ListingSourceId,
+        ) -> Result<
+            Option<listing_source_service::ports::ListingSourceDeletionBlocker>,
+            ListingSourceRepositoryError,
+        > {
+            Ok(None)
+        }
+
+        async fn delete_unused(
+            &mut self,
+            _: ListingSourceId,
+            _: ListingSourceStorageVersion,
+        ) -> Result<(), ListingSourceRepositoryError> {
+            Err(ListingSourceRepositoryError::Internal {
+                source: static_error("unexpected listing source deletion"),
+            })
+        }
+
         async fn insert(
             &mut self,
             _source: &ListingSource,

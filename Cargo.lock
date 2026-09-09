@@ -353,6 +353,8 @@ dependencies = [
  "indexmap 2.14.2",
  "large-language-model",
  "listing-source-core",
+ "listing-source-postgres",
+ "listing-source-service",
  "localization",
  "money",
  "notification-core",
@@ -389,6 +391,7 @@ dependencies = [
  "url",
  "user-core",
  "user-postgres",
+ "user-service",
  "uuid",
  "watchlist-postgres",
 ]

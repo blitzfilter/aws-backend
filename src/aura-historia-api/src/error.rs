@@ -8,6 +8,7 @@ use billing_service::use_cases::{
     CreateBillingPortalSessionError,
 };
 use listing_source_service::use_cases::commands::create_listing_source::CreateListingSourceError;
+use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceError;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceError;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceError;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesError;
@@ -818,6 +819,36 @@ impl From<CreateListingSourceError> for ApiError {
                 ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
                     .with_detail("Listing source create failed internally.")
             }
+        }
+    }
+}
+
+impl From<DeleteListingSourceError> for ApiError {
+    fn from(error: DeleteListingSourceError) -> Self {
+        match error {
+            DeleteListingSourceError::AuthenticatedActorRequired => ApiError::unauthorized(INVALID_CREDENTIALS)
+                .with_header_field("Authorization")
+                .with_detail("Bearer token is required."),
+            DeleteListingSourceError::Forbidden => ApiError::forbidden(FORBIDDEN)
+                .with_detail("Operation is not permitted."),
+            DeleteListingSourceError::NotFound => ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                .with_detail("Listing source was not found."),
+            DeleteListingSourceError::DependencyConflict { blocker } => ApiError::conflict(CONFLICT)
+                .with_detail(match blocker {
+                    listing_source_service::ports::ListingSourceDeletionBlocker::ProductListings => "Listing source has ProductListings.",
+                    listing_source_service::ports::ListingSourceDeletionBlocker::RawStreams => "Listing source has raw-ingestion data.",
+                    listing_source_service::ports::ListingSourceDeletionBlocker::ApprovedPartnershipApplication => "Listing source is retained by an approved PartnershipApplication.",
+                    listing_source_service::ports::ListingSourceDeletionBlocker::ExistingSourcePartnershipApplication => "Listing source is retained by a PartnershipApplication proposal.",
+                }),
+            DeleteListingSourceError::ConcurrencyConflict => ApiError::conflict(CONFLICT)
+                .with_detail("Listing source conflicts with current state."),
+            DeleteListingSourceError::TemporarilyUnavailable { .. }
+            | DeleteListingSourceError::BeginTransactionFailed
+            | DeleteListingSourceError::CommitTransactionFailed => ApiError::service_unavailable(LISTING_SOURCE_TEMPORARILY_UNAVAILABLE)
+                .with_detail("Listing source could not be deleted right now."),
+            DeleteListingSourceError::InvalidPersistedState { .. }
+            | DeleteListingSourceError::Internal { .. } => ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
+                .with_detail("Listing source deletion failed internally."),
         }
     }
 }
@@ -2199,6 +2230,10 @@ impl From<SubmitPartnershipApplicationError> for ApiError {
                     .with_detail("Bearer token is required.")
             }
             SubmitPartnershipApplicationError::Forbidden => partnership_application_forbidden(),
+            SubmitPartnershipApplicationError::ListingSourceNotFound => {
+                ApiError::not_found(PARTNERSHIP_APPLICATION_LISTING_SOURCE_NOT_FOUND)
+                    .with_detail("Listing source was not found.")
+            }
             SubmitPartnershipApplicationError::TemporarilyUnavailable { .. }
             | SubmitPartnershipApplicationError::BeginTransactionFailed
             | SubmitPartnershipApplicationError::CommitTransactionFailed => {

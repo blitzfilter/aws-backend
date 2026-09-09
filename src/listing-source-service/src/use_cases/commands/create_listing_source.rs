@@ -408,6 +408,26 @@ mod tests {
         ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
             Ok(None)
         }
+        async fn find_by_id_for_update(
+            &mut self,
+            _: ListingSourceId,
+        ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
+            Err(source_error())
+        }
+        async fn find_deletion_blocker(
+            &mut self,
+            _: ListingSourceId,
+        ) -> Result<Option<crate::ports::ListingSourceDeletionBlocker>, ListingSourceRepositoryError>
+        {
+            Err(source_error())
+        }
+        async fn delete_unused(
+            &mut self,
+            _: ListingSourceId,
+            _: ListingSourceStorageVersion,
+        ) -> Result<(), ListingSourceRepositoryError> {
+            Err(source_error())
+        }
         async fn insert(
             &mut self,
             source: &ListingSource,

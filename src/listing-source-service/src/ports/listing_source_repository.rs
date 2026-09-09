@@ -95,6 +95,14 @@ pub struct StoredListingSource {
     pub updated: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingSourceDeletionBlocker {
+    ProductListings,
+    RawStreams,
+    ApprovedPartnershipApplication,
+    ExistingSourcePartnershipApplication,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ListingSourceRepositoryError {
     #[error("concurrent listing source update")]
@@ -136,6 +144,23 @@ pub trait ListingSourceRepository: Send {
         &mut self,
         slug: &ListingSourceSlugId,
     ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError>;
+    /// Locks the source row through the enclosing transaction so protected-reference
+    /// writers using FK or proposal locks serialize with deletion.
+    async fn find_by_id_for_update(
+        &mut self,
+        id: ListingSourceId,
+    ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError>;
+    async fn find_deletion_blocker(
+        &mut self,
+        id: ListingSourceId,
+    ) -> Result<Option<ListingSourceDeletionBlocker>, ListingSourceRepositoryError>;
+    /// Explicitly removes source-owned configuration and grants, then deletes the
+    /// locked aggregate using its loaded version.
+    async fn delete_unused(
+        &mut self,
+        id: ListingSourceId,
+        expected: ListingSourceStorageVersion,
+    ) -> Result<(), ListingSourceRepositoryError>;
     async fn insert(
         &mut self,
         source: &ListingSource,

@@ -6,7 +6,7 @@
 
 ## Core Design
 
-- Create and update own PostgreSQL transaction scope.
+- Create, update, and eligible hard-delete own PostgreSQL transaction scope. Delete locks the source, checks ProductListing/raw/application blockers, explicitly removes grants/configuration, and commits physical removal; enabled crawler ingestion is not a blocker. Crawler admission refreshes authoritative source scope before every new pass; late in-flight raw capture receives the typed missing-source fence.
 - Create may atomically persist a new Party and ListingSource through transaction-bound factories.
 - Provider readers return focused safe models; secrets never leave verifier boundaries. Shopify and WooCommerce source reads, including WooCommerce signature validation, require the exact ListingSource grant owned by the source operator's Partnership. `WebCrawlSourceReader` returns a complete canonical source snapshot with derived WebCrawl enablement and optional persisted fallback currency for crawler sync. Trusted system Shopify intake has no user-membership check, but still requires that exact source grant.
 - Party-based provider/grant runtime wiring waits for Iteration 5. Existing Shop composition stays untouched.

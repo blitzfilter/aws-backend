@@ -2,10 +2,206 @@ use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
     assert_problem, json_response, seed_access_token_for, seed_listing_source,
-    seed_listing_source_for_search, seed_party, seed_user,
+    seed_listing_source_for_search, seed_party, seed_product, seed_user,
 };
 use serde_json::json;
-use test_api::{IntegrationTestService, aura_integration_test};
+use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_delete_unused_listing_source_and_reject_a_repeat() {
+    let listing_source_id = seed_listing_source().await;
+    let unrelated_listing_source_id = seed_listing_source().await;
+    let pool = get_postgres_client().await;
+    let partnership_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT partnership_id FROM partnerships ORDER BY partnership_id LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to find partnership for grant: {error}"));
+    sqlx::query(
+        "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
+    )
+    .bind(partnership_id)
+    .bind(listing_source_id)
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to seed listing-source grant: {error}"));
+    let admin_id = seed_user("ADMIN").await;
+    let token =
+        String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
+    let client = reqwest::Client::new();
+    let path = format!(
+        "{}/api/v1/admin/listing-sources/{listing_source_id}",
+        AURA_API.base_url()
+    );
+
+    let product_count_before_delete = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM product_listings WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("count eligible source ProductListings: {error}"));
+    assert_eq!(0, product_count_before_delete);
+
+    let response = client
+        .delete(&path)
+        .bearer_auth(token.clone())
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to delete listing source: {error}"));
+    assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+    assert_eq!(
+        Some("no-store"),
+        response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    );
+    assert!(
+        response
+            .bytes()
+            .await
+            .unwrap_or_else(|error| panic!("failed to read deletion response: {error}"))
+            .is_empty()
+    );
+
+    let source_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM listing_sources WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to count deleted listing source: {error}"));
+    let method_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM listing_source_ingestion_methods WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to count deleted ingestion methods: {error}"));
+    let product_count_after_delete = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM product_listings WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("count deleted source ProductListings: {error}"));
+    let grant_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE listing_source_id = $1",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to count deleted grants: {error}"));
+    assert_eq!(0, source_count);
+    assert_eq!(0, method_count);
+    assert_eq!(0, product_count_after_delete);
+    assert_eq!(0, grant_count);
+    let unrelated_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+    )
+    .bind(unrelated_listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to check unrelated source: {error}"));
+    assert!(unrelated_exists);
+
+    let detail = client
+        .get(&path)
+        .bearer_auth(token.clone())
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to read deleted listing source: {error}"));
+    let (detail_status, detail_body) = json_response(detail).await;
+    assert_problem(
+        detail_status,
+        &detail_body,
+        reqwest::StatusCode::NOT_FOUND,
+        "LISTING_SOURCE_NOT_FOUND",
+    );
+
+    let repeated = client
+        .delete(path)
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to repeat listing source deletion: {error}"));
+    let (repeated_status, repeated_body) = json_response(repeated).await;
+    assert_problem(
+        repeated_status,
+        &repeated_body,
+        reqwest::StatusCode::NOT_FOUND,
+        "LISTING_SOURCE_NOT_FOUND",
+    );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_preserve_live_and_withdrawn_product_listing_source_dependencies_when_delete_is_blocked()
+ {
+    let product_listing_id = seed_product().await;
+    let pool = get_postgres_client().await;
+    let listing_source_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT listing_source_id FROM product_listings WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to find product listing source: {error}"));
+    let admin_id = seed_user("ADMIN").await;
+    let token =
+        String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
+    let delete_path = format!(
+        "{}/api/v1/admin/listing-sources/{listing_source_id}",
+        AURA_API.base_url()
+    );
+
+    let response = reqwest::Client::new()
+        .delete(&delete_path)
+        .bearer_auth(token.clone())
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to delete used listing source: {error}"));
+    let (status, body) = json_response(response).await;
+    assert_problem(status, &body, reqwest::StatusCode::CONFLICT, "CONFLICT");
+
+    sqlx::query(
+        "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL, projection_version = projection_version + 1 WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("withdraw protected product listing: {error}"));
+    let response = reqwest::Client::new()
+        .delete(delete_path)
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap_or_else(|error| {
+            panic!("failed to delete source retained by withdrawn product: {error}")
+        });
+    let (status, body) = json_response(response).await;
+    assert_problem(status, &body, reqwest::StatusCode::CONFLICT, "CONFLICT");
+
+    let source_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+    )
+    .bind(listing_source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to check blocked source: {error}"));
+    let product = sqlx::query_as::<_, (String, Option<String>, i64)>(
+        "SELECT lifecycle, availability, projection_version FROM product_listings WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to check protected product: {error}"));
+    assert!(source_exists);
+    assert_eq!("WITHDRAWN", product.0);
+    assert_eq!(None, product.1);
+    assert!(product.2 > 1);
+}
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_return_safe_listing_source_summary_for_admin_with_no_store_cache_control() {

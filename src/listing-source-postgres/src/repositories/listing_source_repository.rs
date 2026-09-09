@@ -50,6 +50,104 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
             None => Ok(None),
         }
     }
+    async fn find_by_id_for_update(
+        &mut self,
+        id: ListingSourceId,
+    ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
+        let row = sqlx::query_as::<_, SourceRow>(
+            "SELECT listing_source_id, listing_source_slug_id, name, operator_party_id, url, image, referral_configuration, version, created, updated FROM listing_sources WHERE listing_source_id=$1 FOR UPDATE",
+        )
+        .bind(uuid::Uuid::from(id))
+        .fetch_optional(&mut *self.connection)
+        .await
+        .map_err(db_read)?;
+        match row {
+            Some(row) => load(self.connection, row).await.map(Some),
+            None => Ok(None),
+        }
+    }
+    async fn find_deletion_blocker(
+        &mut self,
+        id: ListingSourceId,
+    ) -> Result<Option<ListingSourceDeletionBlocker>, ListingSourceRepositoryError> {
+        let blocker = sqlx::query_scalar::<_, Option<String>>(
+            r#"
+            SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM product_listings WHERE listing_source_id = $1)
+                    THEN 'PRODUCT_LISTINGS'
+                WHEN EXISTS (SELECT 1 FROM product_listing_raw_streams WHERE listing_source_id = $1)
+                    THEN 'RAW_STREAMS'
+                WHEN EXISTS (SELECT 1 FROM partnership_applications WHERE approved_listing_source_id = $1)
+                    THEN 'APPROVED_APPLICATION'
+                WHEN EXISTS (
+                    SELECT 1 FROM partnership_applications
+                    WHERE proposal->>'type' = 'EXISTING_LISTING_SOURCE'
+                      AND proposal->>'listing_source_id' = $2
+                ) THEN 'EXISTING_SOURCE_APPLICATION'
+                ELSE NULL
+            END
+            "#,
+        )
+        .bind(uuid::Uuid::from(id))
+        .bind(id.to_string())
+        .fetch_one(&mut *self.connection)
+        .await
+        .map_err(db_read)?;
+        match blocker.as_deref() {
+            None => Ok(None),
+            Some("PRODUCT_LISTINGS") => Ok(Some(ListingSourceDeletionBlocker::ProductListings)),
+            Some("RAW_STREAMS") => Ok(Some(ListingSourceDeletionBlocker::RawStreams)),
+            Some("APPROVED_APPLICATION") => Ok(Some(
+                ListingSourceDeletionBlocker::ApprovedPartnershipApplication,
+            )),
+            Some("EXISTING_SOURCE_APPLICATION") => Ok(Some(
+                ListingSourceDeletionBlocker::ExistingSourcePartnershipApplication,
+            )),
+            Some(_) => Err(ListingSourceRepositoryError::InvalidPersistedState {
+                source: box_error(ListingIngestionConfigurationMismatch),
+            }),
+        }
+    }
+    async fn delete_unused(
+        &mut self,
+        id: ListingSourceId,
+        expected: ListingSourceStorageVersion,
+    ) -> Result<(), ListingSourceRepositoryError> {
+        let id = uuid::Uuid::from(id);
+        let expected = i64::try_from(expected.into_inner()).map_err(|error| {
+            ListingSourceRepositoryError::InvalidPersistedState {
+                source: box_error(error),
+            }
+        })?;
+        // Cleanup is explicit, although these relationships also cascade as a schema backstop.
+        sqlx::query("DELETE FROM partnership_listing_source_grants WHERE listing_source_id=$1")
+            .bind(id)
+            .execute(&mut *self.connection)
+            .await
+            .map_err(db_write)?;
+        sqlx::query("DELETE FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1")
+            .bind(id).execute(&mut *self.connection).await.map_err(db_write)?;
+        sqlx::query("DELETE FROM listing_source_shopify_ingestion_configurations WHERE listing_source_id=$1")
+            .bind(id).execute(&mut *self.connection).await.map_err(db_write)?;
+        sqlx::query("DELETE FROM listing_source_woocommerce_ingestion_configurations WHERE listing_source_id=$1")
+            .bind(id).execute(&mut *self.connection).await.map_err(db_write)?;
+        sqlx::query("DELETE FROM listing_source_ingestion_methods WHERE listing_source_id=$1")
+            .bind(id)
+            .execute(&mut *self.connection)
+            .await
+            .map_err(db_write)?;
+        let result =
+            sqlx::query("DELETE FROM listing_sources WHERE listing_source_id=$1 AND version=$2")
+                .bind(id)
+                .bind(expected)
+                .execute(&mut *self.connection)
+                .await
+                .map_err(db_write)?;
+        if result.rows_affected() != 1 {
+            return Err(ListingSourceRepositoryError::ConcurrencyConflict);
+        }
+        Ok(())
+    }
     async fn insert(
         &mut self,
         source: &ListingSource,
@@ -394,6 +492,76 @@ mod tests {
 
     const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
+    async fn insert_user(pool: &sqlx::PgPool) -> uuid::Uuid {
+        let user_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
+        )
+        .bind(user_id)
+        .bind(format!("delete-test-{user_id}@example.test"))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert proposal applicant: {error}"));
+        user_id
+    }
+
+    fn existing_source_proposal(source_id: ListingSourceId) -> serde_json::Value {
+        serde_json::json!({
+            "type": "EXISTING_LISTING_SOURCE",
+            "listing_source_id": source_id.to_string(),
+        })
+    }
+
+    async fn wait_until_backend_waits_for_lock(pool: &sqlx::PgPool, backend_pid: i32) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let wait_event_type = sqlx::query_scalar::<_, String>(
+                "SELECT COALESCE(wait_event_type, '') FROM pg_stat_activity WHERE pid = $1",
+            )
+            .bind(backend_pid)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or_else(|error| panic!("inspect concurrent backend state: {error}"));
+            if wait_event_type.as_deref() == Some("Lock") {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("concurrent PostgreSQL backend did not wait for its row lock");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn insert_basic_source(pool: &sqlx::PgPool, name: &str) -> (ListingSourceId, PartyId) {
+        let source_id = ListingSourceId::new();
+        let party_id = PartyId::new();
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(uuid::Uuid::from(party_id))
+            .bind(format!("delete-test-party-{party_id}"))
+            .bind(format!("{name} operator"))
+            .execute(pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert source operator: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(uuid::Uuid::from(source_id))
+        .bind(format!("delete-test-source-{source_id}"))
+        .bind(name)
+        .bind(uuid::Uuid::from(party_id))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert listing source: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, 'PARTNER_API')",
+        )
+        .bind(uuid::Uuid::from(source_id))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert source ingestion method: {error}"));
+        (source_id, party_id)
+    }
+
     #[aura_integration_test(services = [BUSINESS_SCHEMA])]
     async fn should_persist_and_read_operator_provider_configuration_and_webcrawl_source() {
         let pool = get_postgres_client().await;
@@ -558,6 +726,340 @@ mod tests {
         .await
         .unwrap_or_else(|error| panic!("check deleted WebCrawl configuration: {error}"));
         assert!(!web_crawl_configured);
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_explicitly_remove_source_configuration_and_grants_when_deleting_unused_source()
+    {
+        let pool = get_postgres_client().await;
+        let (source_id, party_id) = insert_basic_source(&pool, "Delete target").await;
+        let (other_source_id, other_party_id) =
+            insert_basic_source(&pool, "Unrelated source").await;
+        sqlx::query("INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id, fallback_currency) VALUES ($1, 'EUR')")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert WebCrawl configuration: {error}"));
+        sqlx::query("INSERT INTO listing_source_shopify_ingestion_configurations (listing_source_id, domain) VALUES ($1, 'delete-target.example')")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert Shopify configuration: {error}"));
+        sqlx::query("INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id, webhook_secret) VALUES ($1, 'nonempty-secret')")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert WooCommerce configuration: {error}"));
+        for method in ["WEB_CRAWL", "SHOPIFY", "WOOCOMMERCE"] {
+            sqlx::query(
+                "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, $2)",
+            )
+            .bind(uuid::Uuid::from(source_id))
+            .bind(method)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert configured ingestion method: {error}"));
+        }
+        sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::from(party_id))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert target partnership: {error}"));
+        let grant_partnership_id = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(format!("delete-test-grant-party-{source_id}"))
+            .bind("Grant party")
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert grant party: {error}"));
+        let grant_party_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT party_id FROM parties WHERE party_slug_id = $1",
+        )
+        .bind(format!("delete-test-grant-party-{source_id}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("find grant party: {error}"));
+        sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
+            .bind(grant_partnership_id)
+            .bind(grant_party_id)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert grant partnership: {error}"));
+        sqlx::query("INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)")
+            .bind(grant_partnership_id)
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert target grant: {error}"));
+
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool.clone());
+        let mut transaction = unit_of_work
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin delete transaction: {error}"));
+        let repository_factory = SqlxListingSourceRepositoryFactory::new();
+        let mut repository = repository_factory.in_transaction(&mut transaction);
+        let stored = repository
+            .find_by_id_for_update(source_id)
+            .await
+            .unwrap_or_else(|error| panic!("lock listing source: {error}"))
+            .unwrap_or_else(|| panic!("listing source missing before delete"));
+        assert_eq!(
+            None,
+            repository
+                .find_deletion_blocker(source_id)
+                .await
+                .unwrap_or_else(|error| panic!("check delete dependencies: {error}"))
+        );
+        repository
+            .delete_unused(source_id, stored.version)
+            .await
+            .unwrap_or_else(|error| panic!("delete unused listing source: {error}"));
+        drop(repository);
+        transaction
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit source deletion: {error}"));
+
+        for query in [
+            "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+            "SELECT EXISTS (SELECT 1 FROM listing_source_ingestion_methods WHERE listing_source_id = $1)",
+            "SELECT EXISTS (SELECT 1 FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id = $1)",
+            "SELECT EXISTS (SELECT 1 FROM listing_source_shopify_ingestion_configurations WHERE listing_source_id = $1)",
+            "SELECT EXISTS (SELECT 1 FROM listing_source_woocommerce_ingestion_configurations WHERE listing_source_id = $1)",
+            "SELECT EXISTS (SELECT 1 FROM partnership_listing_source_grants WHERE listing_source_id = $1)",
+        ] {
+            let exists = sqlx::query_scalar::<_, bool>(query)
+                .bind(uuid::Uuid::from(source_id))
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|error| panic!("check deleted source relation: {error}"));
+            assert!(!exists, "deleted source relation remains");
+        }
+        let preserved = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1 AND operator_party_id = $2)",
+        )
+        .bind(uuid::Uuid::from(other_source_id))
+        .bind(uuid::Uuid::from(other_party_id))
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("check unrelated source: {error}"));
+        assert!(preserved);
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_restrict_direct_source_delete_when_raw_stream_or_product_listing_exists() {
+        let pool = get_postgres_client().await;
+        let (raw_source_id, _) = insert_basic_source(&pool, "Raw blocker").await;
+        sqlx::query("INSERT INTO product_listing_raw_streams (product_listing_raw_stream_id, listing_source_id, ingestion_method, source_record_key, source_record_key_sha256, latest_revision) VALUES ($1, $2, 'WEB_CRAWL', 'raw-only', $3, 0)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::from(raw_source_id))
+            .bind(vec![1_u8; 32])
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert raw stream: {error}"));
+        let raw_error = sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
+            .bind(uuid::Uuid::from(raw_source_id))
+            .execute(&pool)
+            .await
+            .expect_err("raw-stream source delete must be restricted");
+        assert!(matches!(
+            raw_error,
+            sqlx::Error::Database(ref error) if error.constraint() == Some("product_listing_raw_streams_listing_source_id_fkey")
+        ));
+
+        let (product_source_id, _) = insert_basic_source(&pool, "Product blocker").await;
+        let product_listing_id = uuid::Uuid::new_v4();
+        let event_id = uuid::Uuid::new_v4();
+        let mut transaction = pool
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin product-listing seed transaction: {error}"));
+        sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, lifecycle, url) VALUES ($1, $2, $3, $3, $3, $4, 'withdrawn-product', 'WITHDRAWN', 'https://delete-test.example/product')")
+            .bind(product_listing_id)
+            .bind(format!("withdrawn-product-{}", &product_listing_id.simple().to_string()[..6]))
+            .bind(event_id)
+            .bind(uuid::Uuid::from(product_source_id))
+            .execute(&mut *transaction)
+            .await
+            .unwrap_or_else(|error| panic!("insert withdrawn product listing: {error}"));
+        sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
+            .bind(event_id)
+            .bind(product_listing_id)
+            .bind(serde_json::json!({
+                "title": null,
+                "description": null,
+                "listingSourceId": product_source_id.to_string(),
+                "sourceListingId": "withdrawn-product",
+                "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
+                "availability": null,
+                "url": "https://delete-test.example/product",
+                "imageCount": 0,
+                "auction": {"start": null, "end": null}
+            }))
+            .execute(&mut *transaction)
+            .await
+            .unwrap_or_else(|error| panic!("insert withdrawn product event: {error}"));
+        transaction
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit product-listing seed: {error}"));
+        let product_error = sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
+            .bind(uuid::Uuid::from(product_source_id))
+            .execute(&pool)
+            .await
+            .expect_err("product-listing source delete must be restricted");
+        assert!(matches!(
+            product_error,
+            sqlx::Error::Database(ref error) if error.constraint() == Some("product_listings_listing_source_id_fkey")
+        ));
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_reject_delayed_existing_source_proposal_after_source_delete_commits() {
+        let pool = get_postgres_client().await;
+        let (source_id, _) = insert_basic_source(&pool, "Delete race target").await;
+        let applicant_user_id = insert_user(&pool).await;
+
+        let mut delete_tx = pool
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin delete race transaction: {error}"));
+        sqlx::query("SELECT 1 FROM listing_sources WHERE listing_source_id = $1 FOR UPDATE")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&mut *delete_tx)
+            .await
+            .unwrap_or_else(|error| panic!("lock delete race target: {error}"));
+
+        let (proposal_pid_tx, proposal_pid_rx) = tokio::sync::oneshot::channel();
+        let proposal_pool = pool.clone();
+        let proposal = existing_source_proposal(source_id);
+        let proposal_task = tokio::spawn(async move {
+            let mut tx = proposal_pool.begin().await?;
+            let backend_pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let _ = proposal_pid_tx.send(backend_pid);
+            sqlx::query(
+                "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, 'SUBMITTED', $3)",
+            )
+            .bind(uuid::Uuid::new_v4())
+            .bind(applicant_user_id)
+            .bind(proposal)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        });
+        let proposal_pid = proposal_pid_rx
+            .await
+            .unwrap_or_else(|_| panic!("proposal transaction did not expose its backend"));
+        wait_until_backend_waits_for_lock(&pool, proposal_pid).await;
+
+        sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
+            .bind(uuid::Uuid::from(source_id))
+            .execute(&mut *delete_tx)
+            .await
+            .unwrap_or_else(|error| panic!("delete locked source: {error}"));
+        delete_tx
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit source deletion: {error}"));
+
+        let proposal_error = proposal_task
+            .await
+            .unwrap_or_else(|error| panic!("join delayed proposal task: {error}"))
+            .expect_err("proposal must fail after committed source deletion");
+        assert!(matches!(
+            proposal_error,
+            sqlx::Error::Database(ref error)
+                if error.code().as_deref() == Some("23503")
+                    && error.constraint() == Some("partnership_applications_existing_listing_source_id_fkey")
+        ));
+        let application_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM partnership_applications WHERE applicant_user_id = $1)",
+        )
+        .bind(applicant_user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("check delayed proposal persistence: {error}"));
+        assert!(!application_exists);
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_observe_existing_source_proposal_after_its_key_share_lock_commits() {
+        let pool = get_postgres_client().await;
+        let (source_id, _) = insert_basic_source(&pool, "Proposal race target").await;
+        let applicant_user_id = insert_user(&pool).await;
+        let (proposal_ready_tx, proposal_ready_rx) = tokio::sync::oneshot::channel();
+        let (commit_proposal_tx, commit_proposal_rx) = tokio::sync::oneshot::channel();
+        let proposal_pool = pool.clone();
+        let proposal = existing_source_proposal(source_id);
+        let proposal_task = tokio::spawn(async move {
+            let mut tx = proposal_pool.begin().await?;
+            sqlx::query(
+                "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, 'SUBMITTED', $3)",
+            )
+            .bind(uuid::Uuid::new_v4())
+            .bind(applicant_user_id)
+            .bind(proposal)
+            .execute(&mut *tx)
+            .await?;
+            let _ = proposal_ready_tx.send(());
+            let _ = commit_proposal_rx.await;
+            tx.commit().await
+        });
+        proposal_ready_rx
+            .await
+            .unwrap_or_else(|_| panic!("proposal transaction did not acquire key-share lock"));
+
+        let (delete_pid_tx, delete_pid_rx) = tokio::sync::oneshot::channel();
+        let delete_pool = pool.clone();
+        let delete_task = tokio::spawn(async move {
+            let mut tx = delete_pool.begin().await?;
+            let backend_pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await?;
+            let _ = delete_pid_tx.send(backend_pid);
+            sqlx::query("SELECT 1 FROM listing_sources WHERE listing_source_id = $1 FOR UPDATE")
+                .bind(uuid::Uuid::from(source_id))
+                .execute(&mut *tx)
+                .await?;
+            let blocker = SqlxListingSourceRepository {
+                connection: &mut tx,
+            }
+            .find_deletion_blocker(source_id)
+            .await
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+            Ok::<_, sqlx::Error>(blocker)
+        });
+        let delete_pid = delete_pid_rx
+            .await
+            .unwrap_or_else(|_| panic!("delete transaction did not expose its backend"));
+        wait_until_backend_waits_for_lock(&pool, delete_pid).await;
+        let _ = commit_proposal_tx.send(());
+
+        proposal_task
+            .await
+            .unwrap_or_else(|error| panic!("join proposal transaction: {error}"))
+            .unwrap_or_else(|error| panic!("commit proposal transaction: {error}"));
+        let blocker = delete_task
+            .await
+            .unwrap_or_else(|error| panic!("join delete transaction: {error}"))
+            .unwrap_or_else(|error| panic!("read delete blocker after proposal commit: {error}"));
+        assert_eq!(
+            Some(ListingSourceDeletionBlocker::ExistingSourcePartnershipApplication),
+            blocker
+        );
+        let source_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
+        )
+        .bind(uuid::Uuid::from(source_id))
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("check proposal-won source: {error}"));
+        assert!(source_exists);
     }
 
     #[aura_integration_test(services = [BUSINESS_SCHEMA])]

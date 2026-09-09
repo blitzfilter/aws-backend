@@ -1,4 +1,5 @@
 pub mod create_listing_source;
+pub mod delete_listing_source;
 pub mod get_listing_source;
 pub mod get_listing_source_by_slug;
 pub mod list_my_listing_sources;

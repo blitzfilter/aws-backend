@@ -103,9 +103,28 @@ impl CrawlerCronJob {
 
     #[tracing::instrument(name = "crawler_run_listing_source_sync_once", skip(self))]
     async fn run_listing_source_sync_once(&self) {
+        if let Err(error) = self.listing_source_registration.sync().await {
+            warn!(
+                event = "crawler.listing_source_sync.failed",
+                error = %error,
+                "ListingSource sync failed"
+            );
+        }
+    }
+
+    pub(super) async fn admit_authoritative_scope_for_work(&self, work_kind: &'static str) -> bool {
         match self.listing_source_registration.sync().await {
-            Ok(_) => {}
-            Err(e) => warn!(error = %e, "ListingSource sync failed"),
+            Ok(_) => true,
+            Err(error) => {
+                warn!(
+                    event = "crawler.work_skipped_stale_listing_source_scope",
+                    work_kind,
+                    error = %error,
+                    outcome = "skipped",
+                    "crawler work skipped because authoritative ListingSource scope could not be refreshed"
+                );
+                false
+            }
         }
     }
 }

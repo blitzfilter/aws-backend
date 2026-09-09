@@ -141,7 +141,15 @@ fn read(error: sqlx::Error) -> PartnershipApplicationRepositoryError {
 }
 
 fn write(error: sqlx::Error) -> PartnershipApplicationRepositoryError {
-    PartnershipApplicationRepositoryError::Internal {
-        source: box_error(error),
+    match &error {
+        sqlx::Error::Database(database_error)
+            if database_error.constraint()
+                == Some("partnership_applications_existing_listing_source_id_fkey") =>
+        {
+            PartnershipApplicationRepositoryError::ListingSourceNotFound
+        }
+        _ => PartnershipApplicationRepositoryError::Internal {
+            source: box_error(error),
+        },
     }
 }

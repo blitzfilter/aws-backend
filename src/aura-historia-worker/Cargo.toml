@@ -61,6 +61,9 @@ tracing = { workspace = true }
 [dev-dependencies]
 rstest = { workspace = true }
 listing-source-core = { workspace = true }
+listing-source-postgres = { workspace = true }
+listing-source-service = { workspace = true }
+user-service = { workspace = true }
 product-listing-normalization = { workspace = true }
 search-filter-core = { workspace = true }
 indexmap = { workspace = true }
