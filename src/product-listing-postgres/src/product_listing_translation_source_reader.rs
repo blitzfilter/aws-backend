@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use application::error::{box_error, static_error};
 use domain_primitives::event_id::EventId;
 use localization::Language;
@@ -82,8 +83,8 @@ impl ProductListingTranslationSourceReader for SqlxProductListingTranslationSour
               AND event.product_listing_id = $2
             "#,
         )
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.as_uuid())
+        .bind(product_listing_id.as_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(ProductListingTranslationSourceQueryError)?;
@@ -116,9 +117,14 @@ impl TryFrom<ProductListingTranslationSourceRow> for ProductListingTranslationSo
         };
 
         Ok(Self {
-            product_listing_id: ProductListingId::from(row.product_listing_id),
-            event_id: EventId::from(row.event_id),
-            content_source_event_id: EventId::from(row.content_source_event_id),
+            product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                .map_err(mapping_error_source)?,
+            event_id: try_from_uuid(row.event_id, "event ID").map_err(mapping_error_source)?,
+            content_source_event_id: try_from_uuid(
+                row.content_source_event_id,
+                "content source event ID",
+            )
+            .map_err(mapping_error_source)?,
             event,
             title,
             title_language,
@@ -164,6 +170,16 @@ fn mapping_error(message: &'static str) -> ProductListingTranslationSourceReadEr
     ProductListingTranslationSourceReadError::InvalidPersistedState {
         source: box_error(ProductListingTranslationSourceMappingError {
             source: static_error(message),
+        }),
+    }
+}
+
+fn mapping_error_source(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> ProductListingTranslationSourceReadError {
+    ProductListingTranslationSourceReadError::InvalidPersistedState {
+        source: box_error(ProductListingTranslationSourceMappingError {
+            source: box_error(source),
         }),
     }
 }

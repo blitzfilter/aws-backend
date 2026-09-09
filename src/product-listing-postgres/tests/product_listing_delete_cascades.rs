@@ -97,18 +97,18 @@ struct SeededRows {
 }
 
 async fn seed_product_listing_owned_rows(pool: &sqlx::PgPool) -> Result<SeededRows, sqlx::Error> {
-    let product_listing_id = Uuid::new_v4();
-    let event_id = Uuid::new_v4();
-    let user_id = Uuid::new_v4();
-    let search_filter_id = Uuid::new_v4();
-    let notification_id = Uuid::new_v4();
-    let notification_delivery_id = Uuid::new_v4();
-    let party_id = Uuid::new_v4();
-    let listing_source_id = Uuid::new_v4();
+    let product_listing_id = Uuid::now_v7();
+    let event_id = Uuid::now_v7();
+    let user_id = Uuid::now_v7();
+    let search_filter_id = Uuid::now_v7();
+    let notification_id = Uuid::now_v7();
+    let notification_delivery_id = Uuid::now_v7();
+    let party_id = Uuid::now_v7();
+    let listing_source_id = Uuid::now_v7();
     let listing_source_slug_id = format!("delete-cascade-source-{listing_source_id}");
     let product_listing_title_slug_id = format!(
         "delete-cascade-{}",
-        &product_listing_id.simple().to_string()[..6]
+        &product_listing_id.simple().to_string()[26..]
     );
     let notification_payload = json!({
         "type": "WATCHLIST",

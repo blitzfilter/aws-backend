@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use application::error::box_error;
 use domain_primitives::event_id::EventId;
 use platform_postgres::SqlxTransaction;
@@ -50,7 +51,7 @@ impl ProductListingCurrentEventGuard for SqlxProductListingCurrentEventGuard<'_>
         let current_event_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT current_event_id FROM product_listings WHERE product_listing_id = $1 FOR SHARE",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(|source| ProductListingCurrentEventCheckError::CheckFailed {
@@ -58,7 +59,13 @@ impl ProductListingCurrentEventGuard for SqlxProductListingCurrentEventGuard<'_>
         })?;
 
         Ok(match current_event_id {
-            Some(event_id) if EventId::from(event_id) == expected_event_id => {
+            Some(event_id)
+                if try_from_uuid::<EventId>(event_id, "current event ID").map_err(
+                    |source| ProductListingCurrentEventCheckError::CheckFailed {
+                        source: box_error(source),
+                    },
+                )? == expected_event_id =>
+            {
                 ProductListingCurrentEventCheck::Current
             }
             Some(_) | None => ProductListingCurrentEventCheck::Stale,
@@ -78,7 +85,7 @@ impl ProductListingCurrentEventGuard for SqlxProductListingCurrentEventGuard<'_>
 
         let product_listing_ids = refs
             .iter()
-            .map(|reference| uuid::Uuid::from(reference.product_listing_id))
+            .map(|reference| reference.product_listing_id.into_uuid())
             .collect::<Vec<_>>();
         let current_event_ids = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
             r#"
@@ -95,16 +102,28 @@ impl ProductListingCurrentEventGuard for SqlxProductListingCurrentEventGuard<'_>
             source: box_error(ProductListingCurrentEventGuardSqlxError(source)),
         })?
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .map(|(product_listing_id, current_event_id)| {
+            let product_listing_id =
+                try_from_uuid::<ProductListingId>(product_listing_id, "ProductListing ID")
+                    .map_err(|source| ProductListingCurrentEventCheckError::CheckFailed {
+                        source: box_error(source),
+                    })?;
+            let current_event_id = try_from_uuid::<EventId>(current_event_id, "current event ID")
+                .map_err(|source| {
+                ProductListingCurrentEventCheckError::CheckFailed {
+                    source: box_error(source),
+                }
+            })?;
+            Ok((product_listing_id, current_event_id))
+        })
+        .collect::<Result<HashMap<_, _>, ProductListingCurrentEventCheckError>>()?;
 
         Ok(refs
             .iter()
             .copied()
             .map(|reference| {
-                let check = match current_event_ids
-                    .get(&uuid::Uuid::from(reference.product_listing_id))
-                {
-                    Some(event_id) if EventId::from(*event_id) == reference.expected_event_id => {
+                let check = match current_event_ids.get(&reference.product_listing_id) {
+                    Some(event_id) if *event_id == reference.expected_event_id => {
                         ProductListingCurrentEventCheck::Current
                     }
                     Some(_) | None => ProductListingCurrentEventCheck::Stale,

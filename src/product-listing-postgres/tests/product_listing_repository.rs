@@ -140,20 +140,17 @@ async fn should_insert_append_find_and_update_product_by_id_in_postgres() {
     let persisted_identity: (String, uuid::Uuid, String, uuid::Uuid, i64) = sqlx::query_as(
         "SELECT product_listing_title_slug_id, listing_source_id, source_listing_id, current_event_id, projection_version FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to load persisted product identity: {error}"));
     assert_eq!(product.title_slug_id().as_ref(), persisted_identity.0);
     assert_eq!(
-        uuid::Uuid::from(product.listing_source_id()),
+        product.listing_source_id().into_uuid(),
         persisted_identity.1
     );
     assert_eq!(product.source_listing_id().as_ref(), persisted_identity.2);
-    assert_eq!(
-        uuid::Uuid::from(update_event.event_id),
-        persisted_identity.3
-    );
+    assert_eq!(update_event.event_id.into_uuid(), persisted_identity.3);
     assert_eq!(2, persisted_identity.4);
 }
 
@@ -177,7 +174,7 @@ async fn should_persist_valid_long_incompressible_url_through_canonical_reposito
 
     let persisted_url: String =
         sqlx::query_scalar("SELECT url FROM product_listings WHERE product_listing_id = $1")
-            .bind(uuid::Uuid::from(product.id()))
+            .bind(product.id().into_uuid())
             .fetch_one(&pool)
             .await
             .unwrap_or_else(|error| panic!("load long canonical URL: {error}"));
@@ -223,14 +220,14 @@ async fn should_preserve_embedding_for_price_and_clear_it_when_images_change() {
     sqlx::query(
         "UPDATE product_listings SET embedding = array_fill(1::real, ARRAY[768]) WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to seed product embedding: {error}"));
     let initial_embedding_source_event_id: uuid::Uuid = sqlx::query_scalar(
         "SELECT embedding_source_event_id FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to load initial embedding source: {error}"));
@@ -286,7 +283,7 @@ async fn should_preserve_embedding_for_price_and_clear_it_when_images_change() {
         (uuid::Uuid, bool, i64, i64) = sqlx::query_as(
         "SELECT embedding_source_event_id, embedding IS NOT NULL, version, projection_version FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to load price-updated revisions: {error}"));
@@ -346,14 +343,11 @@ async fn should_preserve_embedding_for_price_and_clear_it_when_images_change() {
         (uuid::Uuid, bool, i64, i64) = sqlx::query_as(
         "SELECT embedding_source_event_id, embedding IS NOT NULL, version, projection_version FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to load image-updated revisions: {error}"));
-    assert_eq!(
-        uuid::Uuid::from(image_event.event_id),
-        embedding_source_event_id
-    );
+    assert_eq!(image_event.event_id.into_uuid(), embedding_source_event_id);
     assert!(!has_embedding);
     assert_eq!(3, version);
     assert_eq!(3, projection_version);
@@ -507,7 +501,7 @@ async fn should_persist_canonical_source_listing_id_after_unicode_whitespace_inp
     let persisted_source_listing_id: String = sqlx::query_scalar(
         "SELECT source_listing_id FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to load persisted source listing ID: {error}"));
@@ -730,7 +724,7 @@ async fn should_roll_back_product_and_event_when_transaction_is_not_committed() 
     let persisted_event_count: i64 = match sqlx::query_scalar(
         "SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .fetch_one(&pool)
     .await
     {
@@ -751,8 +745,8 @@ async fn insert_product_row(
     sale_observation_fx_rate_id: Option<FxRateId>,
     sale_observed_at: Option<OffsetDateTime>,
 ) -> Result<(), sqlx::Error> {
-    let product_listing_id = uuid::Uuid::new_v4();
-    let event_id = uuid::Uuid::new_v4();
+    let product_listing_id = uuid::Uuid::now_v7();
+    let event_id = uuid::Uuid::now_v7();
     let mut tx = pool.begin().await?;
     let source_listing_id = SourceListingId::try_from(format!("{slug}-source-listing"))
         .unwrap_or_else(|error| panic!("valid source listing ID: {error}"));
@@ -762,9 +756,9 @@ async fn insert_product_row(
     .bind(product_listing_id)
     .bind(title_slug(slug, product_listing_id))
     .bind(event_id)
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .bind(source_listing_id.as_ref())
-    .bind(sale_observation_fx_rate_id.map(uuid::Uuid::from))
+    .bind(sale_observation_fx_rate_id.map(|id| id.into_uuid()))
     .bind(sale_observed_at)
     .execute(&mut *tx)
     .await?;
@@ -831,7 +825,10 @@ fn first_stamped_event(
 }
 
 fn title_slug(prefix: &str, product_listing_id: uuid::Uuid) -> String {
-    format!("{prefix}-{}", &product_listing_id.simple().to_string()[..6])
+    format!(
+        "{prefix}-{}",
+        &product_listing_id.simple().to_string()[26..]
+    )
 }
 
 fn sample_product(slug: &str, listing_source_id: ListingSourceId) -> ProductListing {
@@ -942,7 +939,7 @@ async fn seed_complete_fx_snapshot(pool: &sqlx::PgPool, fx_rate_id: FxRateId) {
     let rate = sqlx::query(
         "INSERT INTO fx_rates (fx_rate_id, captured_at, source, source_event_id) VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(fx_rate_id))
+    .bind(fx_rate_id.into_uuid())
     .bind(OffsetDateTime::UNIX_EPOCH)
     .bind("fxratesapi")
     .bind(fx_rate_id.to_string())
@@ -956,7 +953,7 @@ async fn seed_complete_fx_snapshot(pool: &sqlx::PgPool, fx_rate_id: FxRateId) {
         let quote = sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, $3)",
         )
-        .bind(uuid::Uuid::from(fx_rate_id))
+        .bind(fx_rate_id.into_uuid())
         .bind(currency.as_str())
         .bind(if currency == Currency::Eur {
             1_000_000_i64
@@ -972,7 +969,7 @@ async fn seed_complete_fx_snapshot(pool: &sqlx::PgPool, fx_rate_id: FxRateId) {
 }
 
 async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId {
-    let party_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
     let listing_source_id = ListingSourceId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
         .bind(party_id)
@@ -982,7 +979,7 @@ async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId
         .await
         .unwrap_or_else(|error| panic!("failed to seed listing-source party: {error}"));
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(listing_source_id.into_uuid())
         .bind(slug)
         .bind(slug)
         .bind(party_id)

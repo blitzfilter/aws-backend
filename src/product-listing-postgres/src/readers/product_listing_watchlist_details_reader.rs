@@ -1,15 +1,17 @@
-use crate::url::referral_configuration;
+use crate::{
+    object_id::{PersistedObjectIdError, try_from_uuid},
+    url::referral_configuration,
+};
 use application::{
     pagination::{Cursor, CursoredResult},
     personalized::Personalized,
 };
-use domain_primitives::event_id::EventId;
-use fxrate_core::FxRateId;
+
 use indexmap::IndexSet;
-use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId, outbound_url};
+use listing_source_core::{ListingSourceName, ListingSourceSlugId, outbound_url};
 use localization::{Language, Localized};
 use money::{Currency, MonetaryAmount, Price};
-use notification_core::notification_id::NotificationId;
+
 use platform_postgres::SqlxTransaction;
 use product_listing_core::content_policy::{ContentPolicyDecision, SensitiveContentCategory};
 use product_listing_core::description::Description;
@@ -18,7 +20,7 @@ use product_listing_core::listing_lifecycle::ListingLifecycle;
 use product_listing_core::product_listing::{
     ListingSaleObservation, ProductListingAuction, ProductListingPricing,
 };
-use product_listing_core::product_listing_id::ProductListingId;
+
 use product_listing_core::product_listing_image::ProductListingImage;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 use product_listing_core::source_listing_id::SourceListingId;
@@ -35,8 +37,7 @@ use product_listing_service::user_state::{
     SearchFilterUserState, WatchlistUserState,
 };
 use search_filter_core::{
-    enhanced_match_reason::EnhancedMatchReason, user_search_filter_id::UserSearchFilterId,
-    user_search_filter_name::UserSearchFilterName,
+    enhanced_match_reason::EnhancedMatchReason, user_search_filter_name::UserSearchFilterName,
 };
 use serde::Deserialize;
 use sqlx::PgConnection;
@@ -105,6 +106,20 @@ struct ProductListingImageJson {
     url: String,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum ProductListingWatchlistDetailsRowMappingError {
+    #[error("product watchlist details row contains an invalid persisted object ID")]
+    InvalidObjectId(#[source] PersistedObjectIdError),
+    #[error("product watchlist details row contains an invalid persisted value")]
+    InvalidValue,
+}
+
+impl From<()> for ProductListingWatchlistDetailsRowMappingError {
+    fn from((): ()) -> Self {
+        Self::InvalidValue
+    }
+}
+
 impl SqlxProductListingWatchlistDetailsReaderFactory {
     pub fn new() -> Self {
         Self
@@ -143,7 +158,7 @@ impl ProductListingWatchlistDetailsReader for SqlxProductListingWatchlistDetails
         let mut rows =
             sqlx::query_as::<_, ProductListingDetailsRow>(SELECT_PRODUCT_WATCHLIST_DETAILS)
                 .bind(request.language.as_str())
-                .bind(uuid::Uuid::from(request.user_id))
+                .bind(request.user_id.as_uuid())
                 .bind(query_limit)
                 .bind(
                     request
@@ -155,7 +170,7 @@ impl ProductListingWatchlistDetailsReader for SqlxProductListingWatchlistDetails
                     request
                         .cursor
                         .search_after
-                        .map(|cursor| uuid::Uuid::from(cursor.product_listing_id)),
+                        .map(|cursor| cursor.product_listing_id.into_uuid()),
                 )
                 .fetch_all(&mut *self.connection)
                 .await
@@ -165,14 +180,27 @@ impl ProductListingWatchlistDetailsReader for SqlxProductListingWatchlistDetails
         if has_more {
             rows.pop();
         }
-        let search_after = has_more
-            .then(|| {
-                rows.last().map(|row| ProductListingWatchlistDetailsCursor {
-                    watchlist_created: row.watchlist_created,
-                    product_listing_id: ProductListingId::from(row.product_listing_id),
+        let search_after = if has_more {
+            rows.last()
+                .map(|row| {
+                    Ok::<_, ProductListingWatchlistDetailsRowMappingError>(
+                        ProductListingWatchlistDetailsCursor {
+                            watchlist_created: row.watchlist_created,
+                            product_listing_id: try_from_uuid(
+                                row.product_listing_id,
+                                "ProductListing ID",
+                            )
+                            .map_err(
+                                ProductListingWatchlistDetailsRowMappingError::InvalidObjectId,
+                            )?,
+                        },
+                    )
                 })
-            })
-            .flatten();
+                .transpose()
+                .map_err(|_| ProductListingWatchlistDetailsReadError::InvalidReadModel)?
+        } else {
+            None
+        };
         let product_listings = rows
             .into_iter()
             .map(TryInto::try_into)
@@ -377,7 +405,7 @@ const SELECT_PRODUCT_WATCHLIST_DETAILS: &str = r#"
 "#;
 
 impl TryFrom<ProductListingDetailsRow> for PersonalizedProductListingDetailsReadModel {
-    type Error = ();
+    type Error = ProductListingWatchlistDetailsRowMappingError;
 
     fn try_from(row: ProductListingDetailsRow) -> Result<Self, Self::Error> {
         let source_listing_id =
@@ -415,14 +443,17 @@ impl TryFrom<ProductListingDetailsRow> for PersonalizedProductListingDetailsRead
 
         Ok(Personalized {
             item: ProductListingDetailsReadModel {
-                product_listing_id: ProductListingId::from(row.product_listing_id),
+                product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                    .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)?,
                 product_listing_title_slug_id: ProductListingSlugId::raw(
                     &row.product_listing_title_slug_id,
                 )
                 .map_err(|_| ())?,
-                event_id: EventId::from(row.current_event_id),
+                event_id: try_from_uuid(row.current_event_id, "current event ID")
+                    .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)?,
                 source: product_listing_service::ports::ListingSourceSummary {
-                    listing_source_id: ListingSourceId::from(row.listing_source_id),
+                    listing_source_id: try_from_uuid(row.listing_source_id, "ListingSource ID")
+                        .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)?,
                     name: ListingSourceName::try_from(row.listing_source_name).map_err(|_| ())?,
                     slug_id: ListingSourceSlugId::raw(&row.listing_source_slug_id)
                         .map_err(|_| ())?,
@@ -473,24 +504,27 @@ fn content_policy(
 fn sale_observation(
     observed_at: Option<OffsetDateTime>,
     fx_rate_id: Option<uuid::Uuid>,
-) -> Result<Option<ListingSaleObservation>, ()> {
+) -> Result<Option<ListingSaleObservation>, ProductListingWatchlistDetailsRowMappingError> {
     match (observed_at, fx_rate_id) {
         (Some(observed_at), Some(fx_rate_id)) => Ok(Some(ListingSaleObservation::new(
             observed_at,
-            FxRateId::from(fx_rate_id),
+            try_from_uuid(fx_rate_id, "sale observation FX rate ID")
+                .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)?,
         ))),
         (None, None) => Ok(None),
-        _ => Err(()),
+        _ => Err(ProductListingWatchlistDetailsRowMappingError::InvalidValue),
     }
 }
 
 fn user_state(
     row: &ProductListingDetailsRow,
     _images: &IndexSet<ProductListingImage>,
-) -> Result<Option<ProductListingUserState>, ()> {
-    if row.personalization_user_id.is_none() {
+) -> Result<Option<ProductListingUserState>, ProductListingWatchlistDetailsRowMappingError> {
+    let Some(personalization_user_id) = row.personalization_user_id else {
         return Ok(None);
-    }
+    };
+    try_from_uuid::<user_core::user_id::UserId>(personalization_user_id, "personalization user ID")
+        .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)?;
 
     let (stored_consent, tier) = match (
         row.user_show_unassessed_or_sensitive_content,
@@ -499,7 +533,7 @@ fn user_state(
         (Some(consent), Some("FREE")) => (consent, "FREE"),
         (Some(consent), Some("PRO")) => (consent, "PRO"),
         (Some(consent), Some("ULTIMATE")) => (consent, "ULTIMATE"),
-        _ => return Err(()),
+        _ => return Err(ProductListingWatchlistDetailsRowMappingError::InvalidValue),
     };
     let search_filter = search_filter_user_state(row, Some(tier))?;
 
@@ -518,8 +552,11 @@ fn user_state(
                 .unwrap_or_default()
                 .iter()
                 .copied()
-                .map(NotificationId::from)
-                .collect(),
+                .map(|id| {
+                    try_from_uuid(id, "notification ID")
+                        .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)
+                })
+                .collect::<Result<_, _>>()?,
         },
         search_filter,
     }))
@@ -528,14 +565,14 @@ fn user_state(
 fn search_filter_user_state(
     row: &ProductListingDetailsRow,
     tier: Option<&str>,
-) -> Result<SearchFilterUserState, ()> {
+) -> Result<SearchFilterUserState, ProductListingWatchlistDetailsRowMappingError> {
     let Some(user_search_filter_id) = row.selected_match_user_search_filter_id else {
         if row.selected_match_user_search_filter_name.is_some()
             || row.selected_match_reason.is_some()
             || row.selected_match_feedback.is_some()
             || row.selected_match_month_position.is_some()
         {
-            return Err(());
+            return Err(ProductListingWatchlistDetailsRowMappingError::InvalidValue);
         }
         return Ok(SearchFilterUserState::default());
     };
@@ -544,17 +581,20 @@ fn search_filter_user_state(
         "FREE" => row.selected_match_month_position.ok_or(())? > 10,
         "PRO" | "ULTIMATE" => {
             if row.selected_match_month_position.is_some() {
-                return Err(());
+                return Err(ProductListingWatchlistDetailsRowMappingError::InvalidValue);
             }
             false
         }
-        _ => return Err(()),
+        _ => return Err(ProductListingWatchlistDetailsRowMappingError::InvalidValue),
     };
 
     Ok(SearchFilterUserState {
         matched: true,
         hidden,
-        user_search_filter_id: Some(UserSearchFilterId::from(user_search_filter_id)),
+        user_search_filter_id: Some(
+            try_from_uuid(user_search_filter_id, "user search filter ID")
+                .map_err(ProductListingWatchlistDetailsRowMappingError::InvalidObjectId)?,
+        ),
         user_search_filter_name: row
             .selected_match_user_search_filter_name
             .clone()
@@ -648,21 +688,20 @@ fn lifecycle(value: &str) -> Result<ListingLifecycle, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fxrate_core::FxRateId;
 
     #[test]
     fn should_map_complete_sale_observation() {
-        let fx_rate_id = uuid::Uuid::from_u128(1);
+        let fx_rate_id = FxRateId::new();
         let observed_at = OffsetDateTime::UNIX_EPOCH;
 
-        let result = sale_observation(Some(observed_at), Some(fx_rate_id));
+        let result = sale_observation(Some(observed_at), Some(fx_rate_id.into_uuid()));
 
-        assert_eq!(
+        assert!(matches!(
             result,
-            Ok(Some(ListingSaleObservation::new(
-                observed_at,
-                FxRateId::from(fx_rate_id),
-            )))
-        );
+            Ok(Some(observation))
+                if observation == ListingSaleObservation::new(observed_at, fx_rate_id)
+        ));
     }
 
     #[test]

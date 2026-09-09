@@ -48,7 +48,7 @@ impl ProductListingLifecycleGuard for SqlxProductListingLifecycleGuard<'_> {
         let lifecycle = sqlx::query_scalar::<_, String>(
             "SELECT lifecycle FROM product_listings WHERE product_listing_id = $1 FOR SHARE",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(|source| ProductListingLifecycleGuardError::LockFailed {

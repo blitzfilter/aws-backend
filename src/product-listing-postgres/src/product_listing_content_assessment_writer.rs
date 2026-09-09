@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use application::error::{box_error, static_error};
 use domain_primitives::event_id::EventId;
 use platform_postgres::SqlxTransaction;
@@ -65,7 +66,7 @@ impl ProductListingContentAssessmentWriter for SqlxProductListingContentAssessme
         let current_content_source_event_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT content_source_event_id FROM product_listings WHERE product_listing_id = $1 FOR UPDATE",
         )
-        .bind(uuid::Uuid::from(write.product_listing_id))
+        .bind(write.product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(ProductListingContentAssessmentWriteSqlxError)?;
@@ -73,7 +74,10 @@ impl ProductListingContentAssessmentWriter for SqlxProductListingContentAssessme
             return Ok(ProductListingContentAssessmentWriteOutcome::ProductListingNotFound);
         };
 
-        if EventId::from(current_content_source_event_id) != write.source_event_id {
+        let current_content_source_event_id =
+            try_from_uuid::<EventId>(current_content_source_event_id, "content source event ID")
+                .map_err(mapping_error_source)?;
+        if current_content_source_event_id != write.source_event_id {
             return Ok(ProductListingContentAssessmentWriteOutcome::Stale);
         }
 
@@ -83,7 +87,7 @@ impl ProductListingContentAssessmentWriter for SqlxProductListingContentAssessme
             sqlx::query(
                 "DELETE FROM product_listing_content_assessments WHERE product_listing_id = $1",
             )
-            .bind(uuid::Uuid::from(write.product_listing_id))
+            .bind(write.product_listing_id.as_uuid())
             .execute(&mut *self.connection)
             .await
             .map_err(ProductListingContentAssessmentWriteSqlxError)?;
@@ -107,8 +111,8 @@ impl ProductListingContentAssessmentWriter for SqlxProductListingContentAssessme
                 updated = now()
             "#,
         )
-        .bind(uuid::Uuid::from(write.product_listing_id))
-        .bind(uuid::Uuid::from(write.source_event_id))
+        .bind(write.product_listing_id.as_uuid())
+        .bind(write.source_event_id.as_uuid())
         .bind(decision)
         .bind(category)
         .execute(&mut *self.connection)
@@ -130,7 +134,7 @@ async fn stored_assessment_matches(
         WHERE product_listing_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(write.product_listing_id))
+    .bind(write.product_listing_id.as_uuid())
     .fetch_optional(&mut *connection)
     .await
     .map_err(ProductListingContentAssessmentWriteSqlxError)?;
@@ -140,7 +144,9 @@ async fn stored_assessment_matches(
     };
     let stored_decision = decode_stored_decision(&stored.decision, stored.category.as_deref())?;
     Ok(
-        stored.source_event_id == uuid::Uuid::from(write.source_event_id)
+        try_from_uuid::<EventId>(stored.source_event_id, "content assessment source event ID")
+            .map_err(mapping_error_source)?
+            == write.source_event_id
             && Some(stored_decision) == write.decision,
     )
 }
@@ -173,6 +179,16 @@ fn mapping_error(message: &'static str) -> ProductListingContentAssessmentWriteE
     ProductListingContentAssessmentWriteError::WriteFailed {
         source: box_error(ProductListingContentAssessmentWriteMappingError {
             source: static_error(message),
+        }),
+    }
+}
+
+fn mapping_error_source(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> ProductListingContentAssessmentWriteError {
+    ProductListingContentAssessmentWriteError::WriteFailed {
+        source: box_error(ProductListingContentAssessmentWriteMappingError {
+            source: box_error(source),
         }),
     }
 }

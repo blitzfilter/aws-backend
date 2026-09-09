@@ -1,5 +1,6 @@
+use crate::object_id::{PersistedObjectIdError, try_from_uuid};
 use application::error::{box_error, static_error};
-use notification_core::notification_id::NotificationId;
+
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_service::ports::{
     ProductListingUserStateLookup, ProductListingUserStateReadError, ProductListingUserStateReader,
@@ -9,8 +10,7 @@ use product_listing_service::user_state::{
     SearchFilterUserState, WatchlistUserState,
 };
 use search_filter_core::{
-    enhanced_match_reason::EnhancedMatchReason, user_search_filter_id::UserSearchFilterId,
-    user_search_filter_name::UserSearchFilterName,
+    enhanced_match_reason::EnhancedMatchReason, user_search_filter_name::UserSearchFilterName,
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -40,6 +40,12 @@ struct ProductListingUserStateRow {
 enum ProductListingUserStateRowMappingError {
     #[error("product user state row was returned without a requested product")]
     MissingRequestedProductListing,
+    #[error("product user state has an invalid ProductListing ID")]
+    InvalidProductListingId(#[source] PersistedObjectIdError),
+    #[error("product user state has an invalid notification ID")]
+    InvalidNotificationId(#[source] PersistedObjectIdError),
+    #[error("product user state has an invalid user search filter ID")]
+    InvalidUserSearchFilterId(#[source] PersistedObjectIdError),
     #[error("product user state has an invalid tier")]
     InvalidTier,
     #[error("unmatched product user state contains match fields")]
@@ -73,10 +79,10 @@ impl ProductListingUserStateReader for SqlxProductListingUserStateReader {
             .product_listing_ids
             .iter()
             .copied()
-            .map(uuid::Uuid::from)
+            .map(|id| id.into_uuid())
             .collect::<Vec<_>>();
         let rows = sqlx::query_as::<_, ProductListingUserStateRow>(SELECT_PRODUCT_USER_STATES)
-            .bind(uuid::Uuid::from(lookup.user_id))
+            .bind(lookup.user_id.as_uuid())
             .bind(product_listing_ids)
             .fetch_all(&self.pool)
             .await
@@ -241,8 +247,11 @@ fn product_user_state(
 ) -> Result<(ProductListingId, ProductListingUserState), ProductListingUserStateRowMappingError> {
     let product_listing_id = row
         .product_listing_id
-        .map(ProductListingId::from)
-        .ok_or(ProductListingUserStateRowMappingError::MissingRequestedProductListing)?;
+        .ok_or(ProductListingUserStateRowMappingError::MissingRequestedProductListing)
+        .and_then(|id| {
+            try_from_uuid(id, "ProductListing ID")
+                .map_err(ProductListingUserStateRowMappingError::InvalidProductListingId)
+        })?;
 
     let tier = user_tier(&row.user_tier)?;
     let search_filter = search_filter_user_state(&row, tier)?;
@@ -262,8 +271,11 @@ fn product_user_state(
                     .unseen_notification_ids
                     .unwrap_or_default()
                     .into_iter()
-                    .map(NotificationId::from)
-                    .collect(),
+                    .map(|id| {
+                        try_from_uuid(id, "notification ID")
+                            .map_err(ProductListingUserStateRowMappingError::InvalidNotificationId)
+                    })
+                    .collect::<Result<_, _>>()?,
             },
             search_filter,
         },
@@ -316,7 +328,10 @@ fn search_filter_user_state(
     Ok(SearchFilterUserState {
         matched: true,
         hidden,
-        user_search_filter_id: Some(UserSearchFilterId::from(user_search_filter_id)),
+        user_search_filter_id: Some(
+            try_from_uuid(user_search_filter_id, "user search filter ID")
+                .map_err(ProductListingUserStateRowMappingError::InvalidUserSearchFilterId)?,
+        ),
         user_search_filter_name: row
             .selected_match_user_search_filter_name
             .clone()

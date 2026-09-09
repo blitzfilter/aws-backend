@@ -29,30 +29,27 @@ async fn should_store_embedding_append_enrichment_event_and_advance_current_even
         let (embedding, current_event, version, projection_version): (Option<Vec<f32>>, uuid::Uuid, i64, i64) = sqlx::query_as(
             "SELECT embedding, current_event_id, version, projection_version FROM product_listings WHERE product_listing_id = $1",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_one(&pool)
         .await?;
         assert_eq!(Some(vec![0.25; EMBEDDING_DIMENSIONS]), embedding);
         assert_eq!(
-            uuid::Uuid::from(embedding_write.enrichment_event_id),
+            embedding_write.enrichment_event_id.into_uuid(),
             current_event
         );
         assert_eq!(1, version);
         assert_eq!(2, projection_version);
         let payload: serde_json::Value =
             sqlx::query_scalar("SELECT payload FROM product_listing_events WHERE event_id = $1")
-                .bind(uuid::Uuid::from(embedding_write.enrichment_event_id))
+                .bind(embedding_write.enrichment_event_id.into_uuid())
                 .fetch_one(&pool)
                 .await?;
         assert_eq!(
-            Some(source_event_id.to_string().as_str()),
+            serde_json::json!({
+                "sourceEventId": source_event_id.as_uuid().to_string(),
+            }),
             payload
-                .pointer("/sourceEventId")
-                .and_then(serde_json::Value::as_str)
         );
-        assert_eq!(1, payload.as_object().map_or(0, serde_json::Map::len));
-        assert!(payload.pointer("/title").is_none());
-        assert!(payload.pointer("/embedding").is_none());
         Ok(())
     }
     .await;
@@ -80,7 +77,7 @@ async fn should_report_duplicate_and_stale_without_second_embedding_event() {
         )
         .await?
     );
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_EMBEDDED'").bind(uuid::Uuid::from(product_listing_id)).fetch_one(&pool).await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_EMBEDDED'").bind(product_listing_id.into_uuid()).fetch_one(&pool).await?;
     assert_eq!(1, count);
     let (stale_product_listing_id, stale_event_id) = insert_product_with_created_event(&pool).await?;
     advance_product_current_event(&pool, stale_product_listing_id).await?;
@@ -122,12 +119,12 @@ async fn should_keep_first_embedding_when_duplicate_completions_overlap() {
             tokio::time::timeout(Duration::from_secs(10), duplicate).await??);
         let stored: (Vec<f32>, uuid::Uuid, i64, i64) = sqlx::query_as(
             "SELECT embedding, current_event_id, version, projection_version FROM product_listings WHERE product_listing_id = $1"
-        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
-        assert_eq!((first_write.embedding, uuid::Uuid::from(first_write.enrichment_event_id), 1, 2), stored);
+        ).bind(product_id.into_uuid()).fetch_one(&pool).await?;
+        assert_eq!((first_write.embedding, first_write.enrichment_event_id.into_uuid(), 1, 2), stored);
         let events: Vec<uuid::Uuid> = sqlx::query_scalar(
             "SELECT event_id FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_EMBEDDED'"
-        ).bind(uuid::Uuid::from(product_id)).fetch_all(&pool).await?;
-        assert_eq!(vec![uuid::Uuid::from(first_write.enrichment_event_id)], events);
+        ).bind(product_id.into_uuid()).fetch_all(&pool).await?;
+        assert_eq!(vec![first_write.enrichment_event_id.into_uuid()], events);
         Ok(())
     }.await;
     assert!(
@@ -145,8 +142,9 @@ async fn should_reject_late_embedding_completion_after_new_image_revision_commit
         advance_product_current_event(&pool, product_id).await?;
         let new_source: uuid::Uuid = sqlx::query_scalar(
             "SELECT embedding_source_event_id FROM product_listings WHERE product_listing_id = $1"
-        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
-        let new_write = new_write(product_id, new_source.into(), EventId::new());
+        ).bind(product_id.into_uuid()).fetch_one(&pool).await?;
+        let new_source = EventId::try_from(new_source)?;
+        let new_write = new_write(product_id, new_source, EventId::new());
         let mut newer = SqlxUnitOfWork::new(pool.clone()).begin().await?;
         let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(newer.connection()).await?;
@@ -160,11 +158,11 @@ async fn should_reject_late_embedding_completion_after_new_image_revision_commit
             tokio::time::timeout(Duration::from_secs(10), late).await??);
         let stored: (Vec<f32>, uuid::Uuid, i64) = sqlx::query_as(
             "SELECT embedding, current_event_id, projection_version FROM product_listings WHERE product_listing_id = $1"
-        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
-        assert_eq!((new_write.embedding, uuid::Uuid::from(new_write.enrichment_event_id), 3), stored);
+        ).bind(product_id.into_uuid()).fetch_one(&pool).await?;
+        assert_eq!((new_write.embedding, new_write.enrichment_event_id.into_uuid(), 3), stored);
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_EMBEDDED'"
-        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        ).bind(product_id.into_uuid()).fetch_one(&pool).await?;
         assert_eq!(1, count);
         Ok(())
     }.await;
@@ -181,10 +179,10 @@ async fn should_apply_embedding_after_unrelated_newer_event_without_invalidating
             .fetch_one(&mut *update).await?;
         let unrelated = EventId::new();
         sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
-            .bind(uuid::Uuid::from(unrelated)).bind(uuid::Uuid::from(product_id))
+            .bind(unrelated.into_uuid()).bind(product_id.into_uuid())
             .bind(serde_json::json!({"availability": {"previous": "AVAILABLE", "current": "RESERVED"}})).execute(&mut *update).await?;
         sqlx::query("UPDATE product_listings SET current_event_id = $1, availability = 'RESERVED', version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
-            .bind(uuid::Uuid::from(unrelated)).bind(uuid::Uuid::from(product_id)).execute(&mut *update).await?;
+            .bind(unrelated.into_uuid()).bind(product_id.into_uuid()).execute(&mut *update).await?;
         let write = new_write(product_id, source, EventId::new());
         let completion = apply(&pool, &write);
         tokio::pin!(completion);
@@ -226,8 +224,8 @@ async fn insert_product_with_created_event(
 ) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
     let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, 'Embedding party')",
@@ -237,14 +235,14 @@ async fn insert_product_with_created_event(
     .execute(&mut *tx)
     .await?;
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, 'Embedding source', $3)").bind(listing_source_id).bind(format!("embedding-source-{listing_source_id}")).bind(party_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Antiker Stuhl', 'de', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')").bind(uuid::Uuid::from(product_listing_id)).bind(format!(
+    sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Antiker Stuhl', 'de', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')").bind(product_listing_id.into_uuid()).bind(format!(
                 "embedding-product-{}",
-                &product_listing_id.to_string()[..6]
-            )).bind(uuid::Uuid::from(event_id)).bind(listing_source_id).bind(product_listing_id.to_string())
+                &product_listing_id.as_uuid().simple().to_string()[26..]
+            )).bind(event_id.into_uuid()).bind(listing_source_id).bind(product_listing_id.to_string())
         .execute(&mut *tx).await?;
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(serde_json::json!({
             "listingSourceId": listing_source_id.to_string(),
             "sourceListingId": product_listing_id.to_string(),
@@ -268,16 +266,16 @@ async fn advance_product_current_event(
     let event_id = EventId::new();
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(serde_json::json!({
             "images": {"previousCount": 0, "currentCount": 0}
         }))
         .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE product_listings SET current_event_id = $1, embedding_source_event_id = $1, embedding = NULL, version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .execute(&mut *tx)
         .await?;
     tx.commit().await

@@ -1,3 +1,4 @@
+mod object_id;
 pub mod product_listing_event_appender;
 mod product_listing_event_codec;
 

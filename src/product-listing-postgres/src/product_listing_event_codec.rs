@@ -1,4 +1,5 @@
 use application::error::{BoxError, box_error};
+use domain_primitives::event_id::EventId;
 use listing_source_core::ListingSourceId;
 use localization::{Language, Localized};
 use money::{Currency, MonetaryAmount, Price};
@@ -242,14 +243,18 @@ struct TranslatedEnrichmentDto {
 fn decode_embedded_enrichment(payload: &Value) -> Result<(), ProductListingEventCodecError> {
     let value = serde_json::from_value::<EmbeddedEnrichmentDto>(payload.clone())
         .map_err(|source| ProductListingEventCodecError::MalformedPayload { source })?;
-    parse_uuid(&value.source_event_id, "sourceEventId")?;
+    let source_event_id = parse_uuid(&value.source_event_id, "sourceEventId")?;
+    EventId::try_from(source_event_id)
+        .map_err(|source| invalid_field_source("sourceEventId", source))?;
     Ok(())
 }
 
 fn decode_translated_enrichment(payload: &Value) -> Result<(), ProductListingEventCodecError> {
     let value = serde_json::from_value::<TranslatedEnrichmentDto>(payload.clone())
         .map_err(|source| ProductListingEventCodecError::MalformedPayload { source })?;
-    parse_uuid(&value.source_event_id, "sourceEventId")?;
+    let source_event_id = parse_uuid(&value.source_event_id, "sourceEventId")?;
+    EventId::try_from(source_event_id)
+        .map_err(|source| invalid_field_source("sourceEventId", source))?;
     parse_language(&value.source_language, "sourceLanguage")?;
     if value.target_languages.is_empty() {
         return Err(invalid_field(
@@ -295,7 +300,7 @@ impl TryFrom<&ProductListingDiscovered> for DiscoveredDto {
 
     fn try_from(value: &ProductListingDiscovered) -> Result<Self, Self::Error> {
         Ok(Self {
-            listing_source_id: value.listing_source_id().to_string(),
+            listing_source_id: value.listing_source_id().as_uuid().to_string(),
             source_listing_id: value.source_listing_id().as_ref().to_owned(),
             title: value.title().map(LocalizedTextDto::from),
             description: value.description().map(LocalizedTextDto::from),
@@ -780,7 +785,7 @@ impl TryFrom<ListingSaleObservation> for SaleObservationDto {
     fn try_from(value: ListingSaleObservation) -> Result<Self, Self::Error> {
         Ok(Self {
             observed_at: format_timestamp(value.observed_at(), "saleObservation.observedAt")?,
-            fx_rate_id: value.fx_rate_id().to_string(),
+            fx_rate_id: value.fx_rate_id().as_uuid().to_string(),
         })
     }
 }
@@ -789,16 +794,9 @@ impl TryFrom<SaleObservationDto> for ListingSaleObservation {
     type Error = ProductListingEventCodecError;
 
     fn try_from(value: SaleObservationDto) -> Result<Self, Self::Error> {
-        let fx_rate_uuid = value
-            .fx_rate_id
-            .parse::<uuid::Uuid>()
+        let fx_rate_uuid = parse_uuid(&value.fx_rate_id, "saleObservation.fxRateId")?;
+        let fx_rate_id = fxrate_core::FxRateId::try_from(fx_rate_uuid)
             .map_err(|source| invalid_field_source("saleObservation.fxRateId", source))?;
-        let fx_rate_id = fxrate_core::FxRateId::from(fx_rate_uuid);
-        if fx_rate_id.to_string() != value.fx_rate_id {
-            return Err(ProductListingEventCodecError::NonCanonicalField {
-                field: "saleObservation.fxRateId",
-            });
-        }
         Ok(Self::new(
             parse_timestamp(&value.observed_at, "saleObservation.observedAt")?,
             fx_rate_id,
@@ -847,14 +845,9 @@ fn auction_change_dto(
 }
 
 fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ProductListingEventCodecError> {
-    let id = ListingSourceId::try_from(value)
-        .map_err(|source| invalid_field_source("listingSourceId", source))?;
-    if id.to_string() != value {
-        return Err(ProductListingEventCodecError::NonCanonicalField {
-            field: "listingSourceId",
-        });
-    }
-    Ok(id)
+    let uuid = parse_uuid(value, "listingSourceId")?;
+    ListingSourceId::try_from(uuid)
+        .map_err(|source| invalid_field_source("listingSourceId", source))
 }
 
 fn parse_source_listing_id(value: &str) -> Result<SourceListingId, ProductListingEventCodecError> {
@@ -1263,6 +1256,70 @@ mod tests {
     }
 
     #[test]
+    fn should_encode_storage_object_ids_as_exact_raw_uuids() {
+        let discovered = encode(&discovered_payload())
+            .unwrap_or_else(|error| panic!("encode discovery: {error}"));
+        let changed = encode(&changed_payload_with_all_dimensions())
+            .unwrap_or_else(|error| panic!("encode change: {error}"));
+
+        assert_eq!(
+            Some("01900000-0000-7000-8000-000000000001"),
+            discovered
+                .pointer("/listingSourceId")
+                .and_then(Value::as_str)
+        );
+        assert_eq!(
+            Some("01900000-0000-7000-8000-000000000002"),
+            changed
+                .pointer("/saleObservation/observation/fxRateId")
+                .and_then(Value::as_str)
+        );
+        assert!(!discovered.to_string().contains("ls_"));
+        assert!(!changed.to_string().contains("fx_"));
+    }
+
+    #[test]
+    fn should_reject_uuid_v4_object_ids_in_storage_json() {
+        let invalid_v4 = "67e55044-10b1-426f-9247-bb680e5fe0c8";
+        let mut discovered = canonical_discovery_value();
+        discovered["listingSourceId"] = json!(invalid_v4);
+        let mut changed = encode(&changed_payload_with_all_dimensions())
+            .unwrap_or_else(|error| panic!("encode change: {error}"));
+        changed["saleObservation"]["observation"]["fxRateId"] = json!(invalid_v4);
+
+        assert!(decode("PRODUCT_LISTING_DISCOVERED", 1, &discovered).is_err());
+        assert!(decode("PRODUCT_LISTING_CHANGED", 1, &changed).is_err());
+        assert!(
+            decode_persisted(
+                "ENRICHMENT_EMBEDDED",
+                "ENRICHMENT",
+                1,
+                &json!({"sourceEventId": invalid_v4}),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn should_reject_noncanonical_fx_rate_ids_in_storage_json() {
+        for fx_rate_id in [
+            "01900000-0000-7000-8000-00000000ABCD",
+            "0190000000007000800000000000abcd",
+        ] {
+            let mut changed = encode(&changed_payload_with_all_dimensions())
+                .unwrap_or_else(|error| panic!("encode change: {error}"));
+            changed["saleObservation"]["observation"]["fxRateId"] = json!(fx_rate_id);
+
+            assert!(matches!(
+                decode("PRODUCT_LISTING_CHANGED", 1, &changed),
+                Err(ProductListingEventCodecError::NonCanonicalField {
+                    field: "saleObservation.fxRateId"
+                })
+            ));
+        }
+    }
+
+    #[test]
     fn should_round_trip_withdrawal_with_previous_availability() {
         let payload = withdrawal_payload();
         let encoded = encode(&payload).unwrap_or_else(|error| panic!("encode: {error}"));
@@ -1373,7 +1430,7 @@ mod tests {
     #[test]
     fn should_decode_large_image_counts_without_image_allocation() {
         let payload = json!({
-            "listingSourceId": "10000000-0000-0000-0000-000000000001",
+            "listingSourceId": "01900000-0000-7000-8000-000000000001",
             "sourceListingId": "fixture-source-id",
             "title": null,
             "description": null,
@@ -1549,7 +1606,7 @@ mod tests {
                 json!({
                     "saleObservation": {
                         "transition": "OBSERVED",
-                        "observation": {"observedAt": "yesterday", "fxRateId": "10000000-0000-0000-0000-000000000001"}
+                        "observation": {"observedAt": "yesterday", "fxRateId": "01900000-0000-7000-8000-000000000001"}
                     }
                 }),
             ),
@@ -1623,7 +1680,7 @@ mod tests {
                 "ENRICHMENT_EMBEDDED",
                 "ENRICHMENT",
                 1,
-                &json!({"sourceEventId": "10000000-0000-0000-0000-000000000001"}),
+                &json!({"sourceEventId": "01900000-0000-7000-8000-000000000001"}),
             ),
             Ok(ProductListingPersistedEvent::Embedded)
         ));
@@ -1633,7 +1690,7 @@ mod tests {
                 "ENRICHMENT",
                 1,
                 &json!({
-                    "sourceEventId": "10000000-0000-0000-0000-000000000001",
+                    "sourceEventId": "01900000-0000-7000-8000-000000000001",
                     "sourceLanguage": "de",
                     "targetLanguages": ["en"]
                 }),
@@ -1648,8 +1705,10 @@ mod tests {
 
     fn discovered_payload() -> ProductListingEventPayload {
         ProductListingEventPayload::rehydrate_discovered(RehydratedProductListingDiscovered {
-            listing_source_id: ListingSourceId::try_from("10000000-0000-0000-0000-000000000001")
-                .unwrap_or_else(|error| panic!("listing source ID: {error}")),
+            listing_source_id: ListingSourceId::try_from(storage_uuid(
+                "01900000-0000-7000-8000-000000000001",
+            ))
+            .unwrap_or_else(|error| panic!("listing source ID: {error}")),
             source_listing_id: SourceListingId::try_from("codec-source-listing")
                 .unwrap_or_else(|error| panic!("source ID: {error}")),
             title: Some(Localized::new(Language::En, Title::from("Codec title"))),
@@ -1676,8 +1735,10 @@ mod tests {
     }
 
     fn changed_payload_with_all_dimensions() -> ProductListingEventPayload {
-        let observation =
-            ListingSaleObservation::new(OffsetDateTime::UNIX_EPOCH, fxrate_core::FxRateId::new());
+        let fx_rate_id =
+            fxrate_core::FxRateId::try_from(storage_uuid("01900000-0000-7000-8000-000000000002"))
+                .unwrap_or_else(|error| panic!("FX rate ID: {error}"));
+        let observation = ListingSaleObservation::new(OffsetDateTime::UNIX_EPOCH, fx_rate_id);
         changed_payload(RehydratedProductListingChanged {
             price: Some((None, Some(price(20)))),
             price_estimate_min: Some((None, Some(price(15)))),
@@ -1719,6 +1780,12 @@ mod tests {
             }),
             sale_observation: None,
         })
+    }
+
+    fn storage_uuid(value: &str) -> uuid::Uuid {
+        value
+            .parse::<uuid::Uuid>()
+            .unwrap_or_else(|error| panic!("storage UUID fixture: {error}"))
     }
 
     fn url(value: &str) -> Url {

@@ -55,7 +55,7 @@ async fn lifecycle_guard_flow() -> Result<(), Box<dyn std::error::Error>> {
     let competing_lock = sqlx::query(
         "SELECT product_listing_id FROM product_listings WHERE product_listing_id = $1 FOR NO KEY UPDATE NOWAIT",
     )
-    .bind(uuid::Uuid::from(active_listing_id))
+    .bind(active_listing_id.into_uuid())
     .execute(&mut *competing_transaction)
     .await;
     assert!(
@@ -70,7 +70,7 @@ async fn lifecycle_guard_flow() -> Result<(), Box<dyn std::error::Error>> {
     let released_competing_lock = sqlx::query(
         "SELECT product_listing_id FROM product_listings WHERE product_listing_id = $1 FOR NO KEY UPDATE NOWAIT",
     )
-    .bind(uuid::Uuid::from(active_listing_id))
+    .bind(active_listing_id.into_uuid())
     .execute(&mut *released_competing_transaction)
     .await;
     assert!(
@@ -88,9 +88,9 @@ async fn seed_product(
 ) -> Result<ProductListingId, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
-    let product_uuid = uuid::Uuid::from(product_listing_id);
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let product_uuid = product_listing_id.into_uuid();
     let mut transaction = pool.begin().await?;
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, 'Lifecycle guard party')")
@@ -106,8 +106,11 @@ async fn seed_product(
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Lifecycle guard product', 'en', $6, $7, 'https://example.test/product', '[]')")
         .bind(product_uuid)
-        .bind(format!("lifecycle-guard-{}", &product_listing_id.to_string()[..6]))
-        .bind(uuid::Uuid::from(event_id))
+        .bind(format!(
+                    "lifecycle-guard-{}",
+                    &product_uuid.simple().to_string()[26..]
+                ))
+        .bind(event_id.into_uuid())
         .bind(listing_source_id)
         .bind(product_uuid.to_string())
         .bind(
@@ -118,7 +121,7 @@ async fn seed_product(
         .execute(&mut *transaction)
         .await?;
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
-        .bind(uuid::Uuid::from(event_id))
+        .bind(event_id.into_uuid())
         .bind(product_uuid)
         .bind(serde_json::json!({
             "listingSourceId": listing_source_id.to_string(),

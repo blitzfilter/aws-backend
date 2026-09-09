@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
+use crate::object_id::try_from_uuid;
 use application::error::box_error;
 use domain_primitives::event_id::EventId;
 use domain_primitives::versioned::Versioned;
-use fxrate_core::FxRateId;
 
 use indexmap::IndexSet;
 use localization::Language;
@@ -21,7 +21,6 @@ use product_listing_core::product_listing_id::{ProductListingId, ProductListingK
 use product_listing_core::product_listing_image::ProductListingImage;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 
-use listing_source_core::ListingSourceId;
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_core::title::Title;
 use product_listing_service::ports::product_listing_repository::{
@@ -117,7 +116,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
             WHERE product_listing_id = $1
             "#,
         )
-        .bind(uuid::Uuid::from(id))
+        .bind(id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(ProductListingLookupByIdSqlxError)?;
@@ -143,7 +142,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
               AND source_listing_id = $2
             "#,
         )
-        .bind(uuid::Uuid::from(key.listing_source_id))
+        .bind(key.listing_source_id.as_uuid())
         .bind(key.source_listing_id.as_ref())
         .fetch_optional(&mut *self.connection)
         .await
@@ -194,10 +193,10 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
             RETURNING version
             "#,
         )
-        .bind(uuid::Uuid::from(product.id()))
+        .bind(product.id().as_uuid())
         .bind(product.title_slug_id().as_ref().to_owned())
-        .bind(uuid::Uuid::from(current_event_id))
-        .bind(uuid::Uuid::from(product.listing_source_id()))
+        .bind(current_event_id.as_uuid())
+        .bind(product.listing_source_id().as_uuid())
         .bind(product.source_listing_id().as_ref().to_owned())
         .bind(title.map(|value| value.payload.as_ref().to_owned()))
         .bind(title.map(|value| value.localization.as_str().to_owned()))
@@ -224,7 +223,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .bind(
             product
                 .sale_observation()
-                .map(|value| uuid::Uuid::from(value.fx_rate_id())),
+                .map(|value| value.fx_rate_id().into_uuid()),
         )
         .bind(product.sale_observation().map(|value| value.observed_at()))
         .bind(product.availability().map(ListingAvailability::as_str))
@@ -304,7 +303,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
             RETURNING version
             "#,
         )
-        .bind(uuid::Uuid::from(current_event_id))
+        .bind(current_event_id.as_uuid())
         .bind(effects.advance_embedding_source)
         .bind(title.map(|value| value.payload.as_ref().to_owned()))
         .bind(title.map(|value| value.localization.as_str().to_owned()))
@@ -331,7 +330,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .bind(
             product
                 .sale_observation()
-                .map(|value| uuid::Uuid::from(value.fx_rate_id())),
+                .map(|value| value.fx_rate_id().into_uuid()),
         )
         .bind(product.sale_observation().map(|value| value.observed_at()))
         .bind(product.availability().map(ListingAvailability::as_str))
@@ -340,7 +339,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .bind(product_images)
         .bind(auction.start)
         .bind(auction.end)
-        .bind(uuid::Uuid::from(product.id()))
+        .bind(product.id().as_uuid())
         .bind(expected_version)
         .fetch_optional(&mut *self.connection)
         .await
@@ -364,10 +363,12 @@ impl TryFrom<ProductListingRow> for VersionedProductListing {
         let source_listing_id = SourceListingId::try_from(row.source_listing_id)
             .map_err(|_| ProductListingRepositoryError::InvalidSourceListingIdPersisted)?;
         let product = ProductListing::rehydrate(RehydratedProductListingState {
-            id: ProductListingId::from(row.product_listing_id),
+            id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                .map_err(|_| ProductListingRepositoryError::InvalidAggregateStatePersisted)?,
             title_slug_id: ProductListingSlugId::raw(&row.product_listing_title_slug_id)
                 .map_err(|_| ProductListingRepositoryError::InvalidProductListingSlugPersisted)?,
-            listing_source_id: ListingSourceId::from(row.listing_source_id),
+            listing_source_id: try_from_uuid(row.listing_source_id, "ListingSource ID")
+                .map_err(|_| ProductListingRepositoryError::InvalidAggregateStatePersisted)?,
             source_listing_id,
             title,
             description,
@@ -398,7 +399,8 @@ impl TryFrom<ProductListingRow> for VersionedProductListing {
         })
         .map_err(|_| ProductListingRepositoryError::InvalidAggregateStatePersisted)?;
 
-        let _current_event_id = EventId::from(row.current_event_id);
+        let _current_event_id = try_from_uuid::<EventId>(row.current_event_id, "current event ID")
+            .map_err(|_| ProductListingRepositoryError::InvalidAggregateStatePersisted)?;
         Ok(Versioned {
             value: product,
             version: ProductListingStorageVersion::try_from(row.version)
@@ -414,7 +416,8 @@ fn sale_observation_from_parts(
     match (observed_at, fx_rate_id) {
         (Some(observed_at), Some(fx_rate_id)) => Ok(Some(ListingSaleObservation::new(
             observed_at,
-            FxRateId::from(fx_rate_id),
+            try_from_uuid(fx_rate_id, "sale observation FX rate ID")
+                .map_err(|_| ProductListingRepositoryError::InvalidAggregateStatePersisted)?,
         ))),
         (None, None) => Ok(None),
         _ => Err(ProductListingRepositoryError::InvalidAggregateStatePersisted),
@@ -595,6 +598,7 @@ impl From<ProductListingUpdateSqlxError> for ProductListingRepositoryError {
 mod tests {
     use super::*;
 
+    use listing_source_core::ListingSourceId;
     use serde_json::json;
     use strum::IntoEnumIterator;
 
@@ -778,11 +782,11 @@ mod tests {
         let source_listing_id = SourceListingId::try_from("unit-product")
             .unwrap_or_else(|error| panic!("valid source listing ID: {error}"));
         ProductListingRow {
-            product_listing_id: uuid::Uuid::new_v4(),
+            product_listing_id: ProductListingId::new().into_uuid(),
             product_listing_title_slug_id: title_slug,
             version: 1,
-            current_event_id: uuid::Uuid::new_v4(),
-            listing_source_id: uuid::Uuid::new_v4(),
+            current_event_id: EventId::new().into_uuid(),
+            listing_source_id: ListingSourceId::new().into_uuid(),
             source_listing_id: source_listing_id.to_string(),
             title_text: Some("title".to_owned()),
             title_language: Some("en".to_owned()),

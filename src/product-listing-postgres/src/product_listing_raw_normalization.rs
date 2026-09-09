@@ -1,12 +1,12 @@
+use crate::object_id::try_from_uuid;
 use application::error::box_error;
-use listing_source_core::ListingSourceId;
-use product_listing_core::product_listing_id::ProductListingId;
+
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_normalization::{
     NormalizationContext, ProductListingNormalizationInput, RawProductListingOperation,
     RawProductListingPayloadFormat, RawProductListingValues, SourcePayload,
 };
-use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
+use product_listing_service::ports::ProductListingRawStreamId;
 use product_service::ports::{
     PendingProductListingRawStream, PendingProductListingRawStreamPage,
     PendingProductListingRawStreamPageRequest, PendingProductListingRawStreamReader,
@@ -186,8 +186,12 @@ impl ProductListingRawNormalizationWriter for SqlxProductListingRawNormalization
         .bind(revision)
         .bind(normalizer_version)
         .bind(completion.outcome.as_str())
-        .bind(completion.product_listing_id.map(uuid::Uuid::from))
-        .bind(completion.product_listing_event_id.map(uuid::Uuid::from))
+        .bind(completion.product_listing_id.map(|value| value.into_uuid()))
+        .bind(
+            completion
+                .product_listing_event_id
+                .map(|value| value.into_uuid()),
+        )
         .bind(completion.error_code)
         .execute(&mut *self.connection)
         .await
@@ -205,7 +209,11 @@ impl ProductListingRawNormalizationWriter for SqlxProductListingRawNormalization
             "#,
         )
         .bind(revision)
-        .bind(completion.next_product_listing_id.map(uuid::Uuid::from))
+        .bind(
+            completion
+                .next_product_listing_id
+                .map(|value| value.into_uuid()),
+        )
         .bind(
             completion
                 .next_source_listing_id
@@ -296,7 +304,7 @@ impl PendingProductListingRawStreamReader for SqlxPendingProductListingRawStream
         )
         .bind(i64::from(request.limit) + 1)
         .bind(cursor.map(|cursor| cursor.oldest_pending_at))
-        .bind(cursor.map(|cursor| cursor.product_listing_raw_stream_id.as_uuid()))
+        .bind(cursor.map(|cursor| cursor.product_listing_raw_stream_id.into_uuid()))
         .fetch_all(&self.pool)
         .await
         .map_err(persistence)?;
@@ -304,13 +312,17 @@ impl PendingProductListingRawStreamReader for SqlxPendingProductListingRawStream
         rows.truncate(limit);
         let streams = rows
             .into_iter()
-            .map(|row| PendingProductListingRawStream {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    row.product_listing_raw_stream_id,
-                ),
-                oldest_pending_at: row.oldest_pending_at,
+            .map(|row| {
+                Ok(PendingProductListingRawStream {
+                    product_listing_raw_stream_id: try_from_uuid(
+                        row.product_listing_raw_stream_id,
+                        "ProductListing raw stream ID",
+                    )
+                    .map_err(invalid_state_error)?,
+                    oldest_pending_at: row.oldest_pending_at,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, ProductListingRawNormalizationPortError>>()?;
         let next_cursor = has_next_page
             .then(|| streams.last().map(|stream| stream.cursor()))
             .flatten();
@@ -337,12 +349,19 @@ fn head_from_row(
         ));
     }
     Ok(ProductListingRawNormalizationHead {
-        product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
+        product_listing_raw_stream_id: try_from_uuid(
             row.product_listing_raw_stream_id,
-        ),
-        listing_source_id: ListingSourceId::from(row.listing_source_id),
+            "ProductListing raw stream ID",
+        )
+        .map_err(invalid_state_error)?,
+        listing_source_id: try_from_uuid(row.listing_source_id, "ListingSource ID")
+            .map_err(invalid_state_error)?,
         last_processed_revision,
-        product_listing_id: row.product_listing_id.map(ProductListingId::from),
+        product_listing_id: row
+            .product_listing_id
+            .map(|value| try_from_uuid(value, "ProductListing ID"))
+            .transpose()
+            .map_err(invalid_state_error)?,
         source_listing_id,
     })
 }
@@ -371,12 +390,16 @@ fn revision_from_row(
     let revision =
         u64::try_from(row.revision).map_err(|_| invalid_state("raw revision number is invalid"))?;
     Ok(ProductListingRawRevision {
-        product_listing_raw_revision_id: ProductListingRawRevisionId::from_uuid(
+        product_listing_raw_revision_id: try_from_uuid(
             row.product_listing_raw_revision_id,
-        ),
-        product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
+            "ProductListing raw revision ID",
+        )
+        .map_err(invalid_state_error)?,
+        product_listing_raw_stream_id: try_from_uuid(
             row.product_listing_raw_stream_id,
-        ),
+            "ProductListing raw stream ID",
+        )
+        .map_err(invalid_state_error)?,
         revision,
         input,
     })

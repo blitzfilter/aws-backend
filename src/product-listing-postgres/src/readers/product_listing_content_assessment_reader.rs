@@ -1,5 +1,5 @@
+use crate::object_id::try_from_uuid;
 use application::error::{box_error, static_error};
-use domain_primitives::event_id::EventId;
 use product_listing_core::{
     content_policy::{ContentPolicyDecision, SensitiveContentCategory},
     product_listing_id::ProductListingId,
@@ -72,7 +72,7 @@ impl ProductListingContentAssessmentReader for SqlxProductListingContentAssessme
             product_listing_ids
                 .iter()
                 .copied()
-                .map(uuid::Uuid::from)
+                .map(|id| id.into_uuid())
                 .collect::<Vec<_>>(),
         )
         .fetch_all(&self.pool)
@@ -97,8 +97,10 @@ impl TryFrom<ProductListingContentAssessmentRow> for ProductListingContentAssess
 
     fn try_from(row: ProductListingContentAssessmentRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            product_listing_id: ProductListingId::from(row.product_listing_id),
-            source_event_id: EventId::from(row.source_event_id),
+            product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                .map_err(mapping_error_source)?,
+            source_event_id: try_from_uuid(row.source_event_id, "content source event ID")
+                .map_err(mapping_error_source)?,
             decision: decode_decision(&row.decision, row.category.as_deref())?,
         })
     }
@@ -125,6 +127,16 @@ fn mapping_error(message: &'static str) -> ProductListingContentAssessmentReadEr
     ProductListingContentAssessmentReadError::InvalidPersistedState {
         source: box_error(ProductListingContentAssessmentMappingError {
             source: static_error(message),
+        }),
+    }
+}
+
+fn mapping_error_source(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> ProductListingContentAssessmentReadError {
+    ProductListingContentAssessmentReadError::InvalidPersistedState {
+        source: box_error(ProductListingContentAssessmentMappingError {
+            source: box_error(source),
         }),
     }
 }

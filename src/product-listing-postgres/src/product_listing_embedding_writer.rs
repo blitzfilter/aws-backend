@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use domain_primitives::event_id::EventId;
 use platform_postgres::SqlxTransaction;
 use product_listing_service::ports::{
@@ -47,7 +48,7 @@ impl ProductListingEmbeddingWriter for SqlxProductListingEmbeddingWriter<'_> {
         let embedding_source_event_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT embedding_source_event_id FROM product_listings WHERE product_listing_id = $1 FOR UPDATE",
         )
-        .bind(uuid::Uuid::from(write.product_listing_id))
+        .bind(write.product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(ProductListingEmbeddingWriteSqlxError)?;
@@ -57,12 +58,17 @@ impl ProductListingEmbeddingWriter for SqlxProductListingEmbeddingWriter<'_> {
         if duplicate_embedding_exists(self.connection, write).await? {
             return Ok(ProductListingEmbeddingWriteOutcome::Duplicate);
         }
-        if EventId::from(embedding_source_event_id) != write.source_event_id {
+        let embedding_source_event_id =
+            try_from_uuid::<EventId>(embedding_source_event_id, "embedding source event ID")
+                .map_err(|source| ProductListingEmbeddingWriteError::WriteFailed {
+                    source: application::error::box_error(source),
+                })?;
+        if embedding_source_event_id != write.source_event_id {
             return Ok(ProductListingEmbeddingWriteOutcome::Stale);
         }
 
         let payload = json!({
-            "sourceEventId": write.source_event_id.to_string(),
+            "sourceEventId": write.source_event_id.as_uuid().to_string(),
         });
         sqlx::query(
             r#"
@@ -72,8 +78,8 @@ impl ProductListingEmbeddingWriter for SqlxProductListingEmbeddingWriter<'_> {
             ) VALUES ($1, $2, 'ENRICHMENT_EMBEDDED', 'ENRICHMENT', 1, $3, now())
         "#,
         )
-        .bind(uuid::Uuid::from(write.enrichment_event_id))
-        .bind(uuid::Uuid::from(write.product_listing_id))
+        .bind(write.enrichment_event_id.as_uuid())
+        .bind(write.product_listing_id.as_uuid())
         .bind(payload)
         .execute(&mut *self.connection)
         .await
@@ -82,9 +88,9 @@ impl ProductListingEmbeddingWriter for SqlxProductListingEmbeddingWriter<'_> {
             "UPDATE product_listings SET embedding = $1, current_event_id = $2, projection_version = projection_version + 1, updated = now() WHERE product_listing_id = $3 AND embedding_source_event_id = $4",
         )
         .bind(&write.embedding)
-        .bind(uuid::Uuid::from(write.enrichment_event_id))
-        .bind(uuid::Uuid::from(write.product_listing_id))
-        .bind(uuid::Uuid::from(write.source_event_id))
+        .bind(write.enrichment_event_id.as_uuid())
+        .bind(write.product_listing_id.as_uuid())
+        .bind(write.source_event_id.as_uuid())
         .execute(&mut *self.connection).await.map_err(ProductListingEmbeddingWriteSqlxError)?;
         if update.rows_affected() != 1 {
             return Err(ProductListingEmbeddingWriteError::WriteFailed {
@@ -113,8 +119,8 @@ async fn duplicate_embedding_exists(
         )
     "#,
     )
-    .bind(uuid::Uuid::from(write.product_listing_id))
-    .bind(write.source_event_id.to_string())
+    .bind(write.product_listing_id.as_uuid())
+    .bind(write.source_event_id.as_uuid().to_string())
     .fetch_one(&mut *connection)
     .await
     .map_err(ProductListingEmbeddingWriteSqlxError)

@@ -1,5 +1,6 @@
+use crate::object_id::try_from_uuid;
 use application::error::box_error;
-use domain_primitives::event_id::EventId;
+
 use product_listing_core::product_listing_event::{
     ProductListingEventPayload, ProductListingLifecycleChange,
 };
@@ -67,7 +68,7 @@ impl ProductListingHistoryReader for SqlxProductListingHistoryReader<'_> {
                 sqlx::query_scalar::<_, uuid::Uuid>(
                     "SELECT product_listing_id FROM product_listings WHERE product_listing_id = $1",
                 )
-                .bind(uuid::Uuid::from(*product_listing_id))
+                .bind(product_listing_id.as_uuid())
                 .fetch_optional(&mut *self.connection)
                 .await
             }
@@ -87,6 +88,14 @@ impl ProductListingHistoryReader for SqlxProductListingHistoryReader<'_> {
         let Some(product_listing_id) = product_listing_id else {
             return Ok(None);
         };
+        let product_listing_id = try_from_uuid::<
+            product_listing_core::product_listing_id::ProductListingId,
+        >(product_listing_id, "ProductListing ID")
+        .map_err(|source| {
+            ProductListingHistoryReadError::ProductListingHistoryReadModelInvalid {
+                source: box_error(source),
+            }
+        })?;
 
         let rows = sqlx::query_as::<_, ProductListingHistoryRow>(
             r#"
@@ -108,7 +117,7 @@ impl ProductListingHistoryReader for SqlxProductListingHistoryReader<'_> {
             ORDER BY event_time ASC, event_id ASC
             "#,
         )
-        .bind(product_listing_id)
+        .bind(product_listing_id.as_uuid())
         .fetch_all(&mut *self.connection)
         .await
         .map_err(|error| {
@@ -160,8 +169,17 @@ impl TryFrom<ProductListingHistoryRow> for ProductListingHistoryEntry {
         let kind = history_kind(payload)?;
 
         Ok(Self {
-            product_listing_id: row.product_listing_id.into(),
-            event_id: EventId::from(row.event_id),
+            product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                .map_err(|source| {
+                    ProductListingHistoryReadError::ProductListingHistoryReadModelInvalid {
+                        source: box_error(source),
+                    }
+                })?,
+            event_id: try_from_uuid(row.event_id, "event ID").map_err(|source| {
+                ProductListingHistoryReadError::ProductListingHistoryReadModelInvalid {
+                    source: box_error(source),
+                }
+            })?,
             occurred_at: row.event_time,
             kind,
         })

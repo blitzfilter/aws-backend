@@ -1,11 +1,11 @@
+use crate::object_id::try_from_uuid;
 use crate::product_listing_event_codec;
 use crate::url::referral_configuration;
 use application::error::{BoxError, box_error, static_error};
 use domain_primitives::event_id::EventId;
-use fxrate_core::FxRateId;
 
 use indexmap::IndexSet;
-use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId, outbound_url};
+use listing_source_core::{ListingSourceName, ListingSourceSlugId, outbound_url};
 use localization::{Language, Localized};
 use money::{Currency, MonetaryAmount, Price};
 use platform_postgres::SqlxTransaction;
@@ -99,6 +99,12 @@ impl SourceRowMappingError {
             source: static_error(message),
         }
     }
+
+    fn with_source(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self {
+            source: box_error(source),
+        }
+    }
 }
 
 impl From<SourceQuerySqlxError> for ProductListingSearchFilterMatchSourceReadError {
@@ -168,11 +174,11 @@ impl ProductListingSearchFilterMatchSourceReader
 
         let product_listing_ids = refs
             .iter()
-            .map(|reference| uuid::Uuid::from(reference.product_listing_id))
+            .map(|reference| reference.product_listing_id.into_uuid())
             .collect::<Vec<_>>();
         let event_ids = refs
             .iter()
-            .map(|reference| uuid::Uuid::from(reference.event_id))
+            .map(|reference| reference.event_id.into_uuid())
             .collect::<Vec<_>>();
         let rows = sqlx::query_as::<_, SourceRow>(
             r#"
@@ -252,8 +258,10 @@ fn sources_from_rows(
         HashMap::<ProductListingSearchFilterMatchSourceRef, Vec<SourceRow>>::new();
     for row in rows {
         let reference = ProductListingSearchFilterMatchSourceRef {
-            product_listing_id: ProductListingId::from(row.product_listing_id),
-            event_id: EventId::from(row.event_id),
+            product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                .map_err(SourceRowMappingError::with_source)?,
+            event_id: try_from_uuid(row.event_id, "event ID")
+                .map_err(SourceRowMappingError::with_source)?,
         };
         grouped_rows.entry(reference).or_default().push(row);
     }
@@ -328,12 +336,15 @@ fn source_from_rows(
 
     let event_kind = event_kind_from_row(row)?;
     Ok(Some(ProductListingSearchFilterMatchSource {
-        event_id: EventId::from(row.event_id),
+        event_id: try_from_uuid(row.event_id, "event ID")
+            .map_err(SourceRowMappingError::with_source)?,
         event_kind,
         origin_event_time: row.origin_event_time,
-        current_event_id: EventId::from(row.current_event_id),
+        current_event_id: try_from_uuid(row.current_event_id, "current event ID")
+            .map_err(SourceRowMappingError::with_source)?,
         projection_version: row.projection_version,
-        product_listing_id: ProductListingId::from(row.product_listing_id),
+        product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+            .map_err(SourceRowMappingError::with_source)?,
         product_listing_title_slug_id: ProductListingSlugId::raw(
             &row.product_listing_title_slug_id,
         )
@@ -343,7 +354,8 @@ fn source_from_rows(
             )
         })?,
         source: ListingSourceSummary {
-            listing_source_id: ListingSourceId::from(row.listing_source_id),
+            listing_source_id: try_from_uuid(row.listing_source_id, "ListingSource ID")
+                .map_err(SourceRowMappingError::with_source)?,
             name: ListingSourceName::try_from(row.listing_source_name.clone()).map_err(|_| {
                 SourceRowMappingError::invalid(
                     "persisted product search-filter match source listing source name is invalid",
@@ -506,7 +518,8 @@ fn sale_observation(
     match (fx_rate_id, observed_at) {
         (Some(fx_rate_id), Some(observed_at)) => Ok(Some(ListingSaleObservation::new(
             observed_at,
-            FxRateId::from(fx_rate_id),
+            try_from_uuid(fx_rate_id, "sale observation FX rate ID")
+                .map_err(SourceRowMappingError::with_source)?,
         ))),
         (None, None) => Ok(None),
         _ => Err(SourceRowMappingError::invalid(
@@ -607,6 +620,7 @@ fn event_kind(value: &str) -> ProductListingSearchFilterMatchSourceEventKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fxrate_core::FxRateId;
 
     #[test]
     fn should_preserve_sqlx_query_source() {
@@ -656,15 +670,15 @@ mod tests {
     fn should_map_sale_observation_only_when_both_persisted_columns_are_present() {
         assert!(matches!(sale_observation(None, None), Ok(None)));
 
-        let fx_rate_id = uuid::Uuid::new_v4();
+        let fx_rate_id = FxRateId::new();
         let observed_at = OffsetDateTime::UNIX_EPOCH;
         assert!(matches!(
-            sale_observation(Some(fx_rate_id), Some(observed_at)),
+            sale_observation(Some(fx_rate_id.into_uuid()), Some(observed_at)),
             Ok(Some(value))
-                if value == ListingSaleObservation::new(observed_at, FxRateId::from(fx_rate_id))
+                if value == ListingSaleObservation::new(observed_at, fx_rate_id)
         ));
 
-        assert!(sale_observation(Some(uuid::Uuid::new_v4()), None).is_err());
+        assert!(sale_observation(Some(FxRateId::new().into_uuid()), None).is_err());
         assert!(sale_observation(None, Some(observed_at)).is_err());
     }
 

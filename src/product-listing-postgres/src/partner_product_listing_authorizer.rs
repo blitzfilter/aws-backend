@@ -62,8 +62,8 @@ impl PartnerProductListingAuthorizer for SqlxPartnerProductListingAuthorizer<'_>
             END
             "#,
         )
-        .bind(uuid::Uuid::from(actor_id))
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(actor_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&mut *self.connection)
         .await
         .map_err(PartnerProductListingAuthorizationSqlxError)?;

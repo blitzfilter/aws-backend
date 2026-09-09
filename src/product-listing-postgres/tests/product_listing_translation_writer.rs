@@ -33,7 +33,7 @@ async fn should_store_all_translations_append_enrichment_event_and_advance_curre
     let translations = sqlx::query_as::<_, (String, String, uuid::Uuid)>(
         "SELECT language, title, source_event_id FROM product_listing_translations WHERE product_listing_id = $1 ORDER BY language",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .fetch_all(&pool)
     .await?;
     assert_eq!(
@@ -41,12 +41,12 @@ async fn should_store_all_translations_append_enrichment_event_and_advance_curre
             (
                 "en".to_owned(),
                 "Antique chair".to_owned(),
-                uuid::Uuid::from(source_event_id)
+                source_event_id.into_uuid()
             ),
             (
                 "fr".to_owned(),
                 "Chaise ancienne".to_owned(),
-                uuid::Uuid::from(source_event_id)
+                source_event_id.into_uuid()
             ),
         ],
         translations
@@ -54,29 +54,25 @@ async fn should_store_all_translations_append_enrichment_event_and_advance_curre
     let event = sqlx::query_as::<_, (String, String, serde_json::Value)>(
         "SELECT event_type, event_group, payload FROM product_listing_events WHERE event_id = $1",
     )
-    .bind(uuid::Uuid::from(enrichment_event_id))
+    .bind(enrichment_event_id.into_uuid())
     .fetch_one(&pool)
     .await?;
     assert_eq!("ENRICHMENT_TRANSLATED_TITLES", event.0);
     assert_eq!("ENRICHMENT", event.1);
     assert_eq!(
-        Some("de"),
-        event
-            .2
-            .pointer("/sourceLanguage")
-            .and_then(serde_json::Value::as_str)
+        serde_json::json!({
+            "sourceEventId": source_event_id.as_uuid().to_string(),
+            "sourceLanguage": "de",
+            "targetLanguages": ["en", "fr"],
+        }),
+        event.2
     );
-    assert_eq!(
-        Some(&vec![serde_json::Value::String("en".to_owned()), serde_json::Value::String("fr".to_owned())]),
-        event.2.pointer("/targetLanguages").and_then(serde_json::Value::as_array)
-    );
-    assert!(event.2.pointer("/titles").is_none());
     let (current_event, version, projection_version): (uuid::Uuid, i64, i64) =
         sqlx::query_as("SELECT current_event_id, version, projection_version FROM product_listings WHERE product_listing_id = $1")
-            .bind(uuid::Uuid::from(product_listing_id))
+            .bind(product_listing_id.into_uuid())
             .fetch_one(&pool)
             .await?;
-    assert_eq!(uuid::Uuid::from(enrichment_event_id), current_event);
+    assert_eq!(enrichment_event_id.into_uuid(), current_event);
     assert_eq!(1, version);
     assert_eq!(2, projection_version);
     Ok(())
@@ -108,7 +104,7 @@ async fn should_report_duplicate_without_second_event_when_same_source_is_redeli
         let count = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_group = 'ENRICHMENT'",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .fetch_one(&pool)
     .await?;
         assert_eq!(1, count, "one translated event for the discovered source");
@@ -131,7 +127,7 @@ async fn should_keep_first_translation_when_same_source_redelivery_has_different
         let before: (uuid::Uuid, i64) = sqlx::query_as(
             "SELECT current_event_id, projection_version FROM product_listings WHERE product_listing_id = $1",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_one(&pool)
         .await?;
 
@@ -151,7 +147,7 @@ async fn should_keep_first_translation_when_same_source_redelivery_has_different
         let translations = sqlx::query_as::<_, (String, String)>(
             "SELECT language, title FROM product_listing_translations WHERE product_listing_id = $1 ORDER BY language",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_all(&pool)
         .await?;
         assert_eq!(
@@ -164,7 +160,7 @@ async fn should_keep_first_translation_when_same_source_redelivery_has_different
         let after: (uuid::Uuid, i64) = sqlx::query_as(
             "SELECT current_event_id, projection_version FROM product_listings WHERE product_listing_id = $1",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_one(&pool)
         .await?;
         assert_eq!(before, after);
@@ -173,7 +169,7 @@ async fn should_keep_first_translation_when_same_source_redelivery_has_different
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_TRANSLATED_TITLES' AND event_group = 'ENRICHMENT' AND event_type_schema_version = 1",
             )
-            .bind(uuid::Uuid::from(product_listing_id))
+            .bind(product_listing_id.into_uuid())
             .fetch_one(&pool)
             .await?
         );
@@ -212,7 +208,7 @@ async fn should_serialize_concurrent_same_source_translation_attempts() {
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1 AND event_type = 'ENRICHMENT_TRANSLATED_TITLES' AND event_group = 'ENRICHMENT' AND event_type_schema_version = 1",
             )
-            .bind(uuid::Uuid::from(product_listing_id))
+            .bind(product_listing_id.into_uuid())
             .fetch_one(&pool)
             .await?
         );
@@ -221,7 +217,7 @@ async fn should_serialize_concurrent_same_source_translation_attempts() {
             sqlx::query_scalar::<_, i64>(
                 "SELECT projection_version FROM product_listings WHERE product_listing_id = $1",
             )
-            .bind(uuid::Uuid::from(product_listing_id))
+            .bind(product_listing_id.into_uuid())
             .fetch_one(&pool)
             .await?
         );
@@ -258,17 +254,17 @@ async fn should_report_stale_without_writing_when_content_source_event_advanced(
         let translation_count = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM product_listing_translations WHERE product_listing_id = $1",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_one(&pool)
         .await?;
         assert_eq!(0, translation_count);
         let current_event = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT current_event_id FROM product_listings WHERE product_listing_id = $1",
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .fetch_one(&pool)
         .await?;
-        assert_eq!(uuid::Uuid::from(newer_event_id), current_event);
+        assert_eq!(newer_event_id.into_uuid(), current_event);
         Ok(())
     }
     .await;
@@ -313,8 +309,8 @@ async fn insert_product_with_discovered_event(
 ) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
     let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, 'Translation party')",
@@ -330,16 +326,16 @@ async fn insert_product_with_discovered_event(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Antiker Stuhl', 'de', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')")
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .bind(title_slug("translation-product", product_listing_id))
-        .bind(uuid::Uuid::from(event_id))
+        .bind(event_id.into_uuid())
         .bind(listing_source_id)
         .bind(product_listing_id.to_string())
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(serde_json::json!({
             "listingSourceId": listing_source_id.to_string(),
             "sourceListingId": product_listing_id.to_string(),
@@ -366,8 +362,8 @@ async fn insert_event_and_advance_product(
     let event_id = EventId::new();
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, $3, $4, 1, $5, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(event_type)
         .bind(event_group)
         .bind(serde_json::json!({
@@ -376,8 +372,8 @@ async fn insert_event_and_advance_product(
         .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE product_listings SET current_event_id = $1, content_source_event_id = $1, version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -385,5 +381,8 @@ async fn insert_event_and_advance_product(
 }
 
 fn title_slug(prefix: &str, product_listing_id: ProductListingId) -> String {
-    format!("{prefix}-{}", &product_listing_id.to_string()[..6])
+    format!(
+        "{prefix}-{}",
+        &product_listing_id.as_uuid().simple().to_string()[26..]
+    )
 }
