@@ -69,7 +69,7 @@ async fn should_project_committed_active_product_with_native_source_price_and_no
             document.pointer("/title/language").and_then(Value::as_str)
         );
         assert_eq!(
-            Some(&json!({ "amount": 12_345, "currency": "USD" })),
+            Some(&json!({ "type": "MONETARY", "amount": 12_345, "currency": "USD" })),
             document.get("sourcePrice")
         );
         assert!(document.get("priceEstimateMin").is_none());
@@ -328,7 +328,7 @@ async fn should_project_sold_product_with_all_sale_price_currencies() {
         })?;
 
         assert_eq!(
-            Some(&json!({ "amount": 12_345, "currency": "EUR" })),
+            Some(&json!({ "type": "MONETARY", "amount": 12_345, "currency": "EUR" })),
             document.get("sourcePrice")
         );
         assert_eq!(
@@ -405,7 +405,7 @@ async fn should_project_sold_product_without_main_price_then_add_sale_prices_whe
             std::io::Error::other("corrected ProductListing response has no _source")
         })?;
         assert_eq!(
-            Some(&json!({ "amount": 12_345, "currency": "EUR" })),
+            Some(&json!({ "type": "MONETARY", "amount": 12_345, "currency": "EUR" })),
             corrected_document.get("sourcePrice")
         );
         let sale_prices = corrected_document.get("salePrices").ok_or_else(|| {
