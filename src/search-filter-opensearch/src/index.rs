@@ -476,18 +476,19 @@ mod tests {
     use search_filter_core::search_filter_state::SearchFilterState;
 
     #[test]
-    fn should_build_query_body_with_filters_and_cursor() {
+    fn should_build_query_body_with_filters_and_canonical_typed_id_cursor() {
+        let cursor_id = UserSearchFilterId::new();
         let body = build_query_body(&SearchFilterIndexQuery {
             state: Some(SearchFilterState::Active),
             has_enhanced_search_description: Some(true),
             cursor: Some(Cursor {
                 size: 25,
-                search_after: Some(json!(["a", "b"])),
+                search_after: Some(json!([cursor_id.to_string()])),
             }),
         });
 
         assert_eq!(25, body["size"]);
-        assert_eq!(json!(["a", "b"]), body["search_after"]);
+        assert_eq!(json!([cursor_id.to_string()]), body["search_after"]);
         assert!(body["query"]["bool"]["filter"].is_array());
     }
 

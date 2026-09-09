@@ -131,6 +131,7 @@ async fn withdrawal_race() -> TestResult {
     );
     for id in [source.product_listing_id, unseen_id] {
         let stored = stored(id).await?;
+        assert_eq!(json!(id.to_string()), stored["_id"]);
         assert_eq!(json!(3), stored["_version"]);
         assert_eq!(
             json!({"productListingId": id, "projectionDeleted": true}),
@@ -166,6 +167,10 @@ async fn withdrawal_race() -> TestResult {
         writer.upsert(&source, None).await?
     );
     let restored = stored(source.product_listing_id).await?;
+    assert_eq!(
+        json!(source.product_listing_id.to_string()),
+        restored["_id"]
+    );
     assert_eq!(json!(5), restored["_version"]);
     assert_eq!(
         serde_json::to_value(product_listing_document(&source, None)?)?,

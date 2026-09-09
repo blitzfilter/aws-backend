@@ -45,12 +45,10 @@ impl ProductListingSearchProjection for OpenSearchProductListingSearchProjection
     {
         let version = checked_source_version(source.projection_version)?;
         let document = product_listing_document(source, sale_snapshot).map_err(document_error)?;
+        let document_id = document._id().to_string();
         let response = self
             .client
-            .index(IndexParts::IndexId(
-                &self.index,
-                &source.product_listing_id.to_string(),
-            ))
+            .index(IndexParts::IndexId(&self.index, &document_id))
             .version(version)
             .version_type(VersionType::External)
             .body(document)

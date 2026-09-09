@@ -888,10 +888,15 @@ mod tests {
     }
 
     #[test]
-    fn should_filter_and_exclude_listing_sources() -> Result<(), Box<dyn std::error::Error>> {
+    fn should_filter_and_exclude_typed_product_and_listing_source_ids()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let excluded_product = ProductListingId::new();
         let included = ListingSourceId::new();
         let excluded = ListingSourceId::new();
         let search = ProductListingSearch::new(Language::En, Currency::Eur)
+            .with_exclude_product_listing_id_query(
+                std::collections::HashSet::from([excluded_product]).into(),
+            )
             .with_listing_source_id_query(std::collections::HashSet::from([included]).into())
             .with_exclude_listing_source_id_query(
                 std::collections::HashSet::from([excluded]).into(),
@@ -904,8 +909,12 @@ mod tests {
             filters[0].pointer("/terms/listingSourceId")
         );
         assert_eq!(
+            Some(&json!([excluded_product.to_string()])),
+            must_not[0].pointer("/terms/productListingId")
+        );
+        assert_eq!(
             Some(&json!([excluded.to_string()])),
-            must_not[0].pointer("/terms/listingSourceId")
+            must_not[1].pointer("/terms/listingSourceId")
         );
         assert!(!filters.iter().any(|filter| {
             filter.to_string().contains("shop")

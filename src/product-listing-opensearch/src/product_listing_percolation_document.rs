@@ -59,7 +59,6 @@ struct ProductListingPercolationPricesDocument {
 struct ProductListingPercolationDocument {
     product_listing_id: ProductListingId,
     product_listing_title_slug_id: ProductListingSlugId,
-    #[serde(with = "crate::product_listing_document::listing_source_id")]
     listing_source_id: ListingSourceId,
     #[serde(with = "crate::product_listing_document::source_listing_id")]
     source_listing_id: SourceListingId,

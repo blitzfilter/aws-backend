@@ -113,28 +113,6 @@ pub(crate) mod source_listing_id {
     }
 }
 
-pub(crate) mod listing_source_id {
-    use super::*;
-
-    pub(crate) fn serialize<S>(value: &ListingSourceId, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&value.to_string())
-    }
-
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<ListingSourceId, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        value
-            .parse::<uuid::Uuid>()
-            .map(ListingSourceId::from)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 pub(crate) mod listing_availability {
     use super::*;
 
@@ -255,7 +233,6 @@ pub(crate) enum ProductListingDocumentValidationError {
 pub(crate) struct ProductListingDocument {
     pub product_listing_id: ProductListingId,
     pub product_listing_title_slug_id: ProductListingSlugId,
-    #[serde(with = "listing_source_id")]
     pub listing_source_id: ListingSourceId,
     #[serde(with = "source_listing_id")]
     pub source_listing_id: SourceListingId,
@@ -452,19 +429,29 @@ mod tests {
     }
 
     #[test]
-    fn should_serialize_listing_source_identity_without_retired_source_fields()
+    fn should_round_trip_canonical_typed_ids_without_retired_source_fields()
     -> Result<(), Box<dyn std::error::Error>> {
-        let document = document()?;
+        let mut document = document()?;
+        document.sale_observation_fx_rate_id = Some(FxRateId::new());
+        document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
         let value = serde_json::to_value(&document)?;
 
-        assert_eq!(
-            Some(&serde_json::json!(document.listing_source_id.to_string())),
-            value.get("listingSourceId")
-        );
-        assert_eq!(
-            Some(&serde_json::json!(document.source_listing_id.to_string())),
-            value.get("sourceListingId")
-        );
+        for (field, expected) in [
+            ("productListingId", document.product_listing_id.to_string()),
+            ("listingSourceId", document.listing_source_id.to_string()),
+            ("eventId", document.event_id.to_string()),
+            (
+                "saleObservationFxRateId",
+                document
+                    .sale_observation_fx_rate_id
+                    .map(|id| id.to_string())
+                    .ok_or("sale observation FX rate ID missing")?,
+            ),
+            ("sourceListingId", document.source_listing_id.to_string()),
+        ] {
+            assert_eq!(Some(&serde_json::json!(expected)), value.get(field));
+        }
+        assert_eq!(document.product_listing_id, document._id());
         for field in [
             "listingSourceName",
             "listingSourceSlugId",
@@ -486,6 +473,66 @@ mod tests {
 
         let round_tripped = serde_json::from_value::<ProductListingDocument>(value)?;
         assert_eq!(document, round_tripped);
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_wrong_prefixes_for_typed_document_ids()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = document()?;
+        document.sale_observation_fx_rate_id = Some(FxRateId::new());
+        document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
+        let value = serde_json::to_value(document)?;
+
+        for (field, wrong_id) in [
+            ("productListingId", EventId::new().to_string()),
+            ("listingSourceId", ProductListingId::new().to_string()),
+            ("eventId", FxRateId::new().to_string()),
+            ("saleObservationFxRateId", EventId::new().to_string()),
+        ] {
+            let mut malformed = value.clone();
+            malformed[field] = serde_json::json!(wrong_id);
+            let Err(error) = serde_json::from_value::<ProductListingDocument>(malformed) else {
+                return Err("wrong-prefix document ID was accepted".into());
+            };
+            assert!(error.to_string().contains("wrong object ID prefix"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_bare_uuids_for_typed_document_ids() -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = document()?;
+        document.sale_observation_fx_rate_id = Some(FxRateId::new());
+        document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
+        let bare_ids = [
+            (
+                "productListingId",
+                document.product_listing_id.as_uuid().to_string(),
+            ),
+            (
+                "listingSourceId",
+                document.listing_source_id.as_uuid().to_string(),
+            ),
+            ("eventId", document.event_id.as_uuid().to_string()),
+            (
+                "saleObservationFxRateId",
+                document
+                    .sale_observation_fx_rate_id
+                    .map(|id| id.as_uuid().to_string())
+                    .ok_or("sale observation FX rate ID missing")?,
+            ),
+        ];
+        let value = serde_json::to_value(document)?;
+
+        for (field, bare_id) in bare_ids {
+            let mut malformed = value.clone();
+            malformed[field] = serde_json::json!(bare_id);
+            let Err(error) = serde_json::from_value::<ProductListingDocument>(malformed) else {
+                return Err("bare UUID document ID was accepted".into());
+            };
+            assert!(error.to_string().contains("malformed object ID"));
+        }
         Ok(())
     }
 

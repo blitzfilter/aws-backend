@@ -33,6 +33,7 @@ use search_filter_service::ports::{
     SearchFilterIndex, SearchFilterIndexQuery, SearchFilterProjection,
     SearchFilterProjectionWriteOutcome, SearchFilterView,
 };
+use serde_json::json;
 use std::collections::HashMap;
 use strum::IntoEnumIterator;
 use user_core::user_id::UserId;
@@ -66,6 +67,10 @@ async fn should_index_query_percolate_and_delete_search_filter_document() {
         })
         .await
         .unwrap_or_else(|error| panic!("query failed: {error:?}"));
+    assert_eq!(
+        Some(&json!([view.search_filter_id.to_string()])),
+        query_result.cursor.search_after.as_ref()
+    );
     let indexed = match query_result
         .items
         .iter()
