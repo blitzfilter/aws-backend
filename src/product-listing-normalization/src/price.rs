@@ -178,6 +178,7 @@ pub fn normalize_product_listing_price(
     }
 
     let request_evidence = price_on_request_evidence(trimmed);
+    let has_explicit_monetary_evidence = !price_currency_pairs(trimmed).is_empty();
     match parse_display_price(trimmed, fallback_currency) {
         Ok(parsed)
             if request_evidence == PriceOnRequestEvidence::Explicit
@@ -189,6 +190,7 @@ pub fn normalize_product_listing_price(
             Err(PriceNormalizationError::ParseFailure)
         }
         Ok(parsed) => Ok(Some(ProductListingPrice::Monetary(parsed.price))),
+        Err(error) if has_explicit_monetary_evidence => Err(error),
         Err(_) if request_evidence != PriceOnRequestEvidence::None => {
             Ok(Some(ProductListingPrice::OnRequest))
         }
@@ -1167,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_contradictory_explicit_price_assertions() {
+    fn should_reject_contradictory_or_ambiguous_explicit_price_assertions() {
         assert_eq!(
             Err(PriceError::ParseFailure),
             normalize_product_listing_price(Some("€12,500 – price on request"), None)
@@ -1178,6 +1180,14 @@ mod tests {
                 Some("CHF 12'000 – price on request"),
                 Some(Currency::Chf),
             )
+        );
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(Some("USD 100 / EUR 90 — contact us"), None)
+        );
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(Some("USD 100 / EUR 90 — price on request"), None)
         );
     }
 }
