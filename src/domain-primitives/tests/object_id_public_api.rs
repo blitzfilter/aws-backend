@@ -85,7 +85,11 @@ fn should_report_wrong_prefix_for_valid_foreign_prefix() {
 #[rstest::rstest]
 #[case(TYPE_ID_SUFFIX)]
 #[case("")]
+#[case("ex_")]
+#[case("NOT AN ID")]
 #[case(UUID_TEXT)]
+#[case("01890A5D-AC96-774B-BF1D-D5586C639F75")]
+#[case("other_not-a-typeid")]
 #[case("_01h455vb4pex5vy7enb1p677vn")]
 #[case("ex-01h455vb4pex5vy7enb1p677vn")]
 #[case("ex__01h455vb4pex5vy7enb1p677vn")]
@@ -201,11 +205,38 @@ fn should_keep_generated_types_distinct() -> Result<(), Box<dyn Error>> {
 
 #[cfg(feature = "test-data")]
 #[test]
-fn should_generate_uuid_v7_with_faker() {
-    use fake::{Fake, Faker};
+fn should_generate_uuid_v7_with_supplied_faker_rng() {
+    use fake::rand::{SeedableRng, rngs::StdRng};
+    use fake::{Dummy, Faker};
 
-    let id: ExampleId = Faker.fake();
+    let mut first_rng = StdRng::seed_from_u64(7);
+    let mut matching_rng = StdRng::seed_from_u64(7);
+    let mut different_rng = StdRng::seed_from_u64(8);
+    let first = ExampleId::dummy_with_rng(&Faker, &mut first_rng);
+    let matching = ExampleId::dummy_with_rng(&Faker, &mut matching_rng);
+    let different = ExampleId::dummy_with_rng(&Faker, &mut different_rng);
 
-    assert_eq!(uuid::Variant::RFC4122, id.as_uuid().get_variant());
-    assert_eq!(7, id.as_uuid().get_version_num());
+    assert_eq!(uuid_v7_random_bits(first), uuid_v7_random_bits(matching));
+    assert_ne!(uuid_v7_random_bits(first), uuid_v7_random_bits(different));
+    for id in [first, matching, different] {
+        assert_eq!(uuid::Variant::RFC4122, id.as_uuid().get_variant());
+        assert_eq!(7, id.as_uuid().get_version_num());
+    }
+}
+
+#[cfg(feature = "test-data")]
+fn uuid_v7_random_bits(id: ExampleId) -> [u8; 10] {
+    let bytes = id.as_uuid().as_bytes();
+    [
+        bytes[6] & 0b0000_1111,
+        bytes[7],
+        bytes[8] & 0b0011_1111,
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    ]
 }

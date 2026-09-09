@@ -114,9 +114,15 @@ macro_rules! __object_id_dummy {
         impl $crate::__private::Dummy<$crate::__private::Faker> for $name {
             fn dummy_with_rng<R: $crate::__private::RngExt + ?Sized>(
                 _config: &$crate::__private::Faker,
-                _rng: &mut R,
+                rng: &mut R,
             ) -> Self {
-                Self::new()
+                let mut bytes = $crate::__private::Uuid::now_v7().into_bytes();
+                let random: [u8; 10] = $crate::__private::RngExt::random(rng);
+                bytes[6] = 0b0111_0000 | (random[0] & 0b0000_1111);
+                bytes[7] = random[1];
+                bytes[8] = 0b1000_0000 | (random[2] & 0b0011_1111);
+                bytes[9..].copy_from_slice(&random[3..]);
+                Self($crate::__private::Uuid::from_bytes(bytes))
             }
         }
     };

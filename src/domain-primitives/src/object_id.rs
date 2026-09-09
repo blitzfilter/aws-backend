@@ -27,29 +27,27 @@ pub fn format_uuid(prefix: &str, uuid: &Uuid) -> String {
 
 #[doc(hidden)]
 pub fn parse_uuid(value: &str, expected_prefix: &'static str) -> Result<Uuid, ObjectIdError> {
-    if value.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        return Err(ObjectIdError::NonCanonical {
-            value: value.to_owned(),
-        });
-    }
-
     let Some((actual_prefix, suffix)) = value.rsplit_once('_') else {
         return Err(malformed(value));
     };
 
-    if !is_valid_typeid_prefix(actual_prefix) {
+    if !is_structurally_valid_typeid_prefix(actual_prefix)
+        || !is_structurally_valid_typeid_suffix(suffix)
+    {
         return Err(malformed(value));
     }
 
-    if actual_prefix != expected_prefix {
+    if !actual_prefix.eq_ignore_ascii_case(expected_prefix) {
         return Err(ObjectIdError::WrongPrefix {
             expected: expected_prefix,
             actual: actual_prefix.to_owned(),
         });
     }
 
-    if !is_valid_typeid_suffix(suffix) {
-        return Err(malformed(value));
+    if value.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err(ObjectIdError::NonCanonical {
+            value: value.to_owned(),
+        });
     }
 
     let uuid = Uuid::decode(suffix).map_err(|_| malformed(value))?;
@@ -84,47 +82,52 @@ fn malformed(value: &str) -> ObjectIdError {
     }
 }
 
-fn is_valid_typeid_prefix(prefix: &str) -> bool {
+fn is_structurally_valid_typeid_prefix(prefix: &str) -> bool {
     let bytes = prefix.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 63
-        && bytes.first().is_some_and(u8::is_ascii_lowercase)
-        && bytes.last().is_some_and(u8::is_ascii_lowercase)
+        && bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.last().is_some_and(u8::is_ascii_alphabetic)
         && bytes
             .iter()
-            .all(|byte| byte.is_ascii_lowercase() || *byte == b'_')
+            .all(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
 }
 
-fn is_valid_typeid_suffix(suffix: &str) -> bool {
+fn is_structurally_valid_typeid_suffix(suffix: &str) -> bool {
     suffix.len() == TYPE_ID_SUFFIX_LENGTH
-        && suffix.as_bytes().first().is_some_and(|byte| *byte <= b'7')
-        && suffix.bytes().all(|byte| {
-            byte.is_ascii_digit()
-                || matches!(
-                    byte,
-                    b'a' | b'b'
-                        | b'c'
-                        | b'd'
-                        | b'e'
-                        | b'f'
-                        | b'g'
-                        | b'h'
-                        | b'j'
-                        | b'k'
-                        | b'm'
-                        | b'n'
-                        | b'p'
-                        | b'q'
-                        | b'r'
-                        | b's'
-                        | b't'
-                        | b'v'
-                        | b'w'
-                        | b'x'
-                        | b'y'
-                        | b'z'
-                )
-        })
+        && suffix
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| matches!(byte, b'0'..=b'7'))
+        && suffix.bytes().all(is_typeid_alphabet_character)
+}
+
+fn is_typeid_alphabet_character(byte: u8) -> bool {
+    byte.is_ascii_digit()
+        || matches!(
+            byte.to_ascii_lowercase(),
+            b'a' | b'b'
+                | b'c'
+                | b'd'
+                | b'e'
+                | b'f'
+                | b'g'
+                | b'h'
+                | b'j'
+                | b'k'
+                | b'm'
+                | b'n'
+                | b'p'
+                | b'q'
+                | b'r'
+                | b's'
+                | b't'
+                | b'v'
+                | b'w'
+                | b'x'
+                | b'y'
+                | b'z'
+        )
 }
 
 /// Defines a strict, UUIDv7-backed Aura object identifier.
@@ -251,7 +254,7 @@ macro_rules! object_id_newtype {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_uuid, is_valid_typeid_prefix};
+    use super::{format_uuid, is_structurally_valid_typeid_prefix};
     use serde::Deserialize;
     use std::error::Error;
     use uuid::Uuid;
@@ -291,7 +294,7 @@ mod tests {
             if vector.prefix.is_empty() {
                 assert_eq!(vector.typeid, strong_id::Id::encode(&decoded));
             } else {
-                assert!(is_valid_typeid_prefix(&vector.prefix));
+                assert!(is_structurally_valid_typeid_prefix(&vector.prefix));
                 assert_eq!(vector.typeid, format_uuid(&vector.prefix, &decoded));
             }
         }

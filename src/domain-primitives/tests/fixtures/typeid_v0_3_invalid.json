@@ -62,7 +62,7 @@
   {
     "name": "suffix-hyphens",
     "typeid": "prefix_123456789-123456789-123456",
-    "description": "The suffix can't have any hyphens"
+    "description": "The suffix should be lowercase with no uppercase letters"
   },
   {
     "name": "suffix-wrong-alphabet",
@@ -93,15 +93,5 @@
     "name": "prefix-underscore-end",
     "typeid": "prefix__00000000000000000000000000",
     "description": "The prefix can't end with an underscore"
-  },
-  {
-    "name": "empty",
-    "typeid": "",
-    "description": "The empty string is not a valid typeid"
-  },
-  {
-    "name": "prefix-empty",
-    "typeid": "prefix_",
-    "description": "The suffix can't be the empty string"
   }
 ]
