@@ -231,7 +231,7 @@ async fn should_project_inactive_filter_but_hide_it_from_active_queries_and_reje
             insert_filter(&worker.pool, &filter).await?;
             wait_for_percolation(&worker.index, filter.id(), "Inactive SQS filter cabinet", true).await?;
             sqlx::query("UPDATE search_filters SET state = 'INACTIVE_BY_USER', version = version + 1 WHERE user_search_filter_id = $1")
-                .bind(uuid::Uuid::from(filter.id())).execute(&worker.pool).await?;
+                .bind(filter.id().as_uuid()).execute(&worker.pool).await?;
             wait_for_filter_state(&worker.index, filter.id(), SearchFilterState::InactiveByUser).await?;
             let active = worker.index.query(&SearchFilterIndexQuery {
                 state: Some(SearchFilterState::Active),
@@ -247,7 +247,7 @@ async fn should_project_inactive_filter_but_hide_it_from_active_queries_and_reje
             assert_eq!(1, worker.index.query(&search_filter_service::ports::SearchFilterIndexQuery::default()).await?.items.len());
             let response = reqwest::Client::new()
                 .post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
-                .json(&serde_json::json!({"changes": [{"table": "users", "operation": "update", "record": {"user_id": user}}]}))
+                .json(&serde_json::json!({"changes": [{"table": "users", "operation": "update", "record": {"user_id": user.as_uuid().to_string()}}]}))
                 .send().await?;
             assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
             support::wait_until_empty(SCOPE).await
@@ -264,7 +264,11 @@ async fn redeliver_filter(
     operation: &str,
 ) -> support::TestResult {
     support::post_change(serde_json::json!({
-        "record": {"user_id": user_id, "user_search_filter_id": id, "version": version},
+        "record": {
+            "user_id": user_id.as_uuid().to_string(),
+            "user_search_filter_id": id.as_uuid().to_string(),
+            "version": version
+        },
         "action": operation,
         "metadata": {"table_schema": "public", "table_name": "search_filters"},
     }))
@@ -417,7 +421,7 @@ async fn assert_filter_is_not_persisted(
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM search_filters WHERE user_search_filter_id = $1)",
     )
-    .bind(uuid::Uuid::parse_str(&filter_id.to_string())?)
+    .bind(filter_id.as_uuid())
     .fetch_one(pool)
     .await?;
 
@@ -575,7 +579,7 @@ async fn seed_user(pool: &sqlx::PgPool) -> Result<UserId, sqlx::Error> {
     sqlx::query(
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.as_uuid())
     .bind(format!("sequin-worker-acceptance-{user_id}@example.com"))
     .execute(pool)
     .await?;

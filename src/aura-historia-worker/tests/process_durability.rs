@@ -30,7 +30,7 @@ async fn should_persist_accepted_work_after_process_dies_before_handler_commit_t
             .fetch_one(&mut *barrier)
             .await?;
         let source = commit_source(&pool).await?;
-        let (body, message_id) = observations.publication(source.event_id).await?;
+        let (body, message_id) = observed_publication(&observations, source).await?;
         let original = observations.received(&message_id, 1).await?;
         assert_eq!(body, original.body);
         wait_for_blocked_handler(&pool, blocker_pid).await?;
@@ -77,7 +77,7 @@ async fn should_preserve_committed_result_after_process_dies_before_sqs_delete_t
         let webhook = Relay::webhook(address, observations.clone()).await?;
         let mut child = WorkerProcess::start(&pool, &sqs, address).await?;
         let source = commit_source(&pool).await?;
-        let (body, message_id) = observations.publication(source.event_id).await?;
+        let (body, message_id) = observed_publication(&observations, source).await?;
         let original = observations.received(&message_id, 1).await?;
         observations.delete_held(&original).await?;
         let committed = persisted_assessment(&pool, source).await?;
@@ -123,7 +123,7 @@ async fn should_preserve_one_result_when_two_os_consumers_receive_duplicate_work
             .fetch_one(&mut *barrier)
             .await?;
         let source = commit_source(&pool).await?;
-        let (body, first_message_id) = observations.publication(source.event_id).await?;
+        let (body, first_message_id) = observed_publication(&observations, source).await?;
         let first_receipt = observations.received(&first_message_id, 1).await?;
         let first_transactions = wait_for_blocked_handlers(&pool, blocker_pid, 1).await?;
         let (first_backend, first_xid) =
@@ -137,9 +137,11 @@ async fn should_preserve_one_result_when_two_os_consumers_receive_duplicate_work
         let second_sqs = Relay::sqs("second", observations.clone(), false).await?;
         let mut second = WorkerProcess::start(&pool, &second_sqs, unused_address()?).await?;
         assert_ne!(first.id(), second.id());
-        let batch = observations.accepted_batch(source.event_id).await?;
+        let batch = observations
+            .accepted_batch(uuid::Uuid::from(source.event_id))
+            .await?;
         post_batch(address, &batch).await?;
-        let publications = observations.publications(source.event_id, 2).await?;
+        let publications = observed_publications(&observations, source, 2).await?;
         assert_eq!(2, publications.len());
         let (_, second_message_id) = publications
             .iter()
@@ -195,15 +197,17 @@ async fn should_keep_native_poison_dlq_across_os_restart_and_process_unrelated_w
         let webhook = Relay::webhook(address, observations.clone()).await?;
         let mut child = WorkerProcess::start(&pool, &sqs, address).await?;
         assert_native_redrive_policy().await?;
-        let event_id = uuid::Uuid::new_v4();
-        let product_id = uuid::Uuid::new_v4();
+        let event_id = domain_primitives::event_id::EventId::new();
+        let product_id = product_listing_core::product_listing_id::ProductListingId::new();
+        let event_uuid = uuid::Uuid::from(event_id);
+        let product_uuid = uuid::Uuid::from(product_id);
         let poison = serde_json::json!({
-            "schema_version": 999,
+            "schema_version": 1,
             "scope": "product-content-assessment",
-            "idempotency_key": format!("product-event:{event_id}"),
-            "ordering_key": format!("product:{product_id}"),
+            "idempotency_key": format!("product-event:{event_uuid}"),
+            "ordering_key": format!("product:{product_uuid}"),
             "job_type": "PRODUCT_LISTING_EVENT",
-            "payload": {"event_id": event_id, "product_listing_id": product_id}
+            "payload": {"event_id": event_uuid, "product_listing_id": product_uuid}
         })
         .to_string();
         let poison_message_id = send(&poison).await?;
@@ -237,7 +241,7 @@ async fn should_keep_native_poison_dlq_across_os_restart_and_process_unrelated_w
         assert_eq!(dead.message_id(), still_dead.message_id());
         assert_native_redrive_policy().await?;
         let healthy_source = commit_source(&pool).await?;
-        let (_, healthy_message_id) = observations.publication(healthy_source.event_id).await?;
+        let (_, healthy_message_id) = observed_publication(&observations, healthy_source).await?;
         persisted_assessment(&pool, healthy_source).await?;
         observations.completed(&healthy_message_id).await?;
         assert_eq!(1, assessment_count(&pool).await?);
@@ -270,15 +274,19 @@ async fn should_retry_same_sequin_batch_when_real_sqs_send_response_is_lost() {
         // HTTP ingress cannot confirm it. Observe its durable result before dropping the reply.
         let committed = persisted_assessment(&pool, source).await?;
         loss.release();
-        let (rejected_batch, status) = observations.rejected_batch(source.event_id).await?;
+        let (rejected_batch, status) = observations
+            .rejected_batch(uuid::Uuid::from(source.event_id))
+            .await?;
         assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, status);
-        let accepted_batch = observations.accepted_batch(source.event_id).await?;
+        let accepted_batch = observations
+            .accepted_batch(uuid::Uuid::from(source.event_id))
+            .await?;
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rejected_batch)?,
             serde_json::from_str::<serde_json::Value>(&accepted_batch)?,
             "real Sequin must retry the same entire batch; test does not resubmit it",
         );
-        let publications = observations.publications(source.event_id, 2).await?;
+        let publications = observed_publications(&observations, source, 2).await?;
         assert_eq!(2, publications.len());
         assert_ne!(publications[0].1, publications[1].1);
         assert_eq!(publications[0].0, publications[1].0);
@@ -312,7 +320,7 @@ async fn should_retry_ack_without_rerunning_handler_when_real_delete_response_is
         let webhook = Relay::webhook(address, observations.clone()).await?;
         let mut child = WorkerProcess::start(&pool, &sqs, address).await?;
         let source = commit_source(&pool).await?;
-        let (_, message_id) = observations.publication(source.event_id).await?;
+        let (_, message_id) = observed_publication(&observations, source).await?;
         let receipt = observations.received(&message_id, 1).await?;
         let lost_invocation = observations.response_withheld("DeleteMessage").await?;
         let committed = persisted_assessment(&pool, source).await?;
@@ -359,7 +367,7 @@ async fn should_drain_blocked_work_on_sigterm_and_leave_queued_work_for_restart(
             .fetch_one(&mut *barrier)
             .await?;
         let source = commit_source(&pool).await?;
-        let (body, message_id) = observations.publication(source.event_id).await?;
+        let (body, message_id) = observed_publication(&observations, source).await?;
         let receipt = observations.received(&message_id, 1).await?;
         wait_for_blocked_handler(&pool, blocker_pid).await?;
         child.terminate()?;

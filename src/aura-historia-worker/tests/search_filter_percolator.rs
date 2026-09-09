@@ -11,6 +11,7 @@ use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
 use large_language_model::{
     LargeLanguageModel, LargeLanguageModelError, StructuredGenerationRequest,
 };
+use listing_source_core::ListingSourceId;
 use localization::Language;
 use money::{Currency, MonetaryAmount};
 use notification_postgres::{
@@ -410,7 +411,7 @@ async fn committed_product_create_and_update_flow() -> Result<(), Box<dyn std::e
         let notifications = wait_for_notifications(&worker.pool, user_id, 2).await?;
         let created_notification = notifications
             .iter()
-            .find(|notification| notification.origin_event_id == uuid::Uuid::from(created_event_id))
+            .find(|notification| notification.origin_event_id == created_event_id)
             .ok_or_else(|| std::io::Error::other("created product notification is missing"))?;
         assert_search_filter_notification(
             created_notification,
@@ -421,7 +422,7 @@ async fn committed_product_create_and_update_flow() -> Result<(), Box<dyn std::e
         )?;
         let updated_notification = notifications
             .iter()
-            .find(|notification| notification.origin_event_id == uuid::Uuid::from(updated_event_id))
+            .find(|notification| notification.origin_event_id == updated_event_id)
             .ok_or_else(|| std::io::Error::other("updated product notification is missing"))?;
         assert_search_filter_notification(
             updated_notification,
@@ -716,6 +717,7 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
         redeliver_product_event(
+            &worker.pool,
             &worker.server,
             product_listing_id,
             event_a,
@@ -724,6 +726,7 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         redeliver_product_event(
+            &worker.pool,
             &worker.server,
             product_listing_id,
             event_b,
@@ -735,6 +738,7 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
         assert_no_matches_for(&worker.pool, event_a, NO_SIDE_EFFECT_OBSERVATION).await?;
 
         redeliver_product_event(
+            &worker.pool,
             &worker.server,
             product_listing_id,
             event_b,
@@ -743,6 +747,7 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         redeliver_product_event(
+            &worker.pool,
             &worker.server,
             product_listing_id,
             event_a,
@@ -871,6 +876,7 @@ async fn cross_currency_saved_filter_percolation_flow() -> Result<(), Box<dyn st
         assert_match_total_for_duration(&worker.pool, 4, NO_SIDE_EFFECT_OBSERVATION).await?;
 
         redeliver_product_event(
+            &worker.pool,
             &worker.server,
             event_one.product_listing_id,
             event_one.event_id,
@@ -1043,9 +1049,7 @@ async fn redelivery_and_deterministic_selection_flow() -> Result<(), Box<dyn std
         for filter_id in [first_filter.id(), second_filter.id()] {
             let notification = notifications
                 .iter()
-                .find(|notification| {
-                    notification.user_search_filter_id == uuid::Uuid::from(filter_id)
-                })
+                .find(|notification| notification.user_search_filter_id == filter_id)
                 .ok_or_else(|| std::io::Error::other("filter notification is missing"))?;
             assert_search_filter_notification(
                 notification,
@@ -1057,6 +1061,7 @@ async fn redelivery_and_deterministic_selection_flow() -> Result<(), Box<dyn std
         }
 
         redeliver_product_event(
+            &worker.pool,
             &worker.server,
             product_listing_id,
             event_id,
@@ -1270,7 +1275,7 @@ async fn seed_current_fx_snapshot(pool: &sqlx::PgPool) -> Result<(), sqlx::Error
     )
     .bind(uuid::Uuid::from(fx_rate_id))
     .bind("fxratesapi")
-    .bind(fx_rate_id.to_string())
+    .bind(fx_rate_id.as_uuid().to_string())
     .execute(pool)
     .await?;
 
@@ -1315,7 +1320,6 @@ async fn create_product_with_domain_event(
         "PRODUCT_LISTING_DISCOVERED",
         "DOMAIN",
         json!({
-            "listingSourceId": "10000000-0000-0000-0000-000000000001",
             "sourceListingId": "fixture-source-id",
             "title": {"language": "en", "text": title},
             "description": null,
@@ -1345,26 +1349,39 @@ async fn create_product_with_event_and_lifecycle(
     title: &str,
     event_type: &str,
     event_group: &str,
-    payload: Value,
+    mut payload: Value,
     lifecycle: &str,
 ) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let product_uuid = uuid::Uuid::from(product_listing_id);
     let event_id = EventId::new();
-    let listing_source_id = uuid::Uuid::new_v4();
-    let product_slug_suffix = product_uuid.simple().to_string()[..6].to_owned();
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let product_slug_suffix = product_uuid.simple().to_string()[26..].to_owned();
+    if event_type == "PRODUCT_LISTING_DISCOVERED" && event_group == "DOMAIN" {
+        payload
+            .as_object_mut()
+            .ok_or_else(|| {
+                sqlx::Error::Protocol("fixture event payload must be an object".to_owned())
+            })?
+            .insert(
+                "listingSourceId".to_owned(),
+                Value::String(listing_source_id.as_uuid().to_string()),
+            );
+    }
     let mut tx = pool.begin().await?;
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, $3, party_id FROM operator")
-        .bind(listing_source_id)
-        .bind(format!("worker-percolator-source-{listing_source_id}"))
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $4, $2, $3, party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!("worker-percolator-source-{}", listing_source_id.as_uuid()))
         .bind("Worker percolator source")
+        .bind(listing_source_id.as_uuid())
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, $6, 'en', 'Worker percolator description', 'en', CASE WHEN $7 = 'WITHDRAWN' THEN NULL ELSE 'AVAILABLE' END, $7, 'https://example.test/product', '[]')")
         .bind(product_uuid)
         .bind(format!("worker-percolator-product-{product_slug_suffix}"))
         .bind(uuid::Uuid::from(event_id))
-        .bind(listing_source_id)
+        .bind(listing_source_id.as_uuid())
         .bind(product_uuid.to_string())
         .bind(title)
         .bind(lifecycle)
@@ -1418,12 +1435,17 @@ async fn insert_cross_currency_product_with_event(
     } else {
         event_id
     };
-    let listing_source_id = uuid::Uuid::new_v4();
-    let product_slug_suffix = product_uuid.simple().to_string()[..6].to_owned();
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let product_slug_suffix = product_uuid.simple().to_string()[26..].to_owned();
     let mut tx = pool.begin().await?;
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, 'Cross currency worker source', party_id FROM operator")
-        .bind(listing_source_id)
-        .bind(format!("cross-currency-worker-source-{listing_source_id}"))
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $3, $2, 'Cross currency worker source', party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!(
+            "cross-currency-worker-source-{}",
+            listing_source_id.as_uuid()
+        ))
+        .bind(listing_source_id.as_uuid())
         .execute(&mut *tx)
         .await?;
     sqlx::query(
@@ -1432,7 +1454,7 @@ async fn insert_cross_currency_product_with_event(
     .bind(product_uuid)
     .bind(format!("cross-currency-worker-product-{product_slug_suffix}"))
     .bind(uuid::Uuid::from(event_id))
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(product_uuid.to_string())
     .bind(title)
     .bind(price.map(|(amount, _)| amount))
@@ -1448,7 +1470,7 @@ async fn insert_cross_currency_product_with_event(
         .execute(&mut *tx)
     .await?;
     let payload = serde_json::json!({
-        "listingSourceId": listing_source_id.to_string(),
+        "listingSourceId": listing_source_id.as_uuid().to_string(),
         "sourceListingId": product_uuid.to_string(),
         "title": {"language": "en", "text": title},
         "description": {"language": "en", "text": "Cross currency worker description"},
@@ -1483,7 +1505,7 @@ async fn insert_cross_currency_product_with_event(
                     "transition": "OBSERVED",
                     "observation": {
                         "observedAt": observed_at,
-                        "fxRateId": fx_rate_id.to_string()
+                        "fxRateId": fx_rate_id.as_uuid().to_string()
                     }
                 }
             }))
@@ -1516,7 +1538,7 @@ async fn insert_fx_snapshot(
     )
     .bind(uuid::Uuid::from(fx_rate_id))
     .bind(captured_at)
-    .bind(fx_rate_id.to_string())
+    .bind(fx_rate_id.as_uuid().to_string())
     .execute(pool)
     .await?;
     for currency in [
@@ -1654,7 +1676,7 @@ async fn update_product_and_insert_event_with_group(
             "images": {"previousCount": 0, "currentCount": 0}
         }),
         ("ENRICHMENT_EMBEDDED", "ENRICHMENT") => serde_json::json!({
-            "sourceEventId": event_id.to_string()
+            "sourceEventId": event_id.as_uuid().to_string()
         }),
         _ => serde_json::json!({}),
     };
@@ -1688,20 +1710,22 @@ async fn create_product_with_event_then_rollback(
     let product_listing_id = ProductListingId::new();
     let product_uuid = uuid::Uuid::from(product_listing_id);
     let event_id = EventId::new();
-    let listing_source_id = uuid::Uuid::new_v4();
-    let product_slug_suffix = product_uuid.simple().to_string()[..6].to_owned();
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let product_slug_suffix = product_uuid.simple().to_string()[26..].to_owned();
     let mut tx = pool.begin().await?;
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, $3, party_id FROM operator")
-        .bind(listing_source_id)
-        .bind(format!("worker-percolator-source-{listing_source_id}"))
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $4, $2, $3, party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!("worker-percolator-source-{}", listing_source_id.as_uuid()))
         .bind("Worker percolator source")
+        .bind(listing_source_id.as_uuid())
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, $6, 'en', 'Worker percolator description', 'en', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')")
         .bind(product_uuid)
         .bind(format!("worker-percolator-product-{product_slug_suffix}"))
         .bind(uuid::Uuid::from(event_id))
-        .bind(listing_source_id)
+        .bind(listing_source_id.as_uuid())
         .bind(product_uuid.to_string())
         .bind(title)
 
@@ -1711,7 +1735,7 @@ async fn create_product_with_event_then_rollback(
         .bind(uuid::Uuid::from(event_id))
         .bind(product_uuid)
         .bind(serde_json::json!({
-            "listingSourceId": listing_source_id.to_string(),
+            "listingSourceId": listing_source_id.as_uuid().to_string(),
             "sourceListingId": product_uuid.to_string(),
             "title": {"language": "en", "text": title},
             "description": null,
@@ -1738,7 +1762,7 @@ async fn insert_historical_search_filter_match(
         "INSERT INTO search_filter_matches (user_id, user_search_filter_id, product_listing_id, origin_event_id, user_search_filter_name, created, updated) VALUES ($1, $2, $3, $4, $5, GREATEST(date_trunc('month', now()), now() - INTERVAL '1 minute'), GREATEST(date_trunc('month', now()), now() - INTERVAL '1 minute'))",
     )
     .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::parse_str(&search_filter_id.to_string())?)
+    .bind(search_filter_id.as_uuid())
     .bind(uuid::Uuid::from(product_listing_id))
     .bind(uuid::Uuid::from(origin_event_id))
     .bind("Free tier quota filter")
@@ -1758,7 +1782,7 @@ async fn assert_product_listing_is_current_and_withdrawn(
     pool: &sqlx::PgPool,
     product_listing_id: ProductListingId,
     event_id: EventId,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let (current_event_id, lifecycle, availability): (uuid::Uuid, String, Option<String>) =
         sqlx::query_as(
             "SELECT current_event_id, lifecycle, availability FROM product_listings WHERE product_listing_id = $1",
@@ -1767,7 +1791,7 @@ async fn assert_product_listing_is_current_and_withdrawn(
         .fetch_one(pool)
         .await?;
 
-    assert_eq!(uuid::Uuid::from(event_id), current_event_id);
+    assert_eq!(event_id, EventId::try_from(current_event_id)?);
     assert_eq!("WITHDRAWN", lifecycle);
     assert_eq!(None, availability);
     Ok(())
@@ -1825,7 +1849,10 @@ async fn matches_for_event(
     .bind(uuid::Uuid::from(event_id))
     .fetch_all(pool)
     .await?;
-    Ok(ids.into_iter().map(UserSearchFilterId::from).collect())
+    ids.into_iter()
+        .map(UserSearchFilterId::try_from)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
 }
 
 async fn assert_matches_for_event(
@@ -1850,11 +1877,14 @@ async fn assert_match_valuation(
         "SELECT price_valuation_basis, price_fx_rate_id FROM search_filter_matches WHERE origin_event_id = $1 AND user_search_filter_id = $2",
     )
     .bind(uuid::Uuid::from(event_id))
-    .bind(uuid::Uuid::parse_str(&filter_id.to_string())?)
+    .bind(filter_id.as_uuid())
     .fetch_one(pool)
     .await?;
     assert_eq!(expected_basis, basis.as_deref());
-    assert_eq!(expected_fx_rate_id.map(uuid::Uuid::from), fx_rate_id);
+    assert_eq!(
+        expected_fx_rate_id,
+        fx_rate_id.map(FxRateId::try_from).transpose()?
+    );
     Ok(())
 }
 
@@ -1896,14 +1926,14 @@ async fn assert_match_for_event(
     .fetch_one(pool)
     .await?;
 
-    assert_eq!(uuid::Uuid::from(user_id), matched_user_id);
+    assert_eq!(user_id, UserId::try_from(matched_user_id)?);
     assert_eq!(
-        uuid::Uuid::parse_str(&search_filter_id.to_string())?,
-        matched_search_filter_id
+        search_filter_id,
+        UserSearchFilterId::try_from(matched_search_filter_id)?
     );
     assert_eq!(
-        uuid::Uuid::from(product_listing_id),
-        matched_product_listing_id
+        product_listing_id,
+        ProductListingId::try_from(matched_product_listing_id)?
     );
     Ok(())
 }
@@ -1981,7 +2011,7 @@ async fn assert_event_is_not_persisted(
 }
 
 #[derive(sqlx::FromRow)]
-struct SearchFilterNotificationRow {
+struct SearchFilterNotificationDbRow {
     user_id: uuid::Uuid,
     origin_event_id: uuid::Uuid,
     product_listing_id: uuid::Uuid,
@@ -1989,17 +2019,43 @@ struct SearchFilterNotificationRow {
     kind: String,
 }
 
+struct SearchFilterNotificationRow {
+    user_id: UserId,
+    origin_event_id: EventId,
+    product_listing_id: ProductListingId,
+    user_search_filter_id: UserSearchFilterId,
+    kind: String,
+}
+
+impl TryFrom<SearchFilterNotificationDbRow> for SearchFilterNotificationRow {
+    type Error = domain_primitives::object_id::ObjectIdError;
+
+    fn try_from(row: SearchFilterNotificationDbRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            user_id: UserId::try_from(row.user_id)?,
+            origin_event_id: EventId::try_from(row.origin_event_id)?,
+            product_listing_id: ProductListingId::try_from(row.product_listing_id)?,
+            user_search_filter_id: UserSearchFilterId::try_from(row.user_search_filter_id)?,
+            kind: row.kind,
+        })
+    }
+}
+
 async fn notifications_for_user(
     pool: &sqlx::PgPool,
     user_id: UserId,
-) -> Result<Vec<SearchFilterNotificationRow>, sqlx::Error> {
-    sqlx::query_as(
+) -> Result<Vec<SearchFilterNotificationRow>, Box<dyn std::error::Error>> {
+    sqlx::query_as::<_, SearchFilterNotificationDbRow>(
         "SELECT user_id, origin_event_id, product_listing_id, user_search_filter_id, kind \
          FROM notifications WHERE user_id = $1 ORDER BY created, notification_id",
     )
     .bind(uuid::Uuid::from(user_id))
     .fetch_all(pool)
-    .await
+    .await?
+    .into_iter()
+    .map(SearchFilterNotificationRow::try_from)
+    .collect::<Result<_, _>>()
+    .map_err(Into::into)
 }
 
 async fn wait_for_notifications(
@@ -2050,19 +2106,10 @@ fn assert_search_filter_notification(
     product_listing_id: ProductListingId,
     origin_event_id: EventId,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    assert_eq!(uuid::Uuid::from(user_id), notification.user_id);
-    assert_eq!(
-        uuid::Uuid::from(origin_event_id),
-        notification.origin_event_id
-    );
-    assert_eq!(
-        uuid::Uuid::from(product_listing_id),
-        notification.product_listing_id
-    );
-    assert_eq!(
-        uuid::Uuid::parse_str(&search_filter_id.to_string())?,
-        notification.user_search_filter_id
-    );
+    assert_eq!(user_id, notification.user_id);
+    assert_eq!(origin_event_id, notification.origin_event_id);
+    assert_eq!(product_listing_id, notification.product_listing_id);
+    assert_eq!(search_filter_id, notification.user_search_filter_id);
     assert_eq!("SEARCH_FILTER_MATCH", notification.kind);
     Ok(())
 }
@@ -2132,6 +2179,7 @@ async fn assert_price_filter_document(
 }
 
 async fn redeliver_product_event(
+    pool: &sqlx::PgPool,
     server: &ScopedWorkerServer,
     product_listing_id: ProductListingId,
     event_id: EventId,
@@ -2139,22 +2187,32 @@ async fn redeliver_product_event(
     event_group: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payload = match (event_type, event_group) {
-        ("PRODUCT_LISTING_DISCOVERED", "DOMAIN") => json!({
-            "listingSourceId": "10000000-0000-0000-0000-000000000001",
-            "sourceListingId": "fixture-source-id",
-            "title": null,
-            "description": null,
-            "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
-            "availability": "AVAILABLE",
-            "url": "https://example.test/product",
-            "imageCount": 0,
-            "auction": {"start": null, "end": null}
-        }),
+        ("PRODUCT_LISTING_DISCOVERED", "DOMAIN") => {
+            let listing_source_id = ListingSourceId::try_from(
+                sqlx::query_scalar::<_, uuid::Uuid>(
+                    "SELECT listing_source_id FROM product_listings WHERE product_listing_id = $1",
+                )
+                .bind(product_listing_id.as_uuid())
+                .fetch_one(pool)
+                .await?,
+            )?;
+            json!({
+                "listingSourceId": listing_source_id.as_uuid().to_string(),
+                "sourceListingId": "fixture-source-id",
+                "title": null,
+                "description": null,
+                "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
+                "availability": "AVAILABLE",
+                "url": "https://example.test/product",
+                "imageCount": 0,
+                "auction": {"start": null, "end": null}
+            })
+        }
         ("PRODUCT_LISTING_CHANGED", "DOMAIN") => json!({
             "availability": {"previous": null, "current": "AVAILABLE"}
         }),
         ("ENRICHMENT_EMBEDDED", "ENRICHMENT") => json!({
-            "sourceEventId": event_id.to_string()
+            "sourceEventId": event_id.as_uuid().to_string()
         }),
         _ => json!({}),
     };
@@ -2162,8 +2220,8 @@ async fn redeliver_product_event(
         server.local_webhook_url(),
         json!({
             "record": {
-                "event_id": event_id.to_string(),
-                "product_listing_id": product_listing_id.to_string(),
+                "event_id": event_id.as_uuid().to_string(),
+                "product_listing_id": product_listing_id.as_uuid().to_string(),
                 "event_type": event_type,
                 "event_group": event_group,
                 "event_type_schema_version": 1,
@@ -2187,10 +2245,10 @@ async fn redeliver_search_filter_match(
         server.local_webhook_url(),
         json!({
             "record": {
-                "user_id": user_id.to_string(),
-                "user_search_filter_id": search_filter_id.to_string(),
-                "product_listing_id": product_listing_id.to_string(),
-                "origin_event_id": origin_event_id.to_string()
+                "user_id": user_id.as_uuid().to_string(),
+                "user_search_filter_id": search_filter_id.as_uuid().to_string(),
+                "product_listing_id": product_listing_id.as_uuid().to_string(),
+                "origin_event_id": origin_event_id.as_uuid().to_string()
             },
             "action": "insert",
             "metadata": {"table_schema": "public", "table_name": "search_filter_matches"}

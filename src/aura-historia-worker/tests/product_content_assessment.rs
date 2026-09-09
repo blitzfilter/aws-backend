@@ -3,6 +3,7 @@ use aura_historia_worker::{
     product_content_assessment::consume_product_content_assessment_queue, serve_with_runtime,
 };
 use domain_primitives::event_id::EventId;
+use listing_source_core::ListingSourceId;
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
@@ -208,13 +209,13 @@ async fn should_skip_discovery_after_content_source_advances() {
     )
     .await
     .expect("seed discovery");
-    let newer = uuid::Uuid::new_v4();
+    let newer = EventId::new();
     let mut tx = pool.begin().await.expect("begin revision");
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
-        .bind(newer).bind(uuid::Uuid::from(id)).bind(serde_json::json!({"images": {"previousCount": 0, "currentCount": 0}}))
+        .bind(newer.as_uuid()).bind(uuid::Uuid::from(id)).bind(serde_json::json!({"images": {"previousCount": 0, "currentCount": 0}}))
         .execute(&mut *tx).await.expect("new event");
     sqlx::query("UPDATE product_listings SET current_event_id = $1, content_source_event_id = $1, version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
-        .bind(newer).bind(uuid::Uuid::from(id)).execute(&mut *tx).await.expect("advance source");
+        .bind(newer.as_uuid()).bind(uuid::Uuid::from(id)).execute(&mut *tx).await.expect("advance source");
     tx.commit().await.expect("commit revision");
     let worker = ContentAssessmentWorker::start().await;
     let result: support::TestResult = async {
@@ -308,24 +309,31 @@ async fn insert_product_in_transaction(
     description: &str,
 ) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
+    let product_listing_uuid = uuid::Uuid::from(product_listing_id);
     let event_id = EventId::new();
     let title_slug_id = ProductListingSlugId::from_title_and_suffix(
         "content assessment worker product",
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &product_listing_uuid.simple().to_string()[26..],
     )
     .map_err(|_| sqlx::Error::Protocol("invalid fixture title slug".to_owned()))?;
-    let listing_source_id = uuid::Uuid::new_v4();
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, 'Content assessment worker source', party_id FROM operator")
-        .bind(listing_source_id)
-        .bind(format!("content-assessment-worker-source-{listing_source_id}"))
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let source_listing_id = "content-assessment-fixture-product";
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $3, $2, 'Content assessment worker source', party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!(
+            "content-assessment-worker-source-{}",
+            listing_source_id.as_uuid()
+        ))
+        .bind(listing_source_id.as_uuid())
         .execute(&mut **tx)
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, $6, 'de', $7, 'de', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')")
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_uuid)
         .bind(title_slug_id.as_ref())
-        .bind(uuid::Uuid::from(event_id))
-        .bind(listing_source_id)
-        .bind(product_listing_id.to_string())
+        .bind(event_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
+        .bind(source_listing_id)
         .bind(title)
         .bind(description)
 
@@ -335,8 +343,8 @@ async fn insert_product_in_transaction(
         serde_json::json!({"pricing": {"price": {"previous": null, "current": {"amount": 1200, "currency": "EUR"}}}})
     } else {
         serde_json::json!({
-            "listingSourceId": listing_source_id.to_string(),
-            "sourceListingId": product_listing_id.to_string(),
+            "listingSourceId": listing_source_id.as_uuid().to_string(),
+            "sourceListingId": source_listing_id,
             "title": {"language": "de", "text": title},
             "description": {"language": "de", "text": description},
             "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
@@ -347,8 +355,8 @@ async fn insert_product_in_transaction(
         })
     };
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, $3, $4, 1, $5, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.as_uuid())
+        .bind(product_listing_uuid)
         .bind(event_type)
         .bind(event_group)
         .bind(payload)

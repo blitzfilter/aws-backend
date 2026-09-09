@@ -19,7 +19,8 @@ use product_listing_postgres::{
 use product_listing_service::ports::{
     ProductListingRawCaptureWrite, ProductListingRawCaptureWriteOutcome,
     ProductListingRawCaptureWriter, ProductListingRawCaptureWriterFactory,
-    ProductListingRawIngestionMethod, SourceRecordKeySha256,
+    ProductListingRawIngestionMethod, ProductListingRawRevisionId, ProductListingRawStreamId,
+    SourceRecordKeySha256,
 };
 use product_service::use_cases::{
     NormalizeProductListingRawRevisionHandler, NormalizeProductListingRawRevisionUseCase,
@@ -28,7 +29,7 @@ use serde_json::json;
 use std::{sync::Arc, time::Duration};
 use test_api::{
     IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-    get_sequin_worker_webhook_bind_addr,
+    get_sequin_worker_webhook_bind_addr, get_sqs_client,
 };
 use tokio::{
     sync::{oneshot, watch},
@@ -66,7 +67,7 @@ async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_id
 
         let worker = RawNormalizationWorker::start(pool.clone()).await?;
         let work_result: Result<(), Box<dyn std::error::Error>> = async {
-            wait_for_normalization(&pool, revision_id.as_uuid(), 1).await?;
+            wait_for_normalization(&pool, *revision_id.as_uuid(), 1).await?;
 
             let listing_count: i64 = sqlx::query_scalar("SELECT count(*) FROM product_listings")
                 .fetch_one(&pool)
@@ -77,7 +78,12 @@ async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_id
             assert_eq!(1, listing_count);
             assert_eq!(1, event_count);
 
-            redeliver_raw_revision(stream_id.as_uuid(), revision_id.as_uuid(), revision).await?;
+            redeliver_raw_revision(
+                *stream_id.as_uuid(),
+                *revision_id.as_uuid(),
+                revision,
+            )
+            .await?;
             tokio::time::sleep(POLL_INTERVAL).await;
 
             let normalization_count: i64 = sqlx::query_scalar(
@@ -121,7 +127,7 @@ async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation()
 
         let worker = RawNormalizationWorker::start(pool.clone()).await?;
         let work_result: Result<(), Box<dyn std::error::Error>> = async {
-            wait_for_normalization(&pool, barrier_revision_id.as_uuid(), 1).await?;
+            wait_for_normalization(&pool, *barrier_revision_id.as_uuid(), 1).await?;
 
             let captured = capture(
                 &unit_of_work,
@@ -133,12 +139,17 @@ async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation()
 
             // The barrier completed before this distinct row existed. Its explicit CDC delivery
             // must normalize within four seconds, well below the 30-second reconciliation cadence.
-            redeliver_raw_revision(stream_id.as_uuid(), revision_id.as_uuid(), revision).await?;
+            redeliver_raw_revision(
+                *stream_id.as_uuid(),
+                *revision_id.as_uuid(),
+                revision,
+            )
+            .await?;
             tokio::time::timeout(
                 DIRECT_CDC_TIMEOUT,
                 wait_for_normalization_with_attempts(
                     &pool,
-                    revision_id.as_uuid(),
+                    *revision_id.as_uuid(),
                     1,
                     DIRECT_CDC_POLL_ATTEMPTS,
                 ),
@@ -146,7 +157,12 @@ async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation()
             .await
             .map_err(|_| "direct CDC wake-up did not normalize within four seconds")??;
 
-            redeliver_raw_revision(stream_id.as_uuid(), revision_id.as_uuid(), revision).await?;
+            redeliver_raw_revision(
+                *stream_id.as_uuid(),
+                *revision_id.as_uuid(),
+                revision,
+            )
+            .await?;
             tokio::time::sleep(POLL_INTERVAL).await;
             let normalization_count: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM product_listing_raw_normalizations WHERE product_listing_raw_revision_id = $1",
@@ -180,7 +196,11 @@ async fn should_normalize_committed_sequin_revisions_in_order_despite_reversed_d
             // Startup repair has no rows. This first committed write must arrive through Sequin/SQS.
             tokio::time::sleep(Duration::from_millis(300)).await;
             let first = changed_parts(capture(&uow, &capture_writer, raw_write(source, "ordered", 7, "EUR 100")).await?)?;
-            let normalized = tokio::time::timeout(DIRECT_CDC_TIMEOUT, wait_for_normalization(&pool, first.1.as_uuid(), 1)).await;
+            let normalized = tokio::time::timeout(
+                DIRECT_CDC_TIMEOUT,
+                wait_for_normalization(&pool, *first.1.as_uuid(), 1),
+            )
+            .await;
             if normalized.is_err() {
                 use aws_sdk_sqs::types::QueueAttributeName as A;
                 let counts = test_api::get_sqs_client().await.get_queue_attributes()
@@ -195,9 +215,14 @@ async fn should_normalize_committed_sequin_revisions_in_order_despite_reversed_d
             assert_eq!(first.0, second.0);
             assert_eq!(1, first.2);
             assert_eq!(2, second.2);
-            wait_for_normalization(&pool, second.1.as_uuid(), 1).await?;
+            wait_for_normalization(&pool, *second.1.as_uuid(), 1).await?;
             for (stream, revision, number) in [second, first, second, first] {
-                redeliver_raw_revision(stream.as_uuid(), revision.as_uuid(), number).await?;
+                redeliver_raw_revision_sqs(
+                    *stream.as_uuid(),
+                    *revision.as_uuid(),
+                    number,
+                )
+                .await?;
             }
             support::wait_until_empty(SCOPE).await?;
             let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as("SELECT revision, outcome, error_code FROM product_listing_raw_normalizations WHERE product_listing_raw_stream_id = $1 ORDER BY revision")
@@ -228,27 +253,52 @@ async fn should_not_normalize_rollback_or_accept_unrouted_raw_changes() {
         let result = async {
             let uow = SqlxUnitOfWork::new(pool.clone());
             let mut tx = uow.begin().await?;
-            let outcome = SqlxProductListingRawCaptureWriterFactory::new().in_transaction(&mut tx)
-                .capture(raw_write(source, "rollback", 9, "EUR 100")).await?;
+            let outcome = SqlxProductListingRawCaptureWriterFactory::new()
+                .in_transaction(&mut tx)
+                .capture(raw_write(source, "rollback", 9, "EUR 100"))
+                .await?;
             let (stream, revision, number) = changed_parts(outcome)?;
             drop(tx);
             let client = reqwest::Client::new();
-            for (table, operation) in [("product_listing_raw_revisions", "update"), ("product_listing_raw_streams", "insert")] {
-                let response = client.post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
-                    .json(&json!({"changes": [{"table": table, "operation": operation, "record": {
-                        "product_listing_raw_stream_id": stream.as_uuid(), "product_listing_raw_revision_id": revision.as_uuid(), "revision": number,
-                    }}]})).send().await?;
+            for (table, operation) in [
+                ("product_listing_raw_revisions", "update"),
+                ("product_listing_raw_streams", "insert"),
+            ] {
+                let response = client
+                    .post(format!(
+                        "http://127.0.0.1:{}/cdc/sequin",
+                        get_sequin_worker_webhook_bind_addr().port()
+                    ))
+                    .json(
+                        &json!({"changes": [{"table": table, "operation": operation, "record": {
+                            "product_listing_raw_stream_id": stream.as_uuid().to_string(),
+                            "product_listing_raw_revision_id": revision.as_uuid().to_string(),
+                            "revision": number,
+                        }}]}),
+                    )
+                    .send()
+                    .await?;
                 assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
             support::wait_until_empty(SCOPE).await?;
-            for query in ["SELECT count(*) FROM product_listing_raw_revisions", "SELECT count(*) FROM product_listing_raw_normalizations", "SELECT count(*) FROM product_listings", "SELECT count(*) FROM product_listing_events"] {
-                assert_eq!(0, sqlx::query_scalar::<_, i64>(query).fetch_one(&pool).await?);
+            for query in [
+                "SELECT count(*) FROM product_listing_raw_revisions",
+                "SELECT count(*) FROM product_listing_raw_normalizations",
+                "SELECT count(*) FROM product_listings",
+                "SELECT count(*) FROM product_listing_events",
+            ] {
+                assert_eq!(
+                    0,
+                    sqlx::query_scalar::<_, i64>(query).fetch_one(&pool).await?
+                );
             }
             Ok(())
-        }.await;
+        }
+        .await;
         worker.finish(result).await
-    }.await;
+    }
+    .await;
     result.expect("rollback/filter raw SQS acceptance and cleanup");
 }
 
@@ -328,6 +378,37 @@ async fn redeliver_raw_revision(
     );
     let response = reqwest::Client::new().post(url).json(&body).send().await?;
     assert_eq!(reqwest::StatusCode::ACCEPTED, response.status());
+    Ok(())
+}
+
+async fn redeliver_raw_revision_sqs(
+    stream_id: uuid::Uuid,
+    revision_id: uuid::Uuid,
+    revision: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let stream_id = ProductListingRawStreamId::try_from(stream_id)?;
+    let revision_id = ProductListingRawRevisionId::try_from(revision_id)?;
+    let body = json!({
+        "schema_version": 2,
+        "scope": SCOPE.as_str(),
+        "job_type": "PRODUCT_LISTING_RAW_REVISION",
+        "idempotency_key": format!("product-listing-raw-revision:{revision_id}"),
+        "ordering_key": format!("product-listing-raw-stream:{stream_id}"),
+        "payload": {
+            "product_listing_raw_stream_id": stream_id,
+            "product_listing_raw_revision_id": revision_id,
+            "revision": revision,
+        }
+    })
+    .to_string();
+    let response = get_sqs_client()
+        .await
+        .send_message()
+        .queue_url(WORKER_SQS.queue_url())
+        .message_body(body)
+        .send()
+        .await?;
+    response.message_id().ok_or("SQS send missing message ID")?;
     Ok(())
 }
 
@@ -456,7 +537,7 @@ async fn seed_listing_source(
     pool: &sqlx::PgPool,
     slug: &str,
 ) -> Result<ListingSourceId, sqlx::Error> {
-    let party_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
     let listing_source_id = ListingSourceId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
         .bind(party_id)
@@ -465,7 +546,7 @@ async fn seed_listing_source(
         .execute(pool)
         .await?;
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(*listing_source_id.as_uuid())
         .bind(slug)
         .bind(slug)
         .bind(party_id)
