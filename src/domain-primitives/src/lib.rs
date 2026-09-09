@@ -36,13 +36,7 @@ pub mod change_outcome {
 }
 
 pub mod event_id {
-    crate::uuid_v7_newtype!(EventId);
-
-    impl From<EventId> for uuid::Uuid {
-        fn from(id: EventId) -> Self {
-            id.0
-        }
-    }
+    crate::object_id_newtype!(EventId, "evt");
 }
 
 pub mod event {
@@ -568,6 +562,7 @@ mod tests {
 
         assert_eq!(event_id, mapped.event_id);
         assert_eq!(3, mapped.payload);
+        assert!(mapped.event_id.to_string().starts_with("evt_"));
     }
 
     #[test]
