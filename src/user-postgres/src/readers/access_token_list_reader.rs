@@ -24,7 +24,7 @@ impl AccessTokenListReader for SqlxAccessTokenListReader {
         let rows = sqlx::query_as::<_, AccessTokenDetailsRow>(
             "SELECT access_token_id, user_id, name, scopes, origin, oauth_client_id, expires_at FROM access_tokens WHERE user_id = $1 ORDER BY created ASC, access_token_id ASC",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_all(&self.pool)
         .await
         .map_err(|source| AccessTokenListReadError::TemporarilyUnavailable {

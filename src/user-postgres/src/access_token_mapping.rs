@@ -57,8 +57,12 @@ pub(crate) enum AccessTokenRowMappingError {
     MissingOAuthClientId,
     #[error("user access token has unexpected OAuth client id")]
     UnexpectedOAuthClientId,
-    #[error("invalid access token identifier")]
-    InvalidIdentifier(#[source] uuid::Error),
+    #[error("invalid persisted access token identifier")]
+    InvalidAccessTokenId(#[source] domain_primitives::object_id::ObjectIdError),
+    #[error("invalid persisted user identifier")]
+    InvalidUserId(#[source] domain_primitives::object_id::ObjectIdError),
+    #[error("invalid persisted OAuth client identifier")]
+    InvalidOAuthClientId(#[source] domain_primitives::object_id::ObjectIdError),
     #[error("invalid access token version")]
     InvalidVersion(#[from] domain_primitives::version::InvalidVersionError),
 }
@@ -89,8 +93,10 @@ impl TryFrom<AccessTokenDetailsRow> for AccessTokenDetails {
 
     fn try_from(row: AccessTokenDetailsRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            user_id: UserId::from(row.user_id),
-            access_token_id: AccessTokenId::from(row.access_token_id),
+            user_id: UserId::try_from(row.user_id)
+                .map_err(AccessTokenRowMappingError::InvalidUserId)?,
+            access_token_id: AccessTokenId::try_from(row.access_token_id)
+                .map_err(AccessTokenRowMappingError::InvalidAccessTokenId)?,
             name: AccessTokenName::from(row.name),
             scopes: parse_scopes(row.scopes)?,
             origin: parse_origin(row.origin, row.oauth_client_id)?,
@@ -104,20 +110,15 @@ impl TryFrom<AccessTokenAuthenticationRow> for AccessTokenAuthentication {
 
     fn try_from(row: AccessTokenAuthenticationRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            access_token_id: AccessTokenId::from(row.access_token_id),
-            user_id: UserId::from(row.user_id),
+            access_token_id: AccessTokenId::try_from(row.access_token_id)
+                .map_err(AccessTokenRowMappingError::InvalidAccessTokenId)?,
+            user_id: UserId::try_from(row.user_id)
+                .map_err(AccessTokenRowMappingError::InvalidUserId)?,
             scopes: parse_scopes(row.scopes)?,
             origin: parse_origin(row.origin, row.oauth_client_id)?,
             expires: row.expires_at,
         })
     }
-}
-
-pub(crate) fn access_token_id_uuid(
-    access_token_id: AccessTokenId,
-) -> Result<uuid::Uuid, AccessTokenRowMappingError> {
-    uuid::Uuid::parse_str(&access_token_id.to_string())
-        .map_err(AccessTokenRowMappingError::InvalidIdentifier)
 }
 
 pub(crate) fn scope_values(scopes: &HashSet<Scope>) -> Vec<&'static str> {
@@ -126,12 +127,10 @@ pub(crate) fn scope_values(scopes: &HashSet<Scope>) -> Vec<&'static str> {
 
 pub(crate) fn access_token_origin_values(
     access_token: &AccessToken,
-) -> Result<(&'static str, Option<uuid::Uuid>), AccessTokenRowMappingError> {
+) -> (&'static str, Option<uuid::Uuid>) {
     match access_token.origin() {
-        AccessTokenOrigin::User => Ok(("USER", None)),
-        AccessTokenOrigin::OAuth { client_id } => uuid::Uuid::parse_str(&client_id.to_string())
-            .map(|client_id| ("OAUTH", Some(client_id)))
-            .map_err(|_| AccessTokenRowMappingError::MissingOAuthClientId),
+        AccessTokenOrigin::User => ("USER", None),
+        AccessTokenOrigin::OAuth { client_id } => ("OAUTH", Some(client_id.into_uuid())),
     }
 }
 
@@ -151,9 +150,11 @@ fn access_token_from_parts(
     state: AccessTokenPersistedState,
 ) -> Result<AccessToken, AccessTokenRowMappingError> {
     Ok(AccessToken::rehydrate(RehydratedAccessTokenState {
-        id: AccessTokenId::from(state.access_token_id),
+        id: AccessTokenId::try_from(state.access_token_id)
+            .map_err(AccessTokenRowMappingError::InvalidAccessTokenId)?,
         hashed_token: HashedRawAccessToken::new(state.token_short, state.token_hash),
-        user_id: UserId::from(state.user_id),
+        user_id: UserId::try_from(state.user_id)
+            .map_err(AccessTokenRowMappingError::InvalidUserId)?,
         name: AccessTokenName::from(state.name),
         scopes: parse_scopes(state.scopes)?,
         origin: parse_origin(state.origin, state.oauth_client_id)?,
@@ -186,9 +187,13 @@ fn parse_origin(
         "USER" if oauth_client_id.is_none() => Ok(AccessTokenOrigin::User),
         "USER" => Err(AccessTokenRowMappingError::UnexpectedOAuthClientId),
         "OAUTH" => oauth_client_id
-            .map(|client_id| AccessTokenOrigin::OAuth {
-                client_id: client_id.into(),
+            .map(|client_id| {
+                client_id
+                    .try_into()
+                    .map(|client_id| AccessTokenOrigin::OAuth { client_id })
+                    .map_err(AccessTokenRowMappingError::InvalidOAuthClientId)
             })
+            .transpose()?
             .ok_or(AccessTokenRowMappingError::MissingOAuthClientId),
         _ => Err(AccessTokenRowMappingError::InvalidOrigin(origin)),
     }

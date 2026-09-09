@@ -406,7 +406,7 @@ async fn set_user_dates(
     updated: OffsetDateTime,
 ) {
     let result = sqlx::query("UPDATE users SET created = $2, updated = $3 WHERE user_id = $1")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(created)
         .bind(updated)
         .execute(pool)

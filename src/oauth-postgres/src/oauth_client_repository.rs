@@ -1,4 +1,4 @@
-use crate::mapping::{OAUTH_CLIENT_COLUMNS, client_id_uuid, scope_values};
+use crate::mapping::{OAUTH_CLIENT_COLUMNS, scope_values};
 use crate::rows::OAuthClientRow;
 use application::error::box_error;
 use credential_core::oauth_client_id::OAuthClientId;
@@ -47,7 +47,7 @@ impl OAuthClientRepository for SqlxOAuthClientRepository<'_> {
         &mut self,
         client: &OAuthClient,
     ) -> Result<VersionedOAuthClient, OAuthClientRepositoryError> {
-        let client_id = client_id_uuid(&client.client_id()).map_err(invalid_client_state)?;
+        let client_id = client.client_id().into_uuid();
         let mut query = QueryBuilder::<Postgres>::new(
             "INSERT INTO oauth_clients (client_id, client_secret_short_token, client_secret_long_token_hash, name, redirect_uris, tos_uri, policy_uri, client_uri, logo_uri, scopes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING ",
         );
@@ -82,7 +82,7 @@ impl OAuthClientRepository for SqlxOAuthClientRepository<'_> {
         client: &OAuthClient,
         expected_version: OAuthClientStorageVersion,
     ) -> Result<VersionedOAuthClient, OAuthClientRepositoryError> {
-        let client_id = client_id_uuid(&client.client_id()).map_err(invalid_client_state)?;
+        let client_id = client.client_id().into_uuid();
         let expected_version = version_to_i64(expected_version)?;
         let mut query = QueryBuilder::<Postgres>::new(
             "UPDATE oauth_clients SET name = $1, redirect_uris = $2, tos_uri = $3, policy_uri = $4, client_uri = $5, logo_uri = $6, scopes = $7, version = version + 1, updated = now() WHERE client_id = $8 AND version = $9 RETURNING ",
@@ -117,7 +117,7 @@ impl OAuthClientRepository for SqlxOAuthClientRepository<'_> {
         &mut self,
         client_id: OAuthClientId,
     ) -> Result<bool, OAuthClientRepositoryError> {
-        let client_id = client_id_uuid(&client_id).map_err(invalid_client_state)?;
+        let client_id = client_id.into_uuid();
         let result = sqlx::query("DELETE FROM oauth_clients WHERE client_id = $1")
             .bind(client_id)
             .execute(&mut *self.connection)
@@ -132,7 +132,7 @@ async fn find_client(
     connection: &mut PgConnection,
     client_id: OAuthClientId,
 ) -> Result<Option<VersionedOAuthClient>, OAuthClientRepositoryError> {
-    let client_id = client_id_uuid(&client_id).map_err(invalid_client_state)?;
+    let client_id = client_id.into_uuid();
     let mut query = QueryBuilder::<Postgres>::new("SELECT ");
     query
         .push(OAUTH_CLIENT_COLUMNS)

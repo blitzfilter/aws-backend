@@ -133,7 +133,7 @@ impl UserTierEntitlements for SqlxUserTierEntitlements<'_> {
     ) -> Result<Option<UserTier>, UserTierEntitlementsError> {
         let tier =
             sqlx::query_scalar::<_, String>("SELECT tier FROM users WHERE user_id = $1 FOR UPDATE")
-                .bind(uuid::Uuid::from(user_id))
+                .bind(user_id.into_uuid())
                 .fetch_optional(&mut *self.connection)
                 .await
                 .map_err(|source| UserTierEntitlementsError::LockFailed {
@@ -154,7 +154,7 @@ impl UserTierEntitlements for SqlxUserTierEntitlements<'_> {
     ) -> Result<(), UserTierEntitlementsError> {
         let quota = watchlist_quota(tier);
         sqlx::query(RECONCILE_WATCHLIST_SQL)
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .bind(quota)
             .execute(&mut *self.connection)
             .await
@@ -164,7 +164,7 @@ impl UserTierEntitlements for SqlxUserTierEntitlements<'_> {
 
         let quota = search_filter_quota(tier);
         sqlx::query(RECONCILE_SEARCH_FILTERS_SQL)
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .bind(quota)
             .bind(bind_tier(tier))
             .execute(&mut *self.connection)

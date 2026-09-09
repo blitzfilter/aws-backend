@@ -38,6 +38,10 @@ pub use commands::delete_access_tokens::{
 pub use commands::delete_user::{
     DeleteUserCommand, DeleteUserError, DeleteUserHandler, DeleteUserResult, DeleteUserUseCase,
 };
+pub use commands::register_cognito_user::{
+    RegisterCognitoUserCommand, RegisterCognitoUserError, RegisterCognitoUserHandler,
+    RegisterCognitoUserResult, RegisterCognitoUserUseCase,
+};
 pub use commands::revoke_user_sessions::{
     RevokeUserSessionsCommand, RevokeUserSessionsError, RevokeUserSessionsHandler,
     RevokeUserSessionsResult, RevokeUserSessionsUseCase,
@@ -98,6 +102,10 @@ pub use queries::list_access_tokens::{
 pub use queries::list_admin_access_tokens::{
     AccessTokenSearchCursor, ListAdminAccessTokensError, ListAdminAccessTokensHandler,
     ListAdminAccessTokensRequest, ListAdminAccessTokensResult, ListAdminAccessTokensUseCase,
+};
+pub use queries::resolve_cognito_user::{
+    ResolveCognitoUserError, ResolveCognitoUserHandler, ResolveCognitoUserRequest,
+    ResolveCognitoUserResult, ResolveCognitoUserUseCase,
 };
 pub use queries::search_users::{
     SearchUsersError, SearchUsersHandler, SearchUsersRequest, SearchUsersResult,

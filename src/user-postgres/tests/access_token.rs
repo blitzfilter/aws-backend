@@ -395,7 +395,7 @@ async fn should_not_authenticate_access_token_for_suspended_user() {
         .find_authentication_by_hashed_token(token.hashed_token())
         .await;
     if let Err(error) = sqlx::query("UPDATE users SET suspended = true WHERE user_id = $1")
-        .bind(uuid::Uuid::from(user.id()))
+        .bind(user.id().into_uuid())
         .execute(&pool)
         .await
     {

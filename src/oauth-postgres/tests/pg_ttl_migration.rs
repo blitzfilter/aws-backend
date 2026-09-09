@@ -5,15 +5,15 @@ use uuid::Uuid;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
-const USER_ID: Uuid = Uuid::from_u128(0x10000000000000000000000000000001);
-const CLIENT_ID: Uuid = Uuid::from_u128(0x20000000000000000000000000000001);
-const EXPIRED_ACCESS_TOKEN_ID: Uuid = Uuid::from_u128(0x30000000000000000000000000000001);
-const FUTURE_ACCESS_TOKEN_ID: Uuid = Uuid::from_u128(0x30000000000000000000000000000002);
-const NON_EXPIRING_ACCESS_TOKEN_ID: Uuid = Uuid::from_u128(0x30000000000000000000000000000003);
-const EXPIRED_AUTHORIZATION_CODE: Uuid = Uuid::from_u128(0x40000000000000000000000000000001);
-const FUTURE_AUTHORIZATION_CODE: Uuid = Uuid::from_u128(0x40000000000000000000000000000002);
-const EXPIRED_THIRD_PARTY_EXCHANGE_CODE: Uuid = Uuid::from_u128(0x50000000000000000000000000000001);
-const FUTURE_THIRD_PARTY_EXCHANGE_CODE: Uuid = Uuid::from_u128(0x50000000000000000000000000000002);
+const USER_ID: Uuid = Uuid::from_u128(0x01890a5dac96774bbf1dd5586c639f75);
+const CLIENT_ID: Uuid = Uuid::from_u128(0x01890a5dac96774bbf1dd5586c639f76);
+const EXPIRED_ACCESS_TOKEN_ID: Uuid = Uuid::from_u128(0x01890a5dac96774bbf1dd5586c639f77);
+const FUTURE_ACCESS_TOKEN_ID: Uuid = Uuid::from_u128(0x01890a5dac96774bbf1dd5586c639f78);
+const NON_EXPIRING_ACCESS_TOKEN_ID: Uuid = Uuid::from_u128(0x01890a5dac96774bbf1dd5586c639f79);
+const EXPIRED_AUTHORIZATION_CODE: &str = "01890a5d-ac96-774b-bf1d-d5586c639f80";
+const FUTURE_AUTHORIZATION_CODE: &str = "01890a5d-ac96-774b-bf1d-d5586c639f81";
+const EXPIRED_THIRD_PARTY_EXCHANGE_CODE: &str = "01890a5d-ac96-774b-bf1d-d5586c639f82";
+const FUTURE_THIRD_PARTY_EXCHANGE_CODE: &str = "01890a5d-ac96-774b-bf1d-d5586c639f83";
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_register_and_apply_pg_ttl_for_expiring_oauth_credentials() {
@@ -181,7 +181,7 @@ async fn seed_access_token(
 
 async fn seed_authorization_code(
     pool: &PgPool,
-    authorization_code: Uuid,
+    authorization_code: &str,
     code_challenge: &str,
     expires_at: OffsetDateTime,
 ) -> Result<(), sqlx::Error> {
@@ -204,7 +204,7 @@ async fn seed_authorization_code(
 
 async fn seed_third_party_exchange_code(
     pool: &PgPool,
-    third_party_exchange_code: Uuid,
+    third_party_exchange_code: &str,
     access_token_id: Uuid,
     access_token: &str,
     expires_at: OffsetDateTime,
@@ -233,7 +233,7 @@ async fn access_token_exists(pool: &PgPool, access_token_id: Uuid) -> Result<boo
 
 async fn authorization_code_exists(
     pool: &PgPool,
-    authorization_code: Uuid,
+    authorization_code: &str,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS( \
@@ -246,7 +246,7 @@ async fn authorization_code_exists(
 
 async fn third_party_exchange_code_exists(
     pool: &PgPool,
-    third_party_exchange_code: Uuid,
+    third_party_exchange_code: &str,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS( \

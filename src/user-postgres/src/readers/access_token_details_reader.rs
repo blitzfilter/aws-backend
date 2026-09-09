@@ -1,4 +1,4 @@
-use crate::access_token_mapping::{AccessTokenDetailsRow, access_token_id_uuid};
+use crate::access_token_mapping::AccessTokenDetailsRow;
 use application::error::box_error;
 use sqlx::PgPool;
 use user_core::access_token::AccessTokenId;
@@ -25,16 +25,11 @@ impl AccessTokenDetailsReader for SqlxAccessTokenDetailsReader {
         user_id: UserId,
         access_token_id: AccessTokenId,
     ) -> Result<Option<AccessTokenDetails>, AccessTokenDetailsReadError> {
-        let access_token_id = access_token_id_uuid(access_token_id).map_err(|source| {
-            AccessTokenDetailsReadError::InvalidReadModel {
-                source: box_error(source),
-            }
-        })?;
         let row = sqlx::query_as::<_, AccessTokenDetailsRow>(
             "SELECT access_token_id, user_id, name, scopes, origin, oauth_client_id, expires_at FROM access_tokens WHERE user_id = $1 AND access_token_id = $2",
         )
-        .bind(uuid::Uuid::from(user_id))
-        .bind(access_token_id)
+        .bind(user_id.into_uuid())
+        .bind(access_token_id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(|source| AccessTokenDetailsReadError::TemporarilyUnavailable {

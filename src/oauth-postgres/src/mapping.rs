@@ -18,7 +18,6 @@ use oauth_service::ports::{OAuthClientStorageVersion, PersistedOAuthClient, Vers
 use std::collections::HashSet;
 use user_core::access_token::{AccessTokenId, HashedRawOAuthClientSecret, RawAccessToken};
 use user_core::user_id::UserId;
-use uuid::Uuid;
 
 pub(crate) const OAUTH_CLIENT_COLUMNS: &str = "\
     client_id, client_secret_short_token AS secret_short, \
@@ -47,8 +46,16 @@ pub(crate) enum OAuthRowMappingError {
     InvalidCodeChallengeMethod(String),
     #[error("persisted OAuth access token is invalid")]
     InvalidAccessToken(#[source] user_core::access_token::InvalidRawTokenError),
-    #[error("OAuth identifier conversion failed")]
-    InvalidIdentifier(#[source] uuid::Error),
+    #[error("persisted OAuth client identifier is invalid")]
+    InvalidOAuthClientId(#[source] domain_primitives::object_id::ObjectIdError),
+    #[error("persisted user identifier is invalid")]
+    InvalidUserId(#[source] domain_primitives::object_id::ObjectIdError),
+    #[error("persisted access token identifier is invalid")]
+    InvalidAccessTokenId(#[source] domain_primitives::object_id::ObjectIdError),
+    #[error("persisted authorization code is invalid")]
+    InvalidAuthorizationCode(#[source] uuid::Error),
+    #[error("persisted third-party exchange code is invalid")]
+    InvalidThirdPartyExchangeCode(#[source] uuid::Error),
     #[error("persisted OAuth client version is invalid")]
     InvalidVersion(#[from] domain_primitives::version::InvalidVersionError),
 }
@@ -59,7 +66,8 @@ impl TryFrom<OAuthClientRow> for VersionedOAuthClient {
     fn try_from(row: OAuthClientRow) -> Result<Self, Self::Error> {
         let version = OAuthClientStorageVersion::try_from(row.version)?;
         let client = OAuthClient::rehydrate(RehydratedOAuthClientState {
-            client_id: OAuthClientId::from(row.client_id),
+            client_id: OAuthClientId::try_from(row.client_id)
+                .map_err(OAuthRowMappingError::InvalidOAuthClientId)?,
             hashed_client_secret: HashedRawOAuthClientSecret::new(
                 row.secret_short,
                 row.secret_hash,
@@ -89,7 +97,8 @@ impl TryFrom<OAuthClientViewRow> for oauth_service::ports::OAuthClientView {
 
     fn try_from(row: OAuthClientViewRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            client_id: OAuthClientId::from(row.client_id),
+            client_id: OAuthClientId::try_from(row.client_id)
+                .map_err(OAuthRowMappingError::InvalidOAuthClientId)?,
             name: OAuthClientName::from(row.name),
             redirect_uris: parse_redirect_uris(row.redirect_uris)?.into_set(),
             tos_uri: url::Url::parse(&row.tos_uri).map_err(OAuthRowMappingError::InvalidUrl)?,
@@ -111,9 +120,12 @@ impl TryFrom<AuthorizationCodeRow> for AuthorizationCode {
     fn try_from(row: AuthorizationCodeRow) -> Result<Self, Self::Error> {
         Ok(AuthorizationCode::rehydrate(
             RehydratedAuthorizationCodeState {
-                code: OAuthAuthorizationCode::from(row.code),
-                client_id: OAuthClientId::from(row.client_id),
-                user_id: UserId::from(row.user_id),
+                code: OAuthAuthorizationCode::try_from(row.code)
+                    .map_err(OAuthRowMappingError::InvalidAuthorizationCode)?,
+                client_id: OAuthClientId::try_from(row.client_id)
+                    .map_err(OAuthRowMappingError::InvalidOAuthClientId)?,
+                user_id: UserId::try_from(row.user_id)
+                    .map_err(OAuthRowMappingError::InvalidUserId)?,
                 redirect_uri: url::Url::parse(&row.redirect_uri)
                     .map_err(OAuthRowMappingError::InvalidUrl)?,
                 scopes: parse_scopes(row.scopes)?,
@@ -131,8 +143,10 @@ impl TryFrom<ThirdPartyExchangeCodeRow> for ThirdPartyExchangeCodeGrant {
     fn try_from(row: ThirdPartyExchangeCodeRow) -> Result<Self, Self::Error> {
         Ok(ThirdPartyExchangeCodeGrant::rehydrate(
             RehydratedThirdPartyExchangeCodeGrantState {
-                code: ThirdPartyExchangeCode::from(row.code),
-                access_token_id: AccessTokenId::from(row.access_token_id),
+                code: ThirdPartyExchangeCode::try_from(row.code)
+                    .map_err(OAuthRowMappingError::InvalidThirdPartyExchangeCode)?,
+                access_token_id: AccessTokenId::try_from(row.access_token_id)
+                    .map_err(OAuthRowMappingError::InvalidAccessTokenId)?,
                 access_token: RawAccessToken::try_from(row.access_token)
                     .map_err(OAuthRowMappingError::InvalidAccessToken)?,
                 access_token_expires: row.access_token_expires,
@@ -141,28 +155,6 @@ impl TryFrom<ThirdPartyExchangeCodeRow> for ThirdPartyExchangeCodeGrant {
             },
         ))
     }
-}
-
-pub(crate) fn client_id_uuid(client_id: &OAuthClientId) -> Result<Uuid, OAuthRowMappingError> {
-    Uuid::parse_str(&client_id.to_string()).map_err(OAuthRowMappingError::InvalidIdentifier)
-}
-
-pub(crate) fn authorization_code_uuid(
-    code: &OAuthAuthorizationCode,
-) -> Result<Uuid, OAuthRowMappingError> {
-    Uuid::parse_str(&code.to_string()).map_err(OAuthRowMappingError::InvalidIdentifier)
-}
-
-pub(crate) fn third_party_exchange_code_uuid(
-    code: &ThirdPartyExchangeCode,
-) -> Result<Uuid, OAuthRowMappingError> {
-    Uuid::parse_str(&code.to_string()).map_err(OAuthRowMappingError::InvalidIdentifier)
-}
-
-pub(crate) fn access_token_id_uuid(
-    access_token_id: AccessTokenId,
-) -> Result<Uuid, OAuthRowMappingError> {
-    Uuid::parse_str(&access_token_id.to_string()).map_err(OAuthRowMappingError::InvalidIdentifier)
 }
 
 pub(crate) fn scope_values(scopes: &HashSet<Scope>) -> Vec<String> {
@@ -218,11 +210,41 @@ fn parse_code_challenge_method(value: &str) -> Result<CodeChallengeMethod, OAuth
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
+
+    fn uuid_v7_fixture() -> Uuid {
+        Uuid::parse_str("01890a5d-ac96-774b-bf1d-d5586c639f75")
+            .unwrap_or_else(|error| panic!("invalid UUIDv7 fixture: {error}"))
+    }
+
+    #[test]
+    fn should_reject_non_v7_persisted_oauth_client_id() {
+        let row = OAuthClientRow {
+            client_id: Uuid::new_v4(),
+            secret_short: "short".to_owned(),
+            secret_hash: "hash".to_owned(),
+            name: "Client".to_owned(),
+            redirect_uris: vec!["https://client.example/callback".to_owned()],
+            tos_uri: "https://client.example/tos".to_owned(),
+            policy_uri: "https://client.example/policy".to_owned(),
+            client_uri: "https://client.example".to_owned(),
+            logo_uri: "https://client.example/logo.png".to_owned(),
+            scopes: vec![],
+            version: 1,
+            created: time::OffsetDateTime::UNIX_EPOCH,
+            updated: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert!(matches!(
+            VersionedOAuthClient::try_from(row),
+            Err(OAuthRowMappingError::InvalidOAuthClientId(_))
+        ));
+    }
 
     #[test]
     fn should_rehydrate_versioned_oauth_client_with_operational_metadata() {
         let row = OAuthClientRow {
-            client_id: Uuid::nil(),
+            client_id: uuid_v7_fixture(),
             secret_short: "short".to_owned(),
             secret_hash: "hash".to_owned(),
             name: "Client".to_owned(),
@@ -252,7 +274,7 @@ mod tests {
     #[test]
     fn should_reject_http_redirect_uri_in_persisted_oauth_client() {
         let row = OAuthClientRow {
-            client_id: Uuid::nil(),
+            client_id: uuid_v7_fixture(),
             secret_short: "short".to_owned(),
             secret_hash: "hash".to_owned(),
             name: "Client".to_owned(),
@@ -276,7 +298,7 @@ mod tests {
     #[test]
     fn should_reject_fragment_redirect_uri_in_persisted_oauth_client() {
         let row = OAuthClientRow {
-            client_id: Uuid::nil(),
+            client_id: uuid_v7_fixture(),
             secret_short: "short".to_owned(),
             secret_hash: "hash".to_owned(),
             name: "Client".to_owned(),
@@ -300,7 +322,7 @@ mod tests {
     #[test]
     fn should_reject_invalid_oauth_client_storage_version() {
         let row = OAuthClientRow {
-            client_id: Uuid::nil(),
+            client_id: uuid_v7_fixture(),
             secret_short: "short".to_owned(),
             secret_hash: "hash".to_owned(),
             name: "Client".to_owned(),

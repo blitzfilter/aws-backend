@@ -43,7 +43,7 @@ impl UserRepository for SqlxUserRepository<'_> {
     ) -> Result<Option<VersionedUser>, UserRepositoryError> {
         let sql = format!("SELECT {} FROM users WHERE user_id = $1", user_columns());
         let row = sqlx::query_as::<_, UserRow>(AssertSqlSafe(sql))
-            .bind(uuid::Uuid::from(id))
+            .bind(id.into_uuid())
             .fetch_optional(&mut *self.connection)
             .await
             .map_err(|source| UserRepositoryError::TemporarilyUnavailable {
@@ -120,7 +120,7 @@ impl UserRepository for SqlxUserRepository<'_> {
         );
 
         let row = sqlx::query_as::<_, UserRow>(AssertSqlSafe(sql))
-            .bind(uuid::Uuid::from(user.id()))
+            .bind(user.id().into_uuid())
             .bind::<&str>(user.email().as_ref())
             .bind(profile.first_name.as_ref().map(AsRef::as_ref))
             .bind(profile.last_name.as_ref().map(AsRef::as_ref))
@@ -165,7 +165,7 @@ impl UserRepository for SqlxUserRepository<'_> {
         );
 
         let inserted = sqlx::query_as::<_, UserRow>(AssertSqlSafe(sql))
-            .bind(uuid::Uuid::from(user.id()))
+            .bind(user.id().into_uuid())
             .bind::<&str>(user.email().as_ref())
             .bind(profile.first_name.as_ref().map(AsRef::as_ref))
             .bind(profile.last_name.as_ref().map(AsRef::as_ref))
@@ -231,7 +231,7 @@ impl UserRepository for SqlxUserRepository<'_> {
         );
 
         let row = sqlx::query_as::<_, UserRow>(AssertSqlSafe(sql))
-            .bind(uuid::Uuid::from(user.id()))
+            .bind(user.id().into_uuid())
             .bind::<&str>(user.email().as_ref())
             .bind(profile.first_name.as_ref().map(AsRef::as_ref))
             .bind(profile.last_name.as_ref().map(AsRef::as_ref))
@@ -256,7 +256,7 @@ impl UserRepository for SqlxUserRepository<'_> {
 
     async fn delete_by_id(&mut self, id: UserId) -> Result<bool, UserRepositoryError> {
         let result = sqlx::query("DELETE FROM users WHERE user_id = $1")
-            .bind(uuid::Uuid::from(id))
+            .bind(id.into_uuid())
             .execute(&mut *self.connection)
             .await
             .map_err(map_write_error)?;

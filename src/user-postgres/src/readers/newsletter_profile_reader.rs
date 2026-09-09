@@ -41,7 +41,7 @@ impl NewsletterProfileReader for SqlxNewsletterProfileReader {
         let row = sqlx::query_as::<_, NewsletterProfileRow>(
             "SELECT first_name, last_name, language, currency FROM users WHERE user_id = $1",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(
@@ -87,7 +87,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO users (user_id, email, first_name, last_name, language, currency, tier, role) VALUES ($1, $2, $3, $4, $5, $6, 'FREE', 'USER')",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@example.test"))
         .bind("Ada")
         .bind("Lovelace")

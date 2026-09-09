@@ -1661,6 +1661,7 @@ dependencies = [
  "serde-email",
  "serde_json",
  "serial_test",
+ "sqlx",
  "test-api",
  "thiserror 2.0.20",
  "tokio",
@@ -4380,6 +4381,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "domain-primitives",
  "listing-source-core",
  "listing-source-service",
  "localization",
@@ -8521,7 +8523,6 @@ dependencies = [
  "async-trait",
  "aws-sdk-cognitoidentityprovider",
  "thiserror 2.0.20",
- "user-core",
  "user-service",
 ]
 

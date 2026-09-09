@@ -30,7 +30,7 @@ async fn should_reject_another_transaction_lock_while_tier_entitlements_are_lock
         .unwrap_or_else(|error| panic!("failed to lock user tier: {error:?}"));
 
     let concurrent_lock = sqlx::query("SELECT 1 FROM users WHERE user_id = $1 FOR UPDATE NOWAIT")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .execute(&pool)
         .await;
 
@@ -154,7 +154,8 @@ async fn should_keep_user_deactivation_when_tier_reconciliation_runs_afterward()
     let user_id = seed_user(&pool, "tier-reconciliation-user-wins@example.com", "FREE").await;
     let product_listing_ids =
         seed_watchlist_entries(&pool, user_id, 21, OffsetDateTime::now_utc()).await;
-    let product_listing_id = ProductListingId::from(product_listing_ids[0]);
+    let product_listing_id = ProductListingId::try_from(product_listing_ids[0])
+        .unwrap_or_else(|error| panic!("invalid product-listing fixture: {error}"));
 
     let mut user_tx = begin(&unit).await;
     let loaded = watchlist
@@ -204,7 +205,8 @@ async fn should_reject_stale_user_update_after_tier_reconciliation_wins() {
     let user_id = seed_user(&pool, "tier-reconciliation-wins@example.com", "FREE").await;
     let product_listing_ids =
         seed_watchlist_entries(&pool, user_id, 21, OffsetDateTime::now_utc()).await;
-    let product_listing_id = ProductListingId::from(product_listing_ids[0]);
+    let product_listing_id = ProductListingId::try_from(product_listing_ids[0])
+        .unwrap_or_else(|error| panic!("invalid product-listing fixture: {error}"));
 
     let mut user_tx = begin(&unit).await;
     let loaded = watchlist
@@ -256,15 +258,15 @@ async fn should_keep_legacy_free_tier_product_exclusions_and_lifecycle_filters_a
     let unit = SqlxUnitOfWork::new(pool.clone());
     let entitlements = SqlxUserTierEntitlementsFactory::new();
     let user_id = seed_user(&pool, "tier-entitlements-legacy-free@example.com", "FREE").await;
-    let filter_id = uuid::Uuid::new_v4();
+    let filter_id = uuid::Uuid::now_v7();
 
     sqlx::query(
         "INSERT INTO search_filters (user_search_filter_id, user_id, name, state, search, language, currency) VALUES ($1, $2, 'legacy-compatible', 'ACTIVE', $3, 'en', 'EUR')",
     )
     .bind(filter_id)
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(serde_json::json!({
-        "exclude_product_listing_id_query": [uuid::Uuid::new_v4()],
+        "exclude_product_listing_id_query": [uuid::Uuid::now_v7()],
         "lifecycle_query": ["Deleted"],
     }))
     .execute(&pool)
@@ -317,7 +319,7 @@ async fn should_reactivate_only_plan_restricted_resources_on_upgrade() {
     sqlx::query(
         "UPDATE product_listing_watchlist SET state = 'INACTIVE_BY_RESTRICTED_PLAN', active_since = NULL WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(watchlist_ids[0])
     .execute(&pool)
     .await
@@ -325,7 +327,7 @@ async fn should_reactivate_only_plan_restricted_resources_on_upgrade() {
     sqlx::query(
         "UPDATE product_listing_watchlist SET state = 'INACTIVE_BY_USER', active_since = NULL WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(watchlist_ids[1])
     .execute(&pool)
     .await
@@ -388,7 +390,7 @@ async fn commit(tx: SqlxTransaction) {
 async fn seed_user(pool: &sqlx::PgPool, email: &str, tier: &str) -> UserId {
     let user_id = UserId::new();
     sqlx::query("INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, $3, 'USER')")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(email)
         .bind(tier)
         .execute(pool)
@@ -405,12 +407,12 @@ async fn seed_search_filter(
     enhanced_search_description: Option<&str>,
     created: OffsetDateTime,
 ) -> uuid::Uuid {
-    let filter_id = uuid::Uuid::new_v4();
+    let filter_id = uuid::Uuid::now_v7();
     sqlx::query(
         "INSERT INTO search_filters (user_search_filter_id, user_id, name, state, search, enhanced_search_description, language, currency, created, updated) VALUES ($1, $2, $3, $4, '{}'::jsonb, $5, 'en', 'EUR', $6, $6)",
     )
     .bind(filter_id)
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(name)
     .bind(state)
     .bind(enhanced_search_description)
@@ -427,7 +429,7 @@ async fn seed_watchlist_entries(
     count: usize,
     start: OffsetDateTime,
 ) -> Vec<uuid::Uuid> {
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = uuid::Uuid::now_v7();
     let mut tx = pool
         .begin()
         .await
@@ -444,8 +446,8 @@ async fn seed_watchlist_entries(
 
     let mut product_listing_ids = Vec::with_capacity(count);
     for index in 0..count {
-        let product_listing_id = uuid::Uuid::new_v4();
-        let event_id = uuid::Uuid::new_v4();
+        let product_listing_id = uuid::Uuid::now_v7();
+        let event_id = uuid::Uuid::now_v7();
         sqlx::query(
             "INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())",
         )
@@ -490,7 +492,7 @@ async fn seed_watchlist_entries(
         sqlx::query(
             "INSERT INTO product_listing_watchlist (user_id, product_listing_id, state, active_since, notifications_enabled_since, created, updated) VALUES ($1, $2, 'ACTIVE', $3, $3, $3, $3)",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(product_listing_id)
         .bind(created)
         .execute(pool)
@@ -515,7 +517,7 @@ async fn state_for_watchlist_entry(
     product_listing_id: uuid::Uuid,
 ) -> String {
     sqlx::query_scalar("SELECT state FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(product_listing_id)
         .fetch_one(pool)
         .await
@@ -530,7 +532,7 @@ async fn notifications_for_watchlist_entry(
     sqlx::query_scalar(
         "SELECT notifications FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(product_listing_id)
     .fetch_one(pool)
     .await
@@ -545,7 +547,7 @@ async fn version_for_watchlist_entry(
     sqlx::query_scalar(
         "SELECT version FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(product_listing_id)
     .fetch_one(pool)
     .await
@@ -572,7 +574,7 @@ async fn count_state(
         }
     };
     sqlx::query_scalar(sql)
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(state)
         .fetch_one(pool)
         .await
@@ -580,5 +582,6 @@ async fn count_state(
 }
 
 fn product_listing_title_slug_id(prefix: &str, product_listing_id: uuid::Uuid) -> String {
-    format!("{prefix}-{}", &product_listing_id.simple().to_string()[..6])
+    let uuid = product_listing_id.simple().to_string();
+    format!("{prefix}-{}", &uuid[uuid.len() - 6..])
 }

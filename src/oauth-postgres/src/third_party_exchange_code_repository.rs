@@ -1,7 +1,4 @@
-use crate::mapping::{
-    THIRD_PARTY_EXCHANGE_CODE_COLUMNS, access_token_id_uuid, scope_values,
-    third_party_exchange_code_uuid,
-};
+use crate::mapping::{THIRD_PARTY_EXCHANGE_CODE_COLUMNS, scope_values};
 use crate::rows::ThirdPartyExchangeCodeRow;
 use application::error::box_error;
 use oauth_core::third_party_exchange_code::{ThirdPartyExchangeCode, ThirdPartyExchangeCodeGrant};
@@ -44,18 +41,15 @@ impl ThirdPartyExchangeCodeRepository for SqlxThirdPartyExchangeCodeRepository<'
         &mut self,
         grant: ThirdPartyExchangeCodeGrant,
     ) -> Result<(), OAuthCodeRepositoryError> {
-        let code_uuid =
-            third_party_exchange_code_uuid(&grant.code()).map_err(invalid_code_state)?;
-        let access_token_id =
-            access_token_id_uuid(grant.access_token_id()).map_err(invalid_code_state)?;
+        let code_value: String = grant.code().into();
         let access_token: String = grant.access_token().clone().into();
         sqlx::query(
             "INSERT INTO oauth_third_party_exchange_codes (\
                 third_party_exchange_code, access_token_id, access_token, access_token_expires_at, scopes, expires_at\
              ) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(code_uuid)
-        .bind(access_token_id)
+        .bind(code_value)
+        .bind(grant.access_token_id().into_uuid())
         .bind(access_token)
         .bind(grant.access_token_expires())
         .bind(scope_values(grant.scopes()))
@@ -70,14 +64,14 @@ impl ThirdPartyExchangeCodeRepository for SqlxThirdPartyExchangeCodeRepository<'
         &mut self,
         code: &ThirdPartyExchangeCode,
     ) -> Result<Option<ThirdPartyExchangeCodeGrant>, OAuthCodeRepositoryError> {
-        let code_uuid = third_party_exchange_code_uuid(code).map_err(invalid_code_state)?;
+        let code_value: String = (*code).into();
         let mut query = QueryBuilder::<Postgres>::new(
             "DELETE FROM oauth_third_party_exchange_codes WHERE third_party_exchange_code = $1 RETURNING ",
         );
         query.push(THIRD_PARTY_EXCHANGE_CODE_COLUMNS);
         let row = query
             .build_query_as::<ThirdPartyExchangeCodeRow>()
-            .bind(code_uuid)
+            .bind(code_value)
             .fetch_optional(&mut *self.connection)
             .await
             .map_err(temporary_code_error)?;

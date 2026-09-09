@@ -286,7 +286,7 @@ async fn should_reject_invalid_persisted_redirect_uris() {
             insert_oauth_client(pool.clone(), &client).await?;
             sqlx::query("UPDATE oauth_clients SET redirect_uris = $1 WHERE client_id = $2")
                 .bind(vec![redirect_uri.to_owned()])
-                .bind(Uuid::parse_str(&client.client_id().to_string())?)
+                .bind(client.client_id().into_uuid())
                 .execute(&pool)
                 .await?;
 
@@ -418,10 +418,10 @@ async fn seed_oauth_client(
 }
 
 async fn seed_user(pool: &PgPool) -> Result<UserId, Box<dyn std::error::Error>> {
-    let user_id = UserId::from(Uuid::now_v7());
+    let user_id = UserId::new();
     let email = format!("dummy-oauth-code-{}@example.test", Uuid::now_v7());
     sqlx::query("INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')")
-        .bind(Uuid::parse_str(&user_id.to_string())?)
+        .bind(user_id.into_uuid())
         .bind(email)
         .execute(pool)
         .await?;
@@ -479,8 +479,8 @@ async fn seed_access_token_for_grant(
         "INSERT INTO access_tokens (access_token_id, user_id, token_short, token_hash, name, scopes, origin) \
          VALUES ($1, $2, $3, $4, $5, $6, 'USER')",
     )
-    .bind(Uuid::parse_str(&grant.access_token_id().to_string())?)
-    .bind(Uuid::parse_str(&user_id.to_string())?)
+    .bind(grant.access_token_id().into_uuid())
+    .bind(user_id.into_uuid())
     .bind(hashed.short_token())
     .bind(hashed.long_token_hash())
     .bind("third-party exchange test token")
@@ -607,7 +607,7 @@ async fn client_secret_columns(
         "SELECT client_secret_short_token, client_secret_long_token_hash \
          FROM oauth_clients WHERE client_id = $1",
     )
-    .bind(Uuid::parse_str(&client_id.to_string())?)
+    .bind(client_id.into_uuid())
     .fetch_one(pool)
     .await
     .map_err(Into::into)

@@ -1,6 +1,5 @@
 use crate::access_token_mapping::{
-    ACCESS_TOKEN_COLUMNS, AccessTokenRow, access_token_id_uuid, access_token_origin_values,
-    scope_values,
+    ACCESS_TOKEN_COLUMNS, AccessTokenRow, access_token_origin_values, scope_values,
 };
 use application::error::box_error;
 use platform_postgres::SqlxTransaction;
@@ -43,12 +42,12 @@ impl AccessTokenRepository for SqlxAccessTokenRepository<'_> {
         user_id: UserId,
         access_token_id: AccessTokenId,
     ) -> Result<Option<VersionedAccessToken>, AccessTokenRepositoryError> {
-        let access_token_id = access_token_id_uuid(access_token_id).map_err(invalid_state_error)?;
+        let access_token_id = access_token_id.into_uuid();
         let sql = format!(
             "SELECT {ACCESS_TOKEN_COLUMNS} FROM access_tokens WHERE user_id = $1 AND access_token_id = $2"
         );
         let row = sqlx::query_as::<_, AccessTokenRow>(AssertSqlSafe(sql))
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .bind(access_token_id)
             .fetch_optional(&mut *self.connection)
             .await
@@ -82,16 +81,14 @@ impl AccessTokenRepository for SqlxAccessTokenRepository<'_> {
         &mut self,
         access_token: &AccessToken,
     ) -> Result<VersionedAccessToken, AccessTokenRepositoryError> {
-        let (origin, oauth_client_id) =
-            access_token_origin_values(access_token).map_err(invalid_state_error)?;
-        let access_token_id =
-            access_token_id_uuid(access_token.id()).map_err(invalid_state_error)?;
+        let (origin, oauth_client_id) = access_token_origin_values(access_token);
+        let access_token_id = access_token.id().into_uuid();
         let sql = format!(
             "INSERT INTO access_tokens (access_token_id, user_id, token_short, token_hash, name, scopes, origin, oauth_client_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING {ACCESS_TOKEN_COLUMNS}"
         );
         let row = sqlx::query_as::<_, AccessTokenRow>(AssertSqlSafe(sql))
             .bind(access_token_id)
-            .bind(uuid::Uuid::from(access_token.user_id()))
+            .bind(access_token.user_id().into_uuid())
             .bind(access_token.hashed_token().short_token())
             .bind(access_token.hashed_token().long_token_hash())
             .bind(access_token.name().as_ref())
@@ -111,16 +108,14 @@ impl AccessTokenRepository for SqlxAccessTokenRepository<'_> {
         access_token: &AccessToken,
         expected_version: AccessTokenStorageVersion,
     ) -> Result<VersionedAccessToken, AccessTokenRepositoryError> {
-        let (origin, oauth_client_id) =
-            access_token_origin_values(access_token).map_err(invalid_state_error)?;
-        let access_token_id =
-            access_token_id_uuid(access_token.id()).map_err(invalid_state_error)?;
+        let (origin, oauth_client_id) = access_token_origin_values(access_token);
+        let access_token_id = access_token.id().into_uuid();
         let expected_version = version_to_i64(expected_version)?;
         let sql = format!(
             "UPDATE access_tokens SET name = $3, scopes = $4, origin = $5, oauth_client_id = $6, expires_at = $7, version = version + 1, updated = now() WHERE user_id = $1 AND access_token_id = $2 AND version = $8 RETURNING {ACCESS_TOKEN_COLUMNS}"
         );
         let row = sqlx::query_as::<_, AccessTokenRow>(AssertSqlSafe(sql))
-            .bind(uuid::Uuid::from(access_token.user_id()))
+            .bind(access_token.user_id().into_uuid())
             .bind(access_token_id)
             .bind(access_token.name().as_ref())
             .bind(scope_values(access_token.scopes()))
@@ -141,10 +136,10 @@ impl AccessTokenRepository for SqlxAccessTokenRepository<'_> {
         user_id: UserId,
         access_token_id: AccessTokenId,
     ) -> Result<bool, AccessTokenRepositoryError> {
-        let access_token_id = access_token_id_uuid(access_token_id).map_err(invalid_state_error)?;
+        let access_token_id = access_token_id.into_uuid();
         let result =
             sqlx::query("DELETE FROM access_tokens WHERE user_id = $1 AND access_token_id = $2")
-                .bind(uuid::Uuid::from(user_id))
+                .bind(user_id.into_uuid())
                 .bind(access_token_id)
                 .execute(&mut *self.connection)
                 .await
@@ -158,7 +153,7 @@ impl AccessTokenRepository for SqlxAccessTokenRepository<'_> {
         user_id: UserId,
     ) -> Result<u64, AccessTokenRepositoryError> {
         let result = sqlx::query("DELETE FROM access_tokens WHERE user_id = $1")
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .execute(&mut *self.connection)
             .await
             .map_err(write_error)?;
