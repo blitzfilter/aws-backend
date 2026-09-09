@@ -133,9 +133,11 @@ pub fn normalize_price(
         return Ok(None);
     }
 
-    match parse_price(trimmed, fallback_currency) {
-        Ok((amount, currency)) => Ok(Some(Price::new(amount, currency))),
-        Err(_) if is_price_on_request_marker(trimmed) => Ok(None),
+    let request_evidence = price_on_request_evidence(trimmed);
+    match parse_display_price(trimmed, fallback_currency) {
+        Ok(_) if request_evidence == PriceOnRequestEvidence::Explicit => Ok(None),
+        Ok(parsed) => Ok(Some(parsed.price)),
+        Err(_) if request_evidence == PriceOnRequestEvidence::Explicit => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -154,13 +156,56 @@ pub fn normalize_product_listing_price(
         return Ok(None);
     }
 
-    match parse_price(trimmed, fallback_currency) {
-        Ok((amount, currency)) => Ok(Some(ProductListingPrice::Monetary(Price::new(
-            amount, currency,
-        )))),
-        Err(_) if is_price_on_request_marker(trimmed) => Ok(Some(ProductListingPrice::OnRequest)),
+    let request_evidence = price_on_request_evidence(trimmed);
+    match parse_display_price(trimmed, fallback_currency) {
+        Ok(parsed)
+            if request_evidence == PriceOnRequestEvidence::Explicit
+                && parsed.currency_evidence == PriceCurrencyEvidence::Fallback =>
+        {
+            Ok(Some(ProductListingPrice::OnRequest))
+        }
+        Ok(_) if request_evidence == PriceOnRequestEvidence::Explicit => {
+            Err(PriceNormalizationError::ParseFailure)
+        }
+        Ok(parsed) => Ok(Some(ProductListingPrice::Monetary(parsed.price))),
+        Err(_) if request_evidence != PriceOnRequestEvidence::None => {
+            Ok(Some(ProductListingPrice::OnRequest))
+        }
         Err(error) => Err(error),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriceOnRequestEvidence {
+    None,
+    Explicit,
+    GenericContact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriceCurrencyEvidence {
+    ExplicitMarker,
+    Fallback,
+}
+
+struct ParsedDisplayPrice {
+    price: Price,
+    currency_evidence: PriceCurrencyEvidence,
+}
+
+fn parse_display_price(
+    raw: &str,
+    fallback_currency: Option<Currency>,
+) -> Result<ParsedDisplayPrice, PriceNormalizationError> {
+    let (amount, currency) = parse_price(raw, fallback_currency)?;
+    Ok(ParsedDisplayPrice {
+        price: Price::new(amount, currency),
+        currency_evidence: if detect_currency(raw).is_some() {
+            PriceCurrencyEvidence::ExplicitMarker
+        } else {
+            PriceCurrencyEvidence::Fallback
+        },
+    })
 }
 
 /// Parses one machine-supplied decimal with no display-text interpretation.
@@ -301,11 +346,9 @@ fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
         .cloned()
         .collect();
 
-    if currency_bearing_candidates.is_empty() {
-        candidates
-    } else {
-        currency_bearing_candidates
-    }
+    // A currency marker without an adjacent amount is not evidence that an
+    // unrelated SKU, year, or phone number is a price.
+    currency_bearing_candidates
 }
 
 fn select_price_number_candidate(
@@ -485,49 +528,32 @@ fn split_decimal(s: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn is_price_on_request_marker(raw: &str) -> bool {
-    // Keywords that, when present anywhere in the price string, indicate that
-    // the seller intentionally has not set a price, and it must be requested.
-    // Covers: EN, DE, FR, IT, ES, PT, NL, PL, RU, ZH, JA, AR
-    const KEYWORDS: &[&str] = &[
-        // English
-        "request", // "on request", "price on request", "price upon request"
-        "enquire", // "please enquire"
-        "inquire", // "please inquire"
-        "contact us",
-        "call for price",
-        "ask for price",
-        "poa",
-        // German
-        "anfrage", // "auf Anfrage", "Preis auf Anfrage"
-        // French
-        "demande", // "sur demande", "prix sur demande"
-        // Italian
-        "richiesta", // "su richiesta", "prezzo su richiesta"
-        // Spanish
-        "consultar", // "precio a consultar"
-        "bajo pedido",
-        // Portuguese
-        "consulte",     // "consulte-nos"
-        "sob consulta", // "preço sob consulta"
-        // Dutch
-        "aanvraag", // "op aanvraag", "prijs op aanvraag"
-        // Polish
-        "zapytanie", // "na zapytanie", "cena na zapytanie"
-        // Russian
-        "по запросу", // "цена по запросу"
-        // Chinese
-        "询价",
-        "面议",
-        // Japanese
-        "お問い合わせ", // "価格はお問い合わせ"
-        // Arabic
-        "بالتفاوض",
-        "عند الطلب",
-    ];
-
-    let lower = raw.to_lowercase();
-    KEYWORDS.iter().any(|kw| lower.contains(kw))
+fn price_on_request_evidence(raw: &str) -> PriceOnRequestEvidence {
+    // Phrase-level matching prevents substring false positives such as a word
+    // containing `poa`. CJK/Arabic forms are explicit phrases by themselves.
+    let explicit = regex!(
+        r"(?ix)
+        \b(?:price\s+(?:on|upon)\s+request|price\s+available\s+on\s+request|on\s+request|call\s+for\s+price|ask\s+for\s+price|p\.?o\.?a\.?)\b|
+        \b(?:preis\s+auf\s+anfrage|auf\s+anfrage)\b|
+        \b(?:prix\s+sur\s+demande|sur\s+demande)\b|
+        \b(?:prezzo\s+su\s+richiesta|su\s+richiesta)\b|
+        \b(?:precio\s+a\s+consultar|consultar\s+precio)\b|
+        \b(?:preço\s+sob\s+consulta|preco\s+sob\s+consulta|sob\s+consulta)\b|
+        \b(?:prijs\s+op\s+aanvraag|op\s+aanvraag)\b|
+        \b(?:cena\s+na\s+zapytanie|na\s+zapytanie)\b|
+        цена\s+по\s+запросу|по\s+запросу|询价|面议|
+        価格(?:は)?(?:お問い合わせ|要問い合わせ)|بالتفاوض|عند\s+الطلب
+    "
+    );
+    if explicit.is_match(raw) {
+        PriceOnRequestEvidence::Explicit
+    } else if regex!(r"(?i)\b(?:contact\s+us|please\s+contact|enquir(?:e|ies)|inquir(?:e|ies))\b")
+        .is_match(raw)
+    {
+        PriceOnRequestEvidence::GenericContact
+    } else {
+        PriceOnRequestEvidence::None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -541,9 +567,9 @@ mod tests {
     use money::{Currency, Price};
 
     use super::{
-        PriceError, detect_currency, extract_price_number_candidate, is_price_on_request_marker,
-        normalise_fraction, normalize_machine_decimal_price, normalize_product_listing_price,
-        parse_price, split_decimal,
+        PriceError, PriceOnRequestEvidence, detect_currency, extract_price_number_candidate,
+        normalise_fraction, normalize_machine_decimal_price, normalize_price,
+        normalize_product_listing_price, parse_price, price_on_request_evidence, split_decimal,
     };
 
     // -----------------------------------------------------------------------
@@ -826,7 +852,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // is_price_on_request_marker
+    // price-on-request evidence
     // -----------------------------------------------------------------------
 
     #[test]
@@ -855,6 +881,15 @@ mod tests {
             )))),
             normalize_product_listing_price(Some("$9,000, call for more information"), None)
         );
+        assert_eq!(
+            Err(PriceError::UnknownCurrency),
+            normalize_product_listing_price(Some("Request a callback"), None)
+        );
+    }
+
+    #[test]
+    fn should_clear_monetary_only_price_when_display_text_is_request_marker() {
+        assert_eq!(Ok(None), normalize_price(Some("Price on request"), None));
     }
 
     #[rstest]
@@ -862,7 +897,7 @@ mod tests {
     #[case("Price on Request", true)]
     #[case("POA", true)]
     #[case("price available on request", true)]
-    #[case("Please enquire", true)]
+    #[case("Please enquire", false)]
     #[case("Call for price", true)]
     // German
     #[case("Preis auf Anfrage", true)]
@@ -875,7 +910,7 @@ mod tests {
     #[case("Su Richiesta", true)]
     // Spanish
     #[case("Precio a consultar", true)]
-    #[case("Consultar", true)]
+    #[case("Consultar", false)]
     // Portuguese
     #[case("Preço sob consulta", true)]
     // Dutch
@@ -891,11 +926,50 @@ mod tests {
     #[case("価格はお問い合わせ", true)]
     // Arabic
     #[case("عند الطلب", true)]
+    // Generic request or contact wording is not enough evidence.
+    #[case("Request a callback", false)]
+    #[case("Contact us about delivery", false)]
+    #[case("Product enquiries welcome", false)]
     // Not markers
     #[case("$1200", false)]
     #[case("EUR 45", false)]
     #[case("1.500,00 €", false)]
-    fn should_detect_price_on_request_markers(#[case] raw: &str, #[case] expected: bool) {
-        assert_eq!(is_price_on_request_marker(raw), expected);
+    fn should_detect_explicit_price_on_request_markers(#[case] raw: &str, #[case] expected: bool) {
+        assert_eq!(
+            price_on_request_evidence(raw) == PriceOnRequestEvidence::Explicit,
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case("Price on request · Ref. 2025")]
+    #[case("Preis auf Anfrage – Art.-Nr. 12345")]
+    #[case("Prix sur demande – réf. 2025")]
+    #[case("Price on request – phone 1234567")]
+    #[case("€ Preis auf Anfrage · Ref 1234")]
+    fn should_prefer_explicit_request_price_over_incidental_numbers(#[case] raw: &str) {
+        assert_eq!(
+            Ok(Some(
+                product_listing_core::product_listing_price::ProductListingPrice::OnRequest
+            )),
+            normalize_product_listing_price(Some(raw), Some(Currency::Eur))
+        );
+        assert_eq!(Ok(None), normalize_price(Some(raw), Some(Currency::Eur)));
+    }
+
+    #[test]
+    fn should_not_treat_bajo_pedido_as_price_on_request() {
+        assert_eq!(
+            Err(PriceError::UnknownCurrency),
+            normalize_product_listing_price(Some("bajo pedido"), None)
+        );
+    }
+
+    #[test]
+    fn should_reject_contradictory_explicit_price_assertions() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            normalize_product_listing_price(Some("€12,500 – price on request"), None)
+        );
     }
 }

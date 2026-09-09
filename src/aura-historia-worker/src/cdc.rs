@@ -958,7 +958,7 @@ fn validate_changed_payload(value: &Value) -> Result<(bool, bool, bool), CdcRout
                 for (pricing_field, value) in pricing {
                     match pricing_field.as_str() {
                         "price" => {
-                            validate_price_change(value)?;
+                            validate_product_listing_price_change(value)?;
                             has_main_price_change = true;
                         }
                         "priceEstimateMin" | "priceEstimateMax" => {
@@ -1006,6 +1006,49 @@ fn validate_changed_payload(value: &Value) -> Result<(bool, bool, bool), CdcRout
         has_availability_change,
         has_image_change,
     ))
+}
+
+fn validate_product_listing_price_change(value: &Value) -> Result<(), CdcRouteError> {
+    let change = required_object(value)?;
+    require_exact_keys(change, &["previous", "current"], "price change")?;
+    let previous = require_value(change, "previous")?;
+    let current = require_value(change, "current")?;
+    validate_product_listing_price(previous)?;
+    validate_product_listing_price(current)?;
+    if previous == current {
+        return Err(CdcRouteError::InvalidProductListingEventPayload);
+    }
+    Ok(())
+}
+
+fn validate_product_listing_price(value: &Value) -> Result<(), CdcRouteError> {
+    if value.is_null() {
+        return Ok(());
+    }
+
+    let object = required_object(value)?;
+    match require_string(object, "type")?.as_str() {
+        "MONETARY" => {
+            require_exact_keys(
+                object,
+                &["type", "amount", "currency"],
+                "product listing price",
+            )?;
+            require_u64(object, "amount")?;
+            let currency = require_string(object, "currency")?;
+            let parsed = money::Currency::from_code(currency.as_str())
+                .ok_or_else(|| invalid_product_listing_field("price.currency"))?;
+            if parsed.as_str() != currency {
+                return Err(noncanonical_product_listing_field("price.currency"));
+            }
+            Ok(())
+        }
+        "ON_REQUEST" => {
+            require_exact_keys(object, &["type"], "product listing price")?;
+            Ok(())
+        }
+        _ => Err(CdcRouteError::InvalidProductListingEventPayload),
+    }
 }
 
 fn validate_price_change(value: &Value) -> Result<(), CdcRouteError> {
@@ -1923,7 +1966,7 @@ mod tests {
                 "pricing": {
                     "price": {
                         "previous": null,
-                        "current": {"amount": 900, "currency": "USD"}
+                        "current": {"type": "MONETARY", "amount": 900, "currency": "USD"}
                     }
                 }
             }),
@@ -1931,8 +1974,8 @@ mod tests {
             serde_json::json!({
                 "pricing": {
                     "price": {
-                        "previous": {"amount": 1200, "currency": "USD"},
-                        "current": {"amount": 900, "currency": "USD"}
+                        "previous": {"type": "MONETARY", "amount": 1200, "currency": "USD"},
+                        "current": {"type": "MONETARY", "amount": 900, "currency": "USD"}
                     }
                 },
                 "availability": {"previous": "IN_STOCK", "current": "SOLD_OUT"}
@@ -1964,8 +2007,8 @@ mod tests {
                 "images": {"previousCount": 1, "currentCount": 2},
                 "pricing": {
                     "price": {
-                        "previous": {"amount": 1200, "currency": "USD"},
-                        "current": {"amount": 900, "currency": "USD"}
+                        "previous": {"type": "MONETARY", "amount": 1200, "currency": "USD"},
+                        "current": {"type": "MONETARY", "amount": 900, "currency": "USD"}
                     }
                 }
             }),
@@ -2076,6 +2119,46 @@ mod tests {
             route_change(&change),
             Err(CdcRouteError::UnsupportedProductListingEventSchemaVersion { schema_version: 2 })
         ));
+    }
+
+    #[test]
+    fn should_accept_tagged_main_price_changes_for_watchlist_routing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for price in [
+            serde_json::json!({"previous": null, "current": {"type": "MONETARY", "amount": 900, "currency": "USD"}}),
+            serde_json::json!({"previous": {"type": "MONETARY", "amount": 900, "currency": "USD"}, "current": {"type": "ON_REQUEST"}}),
+            serde_json::json!({"previous": {"type": "ON_REQUEST"}, "current": null}),
+        ] {
+            let jobs = route_change(&product_event_change_with_payload(
+                "PRODUCT_LISTING_CHANGED",
+                "DOMAIN",
+                serde_json::json!({"pricing": {"price": price}}),
+            ))?;
+            assert!(
+                jobs.iter()
+                    .any(|job| job.target_queue == WorkerQueue::WatchlistNotification)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_untagged_or_invalid_tagged_main_price_changes_before_fanout() {
+        for price in [
+            serde_json::json!({"previous": null, "current": {"amount": 900, "currency": "USD"}}),
+            serde_json::json!({"previous": null, "current": {"type": "UNKNOWN"}}),
+            serde_json::json!({"previous": null, "current": {"type": "MONETARY", "amount": 900}}),
+            serde_json::json!({"previous": null, "current": {"type": "ON_REQUEST", "amount": 900}}),
+        ] {
+            assert!(
+                route_change(&product_event_change_with_payload(
+                    "PRODUCT_LISTING_CHANGED",
+                    "DOMAIN",
+                    serde_json::json!({"pricing": {"price": price}}),
+                ))
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -2236,7 +2319,7 @@ mod tests {
                     serde_json::json!({
                         "pricing": {
                             "price": {
-                                "previous": {"amount": 1, "currency": "EUR", "unexpected": true},
+                                "previous": {"type": "MONETARY", "amount": 1, "currency": "EUR", "unexpected": true},
                                 "current": null
                             }
                         }
@@ -2351,7 +2434,7 @@ mod tests {
                 "PRODUCT_LISTING_CHANGED",
                 "DOMAIN",
                 serde_json::json!({
-                    "pricing": {"price": {"previous": null, "current": {"amount": 10, "currency": "EUR"}}},
+                    "pricing": {"price": {"previous": null, "current": {"type": "MONETARY", "amount": 10, "currency": "EUR"}}},
                     "availability": {"previous": null, "current": "AVAILABLE"},
                     "images": {"previousCount": 1, "currentCount": 1}
                 }),

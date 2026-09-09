@@ -242,7 +242,7 @@ impl ProductListingSeed {
                 slug, "a1b2c3",
             )
             .unwrap_or_else(|error| panic!("valid product listing title slug: {error}")),
-            source_price: None,
+            source_price: Some(sale_price),
             sale_price: Some(sale_price),
             has_sale_observation: true,
         }

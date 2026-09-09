@@ -275,6 +275,12 @@ impl SalePricesDocument {
 pub(crate) enum ProductListingDocumentValidationError {
     #[error("product sale projection metadata must be complete when present")]
     PartialSaleProjection,
+    #[error("product sale prices require sale projection metadata")]
+    SalePricesWithoutSaleObservation,
+    #[error("product sale prices require a monetary source price")]
+    SalePricesRequireMonetarySourcePrice,
+    #[error("a monetary source price with sale metadata requires sale prices")]
+    MissingSalePricesForMonetarySaleObservation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SerdeField)]
@@ -347,13 +353,31 @@ impl ProductListingDocument {
     }
 
     pub(crate) fn validate(&self) -> Result<(), ProductListingDocumentValidationError> {
+        let has_sale_metadata = match (self.sale_observation_fx_rate_id, self.sale_observed_at) {
+            (None, None) => false,
+            (Some(_), Some(_)) => true,
+            _ => return Err(ProductListingDocumentValidationError::PartialSaleProjection),
+        };
+        let has_monetary_source_price = matches!(
+            self.source_price,
+            Some(SourcePriceDocument::Monetary { .. })
+        );
+
         match (
-            &self.sale_prices,
-            self.sale_observation_fx_rate_id,
-            self.sale_observed_at,
+            has_sale_metadata,
+            self.sale_prices.is_some(),
+            has_monetary_source_price,
         ) {
-            (None, None, None) | (None, Some(_), Some(_)) | (Some(_), Some(_), Some(_)) => Ok(()),
-            _ => Err(ProductListingDocumentValidationError::PartialSaleProjection),
+            (false, true, _) => {
+                Err(ProductListingDocumentValidationError::SalePricesWithoutSaleObservation)
+            }
+            (true, true, false) => {
+                Err(ProductListingDocumentValidationError::SalePricesRequireMonetarySourcePrice)
+            }
+            (true, false, true) => Err(
+                ProductListingDocumentValidationError::MissingSalePricesForMonetarySaleObservation,
+            ),
+            _ => Ok(()),
         }
     }
 
@@ -376,6 +400,7 @@ impl ProductListingDocument {
 mod tests {
     use super::*;
 
+    use rstest::rstest;
     use time::macros::datetime;
 
     fn document() -> Result<ProductListingDocument, url::ParseError> {
@@ -532,14 +557,70 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn should_allow_sale_metadata_without_sale_prices() -> Result<(), Box<dyn std::error::Error>> {
+    #[rstest]
+    #[case::active_without_source_price(None, false, false, true)]
+    #[case::active_on_request(Some(SourcePriceDocument::OnRequest), false, false, true)]
+    #[case::active_monetary(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        false,
+        false,
+        true
+    )]
+    #[case::sold_without_source_price(None, true, false, true)]
+    #[case::sold_on_request(Some(SourcePriceDocument::OnRequest), true, false, true)]
+    #[case::sold_monetary(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        true,
+        true,
+        true
+    )]
+    #[case::sale_prices_without_source_price(None, true, true, false)]
+    #[case::sale_prices_with_on_request(Some(SourcePriceDocument::OnRequest), true, true, false)]
+    #[case::sold_monetary_without_sale_prices(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        true,
+        false,
+        false
+    )]
+    #[case::sale_prices_without_sale_metadata(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        false,
+        true,
+        false
+    )]
+    fn should_validate_sale_prices_against_source_price_and_sale_metadata(
+        #[case] source_price: Option<SourcePriceDocument>,
+        #[case] has_sale_metadata: bool,
+        #[case] has_sale_prices: bool,
+        #[case] valid: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut document = document()?;
-        document.source_price = None;
-        document.sale_observation_fx_rate_id = Some(FxRateId::new());
-        document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
+        document.source_price = source_price;
+        document.sale_observation_fx_rate_id = has_sale_metadata.then(FxRateId::new);
+        document.sale_observed_at = has_sale_metadata.then_some(OffsetDateTime::UNIX_EPOCH);
+        document.sale_prices = has_sale_prices.then_some(SalePricesDocument {
+            eur: 100,
+            gbp: 100,
+            usd: 100,
+            aud: 100,
+            cad: 100,
+            nzd: 100,
+            cny: 100,
+            brl: 100,
+            pln: 100,
+            r#try: 100,
+            jpy: 100,
+            czk: 100,
+            rub: 100,
+            aed: 100,
+            sar: 100,
+            hkd: 100,
+            sgd: 100,
+            chf: 100,
+            zar: 100,
+        });
 
-        assert_eq!(Ok(()), document.validate());
+        assert_eq!(valid, document.validate().is_ok());
         Ok(())
     }
 

@@ -924,6 +924,34 @@ mod tests {
     }
 
     #[test]
+    fn should_clear_display_text_request_markers_for_monetary_estimates()
+    -> Result<(), crate::NormalizationInputError> {
+        let mut raw_values = upsert_values();
+        raw_values["priceEstimateMin"] = set("Price on request");
+        raw_values["priceEstimateMax"] = set("POA");
+        let input = input(
+            RawProductListingOperation::Upsert,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
+            raw_values,
+            context(),
+        )?;
+
+        let outcome = ProductListingRawValuesNormalizer::new().normalize(&input);
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) = outcome else {
+            panic!("request markers in estimate fields should resolve to clear patches");
+        };
+        assert_eq!(
+            ProductListingRawValuesPatch::Clear,
+            resolved.price_estimate_min
+        );
+        assert_eq!(
+            ProductListingRawValuesPatch::Clear,
+            resolved.price_estimate_max
+        );
+        Ok(())
+    }
+
+    #[test]
     fn should_resolve_v2_display_text_with_the_display_parser()
     -> Result<(), crate::NormalizationInputError> {
         let mut raw_values = v2_upsert_values("DISPLAY_TEXT");
