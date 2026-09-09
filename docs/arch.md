@@ -445,6 +445,10 @@ Avoid a boundary mirror such as `ListingIngestionMethodDto` plus exhaustive iden
 
 For bounded-context enums, this workspace uses the policy that the canonical value set equals the REST value set when the API delegates to the canonical identifier. Adding a canonical variant therefore intentionally makes it REST-visible. A REST-specific alias, subset, or compatibility value still requires an API-local codec and review.
 
+### 5.1.2 Object identifiers
+
+Aura object identities use concrete semantic newtypes backed by UUIDv7. Domain, REST, semantic worker, logs, and rebuildable search documents use strict prefixed TypeID text. PostgreSQL PK/FK columns remain native `uuid`; CDC reflects that storage form and maps it immediately into typed IDs. Internal persisted JSON uses an adapter-owned explicit UUID codec where documented and MUST NOT derive storage encoding from an ID's `Display` implementation. Bare UUID object-ID input and wrong prefixes are invalid. The complete registry, exclusions, and addition recipe live in [`object-ids.md`](object-ids.md).
+
 ### 5.2 Visibility rules
 
 Use the narrowest visibility that satisfies a real production crate boundary.
