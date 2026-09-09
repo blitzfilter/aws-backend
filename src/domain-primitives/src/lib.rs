@@ -1,3 +1,4 @@
+pub mod object_id;
 pub mod query;
 pub mod slug_id;
 pub mod sort;
@@ -93,6 +94,39 @@ pub mod version {
         #[error("version must be greater than zero")]
         Zero,
     }
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use serde;
+    pub use strong_id::prefix as object_id_prefix;
+    pub use uuid::Uuid;
+
+    #[cfg(feature = "test-data")]
+    pub use fake::{Dummy, Faker, RngExt};
+}
+
+#[cfg(feature = "test-data")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __object_id_dummy {
+    ($name:ident) => {
+        impl $crate::__private::Dummy<$crate::__private::Faker> for $name {
+            fn dummy_with_rng<R: $crate::__private::RngExt + ?Sized>(
+                _config: &$crate::__private::Faker,
+                _rng: &mut R,
+            ) -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
+#[cfg(not(feature = "test-data"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __object_id_dummy {
+    ($name:ident) => {};
 }
 
 pub mod versioned {

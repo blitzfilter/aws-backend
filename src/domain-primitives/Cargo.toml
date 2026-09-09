@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 slug = { workspace = true }
+strong_id = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true, features = ["macros", "parsing", "serde"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
