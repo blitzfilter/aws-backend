@@ -2,7 +2,8 @@ use crate::mapping::{PartyRow, party_columns, version_to_i64};
 use application::error::box_error;
 use party_core::{party::Party, party_id::PartyId, party_slug_id::PartySlugId};
 use party_service::ports::{
-    PartyRepository, PartyRepositoryError, PartyRepositoryFactory, PartyStorageVersion, StoredParty,
+    PartyDeletionBlocker, PartyRepository, PartyRepositoryError, PartyRepositoryFactory,
+    PartyStorageVersion, StoredParty,
 };
 use platform_postgres::SqlxTransaction;
 use sqlx::{PgConnection, Postgres, QueryBuilder};
@@ -50,6 +51,85 @@ impl PartyRepository for SqlxPartyRepository<'_> {
             .map_err(|source| PartyRepositoryError::InvalidPersistedState {
                 source: box_error(source),
             })
+    }
+
+    async fn find_by_id_for_update(
+        &mut self,
+        id: PartyId,
+    ) -> Result<Option<StoredParty>, PartyRepositoryError> {
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT ");
+        builder
+            .push(party_columns())
+            .push(" FROM parties WHERE party_id = ")
+            .push_bind(uuid::Uuid::from(id))
+            .push(" FOR UPDATE");
+        let row = builder
+            .build_query_as::<PartyRow>()
+            .fetch_optional(&mut *self.connection)
+            .await
+            .map_err(PartyLookupSqlxError)?;
+
+        row.map(StoredParty::try_from)
+            .transpose()
+            .map_err(|source| PartyRepositoryError::InvalidPersistedState {
+                source: box_error(source),
+            })
+    }
+
+    async fn find_deletion_blocker(
+        &mut self,
+        id: PartyId,
+    ) -> Result<Option<PartyDeletionBlocker>, PartyRepositoryError> {
+        let blocker = sqlx::query_scalar::<_, Option<String>>(
+            r#"
+            SELECT CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM listing_sources WHERE operator_party_id = $1
+                ) THEN 'LISTING_SOURCES'
+                WHEN EXISTS (
+                    SELECT 1 FROM partnerships WHERE party_id = $1
+                ) THEN 'PARTNERSHIP'
+                ELSE NULL
+            END
+            "#,
+        )
+        .bind(uuid::Uuid::from(id))
+        .fetch_one(&mut *self.connection)
+        .await
+        .map_err(PartyLookupSqlxError)?;
+
+        match blocker.as_deref() {
+            None => Ok(None),
+            Some("LISTING_SOURCES") => Ok(Some(PartyDeletionBlocker::ListingSources)),
+            Some("PARTNERSHIP") => Ok(Some(PartyDeletionBlocker::Partnership)),
+            Some(value) => Err(PartyRepositoryError::InvalidPersistedState {
+                source: box_error(std::io::Error::other(format!(
+                    "unknown party deletion blocker: {value}"
+                ))),
+            }),
+        }
+    }
+
+    async fn delete_unused(
+        &mut self,
+        id: PartyId,
+        expected_version: PartyStorageVersion,
+    ) -> Result<(), PartyRepositoryError> {
+        let expected_version = version_to_i64(expected_version).map_err(|source| {
+            PartyRepositoryError::InvalidPersistedState {
+                source: box_error(source),
+            }
+        })?;
+        let result = sqlx::query("DELETE FROM parties WHERE party_id = $1 AND version = $2")
+            .bind(uuid::Uuid::from(id))
+            .bind(expected_version)
+            .execute(&mut *self.connection)
+            .await
+            .map_err(PartyWriteSqlxError)?;
+        if result.rows_affected() != 1 {
+            return Err(PartyRepositoryError::ConcurrencyConflict);
+        }
+        Ok(())
     }
 
     async fn find_by_slug(

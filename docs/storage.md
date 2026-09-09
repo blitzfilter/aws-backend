@@ -26,7 +26,8 @@ PostgreSQL is the sole production owner of notifications and external-delivery i
 
 PostgreSQL is authoritative for Partnerships, Party identity, membership, and ListingSource grants.
 
-- `partnerships` has one row per Party (`party_id` is unique); `partnership_members` and `partnership_listing_source_grants` hold membership and source access.
+- `partnerships` has one row per Party (`party_id` is unique); `partnership_members` and `partnership_listing_source_grants` hold membership and source access. Both `listing_sources.operator_party_id` and `partnerships.party_id` use restrictive Party foreign keys.
+- Party hard deletion locks the Party row, checks indexed ListingSource and Partnership blockers in that same transaction, and makes a version-checked Party-only delete. It never cascades Partnership, member, or grant state; active and dissolved Partnerships both block.
 - Source-grant revocation explicitly deletes only the targeted `(partnership_id, listing_source_id)` join row; deleting an absent row is a successful no-op and does not remove historical or referenced records. Eligible ListingSource hard deletion explicitly removes all of that source's grant rows in its own business transaction.
 - The admin Partnership collection reader uses one joined query and counts distinct members and ListingSource grants. Exact `partyId`, `memberUserId`, and `listingSourceId` filters use `EXISTS`, so filtering does not reduce the returned counts.
 - The admin Partnership detail reader uses one joined PostgreSQL statement with correlated, UUID-ordered association arrays. It returns at most 100 member IDs and 100 ListingSource IDs using SQL-side limits, plus complete member/grant counts; empty associations decode as empty arrays. It performs no N+1 reads.

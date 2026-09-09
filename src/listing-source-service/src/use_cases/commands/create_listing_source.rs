@@ -364,6 +364,28 @@ mod tests {
         ) -> Result<Option<StoredParty>, party_service::ports::PartyRepositoryError> {
             Ok(None)
         }
+        async fn find_by_id_for_update(
+            &mut self,
+            _id: PartyId,
+        ) -> Result<Option<StoredParty>, party_service::ports::PartyRepositoryError> {
+            Err(party_error())
+        }
+        async fn find_deletion_blocker(
+            &mut self,
+            _id: PartyId,
+        ) -> Result<
+            Option<party_service::ports::PartyDeletionBlocker>,
+            party_service::ports::PartyRepositoryError,
+        > {
+            Err(party_error())
+        }
+        async fn delete_unused(
+            &mut self,
+            _id: PartyId,
+            _expected_version: party_service::ports::PartyStorageVersion,
+        ) -> Result<(), party_service::ports::PartyRepositoryError> {
+            Err(party_error())
+        }
         async fn insert(
             &mut self,
             party: &Party,

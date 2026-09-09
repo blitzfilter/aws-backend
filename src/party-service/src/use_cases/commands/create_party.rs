@@ -279,6 +279,34 @@ mod tests {
             Ok(None)
         }
 
+        async fn find_by_id_for_update(
+            &mut self,
+            _id: PartyId,
+        ) -> Result<Option<StoredParty>, PartyRepositoryError> {
+            Err(PartyRepositoryError::Internal {
+                source: static_error("locked party lookup not expected"),
+            })
+        }
+
+        async fn find_deletion_blocker(
+            &mut self,
+            _id: PartyId,
+        ) -> Result<Option<crate::ports::PartyDeletionBlocker>, PartyRepositoryError> {
+            Err(PartyRepositoryError::Internal {
+                source: static_error("party deletion blocker lookup not expected"),
+            })
+        }
+
+        async fn delete_unused(
+            &mut self,
+            _id: PartyId,
+            _expected_version: PartyStorageVersion,
+        ) -> Result<(), PartyRepositoryError> {
+            Err(PartyRepositoryError::Internal {
+                source: static_error("party deletion not expected"),
+            })
+        }
+
         async fn insert(&mut self, party: &Party) -> Result<StoredParty, PartyRepositoryError> {
             let mut state = self.0.lock().map_err(|_| PartyRepositoryError::Internal {
                 source: static_error("fake party state poisoned"),

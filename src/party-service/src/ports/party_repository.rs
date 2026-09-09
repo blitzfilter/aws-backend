@@ -12,6 +12,12 @@ pub struct StoredParty {
     pub updated: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartyDeletionBlocker {
+    ListingSources,
+    Partnership,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum PartyRepositoryError {
     #[error("concurrent party update")]
@@ -49,6 +55,22 @@ pub trait PartyRepository: Send {
         &mut self,
         slug_id: &PartySlugId,
     ) -> Result<Option<StoredParty>, PartyRepositoryError>;
+
+    async fn find_by_id_for_update(
+        &mut self,
+        id: PartyId,
+    ) -> Result<Option<StoredParty>, PartyRepositoryError>;
+
+    async fn find_deletion_blocker(
+        &mut self,
+        id: PartyId,
+    ) -> Result<Option<PartyDeletionBlocker>, PartyRepositoryError>;
+
+    async fn delete_unused(
+        &mut self,
+        id: PartyId,
+        expected_version: PartyStorageVersion,
+    ) -> Result<(), PartyRepositoryError>;
 
     async fn insert(&mut self, party: &Party) -> Result<StoredParty, PartyRepositoryError>;
 

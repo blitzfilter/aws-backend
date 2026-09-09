@@ -4166,6 +4166,79 @@ paths:
                 title: Internal Server Error
                 error: PARTY_INTERNAL_ERROR
   /api/v1/admin/parties/{partyId}:
+    delete:
+      summary: Hard-delete an unused Party as admin
+      description: |
+        Deletes only an unused Party after commit. A Party with any ListingSource or retained
+        Partnership, including `DISSOLVED`, returns `409 CONFLICT`; no dependent business or
+        historical row is cascaded, detached, rewritten, or archived. Responses use
+        `Cache-Control: no-store` and this operation accepts no request body.
+      operationId: adminDeleteParty
+      tags:
+        - Party
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          description: Stable Party identifier.
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        "204":
+          description: Party deleted successfully.
+          headers:
+            Cache-Control:
+              description: Response is never stored.
+              schema:
+                type: string
+              example: no-store
+        "400":
+          description: Invalid Party UUID.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid bearer credentials.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Administrator authority is required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Party was not found, including after a successful prior delete.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Party has a ListingSource or retained Partnership, or changed concurrently.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Party persistence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Party persistence failed internally.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
     patch:
       summary: Update a Party as admin
       description: |

@@ -118,6 +118,7 @@ use partnership_service::use_cases::{
 };
 use party_postgres::{SqlxPartyRepositoryFactory, SqlxPartySearchReaderFactory};
 use party_service::use_cases::commands::create_party::CreatePartyHandler;
+use party_service::use_cases::commands::delete_party::DeletePartyHandler;
 use party_service::use_cases::commands::update_party::UpdatePartyHandler;
 use party_service::use_cases::queries::get_party::GetPartyHandler;
 use party_service::use_cases::queries::search_parties::SearchPartiesHandler;
@@ -518,7 +519,9 @@ pub fn app(state: AppState) -> Router {
                 )
                 .route(
                     "/api/v1/admin/parties/{party_id}",
-                    get(parties::get_party::get_party).patch(parties::update_party::update_party),
+                    get(parties::get_party::get_party)
+                        .patch(parties::update_party::update_party)
+                        .delete(parties::delete_party::delete_party),
                 )
                 .with_state(parties),
         );
@@ -741,6 +744,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
     );
     let update_party = UpdatePartyHandler::new(
+        unit_of_work.clone(),
+        SqlxPartyRepositoryFactory::new(),
+        CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+    );
+    let delete_party = DeletePartyHandler::new(
         unit_of_work.clone(),
         SqlxPartyRepositoryFactory::new(),
         CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
@@ -1066,6 +1074,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         Arc::new(get_party),
         Arc::new(search_parties),
         Arc::new(update_party),
+        Arc::new(delete_party),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );
     let users_state = UsersState {

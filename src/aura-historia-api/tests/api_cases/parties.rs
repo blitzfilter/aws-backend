@@ -5,6 +5,57 @@ use serde_json::json;
 use test_api::{IntegrationTestService, aura_integration_test};
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_delete_unused_party_and_return_not_found_when_repeated() {
+    let party_id = seed_party("Delete Party", None, None).await;
+    let unrelated_id = seed_party("Unrelated Party", None, None).await;
+    let admin_id = seed_user("ADMIN").await;
+    let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/v1/admin/parties/{party_id}", AURA_API.base_url());
+
+    let response = client
+        .delete(&url)
+        .bearer_auth(String::from(token.clone()))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to delete party: {error}"));
+    assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
+    assert_eq!(
+        Some("no-store"),
+        response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    );
+    let body = response
+        .bytes()
+        .await
+        .unwrap_or_else(|error| panic!("failed to read delete response body: {error}"));
+    assert!(body.is_empty());
+
+    let repeated = client
+        .delete(&url)
+        .bearer_auth(String::from(token.clone()))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to repeat party delete: {error}"));
+    let (status, body) = json_response(repeated).await;
+    assert_eq!(reqwest::StatusCode::NOT_FOUND, status);
+    assert_eq!(json!("PARTY_NOT_FOUND"), body["error"]);
+
+    let unrelated = client
+        .get(format!(
+            "{}/api/v1/admin/parties/{unrelated_id}",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to get unrelated party: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, unrelated.status());
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_return_party_summary_for_admin_with_no_store_cache_control() {
     let party_id = seed_party(
         "Admin Party",

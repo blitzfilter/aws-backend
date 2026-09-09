@@ -260,7 +260,7 @@ CREATE INDEX product_listing_raw_normalizations_stream_revision_idx
 
 CREATE TABLE partnerships (
     partnership_id uuid PRIMARY KEY,
-    party_id uuid NOT NULL UNIQUE REFERENCES parties(party_id) ON DELETE CASCADE,
+    party_id uuid NOT NULL UNIQUE REFERENCES parties(party_id) ON DELETE RESTRICT,
     business_state text NOT NULL DEFAULT 'ACTIVE',
     version bigint NOT NULL DEFAULT 1,
     created timestamptz NOT NULL DEFAULT now(),

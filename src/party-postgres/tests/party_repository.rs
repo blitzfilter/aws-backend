@@ -261,6 +261,211 @@ async fn should_enforce_party_name_and_slug_schema_constraints() {
     assert!(blank_slug.is_err());
 }
 
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_delete_unused_party_after_locking_and_leave_unrelated_party() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool);
+    let parties = SqlxPartyRepositoryFactory::new();
+    let target = sample_party("delete-target");
+    let unrelated = sample_party("delete-unrelated");
+
+    let mut tx = begin(&unit_of_work).await;
+    let stored = match parties.in_transaction(&mut tx).insert(&target).await {
+        Ok(value) => value,
+        Err(error) => panic!("failed to insert target party: {error:?}"),
+    };
+    if let Err(error) = parties.in_transaction(&mut tx).insert(&unrelated).await {
+        panic!("failed to insert unrelated party: {error:?}");
+    }
+    if let Err(error) = parties
+        .in_transaction(&mut tx)
+        .find_by_id_for_update(target.id())
+        .await
+    {
+        panic!("failed to lock target party: {error:?}");
+    }
+    match parties
+        .in_transaction(&mut tx)
+        .find_deletion_blocker(target.id())
+        .await
+    {
+        Ok(None) => {}
+        Ok(Some(blocker)) => panic!("unexpected deletion blocker: {blocker:?}"),
+        Err(error) => panic!("failed to read deletion blocker: {error:?}"),
+    }
+    if let Err(error) = parties
+        .in_transaction(&mut tx)
+        .delete_unused(target.id(), stored.version)
+        .await
+    {
+        panic!("failed to delete unused party: {error:?}");
+    }
+    commit(tx).await;
+
+    let mut tx = begin(&unit_of_work).await;
+    assert!(matches!(
+        parties
+            .in_transaction(&mut tx)
+            .find_by_id(target.id())
+            .await,
+        Ok(None)
+    ));
+    assert!(matches!(
+        parties
+            .in_transaction(&mut tx)
+            .find_by_id(unrelated.id())
+            .await,
+        Ok(Some(_))
+    ));
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_report_listing_source_and_active_or_dissolved_partnership_blockers() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let parties = SqlxPartyRepositoryFactory::new();
+    let source_party = sample_party("source-blocker");
+    let active_party = sample_party("active-partnership-blocker");
+    let dissolved_party = sample_party("dissolved-partnership-blocker");
+
+    let mut tx = begin(&unit_of_work).await;
+    for party in [&source_party, &active_party, &dissolved_party] {
+        if let Err(error) = parties.in_transaction(&mut tx).insert(party).await {
+            panic!("failed to insert party: {error:?}");
+        }
+    }
+    commit(tx).await;
+
+    let source_id = uuid::Uuid::new_v4();
+    for (sql, party_id) in [(
+        "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        source_party.id(),
+    )] {
+        if let Err(error) = sqlx::query(sql)
+            .bind(source_id)
+            .bind(format!("source-{source_id}"))
+            .bind("Source blocker")
+            .bind(uuid::Uuid::from(party_id))
+            .execute(&pool)
+            .await
+        {
+            panic!("failed to insert listing source blocker: {error}");
+        }
+    }
+    for (party, state) in [(&active_party, "ACTIVE"), (&dissolved_party, "DISSOLVED")] {
+        if let Err(error) = sqlx::query(
+            "INSERT INTO partnerships (partnership_id, party_id, business_state) VALUES ($1, $2, $3)",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(uuid::Uuid::from(party.id()))
+        .bind(state)
+        .execute(&pool)
+        .await
+        {
+            panic!("failed to insert partnership blocker: {error}");
+        }
+    }
+
+    let mut tx = begin(&unit_of_work).await;
+    for (party_id, expected) in [
+        (
+            source_party.id(),
+            party_service::ports::PartyDeletionBlocker::ListingSources,
+        ),
+        (
+            active_party.id(),
+            party_service::ports::PartyDeletionBlocker::Partnership,
+        ),
+        (
+            dissolved_party.id(),
+            party_service::ports::PartyDeletionBlocker::Partnership,
+        ),
+    ] {
+        let locked = parties
+            .in_transaction(&mut tx)
+            .find_by_id_for_update(party_id)
+            .await;
+        assert!(matches!(locked, Ok(Some(_))));
+        match parties
+            .in_transaction(&mut tx)
+            .find_deletion_blocker(party_id)
+            .await
+        {
+            Ok(Some(blocker)) => assert_eq!(expected, blocker),
+            Ok(None) => panic!("expected party deletion blocker"),
+            Err(error) => panic!("failed to read deletion blocker: {error:?}"),
+        }
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_reject_stale_and_direct_delete_of_party_with_restrictive_references() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let parties = SqlxPartyRepositoryFactory::new();
+    let stale_party = sample_party("stale-delete");
+    let restricted_party = sample_party("restricted-delete");
+
+    let mut tx = begin(&unit_of_work).await;
+    let stale = match parties.in_transaction(&mut tx).insert(&stale_party).await {
+        Ok(value) => value,
+        Err(error) => panic!("failed to insert stale party: {error:?}"),
+    };
+    if let Err(error) = parties
+        .in_transaction(&mut tx)
+        .insert(&restricted_party)
+        .await
+    {
+        panic!("failed to insert restrictive party: {error:?}");
+    }
+    commit(tx).await;
+
+    let mut changed = stale.party.clone();
+    let _ = changed.rename(party_name("stale-delete-renamed"));
+    let mut tx = begin(&unit_of_work).await;
+    if let Err(error) = parties
+        .in_transaction(&mut tx)
+        .update(&changed, stale.version)
+        .await
+    {
+        panic!("failed to update stale party: {error:?}");
+    }
+    commit(tx).await;
+    let mut tx = begin(&unit_of_work).await;
+    assert!(matches!(
+        parties
+            .in_transaction(&mut tx)
+            .delete_unused(stale_party.id(), stale.version)
+            .await,
+        Err(PartyRepositoryError::ConcurrencyConflict)
+    ));
+
+    let partnership_id = uuid::Uuid::new_v4();
+    if let Err(error) =
+        sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
+            .bind(partnership_id)
+            .bind(uuid::Uuid::from(restricted_party.id()))
+            .execute(&pool)
+            .await
+    {
+        panic!("failed to insert restrictive partnership: {error}");
+    }
+    let direct_delete = sqlx::query("DELETE FROM parties WHERE party_id = $1")
+        .bind(uuid::Uuid::from(restricted_party.id()))
+        .execute(&pool)
+        .await;
+    assert!(direct_delete.is_err());
+    let partnership_remains =
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM partnerships WHERE partnership_id = $1")
+            .bind(partnership_id)
+            .fetch_one(&pool)
+            .await;
+    match partnership_remains {
+        Ok(count) => assert_eq!(1, count),
+        Err(error) => panic!("failed to verify retained partnership: {error}"),
+    }
+}
+
 fn party_name(value: &str) -> PartyName {
     PartyName::try_from(value).unwrap_or_else(|error| panic!("invalid test party name: {error}"))
 }
