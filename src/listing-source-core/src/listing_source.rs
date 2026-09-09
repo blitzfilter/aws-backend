@@ -158,7 +158,11 @@ fn replace<T: PartialEq>(current: &mut T, replacement: T) -> ChangeOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
+
+    fn listing_source_id() -> ListingSourceId {
+        ListingSourceId::try_from(uuid::uuid!("01890a5d-ac96-774b-bf1d-d5586c639f75"))
+            .unwrap_or_else(|error| panic!("valid test listing source ID: {error}"))
+    }
 
     fn listing_source_name(value: &str) -> ListingSourceName {
         ListingSourceName::try_from(value)
@@ -168,7 +172,7 @@ mod tests {
     #[test]
     fn should_always_disambiguate_slug_when_creating_listing_source() {
         let mut source = ListingSource::create(NewListingSource {
-            id: ListingSourceId::from(Uuid::nil()),
+            id: listing_source_id(),
             name: listing_source_name("Antik und Stil"),
             operator_party_id: PartyId::new(),
             ingestion_methods: HashSet::new(),
@@ -177,7 +181,7 @@ mod tests {
         });
 
         assert_eq!(
-            "antik-und-stil-00000000-0000-0000-0000-000000000000",
+            "antik-und-stil-01890a5d-ac96-774b-bf1d-d5586c639f75",
             source.slug_id().as_ref()
         );
         assert!(
@@ -186,14 +190,14 @@ mod tests {
                 .changed()
         );
         assert_eq!(
-            "antik-und-stil-00000000-0000-0000-0000-000000000000",
+            "antik-und-stil-01890a5d-ac96-774b-bf1d-d5586c639f75",
             source.slug_id().as_ref()
         );
     }
 
     #[test]
     fn should_disambiguate_fallback_slug_when_listing_source_name_has_no_slug_characters() {
-        let listing_source_id = ListingSourceId::from(Uuid::nil());
+        let listing_source_id = listing_source_id();
         let source = ListingSource::create(NewListingSource {
             id: listing_source_id,
             name: listing_source_name("\u{10FFFF}"),
@@ -204,7 +208,7 @@ mod tests {
         });
 
         assert_eq!(
-            "listing-source-00000000-0000-0000-0000-000000000000",
+            "listing-source-01890a5d-ac96-774b-bf1d-d5586c639f75",
             source.slug_id().as_ref()
         );
     }

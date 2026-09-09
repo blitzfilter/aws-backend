@@ -1,13 +1,7 @@
 use crate::source_listing_id::SourceListingId;
 use listing_source_core::ListingSourceId;
 
-domain_primitives::uuid_v4_newtype!(ProductListingId);
-
-impl From<ProductListingId> for uuid::Uuid {
-    fn from(id: ProductListingId) -> Self {
-        id.0
-    }
-}
+domain_primitives::object_id_newtype!(ProductListingId, "pl");
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProductListingKey {
@@ -32,11 +26,8 @@ impl PartialOrd for ProductListingKey {
 
 impl Ord for ProductListingKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let listing_source_id: uuid::Uuid = self.listing_source_id.into();
-        let other_listing_source_id: uuid::Uuid = other.listing_source_id.into();
-
-        (listing_source_id, &self.source_listing_id)
-            .cmp(&(other_listing_source_id, &other.source_listing_id))
+        (self.listing_source_id.as_uuid(), &self.source_listing_id)
+            .cmp(&(other.listing_source_id.as_uuid(), &other.source_listing_id))
     }
 }
 
@@ -52,6 +43,24 @@ impl fake::Dummy<fake::Faker> for ProductListingKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_use_product_listing_object_id_prefix() {
+        let id = ProductListingId::new();
+
+        assert_eq!("pl", ProductListingId::PREFIX);
+        assert!(id.to_string().starts_with("pl_"));
+    }
+
+    #[cfg(feature = "test-data")]
+    #[test]
+    fn should_fake_uuid_v7_product_listing_id() {
+        use fake::{Fake, Faker};
+
+        let id: ProductListingId = Faker.fake();
+
+        assert_eq!(7, id.as_uuid().get_version_num());
+    }
 
     #[test]
     fn should_create_key_from_listing_source_and_source_listing_ids() {

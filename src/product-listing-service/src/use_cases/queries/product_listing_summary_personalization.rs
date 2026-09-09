@@ -161,7 +161,6 @@ where
 fn redact_hidden_product_search_item(
     product: &mut ProductListingSearchItemWithSource,
 ) -> Result<(), ProductListingSummaryPersonalizationError> {
-    let nil = uuid::Uuid::nil();
     let language = product
         .item
         .title
@@ -174,10 +173,11 @@ fn redact_hidden_product_search_item(
         }
     })?;
 
-    product.item.event_id = EventId::from(nil);
-    product.item.listing_source_id = ListingSourceId::from(nil);
+    let listing_source_id = ListingSourceId::new();
+    product.item.event_id = EventId::new();
+    product.item.listing_source_id = listing_source_id;
     product.source = ListingSourceSummary {
-        listing_source_id: ListingSourceId::from(nil),
+        listing_source_id,
         name: ListingSourceName::try_from("Hidden").map_err(|source| {
             ProductListingSummaryPersonalizationError::HiddenProductListingSummaryInvalid {
                 source: box_error(source),
@@ -190,7 +190,7 @@ fn redact_hidden_product_search_item(
         })?,
     };
     product.item.source_listing_id =
-        SourceListingId::try_from(nil.to_string()).map_err(|error| {
+        SourceListingId::try_from("00000000-0000-0000-0000-000000000000").map_err(|error| {
             ProductListingSummaryPersonalizationError::HiddenProductListingSummaryInvalid {
                 source: box_error(error),
             }
