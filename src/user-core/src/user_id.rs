@@ -1,74 +1,33 @@
-use uuid::Uuid;
+domain_primitives::object_id_newtype!(UserId, "usr");
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-#[serde(into = "String", try_from = "String")]
-pub struct UserId(Uuid);
+#[cfg(test)]
+mod tests {
+    use super::UserId;
+    use std::error::Error;
+    use uuid::Uuid;
 
-#[cfg(feature = "test-data")]
-impl<T> fake::Dummy<T> for UserId {
-    fn dummy_with_rng<R: fake::RngExt + ?Sized>(_config: &T, _rng: &mut R) -> Self {
-        Self::new()
+    const UUID_TEXT: &str = "01890a5d-ac96-774b-bf1d-d5586c639f75";
+    const TYPE_ID_SUFFIX: &str = "01h455vb4pex5vy7enb1p677vn";
+
+    #[test]
+    fn should_use_usr_object_id_contract() -> Result<(), Box<dyn Error>> {
+        let uuid = Uuid::parse_str(UUID_TEXT)?;
+        let id = UserId::try_from(uuid)?;
+
+        assert_eq!("usr", UserId::PREFIX);
+        assert_eq!(format!("usr_{TYPE_ID_SUFFIX}"), id.to_string());
+        assert_eq!(uuid, id.into_uuid());
+        assert!(UserId::try_from(UUID_TEXT).is_err());
+        assert!(UserId::try_from(format!("at_{TYPE_ID_SUFFIX}")).is_err());
+
+        Ok(())
     }
-}
 
-impl Default for UserId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+    #[test]
+    fn should_generate_uuid_v7_user_id_with_usr_prefix() {
+        let id = UserId::new();
 
-impl UserId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl std::fmt::Display for UserId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
-
-impl From<Uuid> for UserId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-
-impl TryFrom<String> for UserId {
-    type Error = uuid::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Uuid::parse_str(&value).map(Self)
-    }
-}
-
-impl From<UserId> for String {
-    fn from(value: UserId) -> Self {
-        value.0.to_string()
-    }
-}
-
-impl From<UserId> for Uuid {
-    fn from(value: UserId) -> Self {
-        value.0
-    }
-}
-
-impl TryFrom<&str> for UserId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Uuid::parse_str(value).map(Self)
-    }
-}
-
-impl TryFrom<&String> for UserId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &String) -> Result<Self, Self::Error> {
-        Self::try_from(value.as_str())
+        assert_eq!(7, id.as_uuid().get_version_num());
+        assert!(id.to_string().starts_with("usr_"));
     }
 }
