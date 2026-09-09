@@ -51,18 +51,51 @@ pub fn detect_currency(raw: &str) -> Option<Currency> {
 ///   - `"1234.5"`       (single decimal digit)
 ///   - `"1'234.56"`     (apostrophe-thousands)
 ///
-/// If no currency marker is found in `raw` the optional `fallback_currency` is
-/// used (e.g. inferred from the ListingSource domain TLD). If neither is present
-/// [`PriceError::UnknownCurrency`] is returned.
+/// If no amount is adjacent to a currency marker, the optional `fallback_currency` is used
+/// (e.g. inferred from the ListingSource domain TLD). Ambiguous explicit currency-and-amount
+/// pairs fail closed. If neither currency source is present, [`PriceError::UnknownCurrency`] is
+/// returned.
 pub fn parse_price(
     raw: &str,
     fallback_currency: Option<Currency>,
 ) -> Result<(MonetaryAmount, Currency), PriceNormalizationError> {
-    let currency = detect_currency(raw)
-        .or(fallback_currency)
-        .ok_or(PriceError::UnknownCurrency)?;
+    let pairs = price_currency_pairs(raw);
+    let (number, currency) = if let Some(first_pair) = pairs.first() {
+        let currency = first_pair.currency;
+        if pairs.iter().any(|pair| pair.currency != currency) {
+            return Err(PriceError::ParseFailure);
+        }
 
-    let number = extract_price_number_candidate(raw, &currency)?;
+        let mut candidates = Vec::new();
+        for pair in pairs {
+            if !candidates.iter().any(|candidate: &PriceNumberCandidate| {
+                candidate.start == pair.candidate.start && candidate.end == pair.candidate.end
+            }) {
+                candidates.push(pair.candidate);
+            }
+        }
+
+        (
+            extract_price_number_candidate_from_candidates(raw, &currency, candidates)?,
+            currency,
+        )
+    } else {
+        let currency = fallback_currency.ok_or_else(|| {
+            if currency_markers(raw).is_empty() {
+                PriceError::UnknownCurrency
+            } else {
+                PriceError::ParseFailure
+            }
+        })?;
+        (
+            extract_price_number_candidate_from_candidates(
+                raw,
+                &currency,
+                extract_price_number_candidates(raw),
+            )?,
+            currency,
+        )
+    };
 
     let amount = parse_price_number(&number, &currency)?;
 
@@ -188,10 +221,10 @@ fn parse_display_price(
     let (amount, currency) = parse_price(raw, fallback_currency)?;
     Ok(ParsedDisplayPrice {
         price: Price::new(amount, currency),
-        currency_evidence: if detect_currency(raw).is_some() {
-            PriceCurrencyEvidence::ExplicitMarker
-        } else {
+        currency_evidence: if price_currency_pairs(raw).is_empty() {
             PriceCurrencyEvidence::Fallback
+        } else {
+            PriceCurrencyEvidence::ExplicitMarker
         },
     })
 }
@@ -297,8 +330,21 @@ struct ParsedPriceNumberCandidate {
     quality: PriceNumberCandidateQuality,
 }
 
+struct PriceCurrencyPair {
+    candidate: PriceNumberCandidate,
+    currency: Currency,
+}
+
+#[cfg(test)]
 fn extract_price_number_candidate(raw: &str, currency: &Currency) -> Result<String, PriceError> {
-    let candidates = price_like_number_candidates(raw);
+    extract_price_number_candidate_from_candidates(raw, currency, price_like_number_candidates(raw))
+}
+
+fn extract_price_number_candidate_from_candidates(
+    raw: &str,
+    currency: &Currency,
+    candidates: Vec<PriceNumberCandidate>,
+) -> Result<String, PriceError> {
     let mut parsed = Vec::new();
 
     for candidate in candidates {
@@ -316,6 +362,7 @@ fn extract_price_number_candidate(raw: &str, currency: &Currency) -> Result<Stri
     }
 }
 
+#[cfg(test)]
 fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
     let candidates = extract_price_number_candidates(raw);
     let currency_markers = currency_marker_spans(raw);
@@ -324,7 +371,7 @@ fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
         return candidates;
     }
 
-    let currency_bearing_candidates: Vec<_> = candidates
+    candidates
         .iter()
         .filter(|candidate| {
             currency_markers.iter().any(|marker| {
@@ -332,11 +379,30 @@ fn price_like_number_candidates(raw: &str) -> Vec<PriceNumberCandidate> {
             })
         })
         .cloned()
-        .collect();
+        .collect()
+}
 
-    // A currency marker without an adjacent amount is not evidence that an
-    // unrelated SKU, year, or phone number is a price.
-    currency_bearing_candidates
+fn price_currency_pairs(raw: &str) -> Vec<PriceCurrencyPair> {
+    let candidates = extract_price_number_candidates(raw);
+    let markers = currency_markers(raw);
+    let mut pairs = Vec::new();
+
+    for candidate in candidates {
+        for marker in &markers {
+            if has_benign_currency_amount_gap(
+                raw,
+                (candidate.start, candidate.end),
+                (marker.start, marker.end),
+            ) {
+                pairs.push(PriceCurrencyPair {
+                    candidate: candidate.clone(),
+                    currency: marker.currency,
+                });
+            }
+        }
+    }
+
+    pairs
 }
 
 fn select_price_number_candidate(
@@ -768,6 +834,7 @@ mod tests {
     )]
     #[case("\u{00a3}3,90000\u{00a3}3,900.00", 390000, Currency::Gbp)]
     #[case("$3,900$3,900.00", 390000, Currency::Usd)]
+    #[case("EUR reference; USD 100", 10000, Currency::Usd)]
     fn should_parse_price_when_valid_string_provided(
         #[case] raw: &str,
         #[case] expected_amount: u64,
@@ -807,6 +874,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn should_fail_closed_when_distinct_explicit_price_pairs_are_present() {
+        assert_eq!(
+            Err(PriceError::ParseFailure),
+            parse_price("USD 100 / EUR 90", None)
+        );
+    }
+
     #[rstest]
     #[case("")]
     #[case("   ")]
@@ -826,6 +901,7 @@ mod tests {
 
     #[rstest]
     #[case("18,00", Currency::Eur, 1800u64)]
+    #[case("EUR reference; 100", Currency::Usd, 10000u64)]
     #[case("1590", Currency::Eur, 159000u64)]
     #[case("1590", Currency::Gbp, 159000u64)]
     #[case("1.234,56", Currency::Eur, 123456u64)]
