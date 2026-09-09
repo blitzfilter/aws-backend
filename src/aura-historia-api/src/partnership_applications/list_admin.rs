@@ -7,6 +7,7 @@ use crate::{
     },
     pagination_data::JsonCursoredData,
     state::PartnershipApplicationsState,
+    wire::parse_query_object_id,
 };
 use application::pagination::Cursor;
 use axum::{
@@ -21,7 +22,6 @@ use domain_primitives::{
 };
 use listing_source_core::ListingSourceId;
 use partnership_core::{
-    partnership_application_id::PartnershipApplicationId,
     partnership_application_search::PartnershipApplicationSearch,
     partnership_application_state::PartnershipApplicationState,
     partnership_proposal_type::PartnershipProposalType,
@@ -34,7 +34,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use user_core::user_id::UserId;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,15 +167,11 @@ fn parse_proposal_types(
 }
 
 fn parse_user_id(value: &str) -> Result<UserId, ApiError> {
-    Uuid::parse_str(value)
-        .map(UserId::from)
-        .map_err(|error| bad_query("applicantUserId", error))
+    parse_query_object_id(value, "applicantUserId", "User")
 }
 
 fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ApiError> {
-    Uuid::parse_str(value)
-        .map(ListingSourceId::from)
-        .map_err(|error| bad_query("listingSourceId", error))
+    parse_query_object_id(value, "listingSourceId", "ListingSource")
 }
 
 fn parse_sort(
@@ -248,14 +243,13 @@ fn parse_search_after(value: &str) -> Result<PartnershipApplicationSearchCursor,
     let [Value::String(position), Value::String(application_id)] = values.as_slice() else {
         return Err(bad_query(
             "searchAfter",
-            "searchAfter must contain an RFC3339 timestamp and application UUID.",
+            "searchAfter must contain an RFC3339 timestamp and PartnershipApplication ID.",
         ));
     };
     let position = OffsetDateTime::parse(position, &Rfc3339)
         .map_err(|error| bad_query("searchAfter", error))?;
-    let application_id = Uuid::parse_str(application_id)
-        .map(PartnershipApplicationId::from)
-        .map_err(|error| bad_query("searchAfter", error))?;
+    let application_id =
+        parse_query_object_id(application_id, "searchAfter", "PartnershipApplication")?;
     Ok(PartnershipApplicationSearchCursor {
         position,
         application_id,
@@ -266,7 +260,7 @@ fn admin_cursor_value(cursor: PartnershipApplicationSearchCursor) -> Result<Valu
     cursor
         .position
         .format(&Rfc3339)
-        .map(|position| json!([position, Uuid::from(cursor.application_id)]))
+        .map(|position| json!([position, cursor.application_id]))
         .map_err(|_| {
             ApiError::internal_server_error(PARTNERSHIP_APPLICATION_INTERNAL_ERROR)
                 .with_detail("Partnership application cursor failed internally.")
@@ -283,14 +277,15 @@ fn bad_query(field: &'static str, detail: impl std::fmt::Display) -> ApiError {
 mod tests {
     use super::*;
     use domain_primitives::sort::SortOrder;
+    use partnership_core::partnership_application_id::PartnershipApplicationId;
     use serde_json::json;
     use time::macros::datetime;
 
     #[test]
     fn should_map_admin_application_search_query() -> Result<(), ApiError> {
-        let applicant_user_id = Uuid::from_u128(0x550e8400e29b41d4a716446655440000);
-        let listing_source_id = Uuid::from_u128(0x660e8400e29b41d4a716446655440000);
-        let application_id = Uuid::from_u128(0x770e8400e29b41d4a716446655440000);
+        let applicant_user_id = UserId::new();
+        let listing_source_id = ListingSourceId::new();
+        let application_id = PartnershipApplicationId::new();
         let request = parse_list_admin_query(Some(&format!(
             "state=SUBMITTED&state=IN_REVIEW&applicantUserId={applicant_user_id}&proposalType=EXISTING_LISTING_SOURCE&listingSourceId={listing_source_id}&created%5Bmin%5D=2026-01-01T00%3A00%3A00Z&created%5Bmax%5D=2026-12-31T23%3A59%3A59Z&updated%5Bmin%5D=2026-02-01T00%3A00%3A00Z&sort=updated&order=asc&size=200&searchAfter=%5B%222026-09-04T12%3A00%3A00Z%22%2C%22{application_id}%22%5D"
         )))?;
@@ -307,20 +302,14 @@ mod tests {
                 .state_query
                 .contains(&PartnershipApplicationState::InReview)
         );
-        assert_eq!(
-            Some(UserId::from(applicant_user_id)),
-            request.search.applicant_user_id
-        );
+        assert_eq!(Some(applicant_user_id), request.search.applicant_user_id);
         assert!(
             request
                 .search
                 .proposal_type_query
                 .contains(&PartnershipProposalType::ExistingListingSource)
         );
-        assert_eq!(
-            Some(ListingSourceId::from(listing_source_id)),
-            request.search.listing_source_id
-        );
+        assert_eq!(Some(listing_source_id), request.search.listing_source_id);
         assert_eq!(
             Some(RangeQuery {
                 min: Some(datetime!(2026-01-01 00:00 UTC)),
@@ -347,7 +336,7 @@ mod tests {
                 size: 100,
                 search_after: Some(PartnershipApplicationSearchCursor {
                     position: datetime!(2026-09-04 12:00 UTC),
-                    application_id: PartnershipApplicationId::from(application_id),
+                    application_id,
                 }),
             }),
             request.cursor
@@ -371,8 +360,8 @@ mod tests {
         let cases = [
             ("state=invalid", "BAD_QUERY_PARAMETER_VALUE"),
             ("proposalType=invalid", "BAD_QUERY_PARAMETER_VALUE"),
-            ("applicantUserId=not-a-uuid", "BAD_QUERY_PARAMETER_VALUE"),
-            ("listingSourceId=not-a-uuid", "BAD_QUERY_PARAMETER_VALUE"),
+            ("applicantUserId=not-an-object-id", "INVALID_OBJECT_ID"),
+            ("listingSourceId=not-an-object-id", "INVALID_OBJECT_ID"),
             (
                 "created%5Bmin%5D=not-a-timestamp",
                 "BAD_QUERY_PARAMETER_VALUE",
@@ -385,7 +374,7 @@ mod tests {
             ("size=not-a-number", "BAD_QUERY_PARAMETER_VALUE"),
             ("searchAfter=not-json", "BAD_QUERY_PARAMETER_VALUE"),
             (
-                "searchAfter=%5B%22not-a-timestamp%22%2C%22not-a-uuid%22%5D",
+                "searchAfter=%5B%22not-a-timestamp%22%2C%22not-an-object-id%22%5D",
                 "BAD_QUERY_PARAMETER_VALUE",
             ),
         ];

@@ -3,6 +3,7 @@ use crate::{
     error::{ApiError, BAD_QUERY_PARAMETER_VALUE, PARTNERSHIP_INTERNAL_ERROR},
     pagination_data::JsonCursoredData,
     state::PartnershipsState,
+    wire::parse_query_object_id,
 };
 use application::pagination::{Cursor, CursoredResult};
 use axum::{
@@ -22,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use user_core::user_id::UserId;
-use uuid::Uuid;
 
 const DEFAULT_PAGE_SIZE: u64 = 21;
 const MAX_PAGE_SIZE: u64 = 100;
@@ -45,7 +45,7 @@ struct ListAdminPartnershipsQuery {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PartnershipSummaryData {
-    partnership_id: Uuid,
+    partnership_id: PartnershipId,
     party: PartnershipPartySummaryData,
     member_count: u64,
     listing_source_grant_count: u64,
@@ -58,7 +58,7 @@ struct PartnershipSummaryData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PartnershipPartySummaryData {
-    party_id: Uuid,
+    party_id: PartyId,
     party_slug_id: String,
     name: String,
 }
@@ -66,7 +66,7 @@ struct PartnershipPartySummaryData {
 impl From<AdminPartnershipSummary> for PartnershipSummaryData {
     fn from(value: AdminPartnershipSummary) -> Self {
         Self {
-            partnership_id: value.partnership_id.into(),
+            partnership_id: value.partnership_id,
             party: PartnershipPartySummaryData::from(value.party),
             member_count: value.member_count,
             listing_source_grant_count: value.listing_source_grant_count,
@@ -79,7 +79,7 @@ impl From<AdminPartnershipSummary> for PartnershipSummaryData {
 impl From<PartnershipPartySummary> for PartnershipPartySummaryData {
     fn from(value: PartnershipPartySummary) -> Self {
         Self {
-            party_id: value.party_id.into(),
+            party_id: value.party_id,
             party_slug_id: value.party_slug_id.to_string(),
             name: value.name.to_string(),
         }
@@ -134,21 +134,15 @@ fn parse_list_admin_query(
 }
 
 fn parse_party_id(value: &str) -> Result<PartyId, ApiError> {
-    Uuid::parse_str(value)
-        .map(PartyId::from)
-        .map_err(|error| bad_query("partyId", error))
+    parse_query_object_id(value, "partyId", "Party")
 }
 
 fn parse_member_user_id(value: &str) -> Result<UserId, ApiError> {
-    Uuid::parse_str(value)
-        .map(UserId::from)
-        .map_err(|error| bad_query("memberUserId", error))
+    parse_query_object_id(value, "memberUserId", "User")
 }
 
 fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ApiError> {
-    Uuid::parse_str(value)
-        .map(ListingSourceId::from)
-        .map_err(|error| bad_query("listingSourceId", error))
+    parse_query_object_id(value, "listingSourceId", "ListingSource")
 }
 
 fn parse_cursor(
@@ -187,14 +181,12 @@ fn parse_search_after(value: &str) -> Result<PartnershipSearchCursor, ApiError> 
     let [Value::String(position), Value::String(partnership_id)] = values.as_slice() else {
         return Err(bad_query(
             "searchAfter",
-            "searchAfter must contain an RFC3339 timestamp and partnership UUID.",
+            "searchAfter must contain an RFC3339 timestamp and Partnership ID.",
         ));
     };
     let position = OffsetDateTime::parse(position, &Rfc3339)
         .map_err(|error| bad_query("searchAfter", error))?;
-    let partnership_id = Uuid::parse_str(partnership_id)
-        .map(PartnershipId::from)
-        .map_err(|error| bad_query("searchAfter", error))?;
+    let partnership_id = parse_query_object_id(partnership_id, "searchAfter", "Partnership")?;
 
     Ok(PartnershipSearchCursor {
         position,
@@ -231,7 +223,7 @@ fn partnership_cursor_value(cursor: PartnershipSearchCursor) -> Result<Value, Ap
     cursor
         .position
         .format(&Rfc3339)
-        .map(|position| json!([position, Uuid::from(cursor.partnership_id)]))
+        .map(|position| json!([position, cursor.partnership_id]))
         .map_err(|_| {
             ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)
                 .with_detail("Partnership cursor failed internally.")
@@ -443,11 +435,11 @@ mod tests {
 
     fn summary() -> AdminPartnershipSummary {
         AdminPartnershipSummary {
-            partnership_id: PartnershipId::from(Uuid::from_u128(
-                0x770e8400e29b41d4a716446655440000,
-            )),
+            partnership_id: PartnershipId::try_from("psh_01h455vb4pex5vy7enb1p677vn")
+                .unwrap_or_else(|error| panic!("valid Partnership ID: {error}")),
             party: PartnershipPartySummary {
-                party_id: PartyId::from(Uuid::from_u128(0x550e8400e29b41d4a716446655440000)),
+                party_id: PartyId::try_from("pty_01h455vb4pex5vy7enb1p677vn")
+                    .unwrap_or_else(|error| panic!("valid Party ID: {error}")),
                 party_slug_id: party_core::party_slug_id::PartySlugId::raw("safe-party")
                     .unwrap_or_else(|error| panic!("valid party slug: {error}")),
                 name: party_core::party_name::PartyName::try_from("Safe Party")
@@ -488,7 +480,8 @@ mod tests {
             Arc::new(UnusedGrantPartnershipListingSourceUseCase),
             Arc::new(UnusedRevokePartnershipListingSourceUseCase),
             Arc::new(FakeAuthenticator {
-                user_id: UserId::from(Uuid::from_u128(0x880e8400e29b41d4a716446655440000)),
+                user_id: UserId::try_from("usr_01h455vb4pex5vy7enb1p677vn")
+                    .unwrap_or_else(|error| panic!("valid User ID: {error}")),
                 reject: reject_auth,
             }),
         );
@@ -504,26 +497,23 @@ mod tests {
 
     #[test]
     fn should_map_admin_partnership_query_to_service_request() -> Result<(), ApiError> {
-        let party_id = Uuid::from_u128(0x550e8400e29b41d4a716446655440000);
-        let member_user_id = Uuid::from_u128(0x660e8400e29b41d4a716446655440000);
-        let listing_source_id = Uuid::from_u128(0x770e8400e29b41d4a716446655440000);
-        let partnership_id = Uuid::from_u128(0x880e8400e29b41d4a716446655440000);
+        let party_id = PartyId::new();
+        let member_user_id = UserId::new();
+        let listing_source_id = ListingSourceId::new();
+        let partnership_id = PartnershipId::new();
         let request = parse_list_admin_query(Some(&format!(
             "partyId={party_id}&memberUserId={member_user_id}&listingSourceId={listing_source_id}&size=200&searchAfter=%5B%222026-09-04T12%3A00%3A00Z%22%2C%22{partnership_id}%22%5D"
         )))?;
 
-        assert_eq!(Some(PartyId::from(party_id)), request.party_id);
-        assert_eq!(Some(UserId::from(member_user_id)), request.member_user_id);
-        assert_eq!(
-            Some(ListingSourceId::from(listing_source_id)),
-            request.listing_source_id
-        );
+        assert_eq!(Some(party_id), request.party_id);
+        assert_eq!(Some(member_user_id), request.member_user_id);
+        assert_eq!(Some(listing_source_id), request.listing_source_id);
         assert_eq!(
             Some(Cursor {
                 size: MAX_PAGE_SIZE,
                 search_after: Some(PartnershipSearchCursor {
                     position: datetime!(2026-09-04 12:00 UTC),
-                    partnership_id: PartnershipId::from(partnership_id),
+                    partnership_id,
                 }),
             }),
             request.cursor
@@ -553,25 +543,43 @@ mod tests {
 
     #[test]
     fn should_reject_invalid_admin_partnership_query_values_with_their_fields() {
-        for (query, field) in [
-            ("partyId=not-a-uuid", "partyId"),
-            ("memberUserId=not-a-uuid", "memberUserId"),
-            ("listingSourceId=not-a-uuid", "listingSourceId"),
-            ("size=not-a-number", "size"),
-            ("searchAfter=not-json", "searchAfter"),
+        for (query, field, expected_code) in [
             (
-                "searchAfter=%5B%22not-a-timestamp%22%2C%22550e8400-e29b-41d4-a716-446655440000%22%5D",
-                "searchAfter",
+                "partyId=not-an-object-id",
+                "partyId",
+                crate::error::INVALID_OBJECT_ID,
             ),
             (
-                "searchAfter=%5B%222026-09-04T12%3A00%3A00Z%22%2C%22not-a-uuid%22%5D",
+                "memberUserId=not-an-object-id",
+                "memberUserId",
+                crate::error::INVALID_OBJECT_ID,
+            ),
+            (
+                "listingSourceId=not-an-object-id",
+                "listingSourceId",
+                crate::error::INVALID_OBJECT_ID,
+            ),
+            ("size=not-a-number", "size", BAD_QUERY_PARAMETER_VALUE),
+            (
+                "searchAfter=not-json",
                 "searchAfter",
+                BAD_QUERY_PARAMETER_VALUE,
+            ),
+            (
+                "searchAfter=%5B%22not-a-timestamp%22%2C%22psh_01h455vb4pex5vy7enb1p677vn%22%5D",
+                "searchAfter",
+                BAD_QUERY_PARAMETER_VALUE,
+            ),
+            (
+                "searchAfter=%5B%222026-09-04T12%3A00%3A00Z%22%2C%22not-an-object-id%22%5D",
+                "searchAfter",
+                crate::error::INVALID_OBJECT_ID,
             ),
         ] {
             let error = parse_list_admin_query(Some(query))
                 .err()
                 .unwrap_or_else(|| panic!("query should be rejected: {query}"));
-            assert_eq!(BAD_QUERY_PARAMETER_VALUE, error.code(), "query: {query}");
+            assert_eq!(expected_code, error.code(), "query: {query}");
             let value = serde_json::to_value(&error).unwrap_or_else(|serialization_error| {
                 panic!("failed to serialize query error: {serialization_error}")
             });
@@ -618,9 +626,9 @@ mod tests {
 
         assert_eq!(
             json!({
-                "partnershipId": "770e8400-e29b-41d4-a716-446655440000",
+                "partnershipId": "psh_01h455vb4pex5vy7enb1p677vn",
                 "party": {
-                    "partyId": "550e8400-e29b-41d4-a716-446655440000",
+                    "partyId": "pty_01h455vb4pex5vy7enb1p677vn",
                     "partySlugId": "safe-party",
                     "name": "Safe Party"
                 },
@@ -640,21 +648,19 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let cursor = PartnershipSearchCursor {
             position: datetime!(2026-01-02 12:00 UTC),
-            partnership_id: PartnershipId::from(Uuid::from_u128(
-                0x770e8400e29b41d4a716446655440000,
-            )),
+            partnership_id: PartnershipId::try_from("psh_01h455vb4pex5vy7enb1p677vn")?,
         };
-        let party_id = Uuid::from_u128(0x550e8400e29b41d4a716446655440000);
-        let member_user_id = Uuid::from_u128(0x660e8400e29b41d4a716446655440000);
-        let listing_source_id = Uuid::from_u128(0x990e8400e29b41d4a716446655440000);
+        let party_id = PartyId::new();
+        let member_user_id = UserId::new();
+        let listing_source_id = ListingSourceId::new();
         let search_after_cursor = PartnershipSearchCursor {
             position: datetime!(2026-09-04 12:00 UTC),
-            partnership_id: PartnershipId::from(Uuid::from_u128(
-                0x770e8400e29b41d4a716446655440000,
-            )),
+            partnership_id: PartnershipId::new(),
         };
-        let search_after =
-            "%5B%222026-09-04T12%3A00%3A00Z%22%2C%22770e8400-e29b-41d4-a716-446655440000%22%5D";
+        let search_after = format!(
+            "%5B%222026-09-04T12%3A00%3A00Z%22%2C%22{}%22%5D",
+            search_after_cursor.partnership_id
+        );
         let request = Request::get(format!(
             "/api/v1/admin/partnerships?partyId={party_id}&memberUserId={member_user_id}&listingSourceId={listing_source_id}&size=200&searchAfter={search_after}"
         ))
@@ -676,10 +682,7 @@ mod tests {
         assert_eq!(json!("Safe Party"), body["items"][0]["party"]["name"]);
         assert_eq!(json!(2), body["items"][0]["memberCount"]);
         assert_eq!(
-            json!([
-                "2026-01-02T12:00:00Z",
-                "770e8400-e29b-41d4-a716-446655440000"
-            ]),
+            json!(["2026-01-02T12:00:00Z", "psh_01h455vb4pex5vy7enb1p677vn"]),
             body["searchAfter"]
         );
 
@@ -687,17 +690,11 @@ mod tests {
         assert_eq!(1, requests.len());
         assert!(matches!(
             requests[0].0.principal,
-            Principal::User(actual_user_id) if actual_user_id == UserId::from(Uuid::from_u128(0x880e8400e29b41d4a716446655440000))
+            Principal::User(actual_user_id) if actual_user_id == UserId::try_from("usr_01h455vb4pex5vy7enb1p677vn")?
         ));
-        assert_eq!(Some(PartyId::from(party_id)), requests[0].1.party_id);
-        assert_eq!(
-            Some(UserId::from(member_user_id)),
-            requests[0].1.member_user_id
-        );
-        assert_eq!(
-            Some(ListingSourceId::from(listing_source_id)),
-            requests[0].1.listing_source_id
-        );
+        assert_eq!(Some(party_id), requests[0].1.party_id);
+        assert_eq!(Some(member_user_id), requests[0].1.member_user_id);
+        assert_eq!(Some(listing_source_id), requests[0].1.listing_source_id);
         assert_eq!(
             Some(Cursor {
                 size: 100,

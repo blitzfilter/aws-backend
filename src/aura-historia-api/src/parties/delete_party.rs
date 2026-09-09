@@ -1,7 +1,5 @@
 use crate::{
-    auth::protected_context,
-    error::{ApiError, INVALID_UUID},
-    state::PartiesState,
+    auth::protected_context, error::ApiError, state::PartiesState, wire::parse_path_object_id,
 };
 use axum::{
     extract::{Path, State},
@@ -10,7 +8,6 @@ use axum::{
 };
 use party_core::party_id::PartyId;
 use party_service::use_cases::commands::delete_party::DeletePartyCommand;
-use uuid::Uuid;
 
 pub async fn delete_party(
     State(state): State<PartiesState>,
@@ -21,16 +18,9 @@ pub async fn delete_party(
         Ok(value) => value,
         Err(response) => return no_store(*response),
     };
-    let party_id = match Uuid::parse_str(&raw_party_id).map(PartyId::from) {
+    let party_id: PartyId = match parse_path_object_id(&raw_party_id, "partyId", "Party") {
         Ok(value) => value,
-        Err(_) => {
-            return no_store(
-                ApiError::bad_request(INVALID_UUID)
-                    .with_path_field("partyId")
-                    .with_detail("Path parameter 'partyId' must be a UUID.")
-                    .into_response(),
-            );
-        }
+        Err(error) => return no_store(error.into_response()),
     };
 
     match state

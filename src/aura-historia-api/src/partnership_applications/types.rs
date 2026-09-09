@@ -1,4 +1,7 @@
-use crate::error::{ApiError, BAD_BODY_VALUE};
+use crate::{
+    error::{ApiError, BAD_BODY_VALUE},
+    wire::parse_body_object_id,
+};
 use listing_source_core::{
     ListingIngestionMethod, ListingSourceId, ListingSourceName, ListingSourcePresentation,
 };
@@ -7,7 +10,9 @@ use partnership_core::{
         PartnershipApplication, PartnershipApplicationApprovalResult, PartnershipProposal,
         ProposedListingSource, ProposedParty,
     },
+    partnership_application_id::PartnershipApplicationId,
     partnership_application_state::PartnershipApplicationState,
+    partnership_id::PartnershipId,
 };
 use partnership_service::ports::PartnershipApplicationView;
 use partnership_service::use_cases::queries::list_admin_partnership_applications::AdminPartnershipApplicationSummary;
@@ -16,13 +21,12 @@ use serde::{Deserialize, Serialize};
 use serde_email::Email;
 use time::OffsetDateTime;
 use url::Url;
-
-use uuid::Uuid;
+use user_core::user_id::UserId;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SubmitPartnershipApplicationData {
-    pub(super) proposal: PartnershipProposalData,
+    pub(super) proposal: PartnershipProposalData<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -31,9 +35,11 @@ pub(super) struct SubmitPartnershipApplicationData {
     rename_all_fields = "camelCase",
     tag = "type"
 )]
-pub(super) enum PartnershipProposalData {
+pub(super) enum PartnershipProposalData<ListingSourceIdentity = ListingSourceId> {
     #[serde(rename = "EXISTING_LISTING_SOURCE")]
-    ExistingListingSource { listing_source_id: ListingSourceId },
+    ExistingListingSource {
+        listing_source_id: ListingSourceIdentity,
+    },
     #[serde(rename = "PROPOSED_LISTING_SOURCE")]
     ProposedListingSource {
         party: ProposedPartyData,
@@ -63,13 +69,19 @@ pub(super) struct ProposedListingSourceData {
     pub(super) requested_ingestion_methods: std::collections::HashSet<ListingIngestionMethod>,
 }
 
-impl TryFrom<PartnershipProposalData> for PartnershipProposal {
+impl TryFrom<PartnershipProposalData<String>> for PartnershipProposal {
     type Error = ApiError;
 
-    fn try_from(value: PartnershipProposalData) -> Result<Self, Self::Error> {
+    fn try_from(value: PartnershipProposalData<String>) -> Result<Self, Self::Error> {
         match value {
             PartnershipProposalData::ExistingListingSource { listing_source_id } => {
-                Ok(Self::ExistingListingSource { listing_source_id })
+                Ok(Self::ExistingListingSource {
+                    listing_source_id: parse_body_object_id(
+                        &listing_source_id,
+                        "proposal.listingSourceId",
+                        "ListingSource",
+                    )?,
+                })
             }
             PartnershipProposalData::ProposedListingSource {
                 party,
@@ -106,7 +118,7 @@ impl TryFrom<PartnershipProposalData> for PartnershipProposal {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct OwnPartnershipApplicationData {
-    id: Uuid,
+    id: PartnershipApplicationId,
     #[serde(with = "crate::wire::partnership_application_state")]
     state: PartnershipApplicationState,
     proposal: PartnershipProposalData,
@@ -115,25 +127,25 @@ pub(super) struct OwnPartnershipApplicationData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AdminPartnershipApplicationData {
-    id: Uuid,
-    applicant_user_id: Uuid,
+    id: PartnershipApplicationId,
+    applicant_user_id: UserId,
     #[serde(with = "crate::wire::partnership_application_state")]
     state: PartnershipApplicationState,
     proposal: PartnershipProposalData,
-    approved_partnership_id: Option<Uuid>,
-    approved_listing_source_id: Option<Uuid>,
+    approved_partnership_id: Option<PartnershipId>,
+    approved_listing_source_id: Option<ListingSourceId>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AdminPartnershipApplicationSummaryData {
-    id: Uuid,
-    applicant_user_id: Uuid,
+    id: PartnershipApplicationId,
+    applicant_user_id: UserId,
     #[serde(with = "crate::wire::partnership_application_state")]
     state: PartnershipApplicationState,
     proposal: PartnershipProposalData,
-    approved_partnership_id: Option<Uuid>,
-    approved_listing_source_id: Option<Uuid>,
+    approved_partnership_id: Option<PartnershipId>,
+    approved_listing_source_id: Option<ListingSourceId>,
     #[serde(with = "time::serde::rfc3339")]
     created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -143,7 +155,7 @@ pub(super) struct AdminPartnershipApplicationSummaryData {
 impl From<PartnershipApplication> for OwnPartnershipApplicationData {
     fn from(value: PartnershipApplication) -> Self {
         Self {
-            id: value.id().into(),
+            id: value.id(),
             state: value.state(),
             proposal: proposal_data(value.proposal()),
         }
@@ -153,7 +165,7 @@ impl From<PartnershipApplication> for OwnPartnershipApplicationData {
 impl From<PartnershipApplicationView> for OwnPartnershipApplicationData {
     fn from(value: PartnershipApplicationView) -> Self {
         Self {
-            id: value.id.into(),
+            id: value.id,
             state: value.state,
             proposal: proposal_data(&value.proposal),
         }
@@ -165,8 +177,8 @@ impl From<PartnershipApplication> for AdminPartnershipApplicationData {
         let (approved_partnership_id, approved_listing_source_id) =
             approval_references(value.approval_result());
         Self {
-            id: value.id().into(),
-            applicant_user_id: value.applicant_user_id().into(),
+            id: value.id(),
+            applicant_user_id: value.applicant_user_id(),
             state: value.state(),
             proposal: proposal_data(value.proposal()),
             approved_partnership_id,
@@ -180,8 +192,8 @@ impl From<PartnershipApplicationView> for AdminPartnershipApplicationData {
         let (approved_partnership_id, approved_listing_source_id) =
             approval_references(value.approval_result);
         Self {
-            id: value.id.into(),
-            applicant_user_id: value.applicant_user_id.into(),
+            id: value.id,
+            applicant_user_id: value.applicant_user_id,
             state: value.state,
             proposal: proposal_data(&value.proposal),
             approved_partnership_id,
@@ -193,12 +205,12 @@ impl From<PartnershipApplicationView> for AdminPartnershipApplicationData {
 impl From<AdminPartnershipApplicationSummary> for AdminPartnershipApplicationSummaryData {
     fn from(value: AdminPartnershipApplicationSummary) -> Self {
         Self {
-            id: value.id.into(),
-            applicant_user_id: value.applicant_user_id.into(),
+            id: value.id,
+            applicant_user_id: value.applicant_user_id,
             state: value.state,
             proposal: proposal_data(&value.proposal),
-            approved_partnership_id: value.approved_partnership_id.map(Into::into),
-            approved_listing_source_id: value.approved_listing_source_id.map(Into::into),
+            approved_partnership_id: value.approved_partnership_id,
+            approved_listing_source_id: value.approved_listing_source_id,
             created: value.created,
             updated: value.updated,
         }
@@ -207,11 +219,11 @@ impl From<AdminPartnershipApplicationSummary> for AdminPartnershipApplicationSum
 
 fn approval_references(
     value: Option<PartnershipApplicationApprovalResult>,
-) -> (Option<Uuid>, Option<Uuid>) {
+) -> (Option<PartnershipId>, Option<ListingSourceId>) {
     match value {
         Some(result) => (
-            Some(result.partnership_id().into()),
-            Some(result.listing_source_id().into()),
+            Some(result.partnership_id()),
+            Some(result.listing_source_id()),
         ),
         None => (None, None),
     }
@@ -345,7 +357,7 @@ mod tests {
     #[test]
     fn should_reject_legacy_shop_proposal_values() {
         let parsed = serde_json::from_value::<SubmitPartnershipApplicationData>(json!({
-            "proposal": { "type": "EXISTING", "shopId": "00000000-0000-0000-0000-000000000001" }
+            "proposal": { "type": "EXISTING", "shopId": "legacy-shop-id" }
         }));
         assert!(parsed.is_err());
     }

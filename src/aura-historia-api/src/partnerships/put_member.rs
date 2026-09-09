@@ -1,7 +1,5 @@
 use crate::{
-    auth::protected_context,
-    error::{ApiError, INVALID_UUID},
-    state::PartnershipsState,
+    auth::protected_context, error::ApiError, state::PartnershipsState, wire::parse_path_object_id,
 };
 use axum::{
     extract::{Path, State},
@@ -11,7 +9,6 @@ use axum::{
 use partnership_core::partnership_id::PartnershipId;
 use partnership_service::use_cases::commands::grant_partnership_membership::GrantPartnershipMembershipCommand;
 use user_core::user_id::UserId;
-use uuid::Uuid;
 
 pub(super) async fn put_member(
     State(state): State<PartnershipsState>,
@@ -48,19 +45,11 @@ pub(super) async fn put_member(
 }
 
 fn parse_partnership_id(raw: &str) -> Result<PartnershipId, ApiError> {
-    Uuid::parse_str(raw).map(PartnershipId::from).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field("partnershipId")
-            .with_detail("Path parameter 'partnershipId' must be a UUID.")
-    })
+    parse_path_object_id(raw, "partnershipId", "Partnership")
 }
 
 fn parse_user_id(raw: &str) -> Result<UserId, ApiError> {
-    Uuid::parse_str(raw).map(UserId::from).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field("userId")
-            .with_detail("Path parameter 'userId' must be a UUID.")
-    })
+    parse_path_object_id(raw, "userId", "User")
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -284,7 +273,7 @@ mod tests {
             Arc::new(UnusedGrantPartnershipListingSourceUseCase),
             Arc::new(UnusedRevokePartnershipListingSourceUseCase),
             Arc::new(FakeAuthenticator {
-                user_id: UserId::from(Uuid::from_u128(0x880e8400e29b41d4a716446655440000)),
+                user_id: UserId::new(),
                 reject: reject_auth,
             }),
         );
@@ -317,6 +306,8 @@ mod tests {
     #[tokio::test]
     async fn should_return_204_for_added_and_existing_membership()
     -> Result<(), Box<dyn std::error::Error>> {
+        let partnership_id = PartnershipId::try_from("psh_01h455vb4pex5vy7enb1p677vn")?;
+        let user_id = UserId::try_from("usr_01h455vb4pex5vy7enb1p677vn")?;
         for membership_outcome in [
             GrantPartnershipMembershipOutcome::Added,
             GrantPartnershipMembershipOutcome::AlreadyMember,
@@ -324,7 +315,7 @@ mod tests {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let response = test_router(Ok(success(membership_outcome)), Arc::clone(&requests), false)
                 .oneshot(request(
-                    "/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000/members/660e8400-e29b-41d4-a716-446655440000",
+                    "/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn/members/usr_01h455vb4pex5vy7enb1p677vn",
                     Some("Bearer valid"),
                 ))
                 .await?;
@@ -340,14 +331,8 @@ mod tests {
             assert!(to_bytes(response.into_body(), usize::MAX).await?.is_empty());
             let requests = lock(&requests);
             assert_eq!(1, requests.len());
-            assert_eq!(
-                PartnershipId::from(Uuid::from_u128(0x770e8400e29b41d4a716446655440000,)),
-                requests[0].1.partnership_id
-            );
-            assert_eq!(
-                UserId::from(Uuid::from_u128(0x660e8400e29b41d4a716446655440000,)),
-                requests[0].1.user_id
-            );
+            assert_eq!(partnership_id, requests[0].1.partnership_id);
+            assert_eq!(user_id, requests[0].1.user_id);
             assert_eq!("request-123", requests[0].0.request_id.as_str());
             assert_eq!("correlation-456", requests[0].0.correlation_id.as_str());
         }
@@ -359,11 +344,11 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         for (path, field) in [
             (
-                "/api/v1/admin/partnerships/not-a-uuid/members/660e8400-e29b-41d4-a716-446655440000",
+                "/api/v1/admin/partnerships/not-an-object-id/members/usr_01h455vb4pex5vy7enb1p677vn",
                 "partnershipId",
             ),
             (
-                "/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000/members/not-a-uuid",
+                "/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn/members/not-an-object-id",
                 "userId",
             ),
         ] {
@@ -387,7 +372,7 @@ mod tests {
             let body = to_bytes(response.into_body(), usize::MAX).await?;
             let body: serde_json::Value = serde_json::from_slice(&body)
                 .unwrap_or_else(|error| panic!("failed to decode error response: {error}"));
-            assert_eq!("INVALID_UUID", body["error"]);
+            assert_eq!("INVALID_OBJECT_ID", body["error"]);
             assert_eq!(field, body["source"]["field"]);
             assert!(lock(&requests).is_empty());
         }
@@ -405,7 +390,7 @@ mod tests {
                 reject_auth,
             )
             .oneshot(request(
-                "/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000/members/660e8400-e29b-41d4-a716-446655440000",
+                "/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn/members/usr_01h455vb4pex5vy7enb1p677vn",
                 authorization,
             ))
             .await?;
@@ -482,7 +467,7 @@ mod tests {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let response = test_router(Err(error), Arc::clone(&requests), false)
                 .oneshot(request(
-                    "/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000/members/660e8400-e29b-41d4-a716-446655440000",
+                    "/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn/members/usr_01h455vb4pex5vy7enb1p677vn",
                     Some("Bearer valid"),
                 ))
                 .await?;
