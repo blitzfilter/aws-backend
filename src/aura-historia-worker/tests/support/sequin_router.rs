@@ -581,6 +581,99 @@ mod tests {
 
     #[test_api::serial]
     #[tokio::test]
+    async fn should_not_forward_delayed_same_table_cdc_across_route_generations()
+    -> Result<(), String> {
+        let received_a = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let app_a = Router::new()
+            .route("/cdc/sequin", post(capture_body))
+            .with_state(received_a.clone());
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|error| format!("bind fake worker A: {error}"))?;
+        let worker_a = listener_a
+            .local_addr()
+            .map_err(|error| format!("read fake worker A address: {error}"))?;
+        let server_a = tokio::spawn(async move {
+            let _ = axum::serve(listener_a, app_a).await;
+        });
+
+        let received_b = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let app_b = Router::new()
+            .route("/cdc/sequin", post(capture_body))
+            .with_state(received_b.clone());
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|error| format!("bind fake worker B: {error}"))?;
+        let worker_b = listener_b
+            .local_addr()
+            .map_err(|error| format!("read fake worker B address: {error}"))?;
+        let server_b = tokio::spawn(async move {
+            let _ = axum::serve(listener_b, app_b).await;
+        });
+
+        let control = test_control();
+        let route_a = install_route(
+            control.clone(),
+            WalLsn(100),
+            worker_a,
+            BTreeMap::from([("public.product_listing_events", worker_a)]),
+        )?;
+        let a_current = Bytes::from_static(
+            br#"{"record":{"id":"a-current"},"action":"insert","metadata":{"table_schema":"public","table_name":"product_listing_events","commit_lsn":101}}"#,
+        );
+        assert_eq!(
+            StatusCode::ACCEPTED,
+            receive(State(control.clone()), a_current.clone())
+                .await
+                .into_response()
+                .status()
+        );
+        assert_eq!(vec![a_current.to_vec()], *received_a.lock().await);
+        assert!(received_b.lock().await.is_empty());
+
+        drop(route_a);
+        let route_b = install_route(
+            control.clone(),
+            WalLsn(200),
+            worker_b,
+            BTreeMap::from([("public.product_listing_events", worker_b)]),
+        )?;
+        let a_delayed = Bytes::from_static(
+            br#"{"record":{"id":"a-delayed"},"action":"insert","metadata":{"table_schema":"public","table_name":"product_listing_events","commit_lsn":150}}"#,
+        );
+        assert_eq!(
+            StatusCode::ACCEPTED,
+            receive(State(control.clone()), a_delayed.clone())
+                .await
+                .into_response()
+                .status()
+        );
+        assert_eq!(vec![a_current.to_vec()], *received_a.lock().await);
+        assert!(received_b.lock().await.is_empty());
+
+        let b_current = Bytes::from_static(
+            br#"{"record":{"id":"b-current"},"action":"insert","metadata":{"table_schema":"public","table_name":"product_listing_events","commit_lsn":201}}"#,
+        );
+        assert_eq!(
+            StatusCode::ACCEPTED,
+            receive(State(control.clone()), b_current.clone())
+                .await
+                .into_response()
+                .status()
+        );
+        assert_eq!(vec![a_current.to_vec()], *received_a.lock().await);
+        assert_eq!(vec![b_current.to_vec()], *received_b.lock().await);
+
+        drop(route_b);
+        server_a.abort();
+        server_b.abort();
+        assert!(matches!(server_a.await, Err(error) if error.is_cancelled()));
+        assert!(matches!(server_b.await, Err(error) if error.is_cancelled()));
+        assert_control_idle(&control)
+    }
+
+    #[test_api::serial]
+    #[tokio::test]
     async fn should_not_forward_stale_or_wrong_table_cdc() -> Result<(), String> {
         let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let app = Router::new()
