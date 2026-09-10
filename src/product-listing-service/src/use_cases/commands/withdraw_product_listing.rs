@@ -252,6 +252,8 @@ impl From<ProductListingRepositoryError> for WithdrawProductListingError {
             | ProductListingRepositoryError::InvalidTitleLanguagePersisted
             | ProductListingRepositoryError::IncompleteDescriptionPersisted
             | ProductListingRepositoryError::InvalidDescriptionLanguagePersisted
+            | ProductListingRepositoryError::InvalidProductListingPricePersisted
+            | ProductListingRepositoryError::InvalidProductListingPriceKindPersisted
             | ProductListingRepositoryError::IncompletePricePersisted
             | ProductListingRepositoryError::NegativePriceAmountPersisted
             | ProductListingRepositoryError::InvalidPriceCurrencyPersisted

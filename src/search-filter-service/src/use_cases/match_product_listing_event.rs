@@ -24,6 +24,7 @@ use large_language_model::{LargeLanguageModel, LargeLanguageModelError};
 use product_listing_core::{
     listing_availability::ListingAvailability, listing_lifecycle::ListingLifecycle,
     product_listing::ProductListingPriceValuationBasis, product_listing_id::ProductListingId,
+    product_listing_price::ProductListingPrice,
 };
 use product_listing_service::ports::{
     ProductListingCurrentEventCheck, ProductListingCurrentEventCheckError,
@@ -433,8 +434,7 @@ where
         }
         Some(product) => {
             let valuation = match product.pricing.price {
-                None => None,
-                Some(source_price) => {
+                Some(ProductListingPrice::Monetary(source_price)) => {
                     let (basis, snapshot) = match product.sale_observation.filter(|_| {
                         product.availability == Some(ListingAvailability::SoldOut)
                             || product.lifecycle == ListingLifecycle::Withdrawn
@@ -476,6 +476,7 @@ where
                         prices,
                     })
                 }
+                None | Some(ProductListingPrice::OnRequest) => None,
             };
             ProductListingSourceReadOutcome::Current(Box::new(ProductListingPercolationInput {
                 source: product,
@@ -1376,7 +1377,8 @@ mod tests {
             .map_err(|_| std::io::Error::other("test mutex poisoned"))?
             .event_snapshot = Some(event_snapshot.clone());
         let mut source = product()?;
-        source.pricing.price = Some(Price::new(MonetaryAmount::from(12_500_u64), Currency::Gbp));
+        source.pricing.price =
+            Some(Price::new(MonetaryAmount::from(12_500_u64), Currency::Gbp).into());
         let mut saved_filter = filter(UserId::new(), UserSearchFilterId::new());
         saved_filter.search.price_query = Some(RangeQuery {
             min: Some(MonetaryAmount::from(10_000_u64)),
@@ -1422,7 +1424,8 @@ mod tests {
             state.event_snapshot = Some(newer_event_snapshot);
         }
         let mut source = product()?;
-        source.pricing.price = Some(Price::new(MonetaryAmount::from(12_500_u64), Currency::Gbp));
+        source.pricing.price =
+            Some(Price::new(MonetaryAmount::from(12_500_u64), Currency::Gbp).into());
         source.sale_observation = Some(ListingSaleObservation::new(
             OffsetDateTime::UNIX_EPOCH,
             sale_snapshot.id(),
@@ -1461,7 +1464,7 @@ mod tests {
     async fn should_fail_when_event_effective_snapshot_is_missing()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut source = product()?;
-        source.pricing.price = Some(Price::new(MonetaryAmount::from(1_u64), Currency::Eur));
+        source.pricing.price = Some(Price::new(MonetaryAmount::from(1_u64), Currency::Eur).into());
         let handler = matching_handler(
             Arc::new(Mutex::new(State::default())),
             vec![source.clone()],
@@ -1486,7 +1489,7 @@ mod tests {
     #[tokio::test]
     async fn should_fail_when_sale_snapshot_is_missing() -> Result<(), Box<dyn std::error::Error>> {
         let mut source = product()?;
-        source.pricing.price = Some(Price::new(MonetaryAmount::from(1_u64), Currency::Eur));
+        source.pricing.price = Some(Price::new(MonetaryAmount::from(1_u64), Currency::Eur).into());
         source.sale_observation = Some(ListingSaleObservation::new(
             OffsetDateTime::UNIX_EPOCH,
             FxRateId::new(),

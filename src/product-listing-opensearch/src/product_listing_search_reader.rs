@@ -18,6 +18,7 @@ use opensearch::http::request::JsonBody;
 use opensearch::{OpenSearch, SearchParts};
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_search::{
     ListingAvailabilityQuery, ProductListingSearch,
 };
@@ -178,7 +179,7 @@ fn map_summary(
 fn map_summary_fields(
     document: ProductListingDocument,
     preferred_language: Language,
-    display_price: Option<Price>,
+    display_price: Option<ProductListingPrice>,
     price_valuation: ProductListingSummaryPriceValuation,
 ) -> Result<ProductListingSearchItem, ProductListingSearchReadError> {
     let title = resolve_title(&document, preferred_language);
@@ -247,26 +248,40 @@ fn price_valuation(
 fn resolve_price(
     document: &ProductListingDocument,
     price_filter: &ProductListingPriceFilterPlan,
-) -> Result<Option<Price>, ProductListingSearchReadError> {
+) -> Result<Option<ProductListingPrice>, ProductListingSearchReadError> {
     document
         .validate()
         .map_err(|_| ProductListingSearchReadError::ProductListingSearchReadModelInvalid)?;
 
     if document.has_sale_observation() {
-        return Ok(document
-            .sale_price(price_filter.target_currency)
-            .map(|amount| Price::new(amount.into(), price_filter.target_currency)));
+        return match document.source_price() {
+            None => Ok(None),
+            Some(ProductListingPrice::OnRequest) => Ok(Some(ProductListingPrice::OnRequest)),
+            Some(ProductListingPrice::Monetary(_)) => document
+                .sale_price(price_filter.target_currency)
+                .map(|amount| {
+                    Some(ProductListingPrice::Monetary(Price::new(
+                        amount.into(),
+                        price_filter.target_currency,
+                    )))
+                })
+                .ok_or(ProductListingSearchReadError::ProductListingSearchReadModelInvalid),
+        };
     }
 
-    document
-        .source_price()
-        .map(|(amount, currency)| {
-            price_filter
-                .convert_active_source_amount(currency, amount)
-                .map(|amount| Price::new(amount.into(), price_filter.target_currency))
-                .map_err(|_| ProductListingSearchReadError::ProductListingSearchReadModelInvalid)
-        })
-        .transpose()
+    match document.source_price() {
+        None => Ok(None),
+        Some(ProductListingPrice::OnRequest) => Ok(Some(ProductListingPrice::OnRequest)),
+        Some(ProductListingPrice::Monetary(price)) => price_filter
+            .convert_active_source_amount(price.currency, u64::from(price.monetary_amount))
+            .map(|amount| {
+                Some(ProductListingPrice::Monetary(Price::new(
+                    amount.into(),
+                    price_filter.target_currency,
+                )))
+            })
+            .map_err(|_| ProductListingSearchReadError::ProductListingSearchReadModelInvalid),
+    }
 }
 
 fn map_hybrid_search_response(
@@ -809,6 +824,7 @@ mod tests {
         product_listing_id::ProductListingId, product_listing_search::ListingAvailabilityQuery,
         product_listing_slug_id::ProductListingSlugId, source_listing_id::SourceListingId,
     };
+    use rstest::rstest;
     use strum::IntoEnumIterator;
     use time::{OffsetDateTime, macros::datetime};
     use url::Url;
@@ -854,6 +870,37 @@ mod tests {
         )?)
     }
 
+    #[derive(Debug)]
+    enum ExpectedPrice {
+        Absent,
+        OnRequest,
+        Monetary(u64),
+    }
+
+    fn sale_prices(usd: u64) -> SalePricesDocument {
+        SalePricesDocument {
+            eur: 100,
+            gbp: 80,
+            usd,
+            aud: 100,
+            cad: 100,
+            nzd: 100,
+            cny: 100,
+            brl: 100,
+            pln: 100,
+            r#try: 100,
+            jpy: 100,
+            czk: 100,
+            rub: 100,
+            aed: 100,
+            sar: 100,
+            hkd: 100,
+            sgd: 100,
+            chf: 100,
+            zar: 100,
+        }
+    }
+
     fn document() -> Result<ProductListingDocument, url::ParseError> {
         Ok(ProductListingDocument {
             product_listing_id: ProductListingId::new(),
@@ -869,7 +916,7 @@ mod tests {
             title_fr: None,
             title_es: None,
             title_it: None,
-            source_price: Some(SourcePriceDocument {
+            source_price: Some(SourcePriceDocument::Monetary {
                 amount: 100,
                 currency: Currency::Eur,
             }),
@@ -1150,35 +1197,30 @@ mod tests {
 
         assert_eq!(
             price,
-            Some(Price::new(MonetaryAmount::from(110_u64), Currency::Usd))
+            Some(ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(110_u64),
+                Currency::Usd,
+            )))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn should_preserve_on_request_price_without_fx_conversion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = document()?;
+        document.source_price = Some(SourcePriceDocument::OnRequest);
+
+        let price = resolve_price(&document, &price_filter(Currency::Usd, Some(110))?)?;
+
+        assert_eq!(Some(ProductListingPrice::OnRequest), price);
         Ok(())
     }
 
     #[test]
     fn should_use_exact_target_sale_price() -> Result<(), Box<dyn std::error::Error>> {
         let mut document = document()?;
-        document.sale_prices = Some(SalePricesDocument {
-            eur: 100,
-            gbp: 80,
-            usd: 777,
-            aud: 100,
-            cad: 100,
-            nzd: 100,
-            cny: 100,
-            brl: 100,
-            pln: 100,
-            r#try: 100,
-            jpy: 100,
-            czk: 100,
-            rub: 100,
-            aed: 100,
-            sar: 100,
-            hkd: 100,
-            sgd: 100,
-            chf: 100,
-            zar: 100,
-        });
+        document.sale_prices = Some(sale_prices(777));
         document.sale_observation_fx_rate_id = Some(FxRateId::new());
         document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
 
@@ -1186,8 +1228,68 @@ mod tests {
 
         assert_eq!(
             price,
-            Some(Price::new(MonetaryAmount::from(777_u64), Currency::Usd))
+            Some(ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(777_u64),
+                Currency::Usd,
+            )))
         );
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::active_without_source_price(None, false, false, ExpectedPrice::Absent)]
+    #[case::active_on_request(
+        Some(SourcePriceDocument::OnRequest),
+        false,
+        false,
+        ExpectedPrice::OnRequest
+    )]
+    #[case::active_monetary(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        false,
+        false,
+        ExpectedPrice::Monetary(110)
+    )]
+    #[case::sold_without_source_price(None, true, false, ExpectedPrice::Absent)]
+    #[case::sold_on_request(
+        Some(SourcePriceDocument::OnRequest),
+        true,
+        false,
+        ExpectedPrice::OnRequest
+    )]
+    #[case::sold_monetary(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        true,
+        true,
+        ExpectedPrice::Monetary(777)
+    )]
+    fn should_resolve_prices_from_valid_source_and_sale_states(
+        #[case] source_price: Option<SourcePriceDocument>,
+        #[case] has_sale_metadata: bool,
+        #[case] has_sale_prices: bool,
+        #[case] expected: ExpectedPrice,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = document()?;
+        document.source_price = source_price;
+        document.sale_observation_fx_rate_id = has_sale_metadata.then(FxRateId::new);
+        document.sale_observed_at = has_sale_metadata.then_some(OffsetDateTime::UNIX_EPOCH);
+        document.sale_prices = has_sale_prices.then(|| sale_prices(777));
+
+        let resolved = resolve_price(&document, &price_filter(Currency::Usd, Some(110))?)?;
+
+        match (resolved, expected) {
+            (None, ExpectedPrice::Absent)
+            | (Some(ProductListingPrice::OnRequest), ExpectedPrice::OnRequest) => {}
+            (Some(ProductListingPrice::Monetary(price)), ExpectedPrice::Monetary(amount)) => {
+                assert_eq!(MonetaryAmount::from(amount), price.monetary_amount);
+                assert_eq!(Currency::Usd, price.currency);
+            }
+            (resolved, expected) => {
+                return Err(
+                    format!("unexpected resolved price {resolved:?} for {expected:?}").into(),
+                );
+            }
+        }
         Ok(())
     }
 

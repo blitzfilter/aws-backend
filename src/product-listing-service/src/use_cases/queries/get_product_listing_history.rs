@@ -16,6 +16,7 @@ use product_listing_core::{
     product_listing::{ListingSaleObservation, ProductListingAuction, ProductListingPricing},
     product_listing_event::ProductListingEventType,
     product_listing_id::ProductListingId,
+    product_listing_price::ProductListingPrice,
     product_listing_slug_id::ProductListingSlugId,
     source_listing_id::SourceListingId,
     title::Title,
@@ -108,8 +109,8 @@ impl TryFrom<Vec<ProductListingHistoryChange>> for ProductListingHistoryChanges 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProductListingHistoryChange {
     MainPriceChanged {
-        previous: Option<Price>,
-        current: Option<Price>,
+        previous: Option<ProductListingPrice>,
+        current: Option<ProductListingPrice>,
     },
     MinimumEstimateChanged {
         previous: Option<Price>,

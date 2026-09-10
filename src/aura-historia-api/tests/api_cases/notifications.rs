@@ -946,7 +946,13 @@ async fn seed_price_notification(
     new_amount: Option<u64>,
 ) {
     let product_listing_id = ProductListingId::new();
-    let price = |amount| serde_json::json!({ "currency": currency, "amount": amount });
+    let price = |amount| {
+        serde_json::json!({
+            "type": "MONETARY",
+            "currency": currency,
+            "amount": amount,
+        })
+    };
     seed_notification_with_payload(
         user_id,
         "WATCHLIST_PRICE_CHANGED",
@@ -1010,8 +1016,8 @@ async fn seed_notification_payloads(user_id: UserId) {
             "snapshot": product_snapshot(localized_title.clone(), image),
             "change": {
                 "type": "PRICE_CHANGE",
-                "old_price": { "currency": "EUR", "amount": 1000 },
-                "new_price": { "currency": "EUR", "amount": 900 }
+                "old_price": { "type": "MONETARY", "currency": "EUR", "amount": 1000 },
+                "new_price": { "type": "MONETARY", "currency": "EUR", "amount": 900 }
             }
         }),
     )

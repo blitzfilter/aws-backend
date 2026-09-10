@@ -68,6 +68,7 @@ pub(super) struct ProductListingDetailsRow {
     title_language: Option<String>,
     description_text: Option<String>,
     description_language: Option<String>,
+    price_kind: Option<String>,
     price_amount: Option<i64>,
     price_currency: Option<String>,
     price_estimate_min_amount: Option<i64>,
@@ -214,7 +215,7 @@ pub(super) const SELECT_PRODUCT_DETAILS: &str = r#"
         p.description_language AS product_description_language,
         selected_text.title_text, selected_text.title_language,
         selected_text.description_text, selected_text.description_language,
-        p.price_amount, p.price_currency, p.price_estimate_min_amount,
+        p.price_kind, p.price_amount, p.price_currency, p.price_estimate_min_amount,
         p.price_estimate_min_currency, p.price_estimate_max_amount,
         p.price_estimate_max_currency, p.sale_observation_fx_rate_id, p.sale_observed_at, p.availability, p.lifecycle, p.url,
         p.product_images,
@@ -392,7 +393,8 @@ impl TryFrom<ProductListingDetailsRow> for PersonalizedProductListingDetailsRead
         )?;
         let title = localized_title(row.title_text, row.title_language)?;
         let description = localized_description(row.description_text, row.description_language)?;
-        let product_price = price(row.price_amount, row.price_currency)?;
+        let product_price =
+            product_listing_price(row.price_kind, row.price_amount, row.price_currency)?;
         let product_price_estimate_min = price(
             row.price_estimate_min_amount,
             row.price_estimate_min_currency,
@@ -595,6 +597,26 @@ fn localized_description(
             )))
         }
         (None, None) => Ok(None),
+        _ => Err(()),
+    }
+}
+
+fn product_listing_price(
+    kind: Option<String>,
+    amount: Option<i64>,
+    currency: Option<String>,
+) -> Result<Option<product_listing_core::product_listing_price::ProductListingPrice>, ()> {
+    match (kind.as_deref(), amount, currency) {
+        (None, None, None) => Ok(None),
+        (Some("MONETARY"), Some(amount), Some(currency)) => Ok(Some(
+            product_listing_core::product_listing_price::ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(u64::try_from(amount).map_err(|_| ())?),
+                parse_currency(&currency)?,
+            )),
+        )),
+        (Some("ON_REQUEST"), None, None) => Ok(Some(
+            product_listing_core::product_listing_price::ProductListingPrice::OnRequest,
+        )),
         _ => Err(()),
     }
 }

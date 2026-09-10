@@ -159,7 +159,7 @@ mod tests {
             r#"[
                 {"sourceListingId":"omitted"},
                 {"sourceListingId":"clear","price":null},
-                {"sourceListingId":"set","price":{"amount":12000,"currency":"EUR"}}
+                {"sourceListingId":"set","price":{"type":"MONETARY","amount":12000,"currency":"EUR"}}
             ]"#,
             true,
         )

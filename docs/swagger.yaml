@@ -11926,7 +11926,7 @@ components:
           nullable: true
         displayPrice:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
         priceValuation:
           $ref: "#/components/schemas/ProductListingSummaryPriceValuationData"
@@ -12092,7 +12092,7 @@ components:
       properties:
         price:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
         priceEstimateMin:
           allOf:
@@ -12420,6 +12420,31 @@ components:
           description: Price amount in minor currency units (e.g., cents for most supported currencies, whole yen for JPY)
           minimum: 0
           example: 2999
+    ProductListingPriceData:
+      oneOf:
+        - type: object
+          required:
+            - type
+            - currency
+            - amount
+          additionalProperties: false
+          properties:
+            type:
+              type: string
+              enum: [MONETARY]
+            currency:
+              $ref: "#/components/schemas/CurrencyData"
+            amount:
+              type: integer
+              minimum: 0
+        - type: object
+          required:
+            - type
+          additionalProperties: false
+          properties:
+            type:
+              type: string
+              enum: [ON_REQUEST]
     ProductListingHistoryEntryData:
       type: object
       description: One immutable committed ProductListing domain-history entry.
@@ -12811,6 +12836,7 @@ components:
             $ref: "#/components/schemas/ProductListingHistoryChangeData"
     ProductListingHistoryChangeData:
       oneOf:
+        - $ref: "#/components/schemas/ProductListingMainPriceHistoryChangeData"
         - $ref: "#/components/schemas/ProductListingPriceHistoryChangeData"
         - $ref: "#/components/schemas/ProductListingAvailabilityHistoryChangeData"
         - $ref: "#/components/schemas/ProductListingUrlHistoryChangeData"
@@ -12820,7 +12846,7 @@ components:
         - $ref: "#/components/schemas/ProductListingRestorationHistoryChangeData"
         - $ref: "#/components/schemas/ProductListingSaleObservationHistoryChangeData"
       description: Typed semantic change.
-    ProductListingPriceHistoryChangeData:
+    ProductListingMainPriceHistoryChangeData:
       type: object
       required:
         - type
@@ -12831,6 +12857,24 @@ components:
           type: string
           enum:
             - MAIN_PRICE_CHANGED
+        previous:
+          allOf:
+            - $ref: "#/components/schemas/ProductListingPriceData"
+          nullable: true
+        current:
+          allOf:
+            - $ref: "#/components/schemas/ProductListingPriceData"
+          nullable: true
+    ProductListingPriceHistoryChangeData:
+      type: object
+      required:
+        - type
+        - previous
+        - current
+      properties:
+        type:
+          type: string
+          enum:
             - MINIMUM_ESTIMATE_CHANGED
             - MAXIMUM_ESTIMATE_CHANGED
         previous:
@@ -14812,14 +14856,14 @@ components:
             - PRICE_CHANGE
         oldPrice:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
-          description: Previous event price, preserving its source currency. Null when unavailable.
+          description: Previous asking-price assertion. Null when unavailable.
         newPrice:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
-          description: New event price, preserving its source currency. Null when unavailable.
+          description: New asking-price assertion. Null when unavailable.
     WatchlistNotificationAvailabilityChangeData:
       type: object
       required:
@@ -14973,9 +15017,9 @@ components:
           $ref: "#/components/schemas/LocalizedTextData"
         price:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
-          description: Optional asking price for the product
+          description: Optional asking-price assertion for the product.
         priceEstimateMin:
           allOf:
             - $ref: "#/components/schemas/PriceData"
@@ -15074,9 +15118,9 @@ components:
           example: baroque-violin-001
         price:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
-          description: Omit to leave unchanged. Send null to clear the current asking price.
+          description: Omit to leave unchanged. Send null to clear the current asking-price assertion.
         availability:
           allOf:
             - $ref: "#/components/schemas/ListingAvailabilityData"
@@ -15150,11 +15194,11 @@ components:
           description: Optional localized description of the product. Used only when creating a new product.
         price:
           allOf:
-            - $ref: "#/components/schemas/PriceData"
+            - $ref: "#/components/schemas/ProductListingPriceData"
           nullable: true
           description:
-            Optional current asking price. Omit to leave an existing price unchanged; send null to clear it; send
-            a value to set it. On creation, omitted and null both mean no current price.
+            Optional current asking-price assertion. Omit to leave it unchanged; send null to clear it; send a
+            tagged monetary or on-request value to set it. On creation, omitted and null both mean no assertion.
         priceEstimateMin:
           allOf:
             - $ref: "#/components/schemas/PriceData"

@@ -13,7 +13,7 @@ use fxrate_service::ports::{
 };
 use product_listing_core::{
     listing_availability::ListingAvailability, listing_lifecycle::ListingLifecycle,
-    product_listing_id::ProductListingId,
+    product_listing_id::ProductListingId, product_listing_price::ProductListingPrice,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,7 +190,7 @@ where
     };
     if source.lifecycle != ListingLifecycle::Active
         || source.availability != Some(ListingAvailability::SoldOut)
-        || source.pricing.price.is_none()
+        || !matches!(source.pricing.price, Some(ProductListingPrice::Monetary(_)))
     {
         return Ok(None);
     }
@@ -613,7 +613,11 @@ mod tests {
         let state = state();
         let snapshot = snapshot()?;
         let mut source = source()?;
-        source.pricing.price = Some(money::Price::new(100_u64.into(), Currency::Eur));
+        source.pricing.price = Some(
+            product_listing_core::product_listing_price::ProductListingPrice::from(
+                money::Price::new(100_u64.into(), Currency::Eur),
+            ),
+        );
         source.availability = Some(ListingAvailability::SoldOut);
         source.sale_observation = Some(ListingSaleObservation::new(
             time::OffsetDateTime::UNIX_EPOCH,
@@ -667,7 +671,11 @@ mod tests {
         let state = state();
         let snapshot = snapshot()?;
         let mut source = source()?;
-        source.pricing.price = Some(money::Price::new(100_u64.into(), Currency::Eur));
+        source.pricing.price = Some(
+            product_listing_core::product_listing_price::ProductListingPrice::from(
+                money::Price::new(100_u64.into(), Currency::Eur),
+            ),
+        );
         source.availability = Some(ListingAvailability::SoldOut);
         source.sale_observation = Some(ListingSaleObservation::new(
             time::OffsetDateTime::UNIX_EPOCH,
@@ -699,7 +707,11 @@ mod tests {
         let state = state();
         let snapshot = snapshot()?;
         let mut source = source()?;
-        source.pricing.price = Some(money::Price::new(100_u64.into(), Currency::Eur));
+        source.pricing.price = Some(
+            product_listing_core::product_listing_price::ProductListingPrice::from(
+                money::Price::new(100_u64.into(), Currency::Eur),
+            ),
+        );
         source.availability = Some(ListingAvailability::SoldOut);
         source.sale_observation = Some(ListingSaleObservation::new(
             time::OffsetDateTime::UNIX_EPOCH,

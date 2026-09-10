@@ -1,10 +1,10 @@
 use crate::error::{ApiError, BAD_BODY_VALUE};
 use crate::product_listings::product_data::ProductListingImageData;
-use crate::values::{LocalizedTextData, PriceData};
+use crate::values::{LocalizedTextData, ProductListingPriceData};
 use axum::response::{IntoResponse, Response};
 use listing_source_core::listing_source_id::ListingSourceId;
 use localization::{Language, Localized};
-use money::Price;
+
 use notification_core::{
     notification::{
         LocalizedNotificationContent, LocalizedNotificationWatchlistChange,
@@ -18,7 +18,8 @@ use notification_service::presentation::NotificationPresentationPreferences;
 use notification_service::use_cases::queries::list_notifications::ListedNotification;
 use partnership_core::partnership_application_id::PartnershipApplicationId;
 use product_listing_core::{
-    listing_availability::ListingAvailability, product_listing_id::ProductListingId, title::Title,
+    listing_availability::ListingAvailability, product_listing_id::ProductListingId,
+    product_listing_price::ProductListingPrice, title::Title,
 };
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use serde::{Deserialize, Serialize, Serializer};
@@ -114,8 +115,8 @@ struct WatchlistNotificationPayloadData {
 )]
 enum WatchlistNotificationChangeData {
     PriceChange {
-        old_price: Option<PriceData>,
-        new_price: Option<PriceData>,
+        old_price: Option<ProductListingPriceData>,
+        new_price: Option<ProductListingPriceData>,
     },
     AvailabilityChange {
         #[serde(with = "crate::wire::listing_availability::option")]
@@ -255,11 +256,8 @@ fn localized_text_data(value: Localized<Language, Title>) -> LocalizedTextData {
     }
 }
 
-fn price_data(value: Price) -> PriceData {
-    PriceData {
-        currency: value.currency,
-        amount: value.monetary_amount.into(),
-    }
+fn product_listing_price_data(value: ProductListingPrice) -> ProductListingPriceData {
+    value.into()
 }
 
 struct NotificationProductListingSnapshotData {
@@ -281,8 +279,8 @@ impl From<LocalizedNotificationWatchlistChange> for WatchlistNotificationChangeD
                 old_price,
                 new_price,
             } => Self::PriceChange {
-                old_price: old_price.map(price_data),
-                new_price: new_price.map(price_data),
+                old_price: old_price.map(product_listing_price_data),
+                new_price: new_price.map(product_listing_price_data),
             },
             LocalizedNotificationWatchlistChange::AvailabilityChange {
                 old_availability,

@@ -21,6 +21,7 @@ use product_listing_core::product_listing::{
 };
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::product_listing_image::ProductListingImage;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_core::title::Title;
 use time::OffsetDateTime;
@@ -36,7 +37,7 @@ pub struct CanonicalProductListingUpsert {
     pub source_listing_id: SourceListingId,
     pub title: PatchField<Localized<Language, Title>>,
     pub description: PatchField<Localized<Language, Description>>,
-    pub price: PatchField<Price>,
+    pub price: PatchField<ProductListingPrice>,
     pub price_estimate_min: PatchField<Price>,
     pub price_estimate_max: PatchField<Price>,
     pub availability: PatchField<ListingAvailability>,

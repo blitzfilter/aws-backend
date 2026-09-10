@@ -1,4 +1,4 @@
-use crate::values::{LocalizedTextData, PriceData};
+use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use application::operation_context::Principal;
 use axum::Json;
 use axum::http::{HeaderValue, header};
@@ -153,7 +153,7 @@ pub(crate) struct ProductListingSummaryData {
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<LocalizedTextData>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    display_price: Option<PriceData>,
+    display_price: Option<ProductListingPriceData>,
     price_valuation: ProductListingSummaryPriceValuationData,
     #[serde(with = "crate::wire::listing_availability::option")]
     availability: Option<ListingAvailability>,
@@ -179,7 +179,7 @@ struct ProductListingPricingPresentationData {
 #[serde(rename_all = "camelCase")]
 struct ProductListingPricingData {
     #[serde(skip_serializing_if = "Option::is_none")]
-    price: Option<PriceData>,
+    price: Option<ProductListingPriceData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     price_estimate_min: Option<PriceData>,
     #[serde(skip_serializing_if = "Option::is_none")]

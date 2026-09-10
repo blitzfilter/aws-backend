@@ -63,7 +63,7 @@ async fn should_read_service_owned_domain_history_by_id_and_title_slug() {
 
     product
         .replace_pricing(ProductListingPricing {
-            price: Some(Price::new(MonetaryAmount::from(13_u64), Currency::Eur)),
+            price: Some(Price::new(MonetaryAmount::from(13_u64), Currency::Eur).into()),
             price_estimate_min: None,
             price_estimate_max: None,
         })
@@ -164,7 +164,7 @@ fn sample_product(listing_source_id: ListingSourceId) -> ProductListing {
             Description::from("Service-owned history model"),
         )),
         pricing: ProductListingPricing {
-            price: Some(Price::new(MonetaryAmount::from(12_u64), Currency::Eur)),
+            price: Some(Price::new(MonetaryAmount::from(12_u64), Currency::Eur).into()),
             price_estimate_min: None,
             price_estimate_max: None,
         },

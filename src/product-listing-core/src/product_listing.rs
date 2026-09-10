@@ -8,6 +8,7 @@ use crate::product_listing_event::{
 };
 use crate::product_listing_id::ProductListingId;
 use crate::product_listing_image::ProductListingImage;
+use crate::product_listing_price::ProductListingPrice;
 use crate::product_listing_slug_id::ProductListingSlugId;
 use crate::source_listing_id::SourceListingId;
 use crate::title::Title;
@@ -74,7 +75,7 @@ pub struct RehydratedProductListingState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ProductListingPricing {
-    pub price: Option<Price>,
+    pub price: Option<ProductListingPrice>,
     pub price_estimate_min: Option<Price>,
     pub price_estimate_max: Option<Price>,
 }
@@ -389,7 +390,13 @@ impl ProductListing {
 
     pub fn set_price(&mut self, price: Price) -> Result<ChangeOutcome, ChangeProductListingError> {
         let mut pricing = self.pricing;
-        pricing.price = Some(price);
+        pricing.price = Some(ProductListingPrice::Monetary(price));
+        self.replace_pricing(pricing)
+    }
+
+    pub fn set_price_on_request(&mut self) -> Result<ChangeOutcome, ChangeProductListingError> {
+        let mut pricing = self.pricing;
+        pricing.price = Some(ProductListingPrice::OnRequest);
         self.replace_pricing(pricing)
     }
 
@@ -647,7 +654,7 @@ mod tests {
     #[test]
     fn should_emit_discovered_with_semantic_facts_and_image_count() {
         let mut source = input();
-        source.pricing.price = Some(eur_price(100));
+        source.pricing.price = Some(ProductListingPrice::from(eur_price(100)));
         source.availability = Some(ListingAvailability::InStock);
         source.images.insert(ProductListingImage::new(
             Url::parse("https://shop.example/a.jpg").unwrap_or_else(|error| panic!("URL: {error}")),
@@ -667,7 +674,10 @@ mod tests {
             ProductListingEventPayload::Discovered(discovered.clone()).event_type()
         );
         assert_eq!(&source_listing_id, discovered.source_listing_id());
-        assert_eq!(Some(eur_price(100)), discovered.pricing().price);
+        assert_eq!(
+            Some(ProductListingPrice::from(eur_price(100))),
+            discovered.pricing().price
+        );
         assert_eq!(
             Some(ListingAvailability::InStock),
             discovered.availability()
@@ -697,7 +707,10 @@ mod tests {
         else {
             panic!("expected one discovered payload");
         };
-        assert_eq!(Some(eur_price(150)), discovered.pricing().price);
+        assert_eq!(
+            Some(ProductListingPrice::from(eur_price(150))),
+            discovered.pricing().price
+        );
         assert_eq!(
             Some(ListingAvailability::InStock),
             discovered.availability()
@@ -708,18 +721,81 @@ mod tests {
     }
 
     #[test]
+    fn should_distinguish_on_request_price_transitions() {
+        let mut listing = rehydrated();
+
+        assert_eq!(Ok(ChangeOutcome::Changed), listing.set_price_on_request());
+        let Some(ProductListingEventPayload::Changed(changed)) =
+            listing.take_pending_event_payload()
+        else {
+            panic!("expected changed payload");
+        };
+        assert_eq!(Some(&None), changed.price().map(ValueChange::previous));
+        assert_eq!(
+            Some(&Some(ProductListingPrice::OnRequest)),
+            changed.price().map(ValueChange::current)
+        );
+
+        assert_eq!(
+            Ok(ChangeOutcome::Changed),
+            listing.set_price(eur_price(100))
+        );
+        let Some(ProductListingEventPayload::Changed(changed)) =
+            listing.take_pending_event_payload()
+        else {
+            panic!("expected changed payload");
+        };
+        assert_eq!(
+            Some(&Some(ProductListingPrice::OnRequest)),
+            changed.price().map(ValueChange::previous)
+        );
+        assert_eq!(
+            Some(&Some(ProductListingPrice::from(eur_price(100)))),
+            changed.price().map(ValueChange::current)
+        );
+
+        assert_eq!(Ok(ChangeOutcome::Changed), listing.set_price_on_request());
+        assert_eq!(Ok(ChangeOutcome::Unchanged), listing.set_price_on_request());
+        let Some(ProductListingEventPayload::Changed(changed)) =
+            listing.take_pending_event_payload()
+        else {
+            panic!("expected changed payload");
+        };
+        assert_eq!(
+            Some(&Some(ProductListingPrice::from(eur_price(100)))),
+            changed.price().map(ValueChange::previous)
+        );
+        assert_eq!(
+            Some(&Some(ProductListingPrice::OnRequest)),
+            changed.price().map(ValueChange::current)
+        );
+
+        assert_eq!(Ok(ChangeOutcome::Changed), listing.clear_price());
+        let Some(ProductListingEventPayload::Changed(changed)) =
+            listing.take_pending_event_payload()
+        else {
+            panic!("expected changed payload");
+        };
+        assert_eq!(
+            Some(&Some(ProductListingPrice::OnRequest)),
+            changed.price().map(ValueChange::previous)
+        );
+        assert_eq!(Some(&None), changed.price().map(ValueChange::current));
+    }
+
+    #[test]
     fn should_coalesce_split_price_changes_and_remove_net_zero_dimensions() {
         let mut listing = rehydrated();
         listing
             .replace_pricing(ProductListingPricing {
-                price: Some(eur_price(100)),
+                price: Some(ProductListingPrice::from(eur_price(100))),
                 price_estimate_min: Some(eur_price(80)),
                 price_estimate_max: Some(eur_price(120)),
             })
             .unwrap_or_else(|error| panic!("replace pricing: {error}"));
         listing
             .replace_pricing(ProductListingPricing {
-                price: Some(eur_price(150)),
+                price: Some(ProductListingPrice::from(eur_price(150))),
                 price_estimate_min: None,
                 price_estimate_max: Some(eur_price(120)),
             })
@@ -732,7 +808,7 @@ mod tests {
         };
         assert_eq!(Some(&None), changed.price().map(ValueChange::previous));
         assert_eq!(
-            Some(&Some(eur_price(150))),
+            Some(&Some(ProductListingPrice::from(eur_price(150)))),
             changed.price().map(ValueChange::current)
         );
         assert_eq!(None, changed.price_estimate_min());

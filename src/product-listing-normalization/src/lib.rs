@@ -29,7 +29,7 @@ pub use normalization_input::{
     RawProductListingPayloadFormat, RawProductListingProvenance, RawProductListingValues,
     SchemaVersionField, SourcePayload, SourcePayloadHash,
 };
-pub use price::{PriceNormalizationError, normalize_price};
+pub use price::{PriceNormalizationError, normalize_price, normalize_product_listing_price};
 pub use raw_values_normalizer::{
     PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
     ProductListingNormalizationContextV1, ProductListingRawValuesNormalizationError,

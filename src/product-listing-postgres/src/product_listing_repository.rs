@@ -19,6 +19,7 @@ use product_listing_core::product_listing::{
 };
 use product_listing_core::product_listing_id::{ProductListingId, ProductListingKey};
 use product_listing_core::product_listing_image::ProductListingImage;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 
 use product_listing_core::source_listing_id::SourceListingId;
@@ -53,6 +54,7 @@ struct ProductListingRow {
     title_language: Option<String>,
     description_text: Option<String>,
     description_language: Option<String>,
+    price_kind: Option<String>,
     price_amount: Option<i64>,
     price_currency: Option<String>,
     price_estimate_min_amount: Option<i64>,
@@ -108,7 +110,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
             SELECT
                 product_listing_id, product_listing_title_slug_id, version, current_event_id, listing_source_id, source_listing_id,
                 title_text, title_language, description_text, description_language,
-                price_amount, price_currency, price_estimate_min_amount,
+                price_kind, price_amount, price_currency, price_estimate_min_amount,
                 price_estimate_min_currency, price_estimate_max_amount,
                 price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url,
                 product_images, embedding, auction_start, auction_end, created, updated
@@ -133,7 +135,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
             SELECT
                 product_listing_id, product_listing_title_slug_id, version, current_event_id, listing_source_id, source_listing_id,
                 title_text, title_language, description_text, description_language,
-                price_amount, price_currency, price_estimate_min_amount,
+                price_kind, price_amount, price_currency, price_estimate_min_amount,
                 price_estimate_min_currency, price_estimate_max_amount,
                 price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url,
                 product_images, embedding, auction_start, auction_end, created, updated
@@ -160,11 +162,9 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         let auction = product.auction();
         let title = product.title();
         let description = product.description();
-        let price_amount = pricing
-            .price
-            .map(|value| amount_to_i64(value.monetary_amount))
-            .transpose()
-            .map_err(|_| ProductListingRepositoryError::ProductListingInsertFailed)?;
+        let (price_kind, price_amount, price_currency) =
+            product_listing_price_to_parts(pricing.price)
+                .map_err(|_| ProductListingRepositoryError::ProductListingInsertFailed)?;
         let price_estimate_min_amount = pricing
             .price_estimate_min
             .map(|value| amount_to_i64(value.monetary_amount))
@@ -182,13 +182,13 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
             INSERT INTO product_listings (
                 product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id,
                 embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language,
-                description_text, description_language, price_amount, price_currency,
+                description_text, description_language, price_kind, price_amount, price_currency,
                 price_estimate_min_amount, price_estimate_min_currency, price_estimate_max_amount,
                 price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at,
                 availability, lifecycle, url, product_images, auction_start, auction_end
             ) VALUES (
-                $1, $2, $3, $3, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+                $1, $2, $3, $3, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
             )
             RETURNING version
             "#,
@@ -202,12 +202,9 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .bind(title.map(|value| value.localization.as_str().to_owned()))
         .bind(description.map(|value| value.payload.as_ref().to_owned()))
         .bind(description.map(|value| value.localization.as_str().to_owned()))
+        .bind(price_kind)
         .bind(price_amount)
-        .bind(
-            pricing
-                .price
-                .map(|value| value.currency.as_str().to_owned()),
-        )
+        .bind(price_currency)
         .bind(price_estimate_min_amount)
         .bind(
             pricing
@@ -252,11 +249,9 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         let auction = product.auction();
         let title = product.title();
         let description = product.description();
-        let price_amount = pricing
-            .price
-            .map(|value| amount_to_i64(value.monetary_amount))
-            .transpose()
-            .map_err(|_| ProductListingRepositoryError::ProductListingUpdateFailed)?;
+        let (price_kind, price_amount, price_currency) =
+            product_listing_price_to_parts(pricing.price)
+                .map_err(|_| ProductListingRepositoryError::ProductListingUpdateFailed)?;
         let price_estimate_min_amount = pricing
             .price_estimate_min
             .map(|value| amount_to_i64(value.monetary_amount))
@@ -282,24 +277,25 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
                 title_language = $4,
                 description_text = $5,
                 description_language = $6,
-                price_amount = $7,
-                price_currency = $8,
-                price_estimate_min_amount = $9,
-                price_estimate_min_currency = $10,
-                price_estimate_max_amount = $11,
-                price_estimate_max_currency = $12,
-                sale_observation_fx_rate_id = $13,
-                sale_observed_at = $14,
-                availability = $15,
-                lifecycle = $16,
-                url = $17,
-                product_images = $18,
-                auction_start = $19,
-                auction_end = $20,
+                price_kind = $7,
+                price_amount = $8,
+                price_currency = $9,
+                price_estimate_min_amount = $10,
+                price_estimate_min_currency = $11,
+                price_estimate_max_amount = $12,
+                price_estimate_max_currency = $13,
+                sale_observation_fx_rate_id = $14,
+                sale_observed_at = $15,
+                availability = $16,
+                lifecycle = $17,
+                url = $18,
+                product_images = $19,
+                auction_start = $20,
+                auction_end = $21,
                 version = version + 1,
                 projection_version = projection_version + 1,
                 updated = now()
-            WHERE product_listing_id = $21 AND version = $22
+            WHERE product_listing_id = $22 AND version = $23
             RETURNING version
             "#,
         )
@@ -309,12 +305,9 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .bind(title.map(|value| value.localization.as_str().to_owned()))
         .bind(description.map(|value| value.payload.as_ref().to_owned()))
         .bind(description.map(|value| value.localization.as_str().to_owned()))
+        .bind(price_kind)
         .bind(price_amount)
-        .bind(
-            pricing
-                .price
-                .map(|value| value.currency.as_str().to_owned()),
-        )
+        .bind(price_currency)
         .bind(price_estimate_min_amount)
         .bind(
             pricing
@@ -373,7 +366,11 @@ impl TryFrom<ProductListingRow> for VersionedProductListing {
             title,
             description,
             pricing: ProductListingPricing {
-                price: price_from_parts(row.price_amount, row.price_currency)?,
+                price: product_listing_price_from_parts(
+                    row.price_kind,
+                    row.price_amount,
+                    row.price_currency,
+                )?,
                 price_estimate_min: price_from_parts(
                     row.price_estimate_min_amount,
                     row.price_estimate_min_currency,
@@ -426,6 +423,76 @@ fn sale_observation_from_parts(
 
 fn amount_to_i64(amount: MonetaryAmount) -> Result<i64, ()> {
     i64::try_from(u64::from(amount)).map_err(|_| ())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProductListingPriceKind {
+    Monetary,
+    OnRequest,
+}
+
+impl ProductListingPriceKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Monetary => "MONETARY",
+            Self::OnRequest => "ON_REQUEST",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, ProductListingRepositoryError> {
+        match value {
+            "MONETARY" => Ok(Self::Monetary),
+            "ON_REQUEST" => Ok(Self::OnRequest),
+            _ => Err(ProductListingRepositoryError::InvalidProductListingPriceKindPersisted),
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn product_listing_price_to_parts(
+    price: Option<ProductListingPrice>,
+) -> Result<(Option<&'static str>, Option<i64>, Option<String>), ()> {
+    match price {
+        None => Ok((None, None, None)),
+        Some(ProductListingPrice::Monetary(price)) => Ok((
+            Some(ProductListingPriceKind::Monetary.as_str()),
+            Some(amount_to_i64(price.monetary_amount)?),
+            Some(price.currency.as_str().to_owned()),
+        )),
+        Some(ProductListingPrice::OnRequest) => Ok((
+            Some(ProductListingPriceKind::OnRequest.as_str()),
+            None,
+            None,
+        )),
+    }
+}
+
+fn product_listing_price_from_parts(
+    kind: Option<String>,
+    amount: Option<i64>,
+    currency: Option<String>,
+) -> Result<Option<ProductListingPrice>, ProductListingRepositoryError> {
+    let Some(kind) = kind else {
+        return match (amount, currency) {
+            (None, None) => Ok(None),
+            _ => Err(ProductListingRepositoryError::InvalidProductListingPricePersisted),
+        };
+    };
+
+    match (ProductListingPriceKind::parse(&kind)?, amount, currency) {
+        (ProductListingPriceKind::Monetary, Some(amount), Some(currency)) => {
+            let amount = u64::try_from(amount)
+                .map_err(|_| ProductListingRepositoryError::NegativePriceAmountPersisted)?;
+            Ok(Some(ProductListingPrice::Monetary(Price::new(
+                MonetaryAmount::from(amount),
+                parse_currency(&currency)?,
+            ))))
+        }
+        (ProductListingPriceKind::OnRequest, None, None) => {
+            Ok(Some(ProductListingPrice::OnRequest))
+        }
+        _ => Err(ProductListingRepositoryError::InvalidProductListingPricePersisted),
+    }
 }
 
 fn price_from_parts(
@@ -641,6 +708,58 @@ mod tests {
     }
 
     #[test]
+    fn should_map_all_product_listing_price_states_from_parts() {
+        assert!(matches!(
+            product_listing_price_from_parts(None, None, None),
+            Ok(None)
+        ));
+        assert!(matches!(
+            product_listing_price_from_parts(
+                Some("MONETARY".to_owned()),
+                Some(123),
+                Some("EUR".to_owned()),
+            ),
+            Ok(Some(ProductListingPrice::Monetary(price)))
+                if price == Price::new(MonetaryAmount::from(123_u64), Currency::Eur)
+        ));
+        assert!(matches!(
+            product_listing_price_from_parts(Some("ON_REQUEST".to_owned()), None, None),
+            Ok(Some(ProductListingPrice::OnRequest))
+        ));
+    }
+
+    #[test]
+    fn should_reject_corrupt_product_listing_price_parts() {
+        for parts in [
+            (None, Some(1), None),
+            (None, None, Some("EUR".to_owned())),
+            (Some("MONETARY".to_owned()), None, Some("EUR".to_owned())),
+            (Some("MONETARY".to_owned()), Some(1), None),
+            (Some("ON_REQUEST".to_owned()), Some(1), None),
+            (Some("ON_REQUEST".to_owned()), None, Some("EUR".to_owned())),
+            (Some("UNKNOWN".to_owned()), None, None),
+        ] {
+            assert!(product_listing_price_from_parts(parts.0, parts.1, parts.2).is_err());
+        }
+        assert!(matches!(
+            product_listing_price_from_parts(
+                Some("MONETARY".to_owned()),
+                Some(-1),
+                Some("EUR".to_owned()),
+            ),
+            Err(ProductListingRepositoryError::NegativePriceAmountPersisted)
+        ));
+        assert!(matches!(
+            product_listing_price_from_parts(
+                Some("MONETARY".to_owned()),
+                Some(1),
+                Some("NOPE".to_owned()),
+            ),
+            Err(ProductListingRepositoryError::InvalidPriceCurrencyPersisted)
+        ));
+    }
+
+    #[test]
     fn should_reject_incomplete_negative_and_invalid_price_parts() {
         assert!(matches!(
             price_from_parts(Some(123), None),
@@ -792,6 +911,7 @@ mod tests {
             title_language: Some("en".to_owned()),
             description_text: Some("description".to_owned()),
             description_language: Some("de".to_owned()),
+            price_kind: Some("MONETARY".to_owned()),
             price_amount: Some(1_200),
             price_currency: Some("EUR".to_owned()),
             price_estimate_min_amount: None,

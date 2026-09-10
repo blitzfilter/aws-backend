@@ -30,6 +30,7 @@ use product_listing_core::product_listing::{
 };
 use product_listing_core::product_listing_id::{ProductListingId, ProductListingKey};
 use product_listing_core::product_listing_image::ProductListingImage;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 use product_listing_core::source_listing_id::SourceListingId;
 use product_listing_core::title::Title;
@@ -43,7 +44,7 @@ pub struct UpsertProductListingCommand {
     pub source_listing_id: SourceListingId,
     pub title: Option<Localized<Language, Title>>,
     pub description: Option<Localized<Language, Description>>,
-    pub price: PatchField<Price>,
+    pub price: PatchField<ProductListingPrice>,
     pub price_estimate_min: PatchField<Price>,
     pub price_estimate_max: PatchField<Price>,
     pub availability: PatchField<ListingAvailability>,
@@ -573,7 +574,7 @@ mod tests {
         Price::new(MonetaryAmount::from(amount), Currency::Eur)
     }
 
-    fn command(price: PatchField<Price>) -> UpsertProductListingCommand {
+    fn command(price: PatchField<ProductListingPrice>) -> UpsertProductListingCommand {
         UpsertProductListingCommand {
             listing_source_id: ListingSourceId::new(),
             source_listing_id: SourceListingId::try_from("listing")
@@ -596,7 +597,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("valid product listing title slug: {error}"))
     }
 
-    fn listing_with_price(value: Option<Price>) -> ProductListing {
+    fn listing_with_price(value: Option<ProductListingPrice>) -> ProductListing {
         listing_with_state(
             ProductListingPricing {
                 price: value,
@@ -633,11 +634,17 @@ mod tests {
     #[test]
     fn should_apply_main_price_patch_for_existing_listing() {
         for (patch, expected) in [
-            (PatchField::Unchanged, Some(price(100))),
-            (PatchField::Set(price(120)), Some(price(120))),
+            (
+                PatchField::Unchanged,
+                Some(ProductListingPrice::from(price(100))),
+            ),
+            (
+                PatchField::Set(ProductListingPrice::from(price(120))),
+                Some(ProductListingPrice::from(price(120))),
+            ),
             (PatchField::Clear, None),
         ] {
-            let mut listing = listing_with_price(Some(price(100)));
+            let mut listing = listing_with_price(Some(ProductListingPrice::from(price(100))));
             listing.take_pending_event_payload();
             let changed = patch.is_changed();
             let update = command(patch);
@@ -706,12 +713,12 @@ mod tests {
     #[test]
     fn should_emit_one_price_event_with_final_pricing_for_combined_patch() {
         let old_pricing = ProductListingPricing {
-            price: Some(price(100)),
+            price: Some(ProductListingPrice::from(price(100))),
             price_estimate_min: Some(price(110)),
             price_estimate_max: Some(price(120)),
         };
         let new_pricing = ProductListingPricing {
-            price: Some(price(200)),
+            price: Some(ProductListingPrice::from(price(200))),
             price_estimate_min: Some(price(210)),
             price_estimate_max: Some(price(220)),
         };
@@ -721,7 +728,7 @@ mod tests {
             ProductListingAuction::default(),
         );
         listing.take_pending_event_payload();
-        let mut update = command(PatchField::Set(price(200)));
+        let mut update = command(PatchField::Set(ProductListingPrice::from(price(200))));
         update.price_estimate_min = PatchField::Set(price(210));
         update.price_estimate_max = PatchField::Set(price(220));
 
@@ -831,7 +838,7 @@ mod tests {
     #[test]
     fn should_create_listing_without_price_for_clear_or_unchanged_patch() {
         for patch in [
-            PatchField::Set(price(100)),
+            PatchField::Set(ProductListingPrice::from(price(100))),
             PatchField::Clear,
             PatchField::Unchanged,
         ] {
@@ -1085,7 +1092,7 @@ mod tests {
         }
     }
     fn handler_command() -> UpsertProductListingCommand {
-        command(PatchField::Set(price(20)))
+        command(PatchField::Set(ProductListingPrice::from(price(20))))
     }
     fn handler(
         state: &SharedHandlerState,
@@ -1100,7 +1107,7 @@ mod tests {
         )
     }
     fn existing_listing() -> VersionedProductListing {
-        let mut listing = listing_with_price(Some(price(10)));
+        let mut listing = listing_with_price(Some(ProductListingPrice::from(price(10))));
         listing.take_pending_event_payload();
         Versioned::new(listing, ProductListingStorageVersion::INITIAL)
     }
@@ -1195,7 +1202,7 @@ mod tests {
     }
     #[tokio::test]
     async fn should_restore_withdrawn_listing_on_canonical_upsert() {
-        let mut withdrawn = listing_with_price(Some(price(10)));
+        let mut withdrawn = listing_with_price(Some(ProductListingPrice::from(price(10))));
         withdrawn.take_pending_event_payload();
         withdrawn
             .withdraw()

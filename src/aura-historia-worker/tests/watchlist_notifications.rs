@@ -439,8 +439,8 @@ async fn create_price_notifications_only_for_active_watchers()
             json!({
                 "pricing": {
                     "price": {
-                        "previous": {"amount": 1200, "currency": "USD"},
-                        "current": {"amount": 900, "currency": "USD"}
+                        "previous": {"type": "MONETARY", "amount": 1200, "currency": "USD"},
+                        "current": {"type": "MONETARY", "amount": 900, "currency": "USD"}
                     }
                 }
             }),
@@ -456,6 +456,34 @@ async fn create_price_notifications_only_for_active_watchers()
             email_notifications[0].origin_event_id
         );
         assert_price_change(&email_notifications[0], "USD", 1200, 900)?;
+
+        let on_request_event_id = EventId::new();
+        let mut on_request_transaction = worker.pool.begin().await?;
+        insert_product_event(
+            &mut on_request_transaction,
+            on_request_event_id,
+            product_listing_id,
+            "PRODUCT_LISTING_CHANGED",
+            json!({
+                "pricing": {
+                    "price": {
+                        "previous": {"type": "MONETARY", "amount": 900, "currency": "USD"},
+                        "current": {"type": "ON_REQUEST"}
+                    }
+                }
+            }),
+        )
+        .await?;
+        on_request_transaction.commit().await?;
+
+        let email_notifications = wait_for_notifications(&worker.pool, email_recipient, 2).await?;
+        let on_request_notification = email_notifications
+            .iter()
+            .find(|notification| {
+                notification.origin_event_id == uuid::Uuid::from(on_request_event_id)
+            })
+            .ok_or("missing ON_REQUEST price notification")?;
+        assert_on_request_price_change(on_request_notification)?;
         assert_no_notifications_for(
             &worker.pool,
             inactive_recipient,
@@ -942,6 +970,20 @@ fn assert_availability_change(
         notification
             .payload
             .pointer("/change/new_availability")
+            .and_then(serde_json::Value::as_str)
+    );
+    Ok(())
+}
+
+fn assert_on_request_price_change(
+    notification: &WatchlistNotificationRow,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!("WATCHLIST_PRICE_CHANGED", notification.kind);
+    assert_eq!(
+        Some("ON_REQUEST"),
+        notification
+            .payload
+            .pointer("/change/new_price/type")
             .and_then(serde_json::Value::as_str)
     );
     Ok(())

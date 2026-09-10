@@ -234,7 +234,7 @@ mod tests {
             &format!("/api/v1/listing-sources/{listing_source_id}/product-listings"),
             r#"[{
                 "sourceListingId":"leaf-fields",
-                "price":{"amount":12000,"currency":"EUR"},
+                "price":{"type":"MONETARY","amount":12000,"currency":"EUR"},
                 "priceEstimateMin":{"amount":10000,"currency":"EUR"},
                 "priceEstimateMax":{"amount":14000,"currency":"EUR"},
                 "availability":"AVAILABLE",

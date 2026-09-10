@@ -7,6 +7,7 @@ use localization::Language;
 use money::Currency;
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::product_listing_id::ProductListingId;
+use product_listing_core::product_listing_price::ProductListingPrice;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 use product_listing_core::source_listing_id::SourceListingId;
 use serde::{Deserialize, Serialize};
@@ -165,12 +166,38 @@ impl TextDocument {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SourcePriceDocument {
-    pub(crate) amount: u64,
-    #[serde(with = "currency")]
-    pub(crate) currency: Currency,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub(crate) enum SourcePriceDocument {
+    Monetary {
+        amount: u64,
+        #[serde(with = "currency")]
+        currency: Currency,
+    },
+    OnRequest,
+}
+
+impl From<ProductListingPrice> for SourcePriceDocument {
+    fn from(value: ProductListingPrice) -> Self {
+        match value {
+            ProductListingPrice::Monetary(price) => Self::Monetary {
+                amount: u64::from(price.monetary_amount),
+                currency: price.currency,
+            },
+            ProductListingPrice::OnRequest => Self::OnRequest,
+        }
+    }
+}
+
+impl From<SourcePriceDocument> for ProductListingPrice {
+    fn from(value: SourcePriceDocument) -> Self {
+        match value {
+            SourcePriceDocument::Monetary { amount, currency } => {
+                Self::Monetary(money::Price::new(amount.into(), currency))
+            }
+            SourcePriceDocument::OnRequest => Self::OnRequest,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +253,12 @@ impl SalePricesDocument {
 pub(crate) enum ProductListingDocumentValidationError {
     #[error("product sale projection metadata must be complete when present")]
     PartialSaleProjection,
+    #[error("product sale prices require sale projection metadata")]
+    SalePricesWithoutSaleObservation,
+    #[error("product sale prices require a monetary source price")]
+    SalePricesRequireMonetarySourcePrice,
+    #[error("a monetary source price with sale metadata requires sale prices")]
+    MissingSalePricesForMonetarySaleObservation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SerdeField)]
@@ -297,20 +330,36 @@ impl ProductListingDocument {
     }
 
     pub(crate) fn validate(&self) -> Result<(), ProductListingDocumentValidationError> {
+        let has_sale_metadata = match (self.sale_observation_fx_rate_id, self.sale_observed_at) {
+            (None, None) => false,
+            (Some(_), Some(_)) => true,
+            _ => return Err(ProductListingDocumentValidationError::PartialSaleProjection),
+        };
+        let has_monetary_source_price = matches!(
+            self.source_price,
+            Some(SourcePriceDocument::Monetary { .. })
+        );
+
         match (
-            &self.sale_prices,
-            self.sale_observation_fx_rate_id,
-            self.sale_observed_at,
+            has_sale_metadata,
+            self.sale_prices.is_some(),
+            has_monetary_source_price,
         ) {
-            (None, None, None) | (None, Some(_), Some(_)) | (Some(_), Some(_), Some(_)) => Ok(()),
-            _ => Err(ProductListingDocumentValidationError::PartialSaleProjection),
+            (false, true, _) => {
+                Err(ProductListingDocumentValidationError::SalePricesWithoutSaleObservation)
+            }
+            (true, true, false) => {
+                Err(ProductListingDocumentValidationError::SalePricesRequireMonetarySourcePrice)
+            }
+            (true, false, true) => Err(
+                ProductListingDocumentValidationError::MissingSalePricesForMonetarySaleObservation,
+            ),
+            _ => Ok(()),
         }
     }
 
-    pub(crate) fn source_price(&self) -> Option<(u64, Currency)> {
-        self.source_price
-            .as_ref()
-            .map(|price| (price.amount, price.currency))
+    pub(crate) fn source_price(&self) -> Option<ProductListingPrice> {
+        self.source_price.map(Into::into)
     }
 
     pub(crate) fn sale_price(&self, currency: Currency) -> Option<u64> {
@@ -328,6 +377,7 @@ impl ProductListingDocument {
 mod tests {
     use super::*;
 
+    use rstest::rstest;
     use time::macros::datetime;
 
     fn document() -> Result<ProductListingDocument, url::ParseError> {
@@ -345,7 +395,7 @@ mod tests {
             title_fr: None,
             title_es: None,
             title_it: None,
-            source_price: Some(SourcePriceDocument {
+            source_price: Some(SourcePriceDocument::Monetary {
                 amount: 100,
                 currency: Currency::Eur,
             }),
@@ -388,6 +438,10 @@ mod tests {
         let value = serde_json::to_value(document()?)?;
 
         assert_eq!(
+            Some(&serde_json::json!("MONETARY")),
+            value.pointer("/sourcePrice/type")
+        );
+        assert_eq!(
             Some(&serde_json::json!(100)),
             value.pointer("/sourcePrice/amount")
         );
@@ -424,6 +478,20 @@ mod tests {
             serde_json::to_value(document)?
                 .get("availability")
                 .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_roundtrip_on_request_source_price() -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(document()?)?;
+        value["sourcePrice"] = serde_json::json!({ "type": "ON_REQUEST" });
+
+        let restored = serde_json::from_value::<ProductListingDocument>(value)?;
+
+        assert_eq!(
+            Some(ProductListingPrice::OnRequest),
+            restored.source_price()
         );
         Ok(())
     }
@@ -536,14 +604,70 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn should_allow_sale_metadata_without_sale_prices() -> Result<(), Box<dyn std::error::Error>> {
+    #[rstest]
+    #[case::active_without_source_price(None, false, false, true)]
+    #[case::active_on_request(Some(SourcePriceDocument::OnRequest), false, false, true)]
+    #[case::active_monetary(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        false,
+        false,
+        true
+    )]
+    #[case::sold_without_source_price(None, true, false, true)]
+    #[case::sold_on_request(Some(SourcePriceDocument::OnRequest), true, false, true)]
+    #[case::sold_monetary(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        true,
+        true,
+        true
+    )]
+    #[case::sale_prices_without_source_price(None, true, true, false)]
+    #[case::sale_prices_with_on_request(Some(SourcePriceDocument::OnRequest), true, true, false)]
+    #[case::sold_monetary_without_sale_prices(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        true,
+        false,
+        false
+    )]
+    #[case::sale_prices_without_sale_metadata(
+        Some(SourcePriceDocument::Monetary { amount: 100, currency: Currency::Eur }),
+        false,
+        true,
+        false
+    )]
+    fn should_validate_sale_prices_against_source_price_and_sale_metadata(
+        #[case] source_price: Option<SourcePriceDocument>,
+        #[case] has_sale_metadata: bool,
+        #[case] has_sale_prices: bool,
+        #[case] valid: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut document = document()?;
-        document.source_price = None;
-        document.sale_observation_fx_rate_id = Some(FxRateId::new());
-        document.sale_observed_at = Some(OffsetDateTime::UNIX_EPOCH);
+        document.source_price = source_price;
+        document.sale_observation_fx_rate_id = has_sale_metadata.then(FxRateId::new);
+        document.sale_observed_at = has_sale_metadata.then_some(OffsetDateTime::UNIX_EPOCH);
+        document.sale_prices = has_sale_prices.then_some(SalePricesDocument {
+            eur: 100,
+            gbp: 100,
+            usd: 100,
+            aud: 100,
+            cad: 100,
+            nzd: 100,
+            cny: 100,
+            brl: 100,
+            pln: 100,
+            r#try: 100,
+            jpy: 100,
+            czk: 100,
+            rub: 100,
+            aed: 100,
+            sar: 100,
+            hkd: 100,
+            sgd: 100,
+            chf: 100,
+            zar: 100,
+        });
 
-        assert_eq!(Ok(()), document.validate());
+        assert_eq!(valid, document.validate().is_ok());
         Ok(())
     }
 

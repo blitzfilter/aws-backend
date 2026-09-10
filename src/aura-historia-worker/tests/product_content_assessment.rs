@@ -340,7 +340,7 @@ async fn insert_product_in_transaction(
         .execute(&mut **tx)
         .await?;
     let payload = if event_type == "PRODUCT_LISTING_CHANGED" {
-        serde_json::json!({"pricing": {"price": {"previous": null, "current": {"amount": 1200, "currency": "EUR"}}}})
+        serde_json::json!({"pricing": {"price": {"previous": null, "current": {"type": "MONETARY", "amount": 1200, "currency": "EUR"}}}})
     } else {
         serde_json::json!({
             "listingSourceId": listing_source_id.as_uuid().to_string(),
