@@ -1120,7 +1120,7 @@ pub(crate) struct RenameRecordRequestDto {
 
 #[derive(serde::Serialize)]
 pub(crate) struct RenameRecordResponseDto {
-    pub id: Uuid,
+    pub id: RecordId,
     pub title: String,
 }
 ```
@@ -1154,7 +1154,7 @@ Use `From` for infallible result-to-response conversion:
 impl From<RenameRecordResult> for RenameRecordResponseDto {
     fn from(result: RenameRecordResult) -> Self {
         Self {
-            id: result.record_id.into_uuid(),
+            id: result.record_id,
             title: result.title,
         }
     }
@@ -1212,9 +1212,13 @@ impl TryFrom<RecordRow> for Versioned<Record, RecordStorageVersion> {
 
     fn try_from(row: RecordRow) -> Result<Self, Self::Error> {
         let version = RecordStorageVersion::try_from(row.version)?;
+        let record_id = RecordId::try_from(row.id)
+            .map_err(RecordRowMappingError::InvalidRecordId)?;
+        let workspace_id = WorkspaceId::try_from(row.workspace_id)
+            .map_err(RecordRowMappingError::InvalidWorkspaceId)?;
         let record = Record::rehydrate(
-            RecordId::from_uuid(row.id),
-            WorkspaceId::from_uuid(row.workspace_id),
+            record_id,
+            workspace_id,
             RecordTitle::try_from(row.title)?,
             RecordStatus::try_from(row.status.as_str())?,
         )
@@ -1263,16 +1267,20 @@ struct RecordDetailsRow {
 It maps directly to the application read model:
 
 ```rust
-impl From<RecordDetailsRow> for RecordBaseDetails {
-    fn from(row: RecordDetailsRow) -> Self {
-        Self {
-            record_id: RecordId::from_uuid(row.record_id),
+impl TryFrom<RecordDetailsRow> for RecordBaseDetails {
+    type Error = RecordDetailsRowMappingError;
+
+    fn try_from(row: RecordDetailsRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            record_id: RecordId::try_from(row.record_id)
+                .map_err(RecordDetailsRowMappingError::InvalidRecordId)?,
             title: row.record_title,
             container: ContainerSummary {
-                container_id: ContainerId::from_uuid(row.container_id),
+                container_id: ContainerId::try_from(row.container_id)
+                    .map_err(RecordDetailsRowMappingError::InvalidContainerId)?,
                 name: row.container_name,
             },
-        }
+        })
     }
 }
 ```
@@ -1359,7 +1367,7 @@ A search adapter owns its document:
 ```rust
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct RecordDocument {
-    id: String,
+    id: RecordId,
     title: String,
     container_name: String,
     projection_version: u64,

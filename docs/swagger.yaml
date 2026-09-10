@@ -3735,8 +3735,18 @@ paths:
                     source:
                       field: sort
                       type: QUERY
+                invalid_object_id:
+                  summary: Invalid ListingSource ID
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_OBJECT_ID
+                    source:
+                      field: listingSourceId
+                      type: QUERY
+                    detail: Query parameter 'listingSourceId' must be a valid ListingSource ID
                 invalid_query:
-                  summary: Invalid object ID, ingestion method, page size, or cursor
+                  summary: Invalid ingestion method, page size, or cursor
                   value:
                     status: 400
                     title: Bad Request
