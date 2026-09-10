@@ -37,8 +37,8 @@ impl WatchlistRepository for SqlxWatchlistRepository<'_> {
             "SELECT user_id, product_listing_id, notifications, state, version \
              FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2",
         )
-        .bind(uuid::Uuid::from(user_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(user_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .fetch_optional(self.tx.connection())
         .await
         .map_err(|source| WatchlistRepositoryError::LookupFailed {
@@ -60,8 +60,8 @@ impl WatchlistRepository for SqlxWatchlistRepository<'_> {
              VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'ACTIVE' THEN $5 ELSE NULL END, CASE WHEN $3 THEN $5 ELSE NULL END, $5, $5) \
              RETURNING user_id, product_listing_id, notifications, state, version",
         )
-            .bind(uuid::Uuid::from(entry.user_id()))
-            .bind(uuid::Uuid::from(entry.product_listing_id()))
+            .bind(entry.user_id().into_uuid())
+            .bind(entry.product_listing_id().into_uuid())
             .bind(entry.notifications())
             .bind(entry.state().as_str())
             .bind(now)
@@ -98,8 +98,8 @@ impl WatchlistRepository for SqlxWatchlistRepository<'_> {
              WHERE user_id = $1 AND product_listing_id = $2 AND version = $6 \
              RETURNING user_id, product_listing_id, notifications, state, version",
         )
-        .bind(uuid::Uuid::from(entry.user_id()))
-        .bind(uuid::Uuid::from(entry.product_listing_id()))
+        .bind(entry.user_id().into_uuid())
+        .bind(entry.product_listing_id().into_uuid())
         .bind(entry.notifications())
         .bind(entry.state().as_str())
         .bind(now)
@@ -124,8 +124,8 @@ impl WatchlistRepository for SqlxWatchlistRepository<'_> {
         let result = sqlx::query(
             "DELETE FROM product_listing_watchlist WHERE user_id = $1 AND product_listing_id = $2 AND version = $3",
         )
-        .bind(uuid::Uuid::from(user_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(user_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(expected_version)
         .execute(self.tx.connection())
         .await

@@ -1,7 +1,8 @@
 use crate::auth::{OptionalAuthExtractor, request_metadata};
-use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE};
 use crate::product_listings::product_data::product_response;
 use crate::state::ProductListingsState;
+use crate::wire::parse_path_object_id;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
@@ -43,14 +44,13 @@ pub async fn get_product_by_id(
         Ok(principal) => principal,
         Err(error) => return ApiError::from(error).into_response(),
     };
-    let product_listing_id = match ProductListingId::try_from(raw_product_listing_id.as_str()) {
+    let product_listing_id = match parse_path_object_id::<ProductListingId>(
+        &raw_product_listing_id,
+        "productListingId",
+        "ProductListing",
+    ) {
         Ok(product_listing_id) => product_listing_id,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("productListingId")
-                .with_detail("Path parameter 'productListingId' must be a UUID.")
-                .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
 
     let context = principal.operation_context(metadata);

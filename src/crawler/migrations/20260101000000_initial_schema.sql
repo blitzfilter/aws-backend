@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS listing_source_product_schemas (
 );
 
 CREATE TABLE IF NOT EXISTS listing_source_domains (
-    domain_id   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    domain_id   UUID        PRIMARY KEY,
     listing_source_id     UUID        NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
     listing_source_domain TEXT        NOT NULL,
     crawl_root_host       TEXT        NOT NULL,

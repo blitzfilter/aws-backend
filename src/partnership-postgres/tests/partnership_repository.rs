@@ -36,8 +36,11 @@ async fn commit(transaction: SqlxTransaction) {
 async fn seed_party(pool: &PgPool) -> PartyId {
     let party_id = PartyId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(uuid::Uuid::from(party_id))
-        .bind(format!("partnership-repository-party-{party_id}"))
+        .bind(party_id.into_uuid())
+        .bind(format!(
+            "partnership-repository-party-{}",
+            party_id.as_uuid().simple()
+        ))
         .bind("Partnership Repository Party")
         .execute(pool)
         .await
@@ -48,7 +51,7 @@ async fn seed_party(pool: &PgPool) -> PartyId {
 async fn seed_user(pool: &PgPool) -> UserId {
     let user_id = UserId::new();
     sqlx::query("INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(format!("{user_id}@partnership-repository.test"))
         .execute(pool)
         .await
@@ -61,10 +64,13 @@ async fn seed_listing_source(pool: &PgPool, party_id: PartyId) -> ListingSourceI
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(format!("partnership-repository-source-{listing_source_id}"))
+    .bind(listing_source_id.into_uuid())
+    .bind(format!(
+            "partnership-repository-source-{}",
+            listing_source_id.as_uuid().simple()
+        ))
     .bind("Partnership Repository Source")
-    .bind(uuid::Uuid::from(party_id))
+    .bind(party_id.into_uuid())
     .execute(pool)
     .await
     .unwrap_or_else(|error| panic!("seed partnership repository source: {error}"));
@@ -191,11 +197,11 @@ async fn should_reactivate_dissolved_partnership_for_party_with_same_id_and_incr
     let persisted = sqlx::query_as::<_, (uuid::Uuid, String, i64)>(
         "SELECT partnership_id, business_state, version FROM partnerships WHERE party_id = $1",
     )
-    .bind(uuid::Uuid::from(party_id))
+    .bind(party_id.into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read reactivated partnership: {error}"));
-    assert_eq!(uuid::Uuid::from(partnership_id), persisted.0);
+    assert_eq!(partnership_id.into_uuid(), persisted.0);
     assert_eq!("ACTIVE", persisted.1);
     assert_eq!(3, persisted.2);
 }
@@ -251,7 +257,7 @@ async fn should_dissolve_active_partnership_remove_associations_and_replay_witho
     let persisted = sqlx::query_as::<_, (String, i64)>(
         "SELECT business_state, version FROM partnerships WHERE partnership_id = $1",
     )
-    .bind(uuid::Uuid::from(partnership_id))
+    .bind(partnership_id.into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read dissolved partnership: {error}"));
@@ -287,7 +293,7 @@ async fn should_dissolve_active_partnership_remove_associations_and_replay_witho
 
     let persisted_version =
         sqlx::query_scalar::<_, i64>("SELECT version FROM partnerships WHERE partnership_id = $1")
-            .bind(uuid::Uuid::from(partnership_id))
+            .bind(partnership_id.into_uuid())
             .fetch_one(&pool)
             .await
             .unwrap_or_else(|error| panic!("read replayed partnership version: {error}"));

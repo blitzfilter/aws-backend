@@ -93,6 +93,7 @@ async fn deletion_race() -> TestResult {
     );
     for deleted_id in [id, unseen_id] {
         let stored = stored(deleted_id).await?;
+        assert_eq!(json!(deleted_id.to_string()), stored["_id"]);
         assert_eq!(json!(3), stored["_version"]);
         assert_eq!(
             json!({"userSearchFilterId": deleted_id, "sourceVersion": 3, "projectionDeleted": true}),
@@ -124,6 +125,7 @@ async fn deletion_race() -> TestResult {
         index.upsert(&projection).await?
     );
     let restored = stored(id).await?;
+    assert_eq!(json!(id.to_string()), restored["_id"]);
     assert_eq!(json!(5), restored["_version"]);
     assert_eq!(
         serde_json::to_value(SearchFilterDocument::try_from(&projection)?)?,

@@ -8,7 +8,7 @@
 ## Core Design
 
 - Domain-only crate.
-- Owns `UserSearchFilterId`, `UserSearchFilterName`, `EnhancedMatchReason`, and `SearchFilterState`.
+- Owns strict UUIDv7-backed `sf_` `UserSearchFilterId`, `UserSearchFilterName`, `EnhancedMatchReason`, and `SearchFilterState`.
 - Reuses canonical `user-core::UserId`, `product-listing-core::product_listing_search::ProductListingSearch`, and neutral event/outcome values from `domain-primitives`.
 - Aggregate has no persistence timestamps.
 - No legacy, service, adapter, transport, or runtime dependency.

@@ -23,11 +23,13 @@ use billing_service::use_cases::{
     BillingPriceIds, CreateBillingCheckoutSessionHandler, CreateBillingManagementSessionHandler,
     CreateBillingPortalSessionHandler,
 };
+use domain_primitives::event_id::EventId;
 use embedding::{
     EmbeddingError, EmbeddingGenerator, EmbeddingImageUrl, EmbeddingText, EmbeddingVector,
 };
 use fxrate_core::FxRateId;
 use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
+use listing_source_core::ListingSourceId;
 use listing_source_postgres::{
     SqlxListingSourceReaders, SqlxListingSourceRepositoryFactory,
     SqlxListingSourceSearchReaderFactory,
@@ -134,7 +136,7 @@ use search_filter_service::use_cases::{
     ListOwnedSearchFiltersHandler, ListSearchFilterMatchesHandler, UpdateOwnedSearchFilterHandler,
     UpdateSearchFilterMatchFeedbackHandler,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -147,8 +149,9 @@ use user_core::access_token::{
 };
 use user_core::tier::UserTier;
 use user_service::ports::{
-    AccessTokenRepository, AccessTokenRepositoryFactory, NewsletterSubscriptionWriteError,
-    NewsletterSubscriptionWriter, UserSessionRevocationError, UserSessionRevoker,
+    AccessTokenRepository, AccessTokenRepositoryFactory, CognitoIdentity, CognitoIssuer,
+    CognitoSubject, NewsletterSubscriptionWriteError, NewsletterSubscriptionWriter,
+    UserSessionRevocationError, UserSessionRevoker,
 };
 use user_service::use_cases::commands::associate_user_stripe_customer_id::AssociateUserStripeCustomerIdHandler;
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleHandler;
@@ -220,7 +223,10 @@ impl StripeCustomerCreator for TestStripeBilling {
         &self,
         request: CreateStripeCustomerRequest,
     ) -> Result<StripeCustomerId, StripeBillingError> {
-        Ok(StripeCustomerId::from(format!("cus_{}", request.user_id)))
+        Ok(StripeCustomerId::from(format!(
+            "cus_{}",
+            request.user_id.as_uuid()
+        )))
     }
 }
 
@@ -263,16 +269,25 @@ impl NewsletterSubscriptionWriter for SuccessfulNewsletterWriter {
     }
 }
 
-static SESSION_REVOCATION_FAILURES: OnceLock<Mutex<HashSet<UserId>>> = OnceLock::new();
+const TEST_COGNITO_ISSUER: &str = "https://issuer.api-acceptance.test/pool";
+
+static COGNITO_SUBJECTS_BY_USER: OnceLock<Mutex<HashMap<UserId, CognitoSubject>>> = OnceLock::new();
+static SESSION_REVOCATION_FAILURES: OnceLock<Mutex<HashSet<CognitoSubject>>> = OnceLock::new();
 
 pub fn fail_session_revocation_for(user_id: UserId) {
+    let subjects = COGNITO_SUBJECTS_BY_USER.get_or_init(|| Mutex::new(HashMap::new()));
+    let subject = match subjects.lock() {
+        Ok(subjects) => subjects.get(&user_id).cloned(),
+        Err(poisoned) => poisoned.into_inner().get(&user_id).cloned(),
+    }
+    .unwrap_or_else(|| panic!("missing Cognito identity fixture for {user_id}"));
     let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
     match failures.lock() {
         Ok(mut failures) => {
-            failures.insert(user_id);
+            failures.insert(subject);
         }
         Err(poisoned) => {
-            poisoned.into_inner().insert(user_id);
+            poisoned.into_inner().insert(subject);
         }
     }
 }
@@ -282,11 +297,14 @@ struct SuccessfulUserSessionRevoker;
 
 #[async_trait::async_trait]
 impl UserSessionRevoker for SuccessfulUserSessionRevoker {
-    async fn revoke_sessions(&self, user_id: UserId) -> Result<(), UserSessionRevocationError> {
+    async fn revoke_sessions(
+        &self,
+        identity: &CognitoIdentity,
+    ) -> Result<(), UserSessionRevocationError> {
         let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
         let should_fail = match failures.lock() {
-            Ok(mut failures) => failures.remove(&user_id),
-            Err(poisoned) => poisoned.into_inner().remove(&user_id),
+            Ok(mut failures) => failures.remove(&identity.subject),
+            Err(poisoned) => poisoned.into_inner().remove(&identity.subject),
         };
         if should_fail {
             return Err(UserSessionRevocationError::TemporarilyUnavailable {
@@ -341,8 +359,8 @@ pub async fn seed_party(name: &str, phone: Option<&str>, email: Option<&str>) ->
     if let Err(error) = sqlx::query(
         "INSERT INTO parties (party_id, party_slug_id, name, phone, email) VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(uuid::Uuid::from(party_id))
-    .bind(format!("api-acceptance-party-{party_id}"))
+    .bind(party_id.as_uuid())
+    .bind(format!("api-acceptance-party-{}", party_id.as_uuid()))
     .bind(name)
     .bind(phone)
     .bind(email)
@@ -357,18 +375,18 @@ pub async fn seed_party(name: &str, phone: Option<&str>, email: Option<&str>) ->
 pub async fn seed_partnership_application(
     applicant_user_id: UserId,
     state: &str,
-    proposal: serde_json::Value,
+    mut proposal: serde_json::Value,
     created: OffsetDateTime,
     updated: OffsetDateTime,
 ) -> PartnershipApplicationId {
-    ensure_existing_listing_source_proposal_is_seeded(&proposal).await;
+    ensure_existing_listing_source_proposal_is_seeded(&mut proposal).await;
     let application_id = PartnershipApplicationId::new();
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query(
         "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal, created, updated) VALUES ($1, $2, $3, $4, $5, $6)",
     )
-    .bind(uuid::Uuid::from(application_id))
-    .bind(uuid::Uuid::from(applicant_user_id))
+    .bind(application_id.as_uuid())
+    .bind(applicant_user_id.as_uuid())
     .bind(state)
     .bind(proposal)
     .bind(created)
@@ -397,8 +415,8 @@ pub async fn seed_partnership_for_search(
         .unwrap_or_else(|error| panic!("failed to begin partnership seed transaction: {error}"));
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(uuid::Uuid::from(party_id))
-        .bind(format!("api-partnership-party-{party_id}"))
+        .bind(party_id.as_uuid())
+        .bind(format!("api-partnership-party-{}", party_id.as_uuid()))
         .bind(party_name)
         .execute(&mut *transaction)
         .await
@@ -406,8 +424,8 @@ pub async fn seed_partnership_for_search(
     sqlx::query(
         "INSERT INTO partnerships (partnership_id, party_id, created, updated) VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(partnership_id))
-    .bind(uuid::Uuid::from(party_id))
+    .bind(partnership_id.as_uuid())
+    .bind(party_id.as_uuid())
     .bind(created)
     .bind(updated)
     .execute(&mut *transaction)
@@ -416,18 +434,20 @@ pub async fn seed_partnership_for_search(
 
     for user_id in member_user_ids {
         sqlx::query("INSERT INTO partnership_members (user_id, partnership_id) VALUES ($1, $2)")
-            .bind(uuid::Uuid::from(*user_id))
-            .bind(uuid::Uuid::from(partnership_id))
+            .bind(user_id.as_uuid())
+            .bind(partnership_id.as_uuid())
             .execute(&mut *transaction)
             .await
             .unwrap_or_else(|error| panic!("failed to seed partnership member: {error}"));
     }
     for listing_source_id in listing_source_ids {
+        let listing_source_id = ListingSourceId::try_from(*listing_source_id)
+            .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"));
         sqlx::query(
             "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
         )
-        .bind(uuid::Uuid::from(partnership_id))
-        .bind(*listing_source_id)
+        .bind(partnership_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
         .execute(&mut *transaction)
         .await
         .unwrap_or_else(|error| panic!("failed to seed partnership listing-source grant: {error}"));
@@ -445,27 +465,29 @@ pub async fn seed_approved_partnership_application(
     created: OffsetDateTime,
     updated: OffsetDateTime,
 ) -> (PartnershipApplicationId, uuid::Uuid, uuid::Uuid) {
-    let approved_listing_source_id = seed_listing_source().await;
+    let approved_listing_source_id = seed_listing_source_id().await;
     let pool = get_postgres_client().await;
-    let approved_partnership_id = sqlx::query_scalar::<_, uuid::Uuid>(
+    let approved_partnership_uuid = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT partnership.partnership_id FROM partnerships AS partnership JOIN listing_sources AS source ON source.operator_party_id = partnership.party_id WHERE source.listing_source_id = $1 ORDER BY partnership.partnership_id LIMIT 1",
     )
-    .bind(approved_listing_source_id)
+    .bind(approved_listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to find seeded partnership: {error}"));
+    let approved_partnership_id = PartnershipId::try_from(approved_partnership_uuid)
+        .unwrap_or_else(|error| panic!("invalid seeded Partnership ID: {error}"));
     let application_id = PartnershipApplicationId::new();
     if let Err(error) = sqlx::query(
         "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal, approved_partnership_id, approved_listing_source_id, created, updated) VALUES ($1, $2, 'APPROVED', $3, $4, $5, $6, $7)",
     )
-    .bind(uuid::Uuid::from(application_id))
-    .bind(uuid::Uuid::from(applicant_user_id))
+    .bind(application_id.as_uuid())
+    .bind(applicant_user_id.as_uuid())
     .bind(serde_json::json!({
         "type": "EXISTING_LISTING_SOURCE",
-        "listing_source_id": approved_listing_source_id,
+        "listing_source_id": approved_listing_source_id.as_uuid(),
     }))
-    .bind(approved_partnership_id)
-    .bind(approved_listing_source_id)
+    .bind(approved_partnership_id.as_uuid())
+    .bind(approved_listing_source_id.as_uuid())
     .bind(created)
     .bind(updated)
     .execute(&pool)
@@ -475,8 +497,8 @@ pub async fn seed_approved_partnership_application(
     }
     (
         application_id,
-        approved_partnership_id,
-        approved_listing_source_id,
+        approved_partnership_id.into_uuid(),
+        approved_listing_source_id.into_uuid(),
     )
 }
 
@@ -498,7 +520,7 @@ async fn seed_user_with_tier_and_consent(
     show_unassessed_or_sensitive_content: bool,
 ) -> UserId {
     let user_id = UserId::new();
-    let email = format!("{}@example.test", user_id);
+    let email = format!("{}@example.test", user_id.as_uuid());
     let tier = match tier {
         UserTier::Free => "FREE",
         UserTier::Pro => "PRO",
@@ -511,7 +533,7 @@ async fn seed_user_with_tier_and_consent(
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.as_uuid())
     .bind(email)
     .bind(show_unassessed_or_sensitive_content)
     .bind(tier)
@@ -521,7 +543,52 @@ async fn seed_user_with_tier_and_consent(
     {
         panic!("failed to seed user: {error}");
     }
+    let subject = format!("provider|opaque:{}", uuid::Uuid::new_v4());
+    seed_user_cognito_identity(user_id, TEST_COGNITO_ISSUER, &subject).await;
     user_id
+}
+
+pub async fn seed_user_cognito_identity(
+    user_id: UserId,
+    issuer: &str,
+    subject: &str,
+) -> CognitoIdentity {
+    let identity = CognitoIdentity {
+        issuer: CognitoIssuer::try_from(issuer)
+            .unwrap_or_else(|error| panic!("invalid Cognito issuer fixture: {error}")),
+        subject: CognitoSubject::try_from(subject)
+            .unwrap_or_else(|error| panic!("invalid Cognito subject fixture: {error}")),
+    };
+    let pool = get_postgres_client().await;
+    if let Err(error) = sqlx::query(
+        r#"
+        INSERT INTO user_cognito_identities (issuer, subject, user_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id) DO UPDATE
+        SET issuer = EXCLUDED.issuer, subject = EXCLUDED.subject
+        "#,
+    )
+    .bind(identity.issuer.as_str())
+    .bind(identity.subject.as_str())
+    .bind(user_id.as_uuid())
+    .execute(&pool)
+    .await
+    {
+        panic!("failed to seed Cognito identity: {error}");
+    }
+
+    let subjects = COGNITO_SUBJECTS_BY_USER.get_or_init(|| Mutex::new(HashMap::new()));
+    match subjects.lock() {
+        Ok(mut subjects) => {
+            subjects.insert(user_id, identity.subject.clone());
+        }
+        Err(poisoned) => {
+            poisoned
+                .into_inner()
+                .insert(user_id, identity.subject.clone());
+        }
+    }
+    identity
 }
 
 pub async fn set_user_search_fields(
@@ -536,7 +603,7 @@ pub async fn set_user_search_fields(
     if let Err(error) = sqlx::query(
         "UPDATE users SET email = $2, first_name = $3, last_name = $4, created = $5, updated = $6 WHERE user_id = $1",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.as_uuid())
     .bind(email)
     .bind(first_name)
     .bind(last_name)
@@ -552,7 +619,7 @@ pub async fn set_user_search_fields(
 pub async fn set_user_stripe_customer_id(user_id: UserId, stripe_customer_id: &str) {
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query("UPDATE users SET stripe_customer_id = $2 WHERE user_id = $1")
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.as_uuid())
         .bind(stripe_customer_id)
         .execute(&pool)
         .await
@@ -583,8 +650,8 @@ async fn seed_watchlist_entry(
     if let Err(error) = sqlx::query(
         "INSERT INTO product_listing_watchlist (user_id, product_listing_id, notifications, state, active_since, notifications_enabled_since) VALUES ($1, $2, true, $3, CASE WHEN $3 = 'ACTIVE' THEN now() ELSE NULL END, now())",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.as_uuid())
+    .bind(product_listing_id.as_uuid())
     .bind(state)
     .execute(&pool)
     .await
@@ -594,6 +661,8 @@ async fn seed_watchlist_entry(
 }
 
 pub async fn seed_partnership_membership(user_id: UserId, listing_source_id: uuid::Uuid) {
+    let listing_source_id = ListingSourceId::try_from(listing_source_id)
+        .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"));
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query(
         r#"
@@ -605,8 +674,8 @@ pub async fn seed_partnership_membership(user_id: UserId, listing_source_id: uui
         ON CONFLICT DO NOTHING
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(listing_source_id)
+    .bind(user_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
     .execute(&pool)
     .await
     {
@@ -615,6 +684,8 @@ pub async fn seed_partnership_membership(user_id: UserId, listing_source_id: uui
 }
 
 pub async fn seed_operator_partnership_listing_source_grant(listing_source_id: uuid::Uuid) {
+    let listing_source_id = ListingSourceId::try_from(listing_source_id)
+        .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"));
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query(
         r#"
@@ -626,7 +697,7 @@ pub async fn seed_operator_partnership_listing_source_grant(listing_source_id: u
         ON CONFLICT DO NOTHING
         "#,
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .execute(&pool)
     .await
     {
@@ -666,11 +737,18 @@ pub async fn seed_access_token_for(user_id: UserId, scopes: HashSet<Scope>) -> R
 }
 
 pub async fn seed_listing_source() -> uuid::Uuid {
-    seed_listing_source_with_id(uuid::Uuid::new_v4()).await
+    seed_listing_source_id().await.into_uuid()
 }
 
-async fn seed_listing_source_with_id(listing_source_id: uuid::Uuid) -> uuid::Uuid {
-    let party_id = uuid::Uuid::new_v4();
+async fn seed_listing_source_id() -> ListingSourceId {
+    let listing_source_id = ListingSourceId::new();
+    seed_listing_source_with_id(listing_source_id).await;
+    listing_source_id
+}
+
+async fn seed_listing_source_with_id(listing_source_id: ListingSourceId) {
+    let party_id = PartyId::new();
+    let partnership_id = PartnershipId::new();
     let pool = get_postgres_client().await;
     let mut transaction = pool
         .begin()
@@ -678,19 +756,25 @@ async fn seed_listing_source_with_id(listing_source_id: uuid::Uuid) -> uuid::Uui
         .unwrap_or_else(|error| panic!("failed to begin listing-source seed transaction: {error}"));
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(party_id)
-        .bind(format!("api-acceptance-party-{party_id}"))
-        .bind(format!("API Acceptance Party {party_id}"))
+        .bind(party_id.as_uuid())
+        .bind(format!("api-acceptance-party-{}", party_id.as_uuid()))
+        .bind(format!("API Acceptance Party {}", party_id.as_uuid()))
         .execute(&mut *transaction)
         .await
         .unwrap_or_else(|error| panic!("failed to seed party: {error}"));
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id, url) VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(listing_source_id)
-    .bind(format!("api-acceptance-source-{listing_source_id}"))
-    .bind(format!("API Acceptance Listing Source {listing_source_id}"))
-    .bind(party_id)
+    .bind(listing_source_id.as_uuid())
+    .bind(format!(
+        "api-acceptance-source-{}",
+        listing_source_id.as_uuid()
+    ))
+    .bind(format!(
+        "API Acceptance Listing Source {}",
+        listing_source_id.as_uuid()
+    ))
+    .bind(party_id.as_uuid())
     .bind("https://api-acceptance.example/")
     .execute(&mut *transaction)
     .await
@@ -698,38 +782,42 @@ async fn seed_listing_source_with_id(listing_source_id: uuid::Uuid) -> uuid::Uui
     sqlx::query(
         "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, 'PARTNER_API')",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .execute(&mut *transaction)
     .await
     .unwrap_or_else(|error| panic!("failed to seed listing-source ingestion method: {error}"));
     sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
-        .bind(uuid::Uuid::new_v4())
-        .bind(party_id)
+        .bind(partnership_id.as_uuid())
+        .bind(party_id.as_uuid())
         .execute(&mut *transaction)
         .await
         .unwrap_or_else(|error| panic!("failed to seed partnership: {error}"));
     transaction.commit().await.unwrap_or_else(|error| {
         panic!("failed to commit listing-source seed transaction: {error}")
     });
-    listing_source_id
 }
 
-async fn ensure_existing_listing_source_proposal_is_seeded(proposal: &serde_json::Value) {
-    let Some(listing_source_id) = proposal
+async fn ensure_existing_listing_source_proposal_is_seeded(proposal: &mut serde_json::Value) {
+    let Some(listing_source_uuid) = proposal
         .get("type")
         .filter(|proposal_type| *proposal_type == "EXISTING_LISTING_SOURCE")
         .and_then(|_| proposal.get("listing_source_id"))
-        .and_then(serde_json::Value::as_str)
-        .and_then(|listing_source_id| listing_source_id.parse::<uuid::Uuid>().ok())
+        .cloned()
+        .and_then(|value| serde_json::from_value::<uuid::Uuid>(value).ok())
     else {
         return;
     };
+    let listing_source_id = ListingSourceId::try_from(listing_source_uuid).unwrap_or_else(|_| {
+        let listing_source_id = ListingSourceId::new();
+        proposal["listing_source_id"] = serde_json::json!(listing_source_id.as_uuid());
+        listing_source_id
+    });
 
     let pool = get_postgres_client().await;
     let exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to check existing proposal ListingSource: {error}"));
@@ -744,17 +832,17 @@ pub async fn seed_listing_source_for_search(
     ingestion_method: &str,
     referral_configuration: Option<serde_json::Value>,
 ) -> (uuid::Uuid, uuid::Uuid, String) {
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
-    let listing_source_slug_id = format!("api-search-source-{listing_source_id}");
+    let party_id = PartyId::new();
+    let listing_source_id = ListingSourceId::new();
+    let listing_source_slug_id = format!("api-search-source-{}", listing_source_id.as_uuid());
     let pool = get_postgres_client().await;
     let mut transaction = pool.begin().await.unwrap_or_else(|error| {
         panic!("failed to begin search listing-source seed transaction: {error}")
     });
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-        .bind(party_id)
-        .bind(format!("api-search-party-{party_id}"))
+        .bind(party_id.as_uuid())
+        .bind(format!("api-search-party-{}", party_id.as_uuid()))
         .bind(operator_name)
         .execute(&mut *transaction)
         .await
@@ -762,10 +850,10 @@ pub async fn seed_listing_source_for_search(
     sqlx::query(
         "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id, url, image, referral_configuration) VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(&listing_source_slug_id)
     .bind(name)
-    .bind(party_id)
+    .bind(party_id.as_uuid())
     .bind("https://listing-source-search.example/")
     .bind("https://listing-source-search.example/image.jpg")
     .bind(referral_configuration)
@@ -775,7 +863,7 @@ pub async fn seed_listing_source_for_search(
     sqlx::query(
         "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, $2)",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(ingestion_method)
     .execute(&mut *transaction)
     .await
@@ -784,7 +872,7 @@ pub async fn seed_listing_source_for_search(
         sqlx::query(
             "INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id, webhook_secret) VALUES ($1, $2)",
         )
-        .bind(listing_source_id)
+        .bind(listing_source_id.as_uuid())
         .bind("provider-secret")
         .execute(&mut *transaction)
         .await
@@ -794,18 +882,22 @@ pub async fn seed_listing_source_for_search(
         panic!("failed to commit search listing-source seed transaction: {error}")
     });
 
-    (listing_source_id, party_id, listing_source_slug_id)
+    (
+        listing_source_id.into_uuid(),
+        party_id.into_uuid(),
+        listing_source_slug_id,
+    )
 }
 
 pub async fn seed_product() -> ProductListingId {
-    let listing_source_id = seed_listing_source().await;
+    let listing_source_id = seed_listing_source_id().await;
     let product_listing_id = ProductListingId::new();
     let product_listing_title_slug_id = ProductListingSlugId::from_title_and_suffix(
         "acceptance product",
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &product_listing_id.as_uuid().simple().to_string()[26..],
     )
     .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
-    let event_id = uuid::Uuid::new_v4();
+    let event_id = EventId::new();
     let pool = get_postgres_client().await;
     seed_current_fx_snapshot(&pool).await;
     let mut tx = pool
@@ -820,11 +912,14 @@ pub async fn seed_product() -> ProductListingId {
         ) VALUES ($1, $2, $3, $3, $3, $4, $5, 'AVAILABLE', 'ACTIVE', $6)
         "#,
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.as_uuid())
     .bind(product_listing_title_slug_id.as_ref())
-    .bind(event_id)
-    .bind(listing_source_id)
-    .bind(format!("listing-source-product-{product_listing_id}"))
+    .bind(event_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
+    .bind(format!(
+        "listing-source-product-{}",
+        product_listing_id.as_uuid()
+    ))
     .bind("https://api-acceptance.example/product")
     .execute(&mut *tx)
     .await
@@ -839,14 +934,14 @@ pub async fn seed_product() -> ProductListingId {
         VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', $3, $4, now())
         "#,
     )
-    .bind(event_id)
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(event_id.as_uuid())
+    .bind(product_listing_id.as_uuid())
     .bind(1_i16)
     .bind(serde_json::json!({
         "title": null,
         "description": null,
-        "listingSourceId": listing_source_id.to_string(),
-        "sourceListingId": format!("listing-source-product-{product_listing_id}"),
+        "listingSourceId": listing_source_id.as_uuid().to_string(),
+        "sourceListingId": format!("listing-source-product-{}", product_listing_id.as_uuid()),
         "pricing": {
             "price": null,
             "priceEstimateMin": null,
@@ -876,9 +971,9 @@ pub(super) async fn seed_current_fx_snapshot(pool: &sqlx::PgPool) {
     if let Err(error) = sqlx::query(
         "INSERT INTO fx_rates (fx_rate_id, captured_at, source, source_event_id) VALUES ($1, now(), $2, $3)",
     )
-    .bind(uuid::Uuid::from(fx_rate_id))
+    .bind(fx_rate_id.as_uuid())
     .bind("fxratesapi")
-    .bind(fx_rate_id.to_string())
+    .bind(fx_rate_id.as_uuid().to_string())
     .execute(pool)
     .await
     {
@@ -892,7 +987,7 @@ pub(super) async fn seed_current_fx_snapshot(pool: &sqlx::PgPool) {
         if let Err(error) = sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, $3)",
         )
-        .bind(uuid::Uuid::from(fx_rate_id))
+        .bind(fx_rate_id.as_uuid())
         .bind(currency)
         .bind(if currency == "EUR" {
             1_000_000_i64
@@ -1269,7 +1364,7 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         Arc::new(RevokeUserSessionsHandler::new(
             unit_of_work.clone(),
             user_postgres::SqlxUserAdminReaderFactory::new(),
-            user_postgres::SqlxUserAccountReaderFactory::new(),
+            user_postgres::SqlxUserCognitoIdentityRegistryFactory::new(),
             SuccessfulUserSessionRevoker,
         )),
         Arc::new(CreateAccessTokenHandler::new(

@@ -19,7 +19,6 @@ use std::error::Error as StdError;
 use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 use time::OffsetDateTime;
 use url::Url;
-use uuid::Uuid;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
@@ -158,7 +157,7 @@ async fn should_order_equal_created_oauth_clients_by_client_id() {
         for client in &clients {
             sqlx::query("UPDATE oauth_clients SET created = $1, updated = $1 WHERE client_id = $2")
                 .bind(created)
-                .bind(Uuid::parse_str(&client.client_id().to_string())?)
+                .bind(client.client_id().into_uuid())
                 .execute(&pool)
                 .await?;
         }
@@ -265,7 +264,7 @@ async fn should_reject_invalid_persisted_oauth_client_row_when_listing() {
         insert_client(&pool, &client).await?;
         sqlx::query("UPDATE oauth_clients SET redirect_uris = $1 WHERE client_id = $2")
             .bind(vec!["http://client.example/callback"])
-            .bind(Uuid::parse_str(&client.client_id().to_string())?)
+            .bind(client.client_id().into_uuid())
             .execute(&pool)
             .await?;
 

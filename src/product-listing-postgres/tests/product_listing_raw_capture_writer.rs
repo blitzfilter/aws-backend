@@ -448,7 +448,7 @@ async fn should_reuse_expired_provider_receipt_identity() {
           AND receipts.provider_delivery_id = $2
         "#,
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .bind("delivery-reused")
     .execute(transaction.connection())
     .await
@@ -511,7 +511,7 @@ async fn should_reuse_expired_provider_receipt_identity_when_capture_waits_on_st
         WHERE listing_source_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read raw stream: {error}"));
@@ -993,7 +993,7 @@ async fn should_block_timestamped_upsert_after_timestamp_free_delete_without_rec
                     latest_provider_source_observation_sha256 \
              FROM product_listing_raw_streams WHERE listing_source_id = $1",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read unknown-delete source order: {error}"));
@@ -1487,7 +1487,7 @@ async fn insert_raw_stream_with_provider_source_ordering(
     operation: Option<&str>,
     observation_sha256: Option<Vec<u8>>,
 ) -> Result<(), sqlx::Error> {
-    let stream_id = uuid::Uuid::new_v4();
+    let stream_id = uuid::Uuid::now_v7();
     let source_record_key = stream_id.to_string();
     let source_record_key_sha256 = Sha256::digest(source_record_key.as_bytes()).to_vec();
 
@@ -1509,7 +1509,7 @@ async fn insert_raw_stream_with_provider_source_ordering(
         "#,
     )
     .bind(stream_id)
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .bind(source_record_key)
     .bind(source_record_key_sha256)
     .bind(ordering_state)
@@ -1721,7 +1721,7 @@ async fn raw_revision_count(pool: &sqlx::PgPool, listing_source_id: ListingSourc
         WHERE streams.listing_source_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .fetch_one(pool)
     .await
     .unwrap_or_else(|error| panic!("count raw revisions: {error}"))
@@ -1737,7 +1737,7 @@ async fn provider_receipt_count(pool: &sqlx::PgPool, listing_source_id: ListingS
         WHERE streams.listing_source_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .fetch_one(pool)
     .await
     .unwrap_or_else(|error| panic!("count provider receipts: {error}"))
@@ -1757,7 +1757,7 @@ async fn provider_source_order_head(
         WHERE listing_source_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.into_uuid())
     .fetch_one(pool)
     .await
     .unwrap_or_else(|error| panic!("read provider source order head: {error}"))
@@ -1798,7 +1798,7 @@ async fn capture_result(
 }
 
 async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId {
-    let party_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
     let listing_source_id = ListingSourceId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
         .bind(party_id)
@@ -1808,7 +1808,7 @@ async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId
         .await
         .unwrap_or_else(|error| panic!("seed party: {error}"));
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(listing_source_id.into_uuid())
         .bind(slug)
         .bind(slug)
         .bind(party_id)

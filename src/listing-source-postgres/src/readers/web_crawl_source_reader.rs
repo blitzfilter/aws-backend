@@ -1,5 +1,6 @@
 use super::{SqlxListingSourceReaders, invalid_read, read_error};
 use application::error::box_error;
+use domain_primitives::object_id::ObjectIdError;
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use listing_source_service::ports::{
     ListingIngestionConfigurationMismatch, ListingSourceReadError, WebCrawlSource,
@@ -49,7 +50,9 @@ fn map_web_crawl_source(row: WebCrawlSourceRow) -> Result<WebCrawlSource, Listin
     };
 
     Ok(WebCrawlSource {
-        listing_source_id: ListingSourceId::from(row.listing_source_id),
+        listing_source_id: ListingSourceId::try_from(row.listing_source_id)
+            .map_err(InvalidWebCrawlSourceId)
+            .map_err(invalid_read)?,
         listing_source_name: ListingSourceName::try_from(row.name).map_err(|error| {
             ListingSourceReadError::InvalidReadModel {
                 source: box_error(error),
@@ -64,6 +67,10 @@ fn map_web_crawl_source(row: WebCrawlSourceRow) -> Result<WebCrawlSource, Listin
         fallback_currency,
     })
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid ListingSource ID persisted")]
+struct InvalidWebCrawlSourceId(#[source] ObjectIdError);
 
 fn parse_optional_currency(
     value: Option<&str>,
@@ -86,13 +93,21 @@ mod tests {
         fallback_currency: Option<&str>,
     ) -> WebCrawlSourceRow {
         WebCrawlSourceRow {
-            listing_source_id: uuid::Uuid::new_v4(),
+            listing_source_id: uuid::Uuid::now_v7(),
             name: "Source".into(),
             listing_source_slug_id: "source".into(),
             web_crawl_enabled,
             web_crawl_configured,
             fallback_currency: fallback_currency.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn should_reject_wrong_version_listing_source_id() {
+        let mut row = row(true, true, Some("EUR"));
+        row.listing_source_id = uuid::Uuid::new_v4();
+
+        assert!(map_web_crawl_source(row).is_err());
     }
 
     #[test]

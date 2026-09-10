@@ -6,9 +6,10 @@
 
 ## Core Design
 
-- Own `ChangeOutcome`, generic events, version wrappers (Serde-capable or internal `no_serde`), reusable UUID/string newtype support, slug IDs/macros, and generic query values.
-- No entity IDs, business rules, transport, persistence, SDKs, or runtime config.
-- `test-data` is explicit. Macro callers need their own matching feature and `fake` dependency.
+- Own `ChangeOutcome`, generic events, version wrappers (Serde-capable or internal `no_serde`), strict UUIDv7 TypeID object-ID support, reusable UUID/string newtypes, slug IDs/macros, and generic query values.
+- Object-ID macro owns canonical text/serde, typed parse errors, raw UUID validation, and hidden dependency paths. Entity crates own concrete IDs and registered prefixes.
+- No bounded-context entity IDs; generic `EventId` lives here with the registered `evt` object-ID prefix. No business rules, transport, persistence, SDKs, or runtime config.
+- `test-data` is explicit. Object-ID `Dummy<Faker>` uses hidden reexports and the supplied RNG for UUIDv7 random bits. The remaining bare UUIDv7 macro is reserved for non-object operational/code values.
 
 ## Ownership
 
@@ -19,3 +20,4 @@
 
 - `cargo check -p domain-primitives --all-targets --all-features`
 - `cargo test -p domain-primitives --all-features`
+- `cargo clippy -p domain-primitives --all-targets --all-features -- -D warnings`

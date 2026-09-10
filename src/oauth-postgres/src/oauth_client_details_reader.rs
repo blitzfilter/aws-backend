@@ -1,4 +1,4 @@
-use crate::mapping::{OAUTH_CLIENT_VIEW_COLUMNS, client_id_uuid};
+use crate::mapping::OAUTH_CLIENT_VIEW_COLUMNS;
 use crate::rows::OAuthClientViewRow;
 use application::error::box_error;
 use credential_core::oauth_client_id::OAuthClientId;
@@ -22,14 +22,13 @@ impl OAuthClientDetailsReader for SqlxOAuthClientDetailsReader {
         &self,
         client_id: &OAuthClientId,
     ) -> Result<Option<OAuthClientView>, OAuthClientReadError> {
-        let client_id = client_id_uuid(client_id).map_err(invalid_persisted_state)?;
         let mut query = QueryBuilder::<Postgres>::new("SELECT ");
         query
             .push(OAUTH_CLIENT_VIEW_COLUMNS)
             .push(" FROM oauth_clients WHERE client_id = $1");
         let row = query
             .build_query_as::<OAuthClientViewRow>()
-            .bind(client_id)
+            .bind(client_id.as_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(temporarily_unavailable)?;

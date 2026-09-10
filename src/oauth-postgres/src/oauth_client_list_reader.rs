@@ -8,7 +8,6 @@ use oauth_service::use_cases::{
     ListOAuthClientsRequest, ListOAuthClientsResult, OAuthClientSearchCursor,
 };
 use sqlx::{PgPool, Postgres, QueryBuilder};
-use uuid::Uuid;
 
 const MAX_CURSOR_SIZE: u64 = 100;
 
@@ -39,13 +38,13 @@ impl OAuthClientListReader for SqlxOAuthClientListReader {
         query
             .push(OAUTH_CLIENT_VIEW_COLUMNS)
             .push(" FROM oauth_clients WHERE TRUE");
-        push_filters(&mut query, &request.search)?;
+        push_filters(&mut query, &request.search);
         if let Some(search_after) = cursor.search_after {
             query
                 .push(" AND (created, client_id) > (")
                 .push_bind(search_after.position)
                 .push(", ")
-                .push_bind(client_id_uuid(&search_after.client_id)?)
+                .push_bind(search_after.client_id.into_uuid())
                 .push(")");
         }
         query
@@ -84,14 +83,11 @@ impl OAuthClientListReader for SqlxOAuthClientListReader {
     }
 }
 
-fn push_filters(
-    query: &mut QueryBuilder<Postgres>,
-    search: &OAuthClientSearch,
-) -> Result<(), OAuthClientReadError> {
+fn push_filters(query: &mut QueryBuilder<Postgres>, search: &OAuthClientSearch) {
     if let Some(client_id) = search.client_id {
         query
             .push(" AND client_id = ")
-            .push_bind(client_id_uuid(&client_id)?);
+            .push_bind(client_id.into_uuid());
     }
     if let Some(name) = &search.name_query {
         query
@@ -99,13 +95,6 @@ fn push_filters(
             .push_bind(like_pattern(name.as_ref()))
             .push(r" ESCAPE E'\\'");
     }
-    Ok(())
-}
-
-fn client_id_uuid(
-    client_id: &credential_core::oauth_client_id::OAuthClientId,
-) -> Result<Uuid, OAuthClientReadError> {
-    Uuid::parse_str(&client_id.to_string()).map_err(invalid_persisted_state)
 }
 
 fn like_pattern(value: &str) -> String {

@@ -24,6 +24,19 @@ CREATE TABLE users (
 
 CREATE INDEX users_created_idx ON users (created DESC);
 
+CREATE TABLE user_cognito_identities (
+    issuer text NOT NULL,
+    subject text NOT NULL,
+    user_id uuid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    created timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (issuer, subject),
+    CONSTRAINT user_cognito_identities_user_unique UNIQUE (user_id),
+    CONSTRAINT user_cognito_identities_issuer_length CHECK (octet_length(issuer) BETWEEN 1 AND 2048),
+    CONSTRAINT user_cognito_identities_subject_length CHECK (octet_length(subject) BETWEEN 1 AND 2048),
+    CONSTRAINT user_cognito_identities_issuer_no_control CHECK (issuer !~ '[[:cntrl:]]'),
+    CONSTRAINT user_cognito_identities_subject_no_control CHECK (subject !~ '[[:cntrl:]]')
+);
+
 CREATE TABLE parties (
     party_id uuid PRIMARY KEY,
     party_slug_id text NOT NULL,
@@ -1007,7 +1020,7 @@ CREATE INDEX access_tokens_oauth_client_id_idx
     ON access_tokens (oauth_client_id);
 
 CREATE TABLE oauth_authorization_codes (
-    authorization_code uuid PRIMARY KEY,
+    authorization_code text PRIMARY KEY,
     client_id uuid NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
     user_id uuid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     redirect_uri text NOT NULL,
@@ -1038,7 +1051,7 @@ CREATE TABLE oauth_authorization_codes (
 );
 
 CREATE TABLE oauth_third_party_exchange_codes (
-    third_party_exchange_code uuid PRIMARY KEY,
+    third_party_exchange_code text PRIMARY KEY,
     access_token_id uuid NOT NULL REFERENCES access_tokens(access_token_id) ON DELETE CASCADE,
     access_token text NOT NULL,
     access_token_expires_at timestamptz,

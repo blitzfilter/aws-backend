@@ -1,18 +1,47 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 use api_support::{
-    assert_problem, json_response, seed_access_token_for, seed_approved_partnership_application,
-    seed_partnership_application, seed_user,
+    assert_problem, json_response, seed_access_token_for,
+    seed_approved_partnership_application as seed_raw_approved_partnership_application,
+    seed_listing_source as seed_raw_listing_source, seed_partnership_application, seed_user,
 };
+use listing_source_core::ListingSourceId;
+use partnership_core::{
+    partnership_application_id::PartnershipApplicationId, partnership_id::PartnershipId,
+};
+use party_core::party_id::PartyId;
 use serde_json::json;
 use test_api::{IntegrationTestService, aura_integration_test};
-use time::macros::datetime;
-use uuid::Uuid;
+use time::{OffsetDateTime, macros::datetime};
+use user_core::user_id::UserId;
 
-fn existing_proposal(listing_source_id: Uuid) -> serde_json::Value {
+fn existing_proposal(listing_source_id: ListingSourceId) -> serde_json::Value {
     json!({
         "type": "EXISTING_LISTING_SOURCE",
-        "listing_source_id": listing_source_id,
+        "listing_source_id": listing_source_id.as_uuid(),
     })
+}
+
+async fn seed_listing_source() -> ListingSourceId {
+    ListingSourceId::try_from(seed_raw_listing_source().await)
+        .unwrap_or_else(|error| panic!("central ListingSource fixture must use UUIDv7: {error}"))
+}
+
+async fn seed_approved_partnership_application(
+    applicant_user_id: UserId,
+    created: OffsetDateTime,
+    updated: OffsetDateTime,
+) -> (PartnershipApplicationId, PartnershipId, ListingSourceId) {
+    let (application_id, partnership_id, listing_source_id) =
+        seed_raw_approved_partnership_application(applicant_user_id, created, updated).await;
+    (
+        application_id,
+        PartnershipId::try_from(partnership_id).unwrap_or_else(|error| {
+            panic!("central Partnership approval fixture must use UUIDv7: {error}")
+        }),
+        ListingSourceId::try_from(listing_source_id).unwrap_or_else(|error| {
+            panic!("central ListingSource approval fixture must use UUIDv7: {error}")
+        }),
+    )
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -29,7 +58,7 @@ async fn should_reject_submission_that_references_a_missing_listing_source() {
         .json(&json!({
             "proposal": {
                 "type": "EXISTING_LISTING_SOURCE",
-                "listingSourceId": Uuid::new_v4(),
+                "listingSourceId": ListingSourceId::new(),
             },
         }))
         .send()
@@ -43,6 +72,49 @@ async fn should_reject_submission_that_references_a_missing_listing_source() {
         reqwest::StatusCode::NOT_FOUND,
         "PARTNERSHIP_APPLICATION_LISTING_SOURCE_NOT_FOUND",
     );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_listing_source_ids_in_submission_body() {
+    let user_id = seed_user("USER").await;
+    let token = seed_access_token_for(user_id, std::collections::HashSet::new()).await;
+    let listing_source_id = ListingSourceId::new();
+
+    for invalid_id in [
+        PartyId::new().to_string(),
+        listing_source_id.as_uuid().to_string(),
+        "ls_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .post(format!(
+                "{}/api/v1/me/partnership-applications",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .json(&json!({
+                "proposal": {
+                    "type": "EXISTING_LISTING_SOURCE",
+                    "listingSourceId": invalid_id,
+                },
+            }))
+            .send()
+            .await
+            .unwrap_or_else(|error| {
+                panic!("failed to validate proposal ListingSource ID: {error}")
+            });
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "proposal.listingSourceId", "type": "BODY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -92,40 +164,61 @@ async fn should_get_admin_partnership_application_detail_with_approval_reference
         json!(approved_listing_source_id),
         body["approvedListingSourceId"]
     );
+    for (field, prefix) in [
+        (&body["id"], "pa_"),
+        (&body["applicantUserId"], "usr_"),
+        (&body["proposal"]["listingSourceId"], "ls_"),
+        (&body["approvedPartnershipId"], "psh_"),
+        (&body["approvedListingSourceId"], "ls_"),
+    ] {
+        assert!(
+            field
+                .as_str()
+                .is_some_and(|value| value.starts_with(prefix)),
+            "response ID must start with {prefix}"
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_admin_partnership_application_detail_id() {
+async fn should_reject_noncanonical_admin_partnership_application_detail_ids() {
     let admin_id = seed_user("ADMIN").await;
     let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let application_id = PartnershipApplicationId::new();
 
-    let response = reqwest::Client::new()
-        .get(format!(
-            "{}/api/v1/admin/partnership-applications/not-a-uuid",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to validate application detail ID: {error}"));
-    let cache_control = response
-        .headers()
-        .get(reqwest::header::CACHE_CONTROL)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        PartnershipId::new().to_string(),
+        application_id.as_uuid().to_string(),
+        "pa_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/admin/partnership-applications/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate application detail ID: {error}"));
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
 
-    assert_eq!(Some("no-store".to_owned()), cache_control);
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
-    assert_eq!(
-        json!({"field": "partnershipApplicationId", "type": "PATH"}),
-        body["source"]
-    );
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "partnershipApplicationId", "type": "PATH"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -137,7 +230,7 @@ async fn should_return_not_found_for_missing_admin_partnership_application_detai
         .get(format!(
             "{}/api/v1/admin/partnership-applications/{}",
             AURA_API.base_url(),
-            Uuid::new_v4()
+            PartnershipApplicationId::new()
         ))
         .bearer_auth(String::from(token))
         .send()
@@ -168,7 +261,7 @@ async fn should_reject_non_admin_partnership_application_detail_access() {
         .get(format!(
             "{}/api/v1/admin/partnership-applications/{}",
             AURA_API.base_url(),
-            Uuid::new_v4()
+            PartnershipApplicationId::new()
         ))
         .bearer_auth(String::from(token))
         .send()
@@ -191,7 +284,7 @@ async fn should_mark_submitted_partnership_application_in_review_as_admin() {
     let application_id = seed_partnership_application(
         applicant_user_id,
         "SUBMITTED",
-        existing_proposal(Uuid::new_v4()),
+        existing_proposal(ListingSourceId::new()),
         datetime!(2026-06-01 12:00 UTC),
         datetime!(2026-06-01 12:00 UTC),
     )
@@ -233,7 +326,7 @@ async fn should_return_conflict_when_marking_non_submitted_partnership_applicati
     let application_id = seed_partnership_application(
         applicant_user_id,
         "IN_REVIEW",
-        existing_proposal(Uuid::new_v4()),
+        existing_proposal(ListingSourceId::new()),
         datetime!(2026-06-01 12:00 UTC),
         datetime!(2026-06-01 12:00 UTC),
     )
@@ -270,7 +363,7 @@ async fn should_return_not_found_when_marking_missing_partnership_application_in
         .patch(format!(
             "{}/api/v1/admin/partnership-applications/{}",
             AURA_API.base_url(),
-            Uuid::new_v4()
+            PartnershipApplicationId::new()
         ))
         .bearer_auth(String::from(token))
         .send()
@@ -298,7 +391,7 @@ async fn should_reject_non_admin_mark_in_review() {
     let application_id = seed_partnership_application(
         applicant_user_id,
         "SUBMITTED",
-        existing_proposal(Uuid::new_v4()),
+        existing_proposal(ListingSourceId::new()),
         datetime!(2026-06-01 12:00 UTC),
         datetime!(2026-06-01 12:00 UTC),
     )
@@ -332,7 +425,7 @@ async fn should_remove_legacy_mark_in_review_route() {
     let application_id = seed_partnership_application(
         applicant_user_id,
         "SUBMITTED",
-        existing_proposal(Uuid::new_v4()),
+        existing_proposal(ListingSourceId::new()),
         datetime!(2026-06-01 12:00 UTC),
         datetime!(2026-06-01 12:00 UTC),
     )
@@ -356,7 +449,7 @@ async fn should_remove_legacy_mark_in_review_route() {
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_approve_an_in_review_partnership_application_on_the_admin_decision_route() {
     let applicant_user_id = seed_user("USER").await;
-    let listing_source_id = api_support::seed_listing_source().await;
+    let listing_source_id = seed_listing_source().await;
     let application_id = seed_partnership_application(
         applicant_user_id,
         "IN_REVIEW",
@@ -534,7 +627,7 @@ async fn should_reject_an_arbitrary_partnership_application_decision_value() {
         .post(format!(
             "{}/api/v1/admin/partnership-applications/{}/decision",
             AURA_API.base_url(),
-            Uuid::new_v4()
+            PartnershipApplicationId::new()
         ))
         .bearer_auth(String::from(token))
         .json(&json!({"decision": "IN_REVIEW"}))
@@ -563,7 +656,7 @@ async fn should_reject_a_partnership_application_decision_outside_in_review() {
     let application_id = seed_partnership_application(
         applicant_user_id,
         "SUBMITTED",
-        existing_proposal(Uuid::new_v4()),
+        existing_proposal(ListingSourceId::new()),
         datetime!(2026-06-01 12:00 UTC),
         datetime!(2026-06-01 12:00 UTC),
     )
@@ -617,7 +710,7 @@ async fn should_return_not_found_for_a_missing_admin_partnership_application_dec
         .post(format!(
             "{}/api/v1/admin/partnership-applications/{}/decision",
             AURA_API.base_url(),
-            Uuid::new_v4()
+            PartnershipApplicationId::new()
         ))
         .bearer_auth(String::from(token))
         .json(&json!({"decision": "REJECT"}))
@@ -686,7 +779,7 @@ async fn should_reject_non_admin_partnership_application_decision() {
 async fn should_list_filtered_admin_partnership_application_summaries_without_secrets() {
     let applicant_user_id = seed_user("USER").await;
     let other_applicant_user_id = seed_user("USER").await;
-    let listing_source_id = Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let matching_id = seed_partnership_application(
         applicant_user_id,
         "SUBMITTED",
@@ -698,7 +791,7 @@ async fn should_list_filtered_admin_partnership_application_summaries_without_se
     let _other_id = seed_partnership_application(
         other_applicant_user_id,
         "IN_REVIEW",
-        existing_proposal(Uuid::new_v4()),
+        existing_proposal(ListingSourceId::new()),
         datetime!(2026-03-02 12:00 UTC),
         datetime!(2026-04-03 12:00 UTC),
     )
@@ -751,6 +844,21 @@ async fn should_list_filtered_admin_partnership_application_summaries_without_se
         json!(listing_source_id),
         body["items"][0]["proposal"]["listingSourceId"]
     );
+    assert!(
+        body["items"][0]["id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pa_"))
+    );
+    assert!(
+        body["items"][0]["applicantUserId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("usr_"))
+    );
+    assert!(
+        body["items"][0]["proposal"]["listingSourceId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ls_"))
+    );
     assert!(body["items"][0].get("version").is_none());
     assert!(body["items"][0]["created"].as_str().is_some());
     assert!(body["items"][0]["updated"].as_str().is_some());
@@ -764,7 +872,7 @@ async fn should_follow_admin_partnership_application_cursor_with_tied_timestamps
         seed_partnership_application(
             applicant_user_id,
             "SUBMITTED",
-            existing_proposal(Uuid::new_v4()),
+            existing_proposal(ListingSourceId::new()),
             created,
             created,
         )
@@ -772,7 +880,7 @@ async fn should_follow_admin_partnership_application_cursor_with_tied_timestamps
         seed_partnership_application(
             applicant_user_id,
             "SUBMITTED",
-            existing_proposal(Uuid::new_v4()),
+            existing_proposal(ListingSourceId::new()),
             created,
             created,
         )
@@ -780,7 +888,7 @@ async fn should_follow_admin_partnership_application_cursor_with_tied_timestamps
         seed_partnership_application(
             applicant_user_id,
             "SUBMITTED",
-            existing_proposal(Uuid::new_v4()),
+            existing_proposal(ListingSourceId::new()),
             created,
             created,
         )
@@ -816,6 +924,11 @@ async fn should_follow_admin_partnership_application_cursor_with_tied_timestamps
         first_body["items"][1]["id"]
     );
     assert!(first_body["searchAfter"].is_array());
+    assert!(
+        first_body["searchAfter"][1]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pa_"))
+    );
     let cursor = first_body["searchAfter"].to_string();
 
     let second = client
@@ -852,7 +965,7 @@ async fn should_return_empty_admin_partnership_application_collection() {
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(token))
-        .query(&[("applicantUserId", Uuid::new_v4().to_string())])
+        .query(&[("applicantUserId", UserId::new().to_string())])
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to get empty application collection: {error}"));
@@ -878,21 +991,97 @@ async fn should_reject_invalid_queries_and_non_admin_collection_access() {
         "{}/api/v1/admin/partnership-applications",
         AURA_API.base_url()
     );
+    let applicant_user_id = UserId::new();
+    let listing_source_id = ListingSourceId::new();
+    let application_id = PartnershipApplicationId::new();
 
-    let invalid = client
-        .get(&path)
-        .bearer_auth(String::from(admin_token))
-        .query(&[("state", "invalid")])
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to validate application query: {error}"));
-    let (status, body) = json_response(invalid).await;
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "BAD_QUERY_PARAMETER_VALUE",
-    );
+    for (field, values) in [
+        (
+            "applicantUserId",
+            [
+                PartyId::new().to_string(),
+                applicant_user_id.as_uuid().to_string(),
+                "usr_not-a-typeid".to_owned(),
+            ],
+        ),
+        (
+            "listingSourceId",
+            [
+                PartyId::new().to_string(),
+                listing_source_id.as_uuid().to_string(),
+                "ls_not-a-typeid".to_owned(),
+            ],
+        ),
+        (
+            "searchAfter",
+            [
+                json!(["2026-05-05T12:00:00Z", PartnershipId::new()]).to_string(),
+                json!(["2026-05-05T12:00:00Z", application_id.as_uuid().to_string()]).to_string(),
+                json!(["2026-05-05T12:00:00Z", "pa_not-a-typeid"]).to_string(),
+            ],
+        ),
+    ] {
+        for value in values {
+            let response = client
+                .get(&path)
+                .bearer_auth(String::from(admin_token.clone()))
+                .query(&[(field, value.as_str())])
+                .send()
+                .await
+                .unwrap_or_else(|error| panic!("failed to validate application {field}: {error}"));
+            let cache_control = response
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let (status, body) = json_response(response).await;
+
+            assert_eq!(Some("no-store".to_owned()), cache_control);
+            assert_problem(
+                status,
+                &body,
+                reqwest::StatusCode::BAD_REQUEST,
+                "INVALID_OBJECT_ID",
+            );
+            assert_eq!(json!({"field": field, "type": "QUERY"}), body["source"]);
+        }
+    }
+
+    for (field, value) in [
+        ("state", "invalid".to_owned()),
+        ("searchAfter", "not-json".to_owned()),
+        (
+            "searchAfter",
+            json!({"timestamp": "2026-05-05T12:00:00Z"}).to_string(),
+        ),
+        (
+            "searchAfter",
+            json!(["not-a-timestamp", application_id]).to_string(),
+        ),
+    ] {
+        let response = client
+            .get(&path)
+            .bearer_auth(String::from(admin_token.clone()))
+            .query(&[(field, value.as_str())])
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate application {field}: {error}"));
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "BAD_QUERY_PARAMETER_VALUE",
+        );
+        assert_eq!(json!({"field": field, "type": "QUERY"}), body["source"]);
+    }
 
     let user_id = seed_user("USER").await;
     let user_token = seed_access_token_for(user_id, std::collections::HashSet::new()).await;

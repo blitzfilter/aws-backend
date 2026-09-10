@@ -1,5 +1,6 @@
 use application::error::box_error;
 use application::pagination::Cursor;
+use domain_primitives::object_id::ObjectIdError;
 
 use listing_source_core::{
     InvalidListingIngestionMethod, InvalidListingSourceSlug, ListingSourceId, ListingSourceName,
@@ -65,6 +66,10 @@ struct ListingSourceSearchRow {
 
 #[derive(Debug, thiserror::Error)]
 enum ListingSourceSearchRowMappingError {
+    #[error("invalid listing source ID persisted")]
+    ListingSourceId(#[source] ObjectIdError),
+    #[error("invalid operator Party ID persisted")]
+    OperatorPartyId(#[source] ObjectIdError),
     #[error("invalid listing source slug")]
     ListingSourceSlug(#[source] InvalidListingSourceSlug),
     #[error("invalid listing source name")]
@@ -88,13 +93,15 @@ impl TryFrom<ListingSourceSearchRow> for ListingSourceSearchSummary {
 
     fn try_from(row: ListingSourceSearchRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            listing_source_id: ListingSourceId::from(row.listing_source_id),
+            listing_source_id: ListingSourceId::try_from(row.listing_source_id)
+                .map_err(Self::Error::ListingSourceId)?,
             listing_source_slug_id: ListingSourceSlugId::raw(row.listing_source_slug_id)
                 .map_err(Self::Error::ListingSourceSlug)?,
             name: ListingSourceName::try_from(row.listing_source_name)
                 .map_err(Self::Error::ListingSourceName)?,
             operator: ListingSourceOperatorSummary {
-                party_id: PartyId::from(row.operator_party_id),
+                party_id: PartyId::try_from(row.operator_party_id)
+                    .map_err(Self::Error::OperatorPartyId)?,
                 party_slug_id: PartySlugId::raw(row.operator_party_slug_id)
                     .map_err(Self::Error::PartySlug)?,
                 name: PartyName::try_from(row.operator_party_name)
@@ -182,7 +189,7 @@ impl ListingSourceSearchReader for SqlxListingSourceSearchReader<'_> {
         );
         if let Some(search_after) = cursor.search_after {
             builder.push(" AND rn > (SELECT rn FROM ranked WHERE listing_source_id = ");
-            builder.push_bind(uuid::Uuid::from(search_after));
+            builder.push_bind(search_after.into_uuid());
             builder.push(")");
         }
         builder.push(" ORDER BY rn LIMIT ").push_bind(limit);
@@ -241,7 +248,7 @@ fn push_filters(builder: &mut QueryBuilder<Postgres>, search: &ListingSourceSear
     if let Some(listing_source_id) = search.listing_source_id {
         builder
             .push(" AND s.listing_source_id = ")
-            .push_bind(uuid::Uuid::from(listing_source_id));
+            .push_bind(listing_source_id.into_uuid());
     }
     if let Some(listing_source_slug_id) = &search.listing_source_slug_id {
         builder
@@ -251,7 +258,7 @@ fn push_filters(builder: &mut QueryBuilder<Postgres>, search: &ListingSourceSear
     if let Some(operator_party_id) = search.operator_party_id {
         builder
             .push(" AND s.operator_party_id = ")
-            .push_bind(uuid::Uuid::from(operator_party_id));
+            .push_bind(operator_party_id.into_uuid());
     }
     if let Some(ingestion_method) = search.ingestion_method {
         builder.push(" AND EXISTS (SELECT 1 FROM listing_source_ingestion_methods filter_method WHERE filter_method.listing_source_id = s.listing_source_id AND filter_method.ingestion_method = ");
@@ -299,6 +306,39 @@ fn push_sort_fields(
 mod tests {
     use super::*;
     use listing_source_core::ListingSourceSearch;
+
+    fn row(listing_source_id: uuid::Uuid, operator_party_id: uuid::Uuid) -> ListingSourceSearchRow {
+        ListingSourceSearchRow {
+            listing_source_id,
+            listing_source_slug_id: "source".to_owned(),
+            listing_source_name: "Source".to_owned(),
+            operator_party_id,
+            operator_party_slug_id: "operator".to_owned(),
+            operator_party_name: "Operator".to_owned(),
+            ingestion_methods: Vec::new(),
+            url: None,
+            image: None,
+            referral_configuration: None,
+            created: OffsetDateTime::UNIX_EPOCH,
+            updated: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn should_reject_wrong_version_listing_source_id() {
+        assert!(matches!(
+            ListingSourceSearchSummary::try_from(row(uuid::Uuid::new_v4(), uuid::Uuid::now_v7())),
+            Err(ListingSourceSearchRowMappingError::ListingSourceId(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_wrong_version_operator_party_id() {
+        assert!(matches!(
+            ListingSourceSearchSummary::try_from(row(uuid::Uuid::now_v7(), uuid::Uuid::new_v4())),
+            Err(ListingSourceSearchRowMappingError::OperatorPartyId(_))
+        ));
+    }
 
     #[test]
     fn should_escape_like_wildcards_as_literal_text() {

@@ -1,34 +1,17 @@
-use uuid::Uuid;
+domain_primitives::object_id_newtype!(PartyId, "pty");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PartyId(Uuid);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl Default for PartyId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+    #[test]
+    fn should_use_pty_prefix_for_party_id()
+    -> Result<(), domain_primitives::object_id::ObjectIdError> {
+        let id = PartyId::try_from("pty_01h455vb4pex5vy7enb1p677vn")?;
 
-impl PartyId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl std::fmt::Display for PartyId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-impl From<Uuid> for PartyId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PartyId> for Uuid {
-    fn from(value: PartyId) -> Self {
-        value.0
+        assert_eq!("pty", PartyId::PREFIX);
+        assert_eq!("pty_01h455vb4pex5vy7enb1p677vn", id.to_string());
+        assert_eq!(7, id.as_uuid().get_version_num());
+        Ok(())
     }
 }

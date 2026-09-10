@@ -28,7 +28,8 @@ async fn should_create_checkout_and_persist_stripe_customer_for_free_user() {
     assert_eq!(reqwest::StatusCode::CREATED, status);
     assert_eq!(
         serde_json::json!(format!(
-            "https://checkout.stripe.test/cus_{user_id}/price_pro_monthly"
+            "https://checkout.stripe.test/cus_{}/price_pro_monthly",
+            user_id.as_uuid()
         )),
         body["url"]
     );
@@ -38,7 +39,7 @@ async fn should_create_checkout_and_persist_stripe_customer_for_free_user() {
             .fetch_one(&get_postgres_client().await)
             .await
             .unwrap_or_else(|error| panic!("failed to read Stripe customer association: {error}"));
-    assert_eq!(Some(format!("cus_{user_id}")), customer_id);
+    assert_eq!(Some(format!("cus_{}", user_id.as_uuid())), customer_id);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -136,7 +137,8 @@ async fn should_create_checkout_when_managing_free_user() {
     assert_eq!(reqwest::StatusCode::CREATED, status);
     assert_eq!(
         serde_json::json!(format!(
-            "https://checkout.stripe.test/cus_{user_id}/price_ultimate_yearly"
+            "https://checkout.stripe.test/cus_{}/price_ultimate_yearly",
+            user_id.as_uuid()
         )),
         body["url"]
     );

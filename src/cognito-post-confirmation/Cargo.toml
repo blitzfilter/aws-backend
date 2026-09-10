@@ -7,7 +7,6 @@ edition = "2024"
 application = { workspace = true }
 platform-observability = { workspace = true }
 platform-postgres = { workspace = true }
-user-core = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
@@ -21,5 +20,6 @@ user-service = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
+sqlx = { workspace = true }
 test-api = { workspace = true, features = ["postgres"] }
 user-core = { workspace = true }

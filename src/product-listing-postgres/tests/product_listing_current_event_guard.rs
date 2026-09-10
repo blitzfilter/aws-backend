@@ -55,8 +55,8 @@ async fn current_event_guard_lock_flow() -> Result<(), Box<dyn std::error::Error
     sqlx::query(
         "INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())",
     )
-    .bind(uuid::Uuid::from(next_event_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(next_event_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .bind(serde_json::json!({
         "availability": {"previous": "AVAILABLE", "current": "SOLD_OUT"}
     }))
@@ -69,8 +69,8 @@ async fn current_event_guard_lock_flow() -> Result<(), Box<dyn std::error::Error
         sqlx::query(
             "UPDATE product_listings SET current_event_id = $1, availability = 'SOLD_OUT', version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2",
         )
-        .bind(uuid::Uuid::from(next_event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(next_event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .execute(&update_pool)
         .await
     });
@@ -99,11 +99,11 @@ async fn should_recheck_current_event_after_waiting_for_concurrent_product_commi
         let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *update).await?;
         sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
-            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id))
+            .bind(newer.into_uuid()).bind(product_id.into_uuid())
             .bind(serde_json::json!({"availability": {"previous": "AVAILABLE", "current": "SOLD_OUT"}}))
             .execute(&mut *update).await?;
         sqlx::query("UPDATE product_listings SET current_event_id = $1, availability = 'SOLD_OUT', version = version + 1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
-            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id))
+            .bind(newer.into_uuid()).bind(product_id.into_uuid())
             .execute(&mut *update).await?;
         let final_guard = async {
             let mut tx = SqlxUnitOfWork::new(pool.clone()).begin().await?;
@@ -145,17 +145,17 @@ async fn should_read_reversed_historical_watchlist_and_match_facts_after_newer_e
         let second = EventId::new();
         for (event, previous, current) in [(first, "AVAILABLE", "RESERVED"), (second, "RESERVED", "SOLD_OUT")] {
             sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_CHANGED', 'DOMAIN', 1, $3, now())")
-                .bind(uuid::Uuid::from(event)).bind(uuid::Uuid::from(product_id))
+                .bind(event.into_uuid()).bind(product_id.into_uuid())
                 .bind(serde_json::json!({"availability": {"previous": previous, "current": current}}))
                 .execute(&pool).await?;
         }
         let newer = EventId::new();
         let mut update = pool.begin().await?;
         sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'ENRICHMENT_EMBEDDED', 'ENRICHMENT', 1, $3, now())")
-            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id))
-            .bind(serde_json::json!({"sourceEventId": discovery.to_string()})).execute(&mut *update).await?;
+            .bind(newer.into_uuid()).bind(product_id.into_uuid())
+            .bind(serde_json::json!({"sourceEventId": discovery.as_uuid().to_string()})).execute(&mut *update).await?;
         sqlx::query("UPDATE product_listings SET current_event_id = $1, projection_version = projection_version + 1 WHERE product_listing_id = $2")
-            .bind(uuid::Uuid::from(newer)).bind(uuid::Uuid::from(product_id)).execute(&mut *update).await?;
+            .bind(newer.into_uuid()).bind(product_id.into_uuid()).execute(&mut *update).await?;
         update.commit().await?;
         let mut tx = SqlxUnitOfWork::new(pool.clone()).begin().await?;
         let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -174,7 +174,7 @@ async fn should_read_reversed_historical_watchlist_and_match_facts_after_newer_e
             assert_eq!(newer, match_source.current_event_id);
         }
         let withdraw = sqlx::query("UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL WHERE product_listing_id = $1")
-            .bind(uuid::Uuid::from(product_id)).execute(&pool);
+            .bind(product_id.into_uuid()).execute(&pool);
         tokio::pin!(withdraw);
         support::assert_blocked(&pool, blocker_pid, 1, withdraw.as_mut()).await?;
         tx.commit().await?;
@@ -190,10 +190,10 @@ async fn should_read_reversed_historical_watchlist_and_match_facts_after_newer_e
 async fn seed_product(pool: &sqlx::PgPool) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
-    let product_uuid = uuid::Uuid::from(product_listing_id);
-    let slug_suffix = product_uuid.simple().to_string()[..6].to_owned();
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let product_uuid = product_listing_id.into_uuid();
+    let slug_suffix = product_uuid.simple().to_string()[26..].to_owned();
     let mut transaction = pool.begin().await?;
     sqlx::query(
         "INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, 'Current event guard party')",
@@ -215,7 +215,7 @@ async fn seed_product(pool: &sqlx::PgPool) -> Result<(ProductListingId, EventId)
     )
     .bind(product_uuid)
     .bind(format!("current-event-guard-{slug_suffix}"))
-    .bind(uuid::Uuid::from(event_id))
+    .bind(event_id.into_uuid())
     .bind(listing_source_id)
     .bind(product_uuid.to_string())
     .bind("Current event guard product")
@@ -224,7 +224,7 @@ async fn seed_product(pool: &sqlx::PgPool) -> Result<(ProductListingId, EventId)
     sqlx::query(
         "INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())",
     )
-    .bind(uuid::Uuid::from(event_id))
+    .bind(event_id.into_uuid())
     .bind(product_uuid)
     .bind(serde_json::json!({
         "listingSourceId": listing_source_id.to_string(),

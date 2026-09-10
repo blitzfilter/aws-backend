@@ -22,7 +22,7 @@ pub use review_page::CrawlerReviewPage;
 pub use review_url::CrawlerReviewUrl;
 pub use schema_candidate_evaluation::SchemaCandidateEvaluation;
 pub use schema_matrix::SchemaMatrix;
-pub use schema_page_evaluation::SchemaPageEvaluation;
+pub use schema_page_evaluation::{SchemaPageEvaluation, SchemaPageReference};
 pub use schema_review_page_input::SchemaReviewPageInput;
 pub use selector_field_evaluation::SelectorFieldEvaluation;
 pub use status::*;

@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use application::error::box_error;
 use product_listing_service::ports::{
     ProductListingRawCaptureWrite, ProductListingRawCaptureWriteError,
@@ -53,7 +54,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
         &mut self,
         write: ProductListingRawCaptureWrite,
     ) -> Result<ProductListingRawCaptureWriteOutcome, ProductListingRawCaptureWriteError> {
-        let listing_source_id = uuid::Uuid::from(write.listing_source_id);
+        let listing_source_id = write.listing_source_id.into_uuid();
         let source_record_key_sha256 = write.source_record_key_sha256.as_bytes().as_slice();
         let provider_receipt = match write.ingestion_method {
             product_listing_service::ports::ProductListingRawIngestionMethod::WebCrawl => None,
@@ -84,6 +85,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                     )
                 });
 
+        let new_stream_id = ProductListingRawStreamId::new();
         sqlx::query(
             r#"
             INSERT INTO product_listing_raw_streams (
@@ -97,7 +99,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             ON CONFLICT (listing_source_id, ingestion_method, source_record_key_sha256) DO NOTHING
             "#,
         )
-        .bind(uuid::Uuid::new_v4())
+        .bind(new_stream_id.as_uuid())
         .bind(listing_source_id)
         .bind(write.ingestion_method.as_str())
         .bind(&write.source_record_key)
@@ -132,6 +134,12 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
         .await
         .map_err(capture_failed)?;
 
+        let stream_id = try_from_uuid::<ProductListingRawStreamId>(
+            stream.product_listing_raw_stream_id,
+            "ProductListing raw stream ID",
+        )
+        .map_err(invalid_capture_state_error)?;
+
         if stream.source_record_key != write.source_record_key {
             return Err(ProductListingRawCaptureWriteError::SourceRecordKeyHashCollision);
         }
@@ -159,7 +167,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                   AND expires_at <= clock_timestamp()
                 "#,
             )
-            .bind(stream.product_listing_raw_stream_id)
+            .bind(stream_id.as_uuid())
             .bind(provider_receipt.scope().as_str())
             .bind(provider_receipt.delivery_id())
             .execute(&mut *self.connection)
@@ -175,7 +183,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                   AND provider_delivery_id = $3
                 "#,
             )
-            .bind(stream.product_listing_raw_stream_id)
+            .bind(stream_id.as_uuid())
             .bind(provider_receipt.scope().as_str())
             .bind(provider_receipt.delivery_id())
             .fetch_optional(&mut *self.connection)
@@ -192,9 +200,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                     == canonical_source_evidence_sha256.as_slice()
                 {
                     return Ok(ProductListingRawCaptureWriteOutcome::Duplicate {
-                        product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                            stream.product_listing_raw_stream_id,
-                        ),
+                        product_listing_raw_stream_id: stream_id,
                         latest_revision,
                     });
                 }
@@ -245,7 +251,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
                 ) VALUES ($1, $2, $3, $4)
                 "#,
             )
-            .bind(stream.product_listing_raw_stream_id)
+            .bind(stream_id.as_uuid())
             .bind(provider_receipt.scope().as_str())
             .bind(provider_receipt.delivery_id())
             .bind(canonical_source_evidence_sha256.as_slice())
@@ -256,18 +262,14 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
 
         if source_observation_matches_stream_head {
             return Ok(ProductListingRawCaptureWriteOutcome::Unchanged {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    stream.product_listing_raw_stream_id,
-                ),
+                product_listing_raw_stream_id: stream_id,
                 latest_revision,
             });
         }
 
         if source_observation_is_stale {
             return Ok(ProductListingRawCaptureWriteOutcome::Stale {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    stream.product_listing_raw_stream_id,
-                ),
+                product_listing_raw_stream_id: stream_id,
                 latest_revision,
             });
         }
@@ -276,16 +278,14 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             if let Some(source_ordering_advancement) = source_ordering_advancement.as_ref() {
                 update_provider_source_order(
                     self.connection,
-                    stream.product_listing_raw_stream_id,
+                    stream_id,
                     source_ordering_advancement,
                 )
                 .await?;
             }
 
             return Ok(ProductListingRawCaptureWriteOutcome::Unchanged {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    stream.product_listing_raw_stream_id,
-                ),
+                product_listing_raw_stream_id: stream_id,
                 latest_revision,
             });
         }
@@ -295,7 +295,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             .ok_or_else(|| invalid_capture_state("raw stream revision overflow"))?;
         let revision_as_i64 = i64::try_from(revision)
             .map_err(|_| invalid_capture_state("raw stream revision exceeds storage range"))?;
-        let product_listing_raw_revision_id = uuid::Uuid::new_v4();
+        let product_listing_raw_revision_id = ProductListingRawRevisionId::new();
 
         sqlx::query(
             r#"
@@ -319,8 +319,8 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
             )
             "#,
         )
-        .bind(product_listing_raw_revision_id)
-        .bind(stream.product_listing_raw_stream_id)
+        .bind(product_listing_raw_revision_id.as_uuid())
+        .bind(stream_id.as_uuid())
         .bind(revision_as_i64)
         .bind(write.input.operation().as_str())
         .bind(write.input.payload_format().as_str())
@@ -347,7 +347,7 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
 
         update_stream_head(
             self.connection,
-            stream.product_listing_raw_stream_id,
+            stream_id,
             revision_as_i64,
             write.input_sha256.as_bytes(),
             source_ordering_advancement.as_ref(),
@@ -355,12 +355,8 @@ impl ProductListingRawCaptureWriter for SqlxProductListingRawCaptureWriter<'_> {
         .await?;
 
         Ok(ProductListingRawCaptureWriteOutcome::Changed {
-            product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                stream.product_listing_raw_stream_id,
-            ),
-            product_listing_raw_revision_id: ProductListingRawRevisionId::from_uuid(
-                product_listing_raw_revision_id,
-            ),
+            product_listing_raw_stream_id: stream_id,
+            product_listing_raw_revision_id,
             revision,
         })
     }
@@ -570,7 +566,7 @@ fn source_ordering_decision(
 
 async fn update_provider_source_order(
     connection: &mut PgConnection,
-    product_listing_raw_stream_id: uuid::Uuid,
+    product_listing_raw_stream_id: ProductListingRawStreamId,
     advancement: &SourceOrderingAdvancement,
 ) -> Result<(), ProductListingRawCaptureWriteError> {
     match advancement {
@@ -591,7 +587,7 @@ async fn update_provider_source_order(
             .bind(order.nanoseconds)
             .bind(order.operation)
             .bind(order.observation_sha256.as_slice())
-            .bind(product_listing_raw_stream_id)
+            .bind(product_listing_raw_stream_id.as_uuid())
             .execute(&mut *connection)
             .await
             .map_err(capture_failed)?;
@@ -610,7 +606,7 @@ async fn update_provider_source_order(
                 "#,
             )
             .bind(observation_sha256.as_slice())
-            .bind(product_listing_raw_stream_id)
+            .bind(product_listing_raw_stream_id.as_uuid())
             .execute(&mut *connection)
             .await
             .map_err(capture_failed)?;
@@ -622,49 +618,31 @@ async fn update_provider_source_order(
 
 async fn update_stream_head(
     connection: &mut PgConnection,
-    product_listing_raw_stream_id: uuid::Uuid,
+    product_listing_raw_stream_id: ProductListingRawStreamId,
     revision: i64,
     input_sha256: &[u8; 32],
     advancement: Option<&SourceOrderingAdvancement>,
 ) -> Result<(), ProductListingRawCaptureWriteError> {
-    match advancement {
-        Some(advancement) => {
-            update_provider_source_order(connection, product_listing_raw_stream_id, advancement)
-                .await?;
-            sqlx::query(
-                r#"
-                UPDATE product_listing_raw_streams
-                SET latest_revision = $1,
-                    latest_input_sha256 = $2,
-                    updated = now()
-                WHERE product_listing_raw_stream_id = $3
-                "#,
-            )
-            .bind(revision)
-            .bind(input_sha256.as_slice())
-            .bind(product_listing_raw_stream_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(capture_failed)?;
-        }
-        None => {
-            sqlx::query(
-                r#"
-                UPDATE product_listing_raw_streams
-                SET latest_revision = $1,
-                    latest_input_sha256 = $2,
-                    updated = now()
-                WHERE product_listing_raw_stream_id = $3
-                "#,
-            )
-            .bind(revision)
-            .bind(input_sha256.as_slice())
-            .bind(product_listing_raw_stream_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(capture_failed)?;
-        }
+    if let Some(advancement) = advancement {
+        update_provider_source_order(connection, product_listing_raw_stream_id, advancement)
+            .await?;
     }
+
+    sqlx::query(
+        r#"
+        UPDATE product_listing_raw_streams
+        SET latest_revision = $1,
+            latest_input_sha256 = $2,
+            updated = now()
+        WHERE product_listing_raw_stream_id = $3
+        "#,
+    )
+    .bind(revision)
+    .bind(input_sha256.as_slice())
+    .bind(product_listing_raw_stream_id.as_uuid())
+    .execute(&mut *connection)
+    .await
+    .map_err(capture_failed)?;
 
     Ok(())
 }
@@ -684,7 +662,13 @@ fn capture_failed(error: sqlx::Error) -> ProductListingRawCaptureWriteError {
 }
 
 fn invalid_capture_state(message: &'static str) -> ProductListingRawCaptureWriteError {
+    invalid_capture_state_error(std::io::Error::other(message))
+}
+
+fn invalid_capture_state_error(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> ProductListingRawCaptureWriteError {
     ProductListingRawCaptureWriteError::CaptureFailed {
-        source: box_error(std::io::Error::other(message)),
+        source: box_error(source),
     }
 }

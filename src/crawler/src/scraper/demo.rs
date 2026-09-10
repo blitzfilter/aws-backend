@@ -91,35 +91,35 @@ async fn main() {
 
     let targets: &[ScrapeTarget] = &[
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5a".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vg".try_into().unwrap(),
             url: "https://www.antiquitaeten-tuebingen.de/weichholzschrank-mit-orig-bemalung-salzburg-um-1800-art-7001/",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5a".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vg".try_into().unwrap(),
             url: "https://www.antiquitaeten-tuebingen.de/bildnis-in-oel-der-gattin-von-samuel-de-la-roche1947-art-g1475/",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5b".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vh".try_into().unwrap(),
             url: "https://20thcenturymilitaria.com/shop.php?code=51609",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5b".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vh".try_into().unwrap(),
             url: "https://20thcenturymilitaria.com/shop.php?code=52012",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5b".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vh".try_into().unwrap(),
             url: "https://20thcenturymilitaria.com/shop.php?code=52014",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5a".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vg".try_into().unwrap(),
             url: "https://www.antiquitaeten-tuebingen.de/https-www-antiquitaeten-tuebingen-de-gemaelde-artnr-g-58-oelgemaelde-landschaftsmalerei-mitte-19-jh/",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5c".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vj".try_into().unwrap(),
             url: "https://nostalgie-palast.de/couchtisch-uebersee-mit-glasplatte-113-m-x-053-m/",
         },
         ScrapeTarget {
-            listing_source_id: "8ded4706-dc72-4b0b-9357-9192e18e3d5d".try_into().unwrap(),
+            listing_source_id: "ls_01h455vb4pex5ty7enb1p677vk".try_into().unwrap(),
             url: "https://www.lot-tissimo.com/de-de/auction-catalogues/chiswick-auctions/catalogue-id-srchis11168/lot-61a5b754-6fc7-435b-80b3-b3fa0141c94e",
         },
     ];

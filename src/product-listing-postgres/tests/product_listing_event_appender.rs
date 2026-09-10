@@ -61,7 +61,7 @@ async fn should_append_domain_event_with_type_version_group_and_semantic_payload
     let row: (String, String, i16, Value) = sqlx::query_as(
         "SELECT event_type, event_group, event_type_schema_version, payload FROM product_listing_events WHERE event_id = $1",
     )
-    .bind(uuid::Uuid::from(event.event_id))
+    .bind(event.event_id.into_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("read event: {error}"));
@@ -105,7 +105,7 @@ fn sample_product(listing_source_id: ListingSourceId) -> ProductListing {
 }
 
 async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId {
-    let party_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
     let listing_source_id = ListingSourceId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
         .bind(party_id)
@@ -115,7 +115,7 @@ async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId
         .await
         .unwrap_or_else(|error| panic!("seed party: {error}"));
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(listing_source_id.into_uuid())
         .bind(slug)
         .bind(slug)
         .bind(party_id)

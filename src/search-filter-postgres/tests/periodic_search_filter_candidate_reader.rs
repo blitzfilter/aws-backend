@@ -33,13 +33,13 @@ async fn should_select_only_filters_eligible_for_closed_window_and_use_creation_
     let eligible_created = window_end - Duration::hours(1);
 
     sqlx::query("UPDATE search_filters SET created = $2 WHERE user_search_filter_id = $1")
-        .bind(uuid::Uuid::from(eligible.id()))
+        .bind(eligible.id().into_uuid())
         .bind(eligible_created)
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("set eligible creation failed: {error:?}"));
     sqlx::query("UPDATE search_filters SET created = $2 WHERE user_search_filter_id = $1")
-        .bind(uuid::Uuid::from(future.id()))
+        .bind(future.id().into_uuid())
         .bind(window_end + Duration::seconds(1))
         .execute(&pool)
         .await
@@ -70,7 +70,7 @@ async fn should_reject_blank_dedicated_description_and_blank_persisted_json() {
     let blank_column = sqlx::query(
         "UPDATE search_filters SET enhanced_search_description = '   ' WHERE user_search_filter_id = $1",
     )
-    .bind(uuid::Uuid::from(filter.id()))
+    .bind(filter.id().into_uuid())
     .execute(&pool)
     .await;
     assert!(blank_column.is_err());
@@ -78,7 +78,7 @@ async fn should_reject_blank_dedicated_description_and_blank_persisted_json() {
     sqlx::query(
         "UPDATE search_filters SET search = jsonb_set(search, '{enhanced_search_description}', '\" \"'::jsonb) WHERE user_search_filter_id = $1",
     )
-    .bind(uuid::Uuid::from(filter.id()))
+    .bind(filter.id().into_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("set malformed JSON failed: {error:?}"));
@@ -106,7 +106,7 @@ async fn should_exclude_filter_whose_checkpoint_already_covers_window() {
     let window_end = OffsetDateTime::UNIX_EPOCH + Duration::hours(10);
 
     sqlx::query("UPDATE search_filters SET created = $2 WHERE user_search_filter_id = $1")
-        .bind(uuid::Uuid::from(filter.id()))
+        .bind(filter.id().into_uuid())
         .bind(window_end - Duration::hours(1))
         .execute(&pool)
         .await
@@ -114,7 +114,7 @@ async fn should_exclude_filter_whose_checkpoint_already_covers_window() {
     sqlx::query(
         "INSERT INTO search_filter_periodic_match_state (user_search_filter_id, matched_through) VALUES ($1, $2)",
     )
-    .bind(uuid::Uuid::from(filter.id()))
+    .bind(filter.id().into_uuid())
     .bind(window_end)
     .execute(&pool)
     .await
@@ -168,7 +168,7 @@ async fn seed_user(pool: &sqlx::PgPool, email: &str) -> UserId {
     sqlx::query(
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
-    .bind(uuid::Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(email)
     .execute(pool)
     .await

@@ -4,17 +4,23 @@ use std::str::FromStr;
 
 use domain_primitives::event_id::EventId;
 use localization::Language;
+use notification_core::notification_delivery_id::NotificationDeliveryId;
 use product_listing_core::{
-    description::Description, listing_availability::ListingAvailability,
-    product_listing_id::ProductListingId, source_listing_id::SourceListingId, title::Title,
+    description::Description,
+    listing_availability::ListingAvailability,
+    product_listing_id::{ProductListingId, ProductListingKey},
+    source_listing_id::SourceListingId,
+    title::Title,
 };
 use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
+use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use url::Url;
+use user_core::user_id::UserId;
 use uuid::Uuid;
 
 use crate::{
@@ -737,17 +743,17 @@ fn product_event_routing_facts(
 ) -> Result<ProductListingEventRoutingFacts, CdcRouteError> {
     let row = required_row(change)?;
     let event_id_value = required_product_event_string(row, "event_id")?;
-    let event_id =
-        EventId::try_from(event_id_value.as_str()).map_err(|_| CdcRouteError::InvalidEventId)?;
-    if event_id.to_string() != event_id_value {
-        return Err(CdcRouteError::InvalidEventId);
-    }
+    let event_id = parse_canonical_storage_object_id(
+        &event_id_value,
+        || CdcRouteError::InvalidEventId,
+        || CdcRouteError::InvalidEventId,
+    )?;
     let product_listing_id_value = required_product_event_string(row, "product_listing_id")?;
-    let product_listing_id = ProductListingId::try_from(product_listing_id_value.as_str())
-        .map_err(|_| CdcRouteError::InvalidProductListingId)?;
-    if product_listing_id.to_string() != product_listing_id_value {
-        return Err(CdcRouteError::InvalidProductListingId);
-    }
+    let product_listing_id = parse_canonical_storage_object_id(
+        &product_listing_id_value,
+        || CdcRouteError::InvalidProductListingId,
+        || CdcRouteError::InvalidProductListingId,
+    )?;
     let event_type = required_product_event_string(row, "event_type")?;
     let event_group = required_product_event_string(row, "event_group")?;
     let schema_version = required_integer(row, "event_type_schema_version")?;
@@ -894,8 +900,12 @@ fn validate_discovered_payload(value: &Value) -> Result<(), CdcRouteError> {
         ],
         "payload",
     )?;
-    validate_listing_source_id(&require_string(object, "listingSourceId")?)?;
-    validate_source_listing_id(&require_string(object, "sourceListingId")?)?;
+    let source_listing_id =
+        validate_source_listing_id(&require_string(object, "sourceListingId")?)?;
+    validate_listing_source_id(
+        &require_string(object, "listingSourceId")?,
+        source_listing_id,
+    )?;
     require_nullable_localized(object, "title", canonical_title)?;
     require_nullable_localized(object, "description", canonical_description)?;
 
@@ -1180,14 +1190,12 @@ fn validate_sale_observation(value: &Value) -> Result<(), CdcRouteError> {
         &require_string(observation, "observedAt")?,
         "saleObservation.observedAt",
     )?;
-    let fx_rate_id =
-        fxrate_core::FxRateId::try_from(require_string(observation, "fxRateId")?.as_str())
-            .map_err(|_| invalid_product_listing_field("saleObservation.fxRateId"))?;
-    if fx_rate_id.to_string() != require_string(observation, "fxRateId")? {
-        return Err(noncanonical_product_listing_field(
-            "saleObservation.fxRateId",
-        ));
-    }
+    let fx_rate_id = require_string(observation, "fxRateId")?;
+    let _: fxrate_core::FxRateId = parse_canonical_storage_object_id(
+        &fx_rate_id,
+        || invalid_product_listing_field("saleObservation.fxRateId"),
+        || noncanonical_product_listing_field("saleObservation.fxRateId"),
+    )?;
     Ok(())
 }
 
@@ -1328,31 +1336,69 @@ fn canonical_description(value: &str) -> String {
     Description::from(value).to_string()
 }
 
-fn validate_listing_source_id(value: &str) -> Result<(), CdcRouteError> {
-    let id =
-        Uuid::parse_str(value).map_err(|_| invalid_product_listing_field("listingSourceId"))?;
-    if id.to_string() != value {
-        return Err(noncanonical_product_listing_field("listingSourceId"));
-    }
+fn validate_listing_source_id(
+    value: &str,
+    source_listing_id: SourceListingId,
+) -> Result<(), CdcRouteError> {
+    let id = parse_canonical_storage_uuid(
+        value,
+        || invalid_product_listing_field("listingSourceId"),
+        || noncanonical_product_listing_field("listingSourceId"),
+    )?;
+    let listing_source_id = id
+        .try_into()
+        .map_err(|_| invalid_product_listing_field("listingSourceId"))?;
+    let _ = ProductListingKey::new(listing_source_id, source_listing_id);
     Ok(())
 }
 
-fn validate_source_listing_id(value: &str) -> Result<(), CdcRouteError> {
+fn validate_source_listing_id(value: &str) -> Result<SourceListingId, CdcRouteError> {
     let id = SourceListingId::try_from(value)
         .map_err(|_| invalid_product_listing_field("sourceListingId"))?;
     if id.as_ref() != value {
         return Err(noncanonical_product_listing_field("sourceListingId"));
     }
-    Ok(())
+    Ok(id)
 }
 
 fn validate_canonical_event_id(value: &str) -> Result<(), CdcRouteError> {
-    let id =
-        EventId::try_from(value).map_err(|_| invalid_product_listing_field("sourceEventId"))?;
-    if id.to_string() != value {
-        return Err(noncanonical_product_listing_field("sourceEventId"));
-    }
+    let _: EventId = parse_canonical_storage_object_id(
+        value,
+        || invalid_product_listing_field("sourceEventId"),
+        || noncanonical_product_listing_field("sourceEventId"),
+    )?;
     Ok(())
+}
+
+fn parse_canonical_storage_uuid<F, N>(
+    value: &str,
+    invalid: F,
+    noncanonical: N,
+) -> Result<Uuid, CdcRouteError>
+where
+    F: Fn() -> CdcRouteError,
+    N: Fn() -> CdcRouteError,
+{
+    let id = Uuid::parse_str(value).map_err(|_| invalid())?;
+    if id.to_string() != value {
+        return Err(noncanonical());
+    }
+    Ok(id)
+}
+
+fn parse_canonical_storage_object_id<T, F, N>(
+    value: &str,
+    invalid: F,
+    noncanonical: N,
+) -> Result<T, CdcRouteError>
+where
+    T: TryFrom<Uuid>,
+    F: Fn() -> CdcRouteError,
+    N: Fn() -> CdcRouteError,
+{
+    parse_canonical_storage_uuid(value, &invalid, noncanonical)?
+        .try_into()
+        .map_err(|_| invalid())
 }
 
 fn validate_language(value: &str, field: &str) -> Result<(), CdcRouteError> {
@@ -1441,8 +1487,16 @@ fn search_filter_changed_job(
     operation: CdcOperation,
 ) -> Result<Vec<DomainJob>, CdcRouteError> {
     let row = row_for_operation(change)?;
-    let user_search_filter_id = required_string(row, "user_search_filter_id")?;
-    let user_id = required_string(row, "user_id")?;
+    let user_search_filter_id: UserSearchFilterId = parse_canonical_storage_object_id(
+        &required_string(row, "user_search_filter_id")?,
+        || CdcRouteError::InvalidObjectId("user_search_filter_id"),
+        || CdcRouteError::InvalidObjectId("user_search_filter_id"),
+    )?;
+    let user_id: UserId = parse_canonical_storage_object_id(
+        &required_string(row, "user_id")?,
+        || CdcRouteError::InvalidObjectId("user_id"),
+        || CdcRouteError::InvalidObjectId("user_id"),
+    )?;
     let version = required_integer(row, "version")?;
 
     Ok(vec![domain_job(
@@ -1462,10 +1516,26 @@ fn search_filter_changed_job(
 
 fn search_filter_match_created_job(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError> {
     let row = required_row(change)?;
-    let user_id = required_string(row, "user_id")?;
-    let user_search_filter_id = required_string(row, "user_search_filter_id")?;
-    let product_listing_id = required_string(row, "product_listing_id")?;
-    let origin_event_id = required_string(row, "origin_event_id")?;
+    let user_id: UserId = parse_canonical_storage_object_id(
+        &required_string(row, "user_id")?,
+        || CdcRouteError::InvalidObjectId("user_id"),
+        || CdcRouteError::InvalidObjectId("user_id"),
+    )?;
+    let user_search_filter_id: UserSearchFilterId = parse_canonical_storage_object_id(
+        &required_string(row, "user_search_filter_id")?,
+        || CdcRouteError::InvalidObjectId("user_search_filter_id"),
+        || CdcRouteError::InvalidObjectId("user_search_filter_id"),
+    )?;
+    let product_listing_id: ProductListingId = parse_canonical_storage_object_id(
+        &required_string(row, "product_listing_id")?,
+        || CdcRouteError::InvalidObjectId("product_listing_id"),
+        || CdcRouteError::InvalidObjectId("product_listing_id"),
+    )?;
+    let origin_event_id: EventId = parse_canonical_storage_object_id(
+        &required_string(row, "origin_event_id")?,
+        || CdcRouteError::InvalidObjectId("origin_event_id"),
+        || CdcRouteError::InvalidObjectId("origin_event_id"),
+    )?;
 
     Ok(vec![domain_job(
         WorkerQueue::SearchFilterMatchNotification,
@@ -1485,19 +1555,17 @@ fn search_filter_match_created_job(change: &CdcChange) -> Result<Vec<DomainJob>,
 fn product_listing_raw_revision_job(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError> {
     let row = required_row(change)?;
     let stream_id_value = required_string(row, "product_listing_raw_stream_id")?;
-    let stream_id = uuid::Uuid::parse_str(&stream_id_value)
-        .map(ProductListingRawStreamId::from_uuid)
-        .map_err(|_| CdcRouteError::InvalidProductListingRawStreamId)?;
-    if stream_id.as_uuid().to_string() != stream_id_value {
-        return Err(CdcRouteError::InvalidProductListingRawStreamId);
-    }
+    let stream_id: ProductListingRawStreamId = parse_canonical_storage_object_id(
+        &stream_id_value,
+        || CdcRouteError::InvalidProductListingRawStreamId,
+        || CdcRouteError::InvalidProductListingRawStreamId,
+    )?;
     let revision_id_value = required_string(row, "product_listing_raw_revision_id")?;
-    let revision_id = uuid::Uuid::parse_str(&revision_id_value)
-        .map(ProductListingRawRevisionId::from_uuid)
-        .map_err(|_| CdcRouteError::InvalidProductListingRawRevisionId)?;
-    if revision_id.as_uuid().to_string() != revision_id_value {
-        return Err(CdcRouteError::InvalidProductListingRawRevisionId);
-    }
+    let revision_id: ProductListingRawRevisionId = parse_canonical_storage_object_id(
+        &revision_id_value,
+        || CdcRouteError::InvalidProductListingRawRevisionId,
+        || CdcRouteError::InvalidProductListingRawRevisionId,
+    )?;
     let revision = required_integer(row, "revision")?;
     let revision =
         u64::try_from(revision).map_err(|_| CdcRouteError::InvalidProductListingRawRevision)?;
@@ -1507,8 +1575,8 @@ fn product_listing_raw_revision_job(change: &CdcChange) -> Result<Vec<DomainJob>
 
     Ok(vec![domain_job(
         WorkerQueue::ProductListingRawNormalization,
-        IdempotencyKey::new(format!("product-listing-raw-revision:{revision_id_value}")),
-        OrderingKey::new(format!("product-listing-raw-stream:{stream_id_value}")),
+        IdempotencyKey::new(format!("product-listing-raw-revision:{revision_id}")),
+        OrderingKey::new(format!("product-listing-raw-stream:{stream_id}")),
         DomainJobPayload::ProductListingRawRevision(ProductListingRawRevisionJob {
             product_listing_raw_stream_id: stream_id,
             product_listing_raw_revision_id: revision_id,
@@ -1519,7 +1587,11 @@ fn product_listing_raw_revision_job(change: &CdcChange) -> Result<Vec<DomainJob>
 
 fn notification_delivery_created_job(change: &CdcChange) -> Result<Vec<DomainJob>, CdcRouteError> {
     let row = required_row(change)?;
-    let notification_delivery_id = required_string(row, "notification_delivery_id")?;
+    let notification_delivery_id: NotificationDeliveryId = parse_canonical_storage_object_id(
+        &required_string(row, "notification_delivery_id")?,
+        || CdcRouteError::InvalidObjectId("notification_delivery_id"),
+        || CdcRouteError::InvalidObjectId("notification_delivery_id"),
+    )?;
 
     Ok(vec![domain_job(
         WorkerQueue::NotificationDelivery,
@@ -1612,6 +1684,8 @@ pub enum CdcRouteError {
     InvalidProductListingRawRevisionId,
     #[error("CDC change has an invalid raw product listing revision number")]
     InvalidProductListingRawRevision,
+    #[error("CDC change has an invalid object ID in column {0}")]
+    InvalidObjectId(&'static str),
     #[error("CDC change has a missing ProductListing event field {field}")]
     MissingProductListingEventField { field: String },
     #[error("CDC change has an invalid ProductListing event field {field}")]
@@ -1656,7 +1730,7 @@ mod tests {
     fn product_event_change(event_type: &str, event_group: &str) -> CdcChange {
         let payload = match (event_type, event_group) {
             ("PRODUCT_LISTING_DISCOVERED", "DOMAIN") => serde_json::json!({
-                "listingSourceId": "10000000-0000-0000-0000-000000000001",
+                "listingSourceId": "01900000-0000-7000-8000-000000000001",
                 "sourceListingId": "fixture-source-id",
                 "title": null,
                 "description": null,
@@ -1674,10 +1748,10 @@ mod tests {
                 "availability": {"previous": null, "current": "AVAILABLE"}
             }),
             ("ENRICHMENT_EMBEDDED", "ENRICHMENT") => serde_json::json!({
-                "sourceEventId": "40000000-0000-0000-0000-000000000002"
+                "sourceEventId": "01900000-0000-7000-8000-000000000005"
             }),
             ("ENRICHMENT_TRANSLATED_TITLES", "ENRICHMENT") => serde_json::json!({
-                "sourceEventId": "40000000-0000-0000-0000-000000000002",
+                "sourceEventId": "01900000-0000-7000-8000-000000000005",
                 "sourceLanguage": "de",
                 "targetLanguages": ["en", "fr", "es", "it"]
             }),
@@ -1697,8 +1771,8 @@ mod tests {
             operation: CdcOperation::Insert,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "event_id": "40000000-0000-0000-0000-000000000001",
-                "product_listing_id": "30000000-0000-0000-0000-000000000001",
+                "event_id": "01900000-0000-7000-8000-000000000004",
+                "product_listing_id": "01900000-0000-7000-8000-000000000003",
                 "event_type": event_type,
                 "event_group": event_group,
                 "event_type_schema_version": 1,
@@ -1718,8 +1792,8 @@ mod tests {
             operation,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "product_listing_raw_stream_id": "10000000-0000-0000-0000-000000000001",
-                "product_listing_raw_revision_id": "20000000-0000-0000-0000-000000000001",
+                "product_listing_raw_stream_id": "01900000-0000-7000-8000-000000000001",
+                "product_listing_raw_revision_id": "01900000-0000-7000-8000-000000000002",
                 "revision": 3,
                 "source_payload": {"mustNotEnterQueue": true},
             })),
@@ -1734,8 +1808,8 @@ mod tests {
     fn should_route_raw_revision_insert_with_typed_wakeup_metadata_only()
     -> Result<(), Box<dyn std::error::Error>> {
         let jobs = product_listing_raw_revision_job(&raw_revision_change(CdcOperation::Insert))?;
-        let expected_stream_id = uuid::Uuid::parse_str("10000000-0000-0000-0000-000000000001")?;
-        let expected_revision_id = uuid::Uuid::parse_str("20000000-0000-0000-0000-000000000001")?;
+        let expected_stream_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000001")?;
+        let expected_revision_id = uuid::Uuid::parse_str("01900000-0000-7000-8000-000000000002")?;
 
         assert!(matches!(
             jobs.as_slice(),
@@ -1749,10 +1823,10 @@ mod tests {
                     revision: 3,
                 }),
             }]
-                if idempotency_key.as_str() == "product-listing-raw-revision:20000000-0000-0000-0000-000000000001"
-                    && ordering_key.as_str() == "product-listing-raw-stream:10000000-0000-0000-0000-000000000001"
-                    && product_listing_raw_stream_id.as_uuid() == expected_stream_id
-                    && product_listing_raw_revision_id.as_uuid() == expected_revision_id
+                if idempotency_key.as_str() == "product-listing-raw-revision:prr_01j0000000e008000000000002"
+                    && ordering_key.as_str() == "product-listing-raw-stream:prs_01j0000000e008000000000001"
+                    && *product_listing_raw_stream_id.as_uuid() == expected_stream_id
+                    && *product_listing_raw_revision_id.as_uuid() == expected_revision_id
         ));
         Ok(())
     }
@@ -1867,16 +1941,18 @@ mod tests {
             jobs.iter()
                 .any(|job| job.target_queue == WorkerQueue::ProductListingTranslate)
         );
-        assert!(jobs.iter().all(|job| job.idempotency_key.as_str()
-            == "product-event:40000000-0000-0000-0000-000000000001"));
+        assert!(
+            jobs.iter().all(|job| job.idempotency_key.as_str()
+                == "product-event:evt_01j0000000e008000000000004")
+        );
         assert!(
             jobs.iter()
-                .all(|job| job.ordering_key.as_str()
-                    == "product:30000000-0000-0000-0000-000000000001")
+                .all(|job| job.ordering_key.as_str() == "product:pl_01j0000000e008000000000003")
         );
-        let expected_event_id = EventId::try_from("40000000-0000-0000-0000-000000000001")?;
+        let expected_event_id =
+            EventId::try_from(Uuid::parse_str("01900000-0000-7000-8000-000000000004")?)?;
         let expected_product_listing_id =
-            ProductListingId::try_from("30000000-0000-0000-0000-000000000001")?;
+            ProductListingId::try_from(Uuid::parse_str("01900000-0000-7000-8000-000000000003")?)?;
         assert!(jobs.iter().all(|job| {
             matches!(
                 &job.payload,
@@ -1950,7 +2026,7 @@ mod tests {
                 "PRODUCT_LISTING_DISCOVERED",
                 "DOMAIN",
                 serde_json::json!({
-                    "listingSourceId": "10000000-0000-0000-0000-000000000001",
+                    "listingSourceId": "01900000-0000-7000-8000-000000000001",
                     "sourceListingId": "fixture-source-id",
                     "title": null,
                     "description": null,
@@ -1981,7 +2057,7 @@ mod tests {
             (
                 "ENRICHMENT_EMBEDDED",
                 "ENRICHMENT",
-                serde_json::json!({"sourceEventId": "40000000-0000-0000-0000-000000000002"}),
+                serde_json::json!({"sourceEventId": "01900000-0000-7000-8000-000000000005"}),
                 false,
             ),
         ] {
@@ -2116,6 +2192,121 @@ mod tests {
 
             assert!(matches!(route_change(&change), Err(error) if error == expected));
         }
+    }
+
+    #[test]
+    fn should_reject_typeids_noncanonical_uuid_and_non_v7_uuid_at_cdc_boundary() {
+        for value in [
+            "evt_01h455vb4pex5vy7enb1p677vn",
+            "01890A5D-AC96-774B-BF1D-D5586C639F75",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ] {
+            let mut change = product_event_change("PRODUCT_LISTING_DISCOVERED", "DOMAIN");
+            if let Some(row) = change.record.as_mut() {
+                row["event_id"] = serde_json::json!(value);
+            }
+            assert!(matches!(
+                route_change(&change),
+                Err(CdcRouteError::InvalidEventId)
+            ));
+        }
+
+        let mut raw = raw_revision_change(CdcOperation::Insert);
+        if let Some(row) = raw.record.as_mut() {
+            row["product_listing_raw_stream_id"] =
+                serde_json::json!("prs_01h455vb4pex5vy7enb1p677vn");
+        }
+        assert!(product_listing_raw_revision_job(&raw).is_err());
+
+        let mut search_filter = CdcChange {
+            schema: Some("public".to_owned()),
+            table: "search_filters".to_owned(),
+            operation: CdcOperation::Insert,
+            primary_key: BTreeMap::new(),
+            record: Some(serde_json::json!({
+                "user_id": "usr_01h455vb4pex5vy7enb1p677vn",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
+                "version": 1
+            })),
+            old_record: None,
+            changed_columns: Vec::new(),
+            commit_lsn: None,
+            commit_timestamp: None,
+        };
+        assert!(search_filter_changed_job(&search_filter, CdcOperation::Insert).is_err());
+        if let Some(row) = search_filter.record.as_mut() {
+            row["user_id"] = serde_json::json!("01900000-0000-7000-8000-000000000001");
+            row["user_search_filter_id"] = serde_json::json!("sf_01h455vb4pex5vy7enb1p677vn");
+        }
+        assert!(search_filter_changed_job(&search_filter, CdcOperation::Insert).is_err());
+
+        let search_filter_match = CdcChange {
+            schema: Some("public".to_owned()),
+            table: "search_filter_matches".to_owned(),
+            operation: CdcOperation::Insert,
+            primary_key: BTreeMap::new(),
+            record: Some(serde_json::json!({
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
+                "product_listing_id": "01900000-0000-7000-8000-000000000003",
+                "origin_event_id": "evt_01h455vb4pex5vy7enb1p677vn"
+            })),
+            old_record: None,
+            changed_columns: Vec::new(),
+            commit_lsn: None,
+            commit_timestamp: None,
+        };
+        assert!(search_filter_match_created_job(&search_filter_match).is_err());
+
+        let delivery = CdcChange {
+            schema: Some("public".to_owned()),
+            table: "notification_deliveries".to_owned(),
+            operation: CdcOperation::Insert,
+            primary_key: BTreeMap::new(),
+            record: Some(serde_json::json!({
+                "notification_delivery_id": "nd_01h455vb4pex5vy7enb1p677vn"
+            })),
+            old_record: None,
+            changed_columns: Vec::new(),
+            commit_lsn: None,
+            commit_timestamp: None,
+        };
+        assert!(notification_delivery_created_job(&delivery).is_err());
+    }
+
+    #[test]
+    fn should_reject_typeids_in_internal_product_listing_event_json() {
+        let mut discovered = product_event_change("PRODUCT_LISTING_DISCOVERED", "DOMAIN");
+        if let Some(payload) = discovered
+            .record
+            .as_mut()
+            .and_then(|row| row.get_mut("payload"))
+        {
+            payload["listingSourceId"] = serde_json::json!("ls_01h455vb4pex5vy7enb1p677vn");
+        }
+        assert!(route_change(&discovered).is_err());
+
+        let embedded = product_event_change_with_payload(
+            "ENRICHMENT_EMBEDDED",
+            "ENRICHMENT",
+            serde_json::json!({"sourceEventId": "evt_01h455vb4pex5vy7enb1p677vn"}),
+        );
+        assert!(route_change(&embedded).is_err());
+
+        let sale = product_event_change_with_payload(
+            "PRODUCT_LISTING_CHANGED",
+            "DOMAIN",
+            serde_json::json!({
+                "saleObservation": {
+                    "transition": "OBSERVED",
+                    "observation": {
+                        "observedAt": "1970-01-01T00:00:00Z",
+                        "fxRateId": "fx_01h455vb4pex5vy7enb1p677vn"
+                    }
+                }
+            }),
+        );
+        assert!(route_change(&sale).is_err());
     }
 
     #[test]
@@ -2286,7 +2477,7 @@ mod tests {
                     "PRODUCT_LISTING_DISCOVERED",
                     "DOMAIN",
                     serde_json::json!({
-                        "listingSourceId": "10000000-0000-0000-0000-000000000001",
+                        "listingSourceId": "01900000-0000-7000-8000-000000000001",
                         "sourceListingId": "fixture-source-id",
                         "title": {"language": "en", "text": "Title", "unexpected": true},
                         "description": null,
@@ -2304,7 +2495,7 @@ mod tests {
                     "PRODUCT_LISTING_DISCOVERED",
                     "DOMAIN",
                     serde_json::json!({
-                        "listingSourceId": "10000000-0000-0000-0000-000000000001",
+                        "listingSourceId": "01900000-0000-7000-8000-000000000001",
                         "sourceListingId": "fixture-source-id",
                         "title": null,
                         "description": null,
@@ -2408,7 +2599,7 @@ mod tests {
                             "transition": "OBSERVED",
                             "observation": {
                                 "observedAt": "yesterday",
-                                "fxRateId": "10000000-0000-0000-0000-000000000001"
+                                "fxRateId": "01900000-0000-7000-8000-000000000001"
                             }
                         }
                     }),
@@ -2551,8 +2742,8 @@ mod tests {
             operation: CdcOperation::Update,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
-                "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
                 "version": 3,
             })),
             old_record: None,
@@ -2564,9 +2755,18 @@ mod tests {
         assert_eq!(1, jobs.len());
         assert_eq!(WorkerQueue::SearchFilterOpenSearch, jobs[0].target_queue);
         assert_eq!(
-            "search-filter:50000000-0000-0000-0000-000000000001:3:update",
+            "search-filter:sf_01j0000000e008000000000006:3:update",
             jobs[0].idempotency_key.as_str()
         );
+        assert!(matches!(
+            &jobs[0].payload,
+            DomainJobPayload::SearchFilterChanged(SearchFilterChangedJob {
+                user_id,
+                user_search_filter_id,
+                ..
+            }) if user_id.to_string() == "usr_01j0000000e008000000000001"
+                && user_search_filter_id.to_string() == "sf_01j0000000e008000000000006"
+        ));
         Ok(())
     }
 
@@ -2579,8 +2779,8 @@ mod tests {
             operation: CdcOperation::Update,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
-                "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
                 "version": 3,
             })),
             old_record: None,
@@ -2602,8 +2802,8 @@ mod tests {
             operation: CdcOperation::Update,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
-                "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
             })),
             old_record: None,
             changed_columns: vec!["name".to_owned()],
@@ -2626,7 +2826,7 @@ mod tests {
             operation: CdcOperation::Insert,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "notification_delivery_id": "60000000-0000-0000-0000-000000000001",
+                "notification_delivery_id": "01900000-0000-7000-8000-000000000007",
                 "channel": "EMAIL"
             })),
             old_record: None,
@@ -2638,13 +2838,19 @@ mod tests {
         assert_eq!(1, jobs.len());
         assert_eq!(WorkerQueue::NotificationDelivery, jobs[0].target_queue);
         assert_eq!(
-            "notification-delivery:60000000-0000-0000-0000-000000000001",
+            "notification-delivery:nd_01j0000000e008000000000007",
             jobs[0].idempotency_key.as_str()
         );
         assert_eq!(
-            "notification-delivery:60000000-0000-0000-0000-000000000001",
+            "notification-delivery:nd_01j0000000e008000000000007",
             jobs[0].ordering_key.as_str()
         );
+        assert!(matches!(
+            &jobs[0].payload,
+            DomainJobPayload::NotificationDeliveryCreated(NotificationDeliveryCreatedJob {
+                notification_delivery_id,
+            }) if notification_delivery_id.to_string() == "nd_01j0000000e008000000000007"
+        ));
         Ok(())
     }
 
@@ -2661,7 +2867,7 @@ mod tests {
             operation: CdcOperation::Insert,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "notification_delivery_id": "60000000-0000-0000-0000-000000000001"
+                "notification_delivery_id": "01900000-0000-7000-8000-000000000007"
             })),
             old_record: None,
             changed_columns: Vec::new(),
@@ -2695,10 +2901,10 @@ mod tests {
             operation: CdcOperation::Insert,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
-                "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
-                "product_listing_id": "30000000-0000-0000-0000-000000000001",
-                "origin_event_id": "40000000-0000-0000-0000-000000000001"
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
+                "product_listing_id": "01900000-0000-7000-8000-000000000003",
+                "origin_event_id": "01900000-0000-7000-8000-000000000004"
             })),
             old_record: None,
             changed_columns: Vec::new(),
@@ -2712,9 +2918,21 @@ mod tests {
             jobs[0].target_queue
         );
         assert_eq!(
-            "search-filter-match:10000000-0000-0000-0000-000000000001:50000000-0000-0000-0000-000000000001:30000000-0000-0000-0000-000000000001:40000000-0000-0000-0000-000000000001",
+            "search-filter-match:usr_01j0000000e008000000000001:sf_01j0000000e008000000000006:pl_01j0000000e008000000000003:evt_01j0000000e008000000000004",
             jobs[0].idempotency_key.as_str()
         );
+        assert!(matches!(
+            &jobs[0].payload,
+            DomainJobPayload::SearchFilterMatchCreated(SearchFilterMatchCreatedJob {
+                user_id,
+                user_search_filter_id,
+                product_listing_id,
+                origin_event_id,
+            }) if user_id.to_string() == "usr_01j0000000e008000000000001"
+                && user_search_filter_id.to_string() == "sf_01j0000000e008000000000006"
+                && product_listing_id.to_string() == "pl_01j0000000e008000000000003"
+                && origin_event_id.to_string() == "evt_01j0000000e008000000000004"
+        ));
         Ok(())
     }
 
@@ -2732,10 +2950,10 @@ mod tests {
             operation: CdcOperation::Insert,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
-                "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
-                "product_listing_id": "30000000-0000-0000-0000-000000000001",
-                "origin_event_id": "40000000-0000-0000-0000-000000000001"
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
+                "product_listing_id": "01900000-0000-7000-8000-000000000003",
+                "origin_event_id": "01900000-0000-7000-8000-000000000004"
             })),
             old_record: None,
             changed_columns: Vec::new(),
@@ -2769,12 +2987,12 @@ mod tests {
             operation: CdcOperation::Update,
             primary_key: BTreeMap::new(),
             record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
+                "user_id": "01900000-0000-7000-8000-000000000001",
                 "tier": "PREMIUM",
                 "version": 4,
             })),
             old_record: Some(serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
+                "user_id": "01900000-0000-7000-8000-000000000001",
                 "tier": "FREE",
                 "version": 3,
             })),
@@ -3087,10 +3305,10 @@ mod tests {
                         "table_schema": "public",
                         "relation": "product_listing_events",
                         "op": "insert",
-                        "keys": { "event_id": "40000000-0000-0000-0000-000000000001" },
+                        "keys": { "event_id": "01900000-0000-7000-8000-000000000004" },
                         "new": {
-                            "event_id": "40000000-0000-0000-0000-000000000001",
-                            "product_listing_id": "30000000-0000-0000-0000-000000000001",
+                            "event_id": "01900000-0000-7000-8000-000000000004",
+                            "product_listing_id": "01900000-0000-7000-8000-000000000003",
                             "event_type": "PRODUCT_LISTING_DISCOVERED",
                             "event_group": "DOMAIN",
                             "event_type_schema_version": 1
@@ -3111,8 +3329,8 @@ mod tests {
         let batch = parse_cdc_batch(
             r#"{
                 "record": {
-                    "event_id": "40000000-0000-0000-0000-000000000001",
-                    "product_listing_id": "30000000-0000-0000-0000-000000000001",
+                    "event_id": "01900000-0000-7000-8000-000000000004",
+                    "product_listing_id": "01900000-0000-7000-8000-000000000003",
                     "event_type": "PRODUCT_LISTING_DISCOVERED",
                     "event_group": "DOMAIN",
                     "event_type_schema_version": 1
@@ -3142,8 +3360,8 @@ mod tests {
         let batch = parse_cdc_batch(
             r#"{
                 "record": {
-                    "user_id": "10000000-0000-0000-0000-000000000001",
-                    "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
+                    "user_id": "01900000-0000-7000-8000-000000000001",
+                    "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
                     "version": 2
                 },
                 "changes": null,
@@ -3159,8 +3377,8 @@ mod tests {
         assert!(batch.changes[0].record.is_none());
         assert_eq!(
             Some(&serde_json::json!({
-                "user_id": "10000000-0000-0000-0000-000000000001",
-                "user_search_filter_id": "50000000-0000-0000-0000-000000000001",
+                "user_id": "01900000-0000-7000-8000-000000000001",
+                "user_search_filter_id": "01900000-0000-7000-8000-000000000006",
                 "version": 2
             })),
             batch.changes[0].old_record.as_ref()
@@ -3175,7 +3393,7 @@ mod tests {
                 "data": [
                     {
                         "record": {
-                            "user_id": "10000000-0000-0000-0000-000000000001",
+                            "user_id": "01900000-0000-7000-8000-000000000001",
                             "tier": "PREMIUM",
                             "version": 2
                         },

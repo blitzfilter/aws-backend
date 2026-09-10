@@ -576,7 +576,7 @@ async fn should_preserve_current_shopify_listing_facts_after_asynchronous_normal
     assert_eq!(4_200, listing.1);
     assert_eq!("USD", listing.2);
     assert_eq!(
-        "https://shopify-".to_owned() + &source.id.to_string() + ".example/products/cabinet-103",
+        format!("https://{}/products/cabinet-103", source.domain.as_str()),
         listing.3
     );
     assert_eq!(1, product_listing_event_count().await);
@@ -740,9 +740,10 @@ struct ShopifySourceFixture {
 
 async fn seed_source() -> ShopifySourceFixture {
     let listing_source_id = ListingSourceId::new();
-    let operator_party_id = uuid::Uuid::new_v4();
-    let domain = Domain::try_from(format!("shopify-{listing_source_id}.example").as_str())
-        .unwrap_or_else(|error| panic!("invalid Shopify domain: {error}"));
+    let operator_party_id = uuid::Uuid::now_v7();
+    let domain =
+        Domain::try_from(format!("shopify-{}.example", listing_source_id.as_uuid()).as_str())
+            .unwrap_or_else(|error| panic!("invalid Shopify domain: {error}"));
     let pool = get_postgres_client().await;
 
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
@@ -754,7 +755,7 @@ async fn seed_source() -> ShopifySourceFixture {
         .unwrap_or_else(|error| panic!("failed inserting source operator: {error}"));
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
         .bind(uuid::Uuid::from(listing_source_id))
-        .bind(format!("shopify-source-{listing_source_id}"))
+        .bind(format!("shopify-source-{}", listing_source_id.as_uuid()))
         .bind("Shopify source")
         .bind(operator_party_id)
         .execute(&pool)
@@ -771,7 +772,7 @@ async fn seed_source() -> ShopifySourceFixture {
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed inserting Shopify source configuration: {error}"));
-    let partnership_id = uuid::Uuid::new_v4();
+    let partnership_id = uuid::Uuid::now_v7();
     sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
         .bind(partnership_id)
         .bind(operator_party_id)

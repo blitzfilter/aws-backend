@@ -283,7 +283,7 @@ where
                 provenance_bytes,
                 listing_source_id = %listing_source_id,
                 ingestion_method,
-                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                product_listing_raw_stream_id = %product_listing_raw_stream_id,
                 revision,
                 outcome = "changed",
                 "raw product listing capture metric"
@@ -305,7 +305,7 @@ where
                 provenance_bytes,
                 listing_source_id = %listing_source_id,
                 ingestion_method,
-                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                product_listing_raw_stream_id = %product_listing_raw_stream_id,
                 revision = latest_revision,
                 outcome = "unchanged",
                 "raw product listing capture metric"
@@ -327,7 +327,7 @@ where
                 provenance_bytes,
                 listing_source_id = %listing_source_id,
                 ingestion_method,
-                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                product_listing_raw_stream_id = %product_listing_raw_stream_id,
                 revision = latest_revision,
                 outcome = "duplicate",
                 "raw product listing capture metric"
@@ -349,7 +349,7 @@ where
                 provenance_bytes,
                 listing_source_id = %listing_source_id,
                 ingestion_method,
-                product_listing_raw_stream_id = %product_listing_raw_stream_id.as_uuid(),
+                product_listing_raw_stream_id = %product_listing_raw_stream_id,
                 revision = latest_revision,
                 outcome = "stale",
                 "raw product listing capture metric"
@@ -756,14 +756,13 @@ mod tests {
         {
             *lock(self.writes) += 1;
             lock(self.provider_receipts).push(write.provider_receipt);
-            let product_listing_raw_stream_id =
-                crate::ports::ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
+            let product_listing_raw_stream_id = crate::ports::ProductListingRawStreamId::new();
 
             Ok(match self.outcome {
                 TestCaptureOutcome::Changed => ProductListingRawCaptureWriteOutcome::Changed {
                     product_listing_raw_stream_id,
-                    product_listing_raw_revision_id:
-                        crate::ports::ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4()),
+                    product_listing_raw_revision_id: crate::ports::ProductListingRawRevisionId::new(
+                    ),
                     revision: 1,
                 },
                 TestCaptureOutcome::Duplicate => ProductListingRawCaptureWriteOutcome::Duplicate {

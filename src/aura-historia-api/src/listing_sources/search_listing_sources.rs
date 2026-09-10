@@ -2,6 +2,7 @@ use super::types::ListingSourceSearchCollectionData;
 use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_ORDER_VALUE, BAD_QUERY_PARAMETER_VALUE, BAD_SORT_VALUE};
 use crate::state::ListingSourcesState;
+use crate::wire::parse_query_object_id;
 use application::pagination::Cursor;
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -15,7 +16,6 @@ use listing_source_core::{
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesRequest;
 use party_core::party_id::PartyId;
 use serde::Deserialize;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,9 +109,7 @@ fn parse_listing_source_id(
     field: &'static str,
 ) -> Result<Option<ListingSourceId>, ApiError> {
     value
-        .map(|value| {
-            ListingSourceId::try_from(value.as_str()).map_err(|error| bad_query(field, error))
-        })
+        .map(|value| parse_query_object_id(&value, field, "ListingSource"))
         .transpose()
 }
 
@@ -126,11 +124,7 @@ fn parse_listing_source_slug_id(
 
 fn parse_party_id(value: Option<String>, field: &'static str) -> Result<Option<PartyId>, ApiError> {
     value
-        .map(|value| {
-            Uuid::parse_str(&value)
-                .map(PartyId::from)
-                .map_err(|error| bad_query(field, error))
-        })
+        .map(|value| parse_query_object_id(&value, field, "Party"))
         .transpose()
 }
 
@@ -199,12 +193,7 @@ fn parse_cursor(
 }
 
 fn parse_search_after(value: &str) -> Result<ListingSourceId, ApiError> {
-    ListingSourceId::try_from(value).map_err(|error| {
-        bad_query(
-            "searchAfter",
-            format!("searchAfter must contain a ListingSource UUID: {error}"),
-        )
-    })
+    parse_query_object_id(value, "searchAfter", "ListingSource")
 }
 
 fn bad_query(field: &'static str, detail: impl std::fmt::Display) -> ApiError {
@@ -227,21 +216,15 @@ mod tests {
 
     #[test]
     fn should_map_listing_source_search_query_to_service_request() -> Result<(), ApiError> {
-        let listing_source_id = "550e8400-e29b-41d4-a716-446655440000";
-        let operator_party_id = "550e8400-e29b-41d4-a716-446655440001";
+        let listing_source_id = ListingSourceId::new();
+        let operator_party_id = PartyId::new();
         let request = parse_search_listing_sources_query(Some(&format!(
             "query=operator&name=Antik&listingSourceId={listing_source_id}&listingSourceSlugId=antik-source&operatorPartyId={operator_party_id}&ingestionMethod=SHOPIFY&sort=created&order=desc&size=200&searchAfter={listing_source_id}"
         )))?;
 
         assert_eq!(Some("operator"), request.search.query.as_deref());
         assert_eq!(Some("Antik"), request.search.name_query.as_deref());
-        assert_eq!(
-            Some(
-                ListingSourceId::try_from(listing_source_id)
-                    .unwrap_or_else(|error| panic!("test ID: {error}"))
-            ),
-            request.search.listing_source_id
-        );
+        assert_eq!(Some(listing_source_id), request.search.listing_source_id);
         assert_eq!(
             Some(
                 ListingSourceSlugId::raw("antik-source")
@@ -249,13 +232,7 @@ mod tests {
             ),
             request.search.listing_source_slug_id
         );
-        assert_eq!(
-            Some(PartyId::from(
-                Uuid::parse_str(operator_party_id)
-                    .unwrap_or_else(|error| panic!("test Party ID: {error}"))
-            )),
-            request.search.operator_party_id
-        );
+        assert_eq!(Some(operator_party_id), request.search.operator_party_id);
         assert_eq!(
             Some(ListingIngestionMethod::Shopify),
             request.search.ingestion_method
@@ -270,10 +247,7 @@ mod tests {
         assert_eq!(
             Some(Cursor {
                 size: 100,
-                search_after: Some(
-                    ListingSourceId::try_from(listing_source_id)
-                        .unwrap_or_else(|error| panic!("test cursor: {error}")),
-                ),
+                search_after: Some(listing_source_id),
             }),
             request.cursor
         );
@@ -296,10 +270,10 @@ mod tests {
             "sort=invalid&order=asc",
             "sort=name&order=sideways",
             "size=not-a-number",
-            "searchAfter=not-a-uuid",
-            "listingSourceId=not-a-uuid",
+            "searchAfter=not-an-object-id",
+            "listingSourceId=not-an-object-id",
             "listingSourceSlugId=Not-A-Slug",
-            "operatorPartyId=not-a-uuid",
+            "operatorPartyId=not-an-object-id",
             "ingestionMethod=UNKNOWN",
         ] {
             assert!(

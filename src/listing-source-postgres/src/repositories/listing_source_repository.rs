@@ -1,4 +1,5 @@
 use application::{error::box_error, patch_field::PatchField};
+use domain_primitives::object_id::ObjectIdError;
 use listing_source_core::*;
 use listing_source_service::ports::*;
 
@@ -24,6 +25,15 @@ struct SourceRow {
     created: OffsetDateTime,
     updated: OffsetDateTime,
 }
+
+#[derive(Debug, thiserror::Error)]
+enum SourceRowMappingError {
+    #[error("invalid ListingSource ID persisted")]
+    ListingSourceId(#[source] ObjectIdError),
+    #[error("invalid operator Party ID persisted")]
+    OperatorPartyId(#[source] ObjectIdError),
+}
+
 #[derive(sqlx::FromRow)]
 struct MethodRow {
     ingestion_method: String,
@@ -34,7 +44,7 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
         &mut self,
         id: ListingSourceId,
     ) -> Result<Option<StoredListingSource>, ListingSourceRepositoryError> {
-        let row=sqlx::query_as::<_,SourceRow>("SELECT listing_source_id, listing_source_slug_id, name, operator_party_id, url, image, referral_configuration, version, created, updated FROM listing_sources WHERE listing_source_id=$1").bind(uuid::Uuid::from(id)).fetch_optional(&mut *self.connection).await.map_err(db_read)?;
+        let row=sqlx::query_as::<_,SourceRow>("SELECT listing_source_id, listing_source_slug_id, name, operator_party_id, url, image, referral_configuration, version, created, updated FROM listing_sources WHERE listing_source_id=$1").bind(id.into_uuid()).fetch_optional(&mut *self.connection).await.map_err(db_read)?;
         match row {
             Some(row) => load(self.connection, row).await.map(Some),
             None => Ok(None),
@@ -57,7 +67,7 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
         let row = sqlx::query_as::<_, SourceRow>(
             "SELECT listing_source_id, listing_source_slug_id, name, operator_party_id, url, image, referral_configuration, version, created, updated FROM listing_sources WHERE listing_source_id=$1 FOR UPDATE",
         )
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(db_read)?;
@@ -88,8 +98,8 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
             END
             "#,
         )
-        .bind(uuid::Uuid::from(id))
-        .bind(id.to_string())
+        .bind(id.into_uuid())
+        .bind(id.as_uuid().to_string())
         .fetch_one(&mut *self.connection)
         .await
         .map_err(db_read)?;
@@ -113,7 +123,7 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
         id: ListingSourceId,
         expected: ListingSourceStorageVersion,
     ) -> Result<(), ListingSourceRepositoryError> {
-        let id = uuid::Uuid::from(id);
+        let id = id.into_uuid();
         let expected = i64::try_from(expected.into_inner()).map_err(|error| {
             ListingSourceRepositoryError::InvalidPersistedState {
                 source: box_error(error),
@@ -160,7 +170,7 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
             }
         })?;
         let referral_configuration = referral_json(source.referral_configuration());
-        let row=sqlx::query_as::<_,SourceRow>("INSERT INTO listing_sources (listing_source_id,listing_source_slug_id,name,operator_party_id,url,image,referral_configuration) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING listing_source_id,listing_source_slug_id,name,operator_party_id,url,image,referral_configuration,version,created,updated").bind(uuid::Uuid::from(source.id())).bind(source.slug_id().as_ref()).bind(source.name().as_ref()).bind(uuid::Uuid::from(source.operator_party_id())).bind(source.presentation().url.as_ref().map(Url::as_str)).bind(source.presentation().image.as_ref().map(Url::as_str)).bind(referral_configuration).fetch_one(&mut *self.connection).await.map_err(db_write)?;
+        let row=sqlx::query_as::<_,SourceRow>("INSERT INTO listing_sources (listing_source_id,listing_source_slug_id,name,operator_party_id,url,image,referral_configuration) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING listing_source_id,listing_source_slug_id,name,operator_party_id,url,image,referral_configuration,version,created,updated").bind(source.id().into_uuid()).bind(source.slug_id().as_ref()).bind(source.name().as_ref()).bind(source.operator_party_id().into_uuid()).bind(source.presentation().url.as_ref().map(Url::as_str)).bind(source.presentation().image.as_ref().map(Url::as_str)).bind(referral_configuration).fetch_one(&mut *self.connection).await.map_err(db_write)?;
         write_configuration(
             self.connection,
             source.id(),
@@ -182,41 +192,47 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
                 source: box_error(ListingIngestionConfigurationMismatch),
             }
         })?;
+        let existing_configuration =
+            read_configuration(self.connection, source.id().into_uuid()).await?;
+        let had_woocommerce = existing_configuration
+            .0
+            .iter()
+            .any(|configuration| configuration.method() == ListingIngestionMethod::Woocommerce);
         let expected = i64::try_from(expected.into_inner()).map_err(|error| {
             ListingSourceRepositoryError::InvalidPersistedState {
                 source: box_error(error),
             }
         })?;
         let webhook_secret = match woocommerce_webhook_secret {
-            PatchField::Unchanged => {
+            PatchField::Unchanged if had_woocommerce => {
                 existing_woocommerce_webhook_secret(self.connection, source.id()).await?
             }
+            PatchField::Unchanged | PatchField::Clear => None,
             PatchField::Set(secret) => Some(secret.to_owned()),
-            PatchField::Clear => None,
         };
         let referral_configuration = referral_json(source.referral_configuration());
-        let row=sqlx::query_as::<_,SourceRow>("UPDATE listing_sources SET name=$1,operator_party_id=$2,url=$3,image=$4,referral_configuration=$5,version=version+1,updated=now() WHERE listing_source_id=$6 AND version=$7 RETURNING listing_source_id,listing_source_slug_id,name,operator_party_id,url,image,referral_configuration,version,created,updated").bind(source.name().as_ref()).bind(uuid::Uuid::from(source.operator_party_id())).bind(source.presentation().url.as_ref().map(Url::as_str)).bind(source.presentation().image.as_ref().map(Url::as_str)).bind(referral_configuration).bind(uuid::Uuid::from(source.id())).bind(expected).fetch_optional(&mut *self.connection).await.map_err(db_write)?.ok_or(ListingSourceRepositoryError::ConcurrencyConflict)?;
+        let row=sqlx::query_as::<_,SourceRow>("UPDATE listing_sources SET name=$1,operator_party_id=$2,url=$3,image=$4,referral_configuration=$5,version=version+1,updated=now() WHERE listing_source_id=$6 AND version=$7 RETURNING listing_source_id,listing_source_slug_id,name,operator_party_id,url,image,referral_configuration,version,created,updated").bind(source.name().as_ref()).bind(source.operator_party_id().into_uuid()).bind(source.presentation().url.as_ref().map(Url::as_str)).bind(source.presentation().image.as_ref().map(Url::as_str)).bind(referral_configuration).bind(source.id().into_uuid()).bind(expected).fetch_optional(&mut *self.connection).await.map_err(db_write)?.ok_or(ListingSourceRepositoryError::ConcurrencyConflict)?;
         sqlx::query("DELETE FROM listing_source_ingestion_methods WHERE listing_source_id=$1")
-            .bind(uuid::Uuid::from(source.id()))
+            .bind(source.id().into_uuid())
             .execute(&mut *self.connection)
             .await
             .map_err(db_write)?;
         sqlx::query(
             "DELETE FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1",
         )
-        .bind(uuid::Uuid::from(source.id()))
+        .bind(source.id().into_uuid())
         .execute(&mut *self.connection)
         .await
         .map_err(db_write)?;
         sqlx::query("DELETE FROM listing_source_shopify_ingestion_configurations WHERE listing_source_id=$1")
-            .bind(uuid::Uuid::from(source.id()))
+            .bind(source.id().into_uuid())
             .execute(&mut *self.connection)
             .await
             .map_err(db_write)?;
         sqlx::query(
             "DELETE FROM listing_source_woocommerce_ingestion_configurations WHERE listing_source_id=$1",
         )
-        .bind(uuid::Uuid::from(source.id()))
+        .bind(source.id().into_uuid())
         .execute(&mut *self.connection)
         .await
         .map_err(db_write)?;
@@ -234,6 +250,12 @@ async fn load(
     connection: &mut PgConnection,
     row: SourceRow,
 ) -> Result<StoredListingSource, ListingSourceRepositoryError> {
+    let listing_source_id = ListingSourceId::try_from(row.listing_source_id)
+        .map_err(SourceRowMappingError::ListingSourceId)
+        .map_err(invalid)?;
+    let operator_party_id = party_core::party_id::PartyId::try_from(row.operator_party_id)
+        .map_err(SourceRowMappingError::OperatorPartyId)
+        .map_err(invalid)?;
     let methods = sqlx::query_as::<_, MethodRow>(
         "SELECT ingestion_method FROM listing_source_ingestion_methods WHERE listing_source_id=$1",
     )
@@ -251,10 +273,10 @@ async fn load(
     )?;
     let config = read_configuration(connection, row.listing_source_id).await?;
     let source = ListingSource::rehydrate(RehydratedListingSourceState {
-        id: ListingSourceId::from(row.listing_source_id),
+        id: listing_source_id,
         slug_id: row.listing_source_slug_id,
         name: row.name,
-        operator_party_id: party_core::party_id::PartyId::from(row.operator_party_id),
+        operator_party_id,
         ingestion_methods: methods,
         presentation: ListingSourcePresentation {
             url: row
@@ -288,11 +310,11 @@ async fn existing_woocommerce_webhook_secret(
     sqlx::query_scalar::<_, Option<String>>(
         "SELECT webhook_secret FROM listing_source_woocommerce_ingestion_configurations WHERE listing_source_id=$1",
     )
-    .bind(uuid::Uuid::from(id))
+    .bind(id.into_uuid())
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db_read)
-    .map(Option::flatten)
+    .map_err(db_read)?
+    .ok_or_else(|| invalid(ListingIngestionConfigurationMismatch))
 }
 
 async fn write_configuration(
@@ -301,21 +323,22 @@ async fn write_configuration(
     configs: &ListingSourceIngestionConfigurations,
     woocommerce_webhook_secret: Option<&str>,
 ) -> Result<(), ListingSourceRepositoryError> {
+    let id = id.into_uuid();
     for config in &configs.0 {
-        sqlx::query("INSERT INTO listing_source_ingestion_methods (listing_source_id,ingestion_method) VALUES ($1,$2)").bind(uuid::Uuid::from(id)).bind(config.method().as_str()).execute(&mut *connection).await.map_err(db_write)?;
+        sqlx::query("INSERT INTO listing_source_ingestion_methods (listing_source_id,ingestion_method) VALUES ($1,$2)").bind(id).bind(config.method().as_str()).execute(&mut *connection).await.map_err(db_write)?;
         match config {
             ListingIngestionConfiguration::Shopify {
                 domain,
                 currency,
                 language,
             } => {
-                sqlx::query("INSERT INTO listing_source_shopify_ingestion_configurations (listing_source_id,domain,currency,language) VALUES ($1,$2,$3,$4)").bind(uuid::Uuid::from(id)).bind(domain.as_str()).bind(currency.map(|v|v.as_str())).bind(language.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
+                sqlx::query("INSERT INTO listing_source_shopify_ingestion_configurations (listing_source_id,domain,currency,language) VALUES ($1,$2,$3,$4)").bind(id).bind(domain.as_str()).bind(currency.map(|v|v.as_str())).bind(language.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
             }
             ListingIngestionConfiguration::Woocommerce { currency, language } => {
-                sqlx::query("INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id,webhook_secret,currency,language) VALUES ($1,$2,$3,$4)").bind(uuid::Uuid::from(id)).bind(woocommerce_webhook_secret).bind(currency.map(|v|v.as_str())).bind(language.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
+                sqlx::query("INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id,webhook_secret,currency,language) VALUES ($1,$2,$3,$4)").bind(id).bind(woocommerce_webhook_secret).bind(currency.map(|v|v.as_str())).bind(language.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
             }
             ListingIngestionConfiguration::WebCrawl { fallback_currency } => {
-                sqlx::query("INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id,fallback_currency) VALUES ($1,$2)").bind(uuid::Uuid::from(id)).bind(fallback_currency.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
+                sqlx::query("INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id,fallback_currency) VALUES ($1,$2)").bind(id).bind(fallback_currency.map(|v|v.as_str())).execute(&mut *connection).await.map_err(db_write)?;
             }
             ListingIngestionConfiguration::PartnerApi => {}
         }
@@ -493,7 +516,7 @@ mod tests {
     const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
     async fn insert_user(pool: &sqlx::PgPool) -> uuid::Uuid {
-        let user_id = uuid::Uuid::new_v4();
+        let user_id = uuid::Uuid::now_v7();
         sqlx::query(
             "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
         )
@@ -508,7 +531,7 @@ mod tests {
     fn existing_source_proposal(source_id: ListingSourceId) -> serde_json::Value {
         serde_json::json!({
             "type": "EXISTING_LISTING_SOURCE",
-            "listing_source_id": source_id.to_string(),
+            "listing_source_id": source_id.as_uuid().to_string(),
         })
     }
 
@@ -536,8 +559,8 @@ mod tests {
         let source_id = ListingSourceId::new();
         let party_id = PartyId::new();
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::from(party_id))
-            .bind(format!("delete-test-party-{party_id}"))
+            .bind(party_id.into_uuid())
+            .bind(format!("delete-test-party-{}", party_id.as_uuid().simple()))
             .bind(format!("{name} operator"))
             .execute(pool)
             .await
@@ -545,21 +568,113 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
-        .bind(uuid::Uuid::from(source_id))
-        .bind(format!("delete-test-source-{source_id}"))
+        .bind(source_id.into_uuid())
+        .bind(format!(
+                    "delete-test-source-{}",
+                    source_id.as_uuid().simple()
+                ))
         .bind(name)
-        .bind(uuid::Uuid::from(party_id))
+        .bind(party_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("insert listing source: {error}"));
         sqlx::query(
             "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, 'PARTNER_API')",
         )
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .execute(pool)
         .await
         .unwrap_or_else(|error| panic!("insert source ingestion method: {error}"));
         (source_id, party_id)
+    }
+
+    async fn insert_source_with_missing_declared_configuration(
+        pool: &sqlx::PgPool,
+        method: ListingIngestionMethod,
+    ) -> ListingSource {
+        let operator_party_id = PartyId::new();
+        let source_id = ListingSourceId::new();
+        let name = format!("Missing {} configuration", method.as_str());
+        let source = ListingSource::create(NewListingSource {
+            id: source_id,
+            name: ListingSourceName::try_from(name.as_str())
+                .unwrap_or_else(|error| panic!("invalid test listing source name: {error}")),
+            operator_party_id,
+            ingestion_methods: HashSet::from([method]),
+            presentation: ListingSourcePresentation::default(),
+            referral_configuration: None,
+        });
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(operator_party_id.into_uuid())
+            .bind(format!(
+                "missing-config-operator-{}",
+                operator_party_id.as_uuid().simple()
+            ))
+            .bind(format!(
+                "Missing {} configuration operator",
+                method.as_str()
+            ))
+            .execute(pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert missing-configuration operator: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(source.id().into_uuid())
+        .bind(source.slug_id().as_ref())
+        .bind(source.name().as_ref())
+        .bind(source.operator_party_id().into_uuid())
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert missing-configuration source: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, $2)",
+        )
+        .bind(source.id().into_uuid())
+        .bind(method.as_str())
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert declared ingestion method: {error}"));
+        source
+    }
+
+    fn configuration_for(method: ListingIngestionMethod) -> ListingSourceIngestionConfigurations {
+        let configuration = match method {
+            ListingIngestionMethod::WebCrawl => ListingIngestionConfiguration::WebCrawl {
+                fallback_currency: None,
+            },
+            ListingIngestionMethod::Shopify => ListingIngestionConfiguration::Shopify {
+                domain: Domain::try_from("missing-configuration.example")
+                    .unwrap_or_else(|error| panic!("invalid test domain: {error}")),
+                currency: None,
+                language: None,
+            },
+            ListingIngestionMethod::Woocommerce => ListingIngestionConfiguration::Woocommerce {
+                currency: None,
+                language: None,
+            },
+            ListingIngestionMethod::PartnerApi => ListingIngestionConfiguration::PartnerApi,
+        };
+        ListingSourceIngestionConfigurations(vec![configuration])
+    }
+
+    fn assert_configuration_mismatch<T>(
+        result: Result<T, ListingSourceRepositoryError>,
+        method: ListingIngestionMethod,
+    ) {
+        match result {
+            Err(ListingSourceRepositoryError::InvalidPersistedState { source }) => assert_eq!(
+                ListingIngestionConfigurationMismatch.to_string(),
+                source.to_string(),
+                "wrong source for missing {} configuration",
+                method.as_str()
+            ),
+            Err(error) => panic!(
+                "missing {} configuration returned wrong error: {error}",
+                method.as_str()
+            ),
+            Ok(_) => panic!("missing {} configuration was accepted", method.as_str()),
+        }
     }
 
     #[aura_integration_test(services = [BUSINESS_SCHEMA])]
@@ -567,7 +682,7 @@ mod tests {
         let pool = get_postgres_client().await;
         let operator_party_id = PartyId::new();
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::from(operator_party_id))
+            .bind(operator_party_id.into_uuid())
             .bind("operator")
             .bind("Operator")
             .execute(&pool)
@@ -622,10 +737,10 @@ mod tests {
             .commit()
             .await
             .unwrap_or_else(|error| panic!("commit transaction: {error}"));
-        let partnership_id = uuid::Uuid::new_v4();
+        let partnership_id = uuid::Uuid::now_v7();
         sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
             .bind(partnership_id)
-            .bind(uuid::Uuid::from(operator_party_id))
+            .bind(operator_party_id.into_uuid())
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert operator partnership: {error}"));
@@ -633,7 +748,7 @@ mod tests {
             "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
         )
         .bind(partnership_id)
-        .bind(uuid::Uuid::from(source.id()))
+        .bind(source.id().into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("insert listing source grant: {error}"));
@@ -721,7 +836,7 @@ mod tests {
         let web_crawl_configured = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM listing_source_web_crawl_ingestion_configurations WHERE listing_source_id=$1)",
         )
-        .bind(uuid::Uuid::from(source.id()))
+        .bind(source.id().into_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("check deleted WebCrawl configuration: {error}"));
@@ -736,17 +851,17 @@ mod tests {
         let (other_source_id, other_party_id) =
             insert_basic_source(&pool, "Unrelated source").await;
         sqlx::query("INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id, fallback_currency) VALUES ($1, 'EUR')")
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert WebCrawl configuration: {error}"));
         sqlx::query("INSERT INTO listing_source_shopify_ingestion_configurations (listing_source_id, domain) VALUES ($1, 'delete-target.example')")
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert Shopify configuration: {error}"));
         sqlx::query("INSERT INTO listing_source_woocommerce_ingestion_configurations (listing_source_id, webhook_secret) VALUES ($1, 'nonempty-secret')")
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert WooCommerce configuration: {error}"));
@@ -754,22 +869,23 @@ mod tests {
             sqlx::query(
                 "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, $2)",
             )
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .bind(method)
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert configured ingestion method: {error}"));
         }
         sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
-            .bind(uuid::Uuid::new_v4())
-            .bind(uuid::Uuid::from(party_id))
+            .bind(uuid::Uuid::now_v7())
+            .bind(party_id.into_uuid())
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert target partnership: {error}"));
-        let grant_partnership_id = uuid::Uuid::new_v4();
+        let grant_partnership_id = uuid::Uuid::now_v7();
+        let grant_party_slug = format!("delete-test-grant-party-{}", source_id.as_uuid().simple());
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::new_v4())
-            .bind(format!("delete-test-grant-party-{source_id}"))
+            .bind(uuid::Uuid::now_v7())
+            .bind(&grant_party_slug)
             .bind("Grant party")
             .execute(&pool)
             .await
@@ -777,7 +893,7 @@ mod tests {
         let grant_party_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT party_id FROM parties WHERE party_slug_id = $1",
         )
-        .bind(format!("delete-test-grant-party-{source_id}"))
+        .bind(&grant_party_slug)
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("find grant party: {error}"));
@@ -789,7 +905,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("insert grant partnership: {error}"));
         sqlx::query("INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)")
             .bind(grant_partnership_id)
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert target grant: {error}"));
@@ -832,7 +948,7 @@ mod tests {
             "SELECT EXISTS (SELECT 1 FROM partnership_listing_source_grants WHERE listing_source_id = $1)",
         ] {
             let exists = sqlx::query_scalar::<_, bool>(query)
-                .bind(uuid::Uuid::from(source_id))
+                .bind(source_id.into_uuid())
                 .fetch_one(&pool)
                 .await
                 .unwrap_or_else(|error| panic!("check deleted source relation: {error}"));
@@ -841,8 +957,8 @@ mod tests {
         let preserved = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1 AND operator_party_id = $2)",
         )
-        .bind(uuid::Uuid::from(other_source_id))
-        .bind(uuid::Uuid::from(other_party_id))
+        .bind(other_source_id.into_uuid())
+        .bind(other_party_id.into_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("check unrelated source: {error}"));
@@ -854,14 +970,14 @@ mod tests {
         let pool = get_postgres_client().await;
         let (raw_source_id, _) = insert_basic_source(&pool, "Raw blocker").await;
         sqlx::query("INSERT INTO product_listing_raw_streams (product_listing_raw_stream_id, listing_source_id, ingestion_method, source_record_key, source_record_key_sha256, latest_revision) VALUES ($1, $2, 'WEB_CRAWL', 'raw-only', $3, 0)")
-            .bind(uuid::Uuid::new_v4())
-            .bind(uuid::Uuid::from(raw_source_id))
+            .bind(uuid::Uuid::now_v7())
+            .bind(raw_source_id.into_uuid())
             .bind(vec![1_u8; 32])
             .execute(&pool)
             .await
             .unwrap_or_else(|error| panic!("insert raw stream: {error}"));
         let raw_error = sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
-            .bind(uuid::Uuid::from(raw_source_id))
+            .bind(raw_source_id.into_uuid())
             .execute(&pool)
             .await
             .expect_err("raw-stream source delete must be restricted");
@@ -871,8 +987,8 @@ mod tests {
         ));
 
         let (product_source_id, _) = insert_basic_source(&pool, "Product blocker").await;
-        let product_listing_id = uuid::Uuid::new_v4();
-        let event_id = uuid::Uuid::new_v4();
+        let product_listing_id = uuid::Uuid::now_v7();
+        let event_id = uuid::Uuid::now_v7();
         let mut transaction = pool
             .begin()
             .await
@@ -881,7 +997,7 @@ mod tests {
             .bind(product_listing_id)
             .bind(format!("withdrawn-product-{}", &product_listing_id.simple().to_string()[..6]))
             .bind(event_id)
-            .bind(uuid::Uuid::from(product_source_id))
+            .bind(product_source_id.into_uuid())
             .execute(&mut *transaction)
             .await
             .unwrap_or_else(|error| panic!("insert withdrawn product listing: {error}"));
@@ -891,7 +1007,7 @@ mod tests {
             .bind(serde_json::json!({
                 "title": null,
                 "description": null,
-                "listingSourceId": product_source_id.to_string(),
+                "listingSourceId": product_source_id.as_uuid().to_string(),
                 "sourceListingId": "withdrawn-product",
                 "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
                 "availability": null,
@@ -907,7 +1023,7 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("commit product-listing seed: {error}"));
         let product_error = sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
-            .bind(uuid::Uuid::from(product_source_id))
+            .bind(product_source_id.into_uuid())
             .execute(&pool)
             .await
             .expect_err("product-listing source delete must be restricted");
@@ -928,7 +1044,7 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("begin delete race transaction: {error}"));
         sqlx::query("SELECT 1 FROM listing_sources WHERE listing_source_id = $1 FOR UPDATE")
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .execute(&mut *delete_tx)
             .await
             .unwrap_or_else(|error| panic!("lock delete race target: {error}"));
@@ -945,7 +1061,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, 'SUBMITTED', $3)",
             )
-            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::now_v7())
             .bind(applicant_user_id)
             .bind(proposal)
             .execute(&mut *tx)
@@ -958,7 +1074,7 @@ mod tests {
         wait_until_backend_waits_for_lock(&pool, proposal_pid).await;
 
         sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
-            .bind(uuid::Uuid::from(source_id))
+            .bind(source_id.into_uuid())
             .execute(&mut *delete_tx)
             .await
             .unwrap_or_else(|error| panic!("delete locked source: {error}"));
@@ -1001,7 +1117,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal) VALUES ($1, $2, 'SUBMITTED', $3)",
             )
-            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::now_v7())
             .bind(applicant_user_id)
             .bind(proposal)
             .execute(&mut *tx)
@@ -1023,7 +1139,7 @@ mod tests {
                 .await?;
             let _ = delete_pid_tx.send(backend_pid);
             sqlx::query("SELECT 1 FROM listing_sources WHERE listing_source_id = $1 FOR UPDATE")
-                .bind(uuid::Uuid::from(source_id))
+                .bind(source_id.into_uuid())
                 .execute(&mut *tx)
                 .await?;
             let blocker = SqlxListingSourceRepository {
@@ -1055,11 +1171,90 @@ mod tests {
         let source_exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
         )
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("check proposal-won source: {error}"));
         assert!(source_exists);
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_fail_read_when_declared_ingestion_configuration_is_missing() {
+        let pool = get_postgres_client().await;
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool.clone());
+
+        for method in [
+            ListingIngestionMethod::WebCrawl,
+            ListingIngestionMethod::Shopify,
+            ListingIngestionMethod::Woocommerce,
+        ] {
+            let source = insert_source_with_missing_declared_configuration(&pool, method).await;
+            let mut transaction = unit_of_work
+                .begin()
+                .await
+                .unwrap_or_else(|error| panic!("begin missing-configuration read: {error}"));
+            let result = SqlxListingSourceRepositoryFactory::new()
+                .in_transaction(&mut transaction)
+                .find_by_id(source.id())
+                .await;
+
+            assert_configuration_mismatch(result, method);
+        }
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_fail_update_without_recreating_missing_declared_ingestion_configuration() {
+        let pool = get_postgres_client().await;
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool.clone());
+        let expected = ListingSourceStorageVersion::try_from(1_i64)
+            .unwrap_or_else(|error| panic!("invalid test storage version: {error}"));
+
+        for method in [
+            ListingIngestionMethod::WebCrawl,
+            ListingIngestionMethod::Shopify,
+            ListingIngestionMethod::Woocommerce,
+        ] {
+            let source = insert_source_with_missing_declared_configuration(&pool, method).await;
+            let configuration = configuration_for(method);
+            let mut transaction = unit_of_work
+                .begin()
+                .await
+                .unwrap_or_else(|error| panic!("begin missing-configuration update: {error}"));
+            let result = SqlxListingSourceRepositoryFactory::new()
+                .in_transaction(&mut transaction)
+                .update(&source, &configuration, PatchField::Unchanged, expected)
+                .await;
+
+            assert_configuration_mismatch(result, method);
+            drop(transaction);
+
+            let state = sqlx::query_as::<_, (i64, bool)>(
+                r#"
+                SELECT
+                    version,
+                    EXISTS (
+                        SELECT 1
+                        FROM listing_source_web_crawl_ingestion_configurations
+                        WHERE listing_source_id = $1
+                        UNION ALL
+                        SELECT 1
+                        FROM listing_source_shopify_ingestion_configurations
+                        WHERE listing_source_id = $1
+                        UNION ALL
+                        SELECT 1
+                        FROM listing_source_woocommerce_ingestion_configurations
+                        WHERE listing_source_id = $1
+                    )
+                FROM listing_sources
+                WHERE listing_source_id = $1
+                "#,
+            )
+            .bind(source.id().into_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("read source after rejected update: {error}"));
+            assert_eq!((1, false), state, "update changed corrupted source");
+        }
     }
 
     #[aura_integration_test(services = [BUSINESS_SCHEMA])]
@@ -1068,8 +1263,11 @@ mod tests {
         let operator_party_id = PartyId::new();
         let source_id = ListingSourceId::new();
         sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
-            .bind(uuid::Uuid::from(operator_party_id))
-            .bind(format!("orphan-web-crawl-operator-{operator_party_id}"))
+            .bind(operator_party_id.into_uuid())
+            .bind(format!(
+                "orphan-web-crawl-operator-{}",
+                operator_party_id.as_uuid().simple()
+            ))
             .bind("Orphan WebCrawl operator")
             .execute(&pool)
             .await
@@ -1077,17 +1275,20 @@ mod tests {
         sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
-        .bind(uuid::Uuid::from(source_id))
-        .bind(format!("orphan-web-crawl-source-{source_id}"))
+        .bind(source_id.into_uuid())
+        .bind(format!(
+            "orphan-web-crawl-source-{}",
+            source_id.as_uuid().simple()
+        ))
         .bind("Orphan WebCrawl source")
-        .bind(uuid::Uuid::from(operator_party_id))
+        .bind(operator_party_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("insert listing source: {error}"));
         sqlx::query(
             "INSERT INTO listing_source_web_crawl_ingestion_configurations (listing_source_id) VALUES ($1)",
         )
-        .bind(uuid::Uuid::from(source_id))
+        .bind(source_id.into_uuid())
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("insert orphan WebCrawl configuration: {error}"));
@@ -1100,6 +1301,87 @@ mod tests {
         let result = SqlxListingSourceRepositoryFactory::new()
             .in_transaction(&mut transaction)
             .find_by_id(source_id)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ListingSourceRepositoryError::InvalidPersistedState { .. })
+        ));
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_reject_wrong_version_persisted_operator_party_id() {
+        let pool = get_postgres_client().await;
+        let operator_party_id = uuid::Uuid::new_v4();
+        let source_id = ListingSourceId::new();
+        let slug = ListingSourceSlugId::raw("wrong-version-operator-source")
+            .unwrap_or_else(|error| panic!("valid test source slug: {error}"));
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(operator_party_id)
+            .bind("wrong-version-source-operator")
+            .bind("Wrong version source operator")
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert wrong-version source operator: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(source_id.into_uuid())
+        .bind(slug.as_ref())
+        .bind("Wrong version operator source")
+        .bind(operator_party_id)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert source with wrong-version operator: {error}"));
+
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool);
+        let mut transaction = unit_of_work
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin wrong-version read transaction: {error}"));
+        let result = SqlxListingSourceRepositoryFactory::new()
+            .in_transaction(&mut transaction)
+            .find_by_slug(&slug)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ListingSourceRepositoryError::InvalidPersistedState { .. })
+        ));
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_reject_wrong_version_persisted_listing_source_id() {
+        let pool = get_postgres_client().await;
+        let operator_party_id = PartyId::new();
+        let slug = ListingSourceSlugId::raw("wrong-version-source")
+            .unwrap_or_else(|error| panic!("valid test source slug: {error}"));
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(operator_party_id.into_uuid())
+            .bind("wrong-version-source-operator")
+            .bind("Wrong version source operator")
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert wrong-version source operator: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(slug.as_ref())
+        .bind("Wrong version source")
+        .bind(operator_party_id.into_uuid())
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert wrong-version source: {error}"));
+
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool);
+        let mut transaction = unit_of_work
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin wrong-version read transaction: {error}"));
+        let result = SqlxListingSourceRepositoryFactory::new()
+            .in_transaction(&mut transaction)
+            .find_by_slug(&slug)
             .await;
 
         assert!(matches!(

@@ -2,6 +2,7 @@ use crate::error::{ApiError, BAD_BODY_VALUE};
 use crate::product_listings::product_data::ProductListingImageData;
 use crate::values::{LocalizedTextData, ProductListingPriceData};
 use axum::response::{IntoResponse, Response};
+use listing_source_core::listing_source_id::ListingSourceId;
 use localization::{Language, Localized};
 
 use notification_core::{
@@ -15,14 +16,15 @@ use notification_core::{
 };
 use notification_service::presentation::NotificationPresentationPreferences;
 use notification_service::use_cases::queries::list_notifications::ListedNotification;
+use partnership_core::partnership_application_id::PartnershipApplicationId;
 use product_listing_core::{
-    listing_availability::ListingAvailability, product_listing_price::ProductListingPrice,
-    title::Title,
+    listing_availability::ListingAvailability, product_listing_id::ProductListingId,
+    product_listing_price::ProductListingPrice, title::Title,
 };
+use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use serde::{Deserialize, Serialize, Serializer};
 use time::OffsetDateTime;
 use url::Url;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,14 +35,14 @@ pub(crate) struct UpdateNotificationSeenData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateNotificationsSeenData {
-    pub notification_ids: Vec<Uuid>,
+    pub notification_ids: Vec<String>,
     pub seen: bool,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NotificationData {
-    notification_id: Uuid,
+    notification_id: NotificationId,
     seen: bool,
     #[serde(with = "time::serde::rfc3339")]
     created: OffsetDateTime,
@@ -59,7 +61,7 @@ impl From<(ListedNotification, NotificationPresentationPreferences)> for Notific
         ),
     ) -> Self {
         Self {
-            notification_id: Uuid::from(value.notification_id),
+            notification_id: value.notification_id,
             seen: value.seen,
             created: value.created,
             updated: value.updated,
@@ -92,8 +94,8 @@ impl Serialize for NotificationContentData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WatchlistNotificationPayloadData {
-    product_listing_id: Uuid,
-    listing_source_id: Uuid,
+    product_listing_id: ProductListingId,
+    listing_source_id: ListingSourceId,
     source_listing_id: String,
     listing_source_slug_id: String,
     product_listing_title_slug_id: String,
@@ -127,10 +129,10 @@ enum WatchlistNotificationChangeData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchFilterNotificationPayloadData {
-    product_listing_id: Uuid,
-    user_search_filter_id: Uuid,
+    product_listing_id: ProductListingId,
+    user_search_filter_id: UserSearchFilterId,
     user_search_filter_name: String,
-    listing_source_id: Uuid,
+    listing_source_id: ListingSourceId,
     source_listing_id: String,
     listing_source_slug_id: String,
     product_listing_title_slug_id: String,
@@ -144,7 +146,7 @@ struct SearchFilterNotificationPayloadData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PartnershipApplicationNotificationPayloadData {
-    partnership_application_id: Uuid,
+    partnership_application_id: PartnershipApplicationId,
     #[serde(with = "crate::wire::partnership_application_decision")]
     decision: PartnershipApplicationDecision,
     party_name: String,
@@ -172,7 +174,7 @@ impl
             } => {
                 let snapshot = notification_product_snapshot(snapshot, presentation_preferences);
                 Self::Watchlist(WatchlistNotificationPayloadData {
-                    product_listing_id: Uuid::from(product_listing_id),
+                    product_listing_id,
                     listing_source_id: snapshot.listing_source_id,
                     source_listing_id: snapshot.source_listing_id,
                     listing_source_slug_id: snapshot.listing_source_slug_id,
@@ -193,8 +195,8 @@ impl
             } => {
                 let snapshot = notification_product_snapshot(snapshot, presentation_preferences);
                 Self::SearchFilter(SearchFilterNotificationPayloadData {
-                    product_listing_id: Uuid::from(product_listing_id),
-                    user_search_filter_id: Uuid::from(user_search_filter_id),
+                    product_listing_id,
+                    user_search_filter_id,
                     user_search_filter_name: user_search_filter_name.to_string(),
                     listing_source_id: snapshot.listing_source_id,
                     source_listing_id: snapshot.source_listing_id.to_string(),
@@ -215,7 +217,7 @@ impl
                 snapshot,
                 decision,
             } => Self::PartnershipApplication(PartnershipApplicationNotificationPayloadData {
-                partnership_application_id: Uuid::from(partnership_application_id),
+                partnership_application_id,
                 decision,
                 party_name: snapshot.party_name.to_string(),
                 listing_source_name: snapshot.listing_source_name.to_string(),
@@ -230,7 +232,7 @@ fn notification_product_snapshot(
     presentation_preferences: NotificationPresentationPreferences,
 ) -> NotificationProductListingSnapshotData {
     NotificationProductListingSnapshotData {
-        listing_source_id: Uuid::from(snapshot.listing_source_id),
+        listing_source_id: snapshot.listing_source_id,
         source_listing_id: snapshot.source_listing_id.to_string(),
         listing_source_slug_id: snapshot.listing_source_slug_id.to_string(),
         product_listing_title_slug_id: snapshot.product_listing_title_slug_id.to_string(),
@@ -259,7 +261,7 @@ fn product_listing_price_data(value: ProductListingPrice) -> ProductListingPrice
 }
 
 struct NotificationProductListingSnapshotData {
-    listing_source_id: Uuid,
+    listing_source_id: ListingSourceId,
     source_listing_id: String,
     listing_source_slug_id: String,
     product_listing_title_slug_id: String,
@@ -303,8 +305,4 @@ pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, 
             .with_detail(error.to_string())
             .into_response()
     })
-}
-
-pub(crate) fn notification_id(value: Uuid) -> NotificationId {
-    NotificationId::from(value)
 }

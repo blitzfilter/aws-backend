@@ -52,8 +52,8 @@ impl ProductListingEventAppender for SqlxProductListingEventAppender<'_> {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
-        .bind(uuid::Uuid::from(event.event_id))
-        .bind(uuid::Uuid::from(event.aggregate_id))
+        .bind(event.event_id.as_uuid())
+        .bind(event.aggregate_id.as_uuid())
         .bind(event.payload.event_type().as_str())
         .bind("DOMAIN")
         .bind(PRODUCT_LISTING_EVENT_SCHEMA_VERSION)

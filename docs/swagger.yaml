@@ -94,8 +94,7 @@ paths:
           description: Unique identifier of the target ListingSource
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: ls_6rd827eqfefsva9teecmwa3ate
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -150,7 +149,7 @@ paths:
                 partial_failure:
                   summary: Some product-listings failed while at least one product was created
                   value:
-                    - listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                    - listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                       sourceListingId: baroque-violin-002
                       error: CONFLICT
         "400":
@@ -194,7 +193,7 @@ paths:
                     error: INVALID_CREDENTIALS
                     source:
                       field: Authorization
-                      type: header
+                      type: HEADER
                 access_token_not_found:
                   summary: Aura Historia access token is unknown or expired
                   value:
@@ -285,8 +284,7 @@ paths:
           description: Unique identifier of the target ListingSource
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: ls_6rd827eqfefsva9teecmwa3ate
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -333,7 +331,7 @@ paths:
                 partial_failure:
                   summary: Some product-listings failed while at least one product was updated
                   value:
-                    - listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                    - listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                       sourceListingId: baroque-violin-002
                       error: PRODUCT_LISTING_NOT_FOUND
         "400":
@@ -377,7 +375,7 @@ paths:
                     error: INVALID_CREDENTIALS
                     source:
                       field: Authorization
-                      type: header
+                      type: HEADER
                 access_token_not_found:
                   summary: Aura Historia access token is unknown or expired
                   value:
@@ -453,8 +451,7 @@ paths:
           description: Unique identifier of the target ListingSource
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: ls_6rd827eqfefsva9teecmwa3ate
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -532,7 +529,7 @@ paths:
                 partial_failure:
                   summary: Some product-listings failed while at least one product was upserted
                   value:
-                    - listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                    - listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                       sourceListingId: baroque-violin-002
                       error: BAD_BODY_VALUE
         "400":
@@ -576,7 +573,7 @@ paths:
                     error: INVALID_CREDENTIALS
                     source:
                       field: Authorization
-                      type: header
+                      type: HEADER
                 access_token_not_found:
                   summary: Aura Historia access token is unknown or expired
                   value:
@@ -656,8 +653,7 @@ paths:
           description: Unique identifier of the target ListingSource
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: ls_6rd827eqfefsva9teecmwa3ate
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -690,7 +686,7 @@ paths:
                   value: []
                 partial_failure:
                   value:
-                    - listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                    - listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                       sourceListingId: baroque-violin-002
                       error: PRODUCT_LISTING_NOT_FOUND
         "400":
@@ -809,8 +805,7 @@ paths:
           description: Unique identifier of the target ListingSource that should receive the WooCommerce webhook
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: ls_6rd827eqfefsva9teecmwa3ate
         - name: x-wc-webhook-topic
           in: header
           required: true
@@ -934,18 +929,18 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: listingSourceId
-                      sourceType: path
+                      type: PATH
                     detail: Missing field 'listingSourceId'.
                 invalid_listing_source_id:
                   summary: Invalid listing source ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: listingSourceId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid ListingSource ID
                 missing_body:
                   summary: Request body is absent or empty
                   value:
@@ -968,7 +963,7 @@ paths:
                     error: BAD_HEADER_VALUE
                     source:
                       field: x-wc-webhook-topic
-                      sourceType: header
+                      type: HEADER
         "401":
           description:
             "Unauthorized — missing or invalid bearer credentials use `INVALID_CREDENTIALS`. A missing or invalid
@@ -989,7 +984,7 @@ paths:
                     error: INVALID_CREDENTIALS
                     source:
                       field: Authorization
-                      sourceType: header
+                      type: HEADER
                 invalid_access_token:
                   summary: Aura Historia access token is unknown or expired
                   value:
@@ -1004,7 +999,7 @@ paths:
                     error: BAD_HEADER_VALUE
                     source:
                       field: x-wc-webhook-signature
-                      sourceType: header
+                      type: HEADER
                     detail: WooCommerce signature header is required.
                 signature_mismatch:
                   summary: WooCommerce signature does not match the request body
@@ -1014,7 +1009,7 @@ paths:
                     error: BAD_HEADER_VALUE
                     source:
                       field: x-wc-webhook-signature
-                      sourceType: header
+                      type: HEADER
                     detail: WooCommerce signature is invalid.
         "403":
           description: Forbidden — the caller lacks the required ProductListing write capability or exact source partnership grant, including for ignored status events
@@ -1213,8 +1208,7 @@ paths:
           description: Unique identifier of the ProductListing
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: pl_5xdb465tg1enarx2knf04mxbxj
         - name: language
           in: query
           required: false
@@ -1311,8 +1305,7 @@ paths:
           description: Unique ProductListing identifier
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: pl_5xdb465tg1enarx2knf04mxbxj
       responses:
         "200":
           description: Product history retrieved successfully
@@ -1332,10 +1325,10 @@ paths:
                   summary: Example ProductListing history
                   value:
                     - eventType: PRODUCT_LISTING_DISCOVERED
-                      productListingId: 550e8400-e29b-41d4-a716-446655440000
-                      eventId: 650e8400-e29b-41d4-a716-446655440001
+                      productListingId: pl_5xdb465tg1enarx2knf04mxbxj
+                      eventId: evt_7s35w34ftcew1r4cransc55rt4
                       payload:
-                        listingSourceId: 550e8400-e29b-41d4-a716-446655440010
+                        listingSourceId: ls_6ckwc632p2e2q86nv92g9eyw9q
                         sourceListingId: source-6ba7b810
                         pricing:
                           price:
@@ -1349,8 +1342,8 @@ paths:
                           end: null
                       timestamp: "2026-09-01T10:00:00Z"
                     - eventType: PRODUCT_LISTING_CHANGED
-                      productListingId: 550e8400-e29b-41d4-a716-446655440000
-                      eventId: 650e8400-e29b-41d4-a716-446655440003
+                      productListingId: pl_5xdb465tg1enarx2knf04mxbxj
+                      eventId: evt_2mdmwstjvvfn3rmbakmarshhqg
                       payload:
                         changes:
                           - type: MAIN_PRICE_CHANGED
@@ -1430,8 +1423,7 @@ paths:
           description: Unique identifier of the product
           schema:
             type: string
-            format: uuid
-            example: 550e8400-e29b-41d4-a716-446655440000
+            example: pl_5xdb465tg1enarx2knf04mxbxj
         - name: language
           in: query
           required: false
@@ -1464,7 +1456,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: /api/v1/product-listings/550e8400-e29b-41d4-a716-446655440000/similar
+              example: /api/v1/product-listings/pl_5xdb465tg1enarx2knf04mxbxj/similar
         "400":
           description: Bad request - invalid parameters
           content:
@@ -1482,7 +1474,7 @@ paths:
                 title: Not Found
                 error: PRODUCT_LISTING_NOT_FOUND
                 detail:
-                  ProductListing with ListingSourceId '550e8400-e29b-41d4-a716-446655440000' and SourceListingId '6ba7b810'
+                  ProductListing with ListingSourceId 'ls_6rd827eqfefsva9teecmwa3ate' and SourceListingId '6ba7b810'
                   not found.
         "500":
           description: Internal server error
@@ -1554,10 +1546,9 @@ paths:
             type: array
             items:
               type: string
-              format: uuid
             uniqueItems: true
           example:
-            - 550e8400-e29b-41d4-a716-446655440000
+            - pl_5xdb465tg1enarx2knf04mxbxj
         - name: listingSourceId
           in: query
           required: false
@@ -1568,7 +1559,6 @@ paths:
             type: array
             items:
               type: string
-              format: uuid
             uniqueItems: true
         - name: excludeListingSourceId
           in: query
@@ -1580,7 +1570,6 @@ paths:
             type: array
             items:
               type: string
-              format: uuid
             uniqueItems: true
         - name: price
           in: query
@@ -1751,7 +1740,7 @@ paths:
             "
           schema:
             $ref: "#/components/schemas/ProductListingSearchCursorData"
-          example: '{"fxRateId":"6ba7b810-9dad-11d1-80b4-00c04fd430c8","searchAfter":[2999,"550e8400-e29b-41d4-a716-446655440000"]}'
+          example: '{"fxRateId":"fx_0cwktgjtwnf4tb6hf2f8zm0x5k","searchAfter":[2999,"pl_5xdb465tg1enarx2knf04mxbxj"]}'
         - name: size
           in: query
           required: false
@@ -1804,7 +1793,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: sort
-                      sourceType: query
+                      type: QUERY
                     detail: "Expected any of: 'score', 'price', 'updated', 'created'. Got: 'invalid'"
                 invalid_order:
                   summary: Invalid sort order
@@ -1814,7 +1803,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: order
-                      sourceType: query
+                      type: QUERY
                     detail: "Expected any of: 'asc' or 'desc'. Got: 'invalid'"
         "503":
           description: Product search or required personalized state is temporarily unavailable
@@ -1867,8 +1856,8 @@ paths:
                 $ref: "#/components/schemas/UserSearchFilterCollectionData"
               example:
                 items:
-                  - userId: 550e8400-e29b-41d4-a716-446655440000
-                    userSearchFilterId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+                  - userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                    userSearchFilterId: sf_4hyqf0gyxveazss7nby5hve5x2
                     name: My Tech Store Search
                     notifications: true
                     state: ACTIVE
@@ -1884,7 +1873,7 @@ paths:
                       availability:
                         - IN_STOCK
                       listingSourceId:
-                        - 550e8400-e29b-41d4-a716-446655440000
+                        - ls_6rd827eqfefsva9teecmwa3ate
                     created: "2024-01-01T10:00:00Z"
                     updated: "2024-01-01T12:00:00Z"
                 from: 0
@@ -1971,7 +1960,7 @@ paths:
                   min: "2024-01-01T00:00:00Z"
                   max: "2024-12-31T23:59:59Z"
                 listingSourceId:
-                  - 550e8400-e29b-41d4-a716-446655440000
+                  - ls_6rd827eqfefsva9teecmwa3ate
       responses:
         "201":
           description: Search filter created successfully
@@ -1981,7 +1970,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: https://api.aura-historia.com/api/v1/me/search-filters/6ba7b810-9dad-11d1-80b4-00c04fd430c8
+              example: https://api.aura-historia.com/api/v1/me/search-filters/sf_4hyqf0gyxveazss7nby5hve5x2
             Content-Language:
               description: The language of the returned content
               schema:
@@ -2003,8 +1992,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/UserSearchFilterData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
-                userSearchFilterId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                userSearchFilterId: sf_4hyqf0gyxveazss7nby5hve5x2
                 name: My Tech Store Search
                 notifications: true
                 state: ACTIVE
@@ -2020,7 +2009,7 @@ paths:
                   availability:
                     - IN_STOCK
                   listingSourceId:
-                    - 550e8400-e29b-41d4-a716-446655440000
+                    - ls_6rd827eqfefsva9teecmwa3ate
                 created: "2024-01-01T12:00:00Z"
                 updated: "2024-01-01T12:00:00Z"
         "400":
@@ -2128,8 +2117,7 @@ paths:
           description: Unique identifier of the search filter
           schema:
             type: string
-            format: uuid
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -2158,8 +2146,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/UserSearchFilterData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
-                userSearchFilterId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                userSearchFilterId: sf_4hyqf0gyxveazss7nby5hve5x2
                 name: My Tech Store Search
                 notifications: true
                 state: ACTIVE
@@ -2175,7 +2163,7 @@ paths:
                   availability:
                     - IN_STOCK
                   listingSourceId:
-                    - 550e8400-e29b-41d4-a716-446655440000
+                    - ls_6rd827eqfefsva9teecmwa3ate
                 created: "2024-01-01T10:00:00Z"
                 updated: "2024-01-01T12:00:00Z"
         "400":
@@ -2193,17 +2181,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid UserSearchFilter ID
         "401":
           description: Unauthorized - missing or invalid Cognito JWT or Aura access token
           content:
@@ -2264,8 +2252,7 @@ paths:
           description: Unique identifier of the search filter to delete
           schema:
             type: string
-            format: uuid
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -2293,17 +2280,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid UserSearchFilter ID
         "401":
           description: Unauthorized - missing or invalid Cognito JWT or Aura access token
           content:
@@ -2378,8 +2365,7 @@ paths:
           description: Unique identifier of the search filter to update
           schema:
             type: string
-            format: uuid
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -2403,7 +2389,7 @@ paths:
                       min: 2000
                       max: 8000
                     listingSourceId:
-                      - 550e8400-e29b-41d4-a716-446655440000
+                      - ls_6rd827eqfefsva9teecmwa3ate
               update_name_only:
                 summary: Update only the name
                 value:
@@ -2431,7 +2417,7 @@ paths:
                     language: de
                     currency: EUR
                     listingSourceId:
-                      - 550e8400-e29b-41d4-a716-446655440000
+                      - ls_6rd827eqfefsva9teecmwa3ate
               empty_update:
                 summary: No changes (returns existing filter)
                 value: {}
@@ -2460,8 +2446,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/UserSearchFilterData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
-                userSearchFilterId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                userSearchFilterId: sf_4hyqf0gyxveazss7nby5hve5x2
                 name: Updated Filter Name
                 notifications: true
                 state: ACTIVE
@@ -2477,7 +2463,7 @@ paths:
                   availability:
                     - IN_STOCK
                   listingSourceId:
-                    - 550e8400-e29b-41d4-a716-446655440000
+                    - ls_6rd827eqfefsva9teecmwa3ate
                 created: "2024-01-01T10:00:00Z"
                 updated: "2024-01-01T12:30:00Z"
         "400":
@@ -2495,17 +2481,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid UserSearchFilter ID
                 invalid_json:
                   summary: Invalid JSON format
                   value:
@@ -2634,8 +2620,7 @@ paths:
           description: Unique identifier of the search filter
           schema:
             type: string
-            format: uuid
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
         - name: currency
           in: query
           required: false
@@ -2677,11 +2662,11 @@ paths:
               example:
                 items:
                   - item:
-                      productListingId: 550e8400-e29b-41d4-a716-446655440000
+                      productListingId: pl_5xdb465tg1enarx2knf04mxbxj
                       productListingTitleSlugId: golden-cufflinks-a1b2c3
-                      eventId: 550e8400-e29b-41d4-a716-446655440001
+                      eventId: evt_69wh1chr82fen9vvyk6n3mh80m
                       source:
-                        listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                        listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                         name: Curated Antiques
                         slugId: curated-antiques
                       sourceListingId: 6ba7b810
@@ -2730,7 +2715,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: searchAfter
-                      sourceType: query
+                      type: QUERY
                     detail: Remove pagination parameters; this endpoint always returns a fixed-size preview.
                 size_not_supported:
                   summary: Client pagination size is not supported
@@ -2740,7 +2725,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: size
-                      sourceType: query
+                      type: QUERY
                     detail: Remove pagination parameters; this endpoint always returns a fixed-size preview.
                 missing_search_filter_id:
                   summary: Missing search filter ID
@@ -2750,17 +2735,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid UserSearchFilter ID
         "401":
           description: Unauthorized - invalid or missing JWT token
           content:
@@ -2799,7 +2784,7 @@ paths:
         filter and authenticated user.
 
         Results use fixed ascending match-creation order and are paginated with the tie-safe RFC3339 match-creation timestamp
-        plus product UUID `searchAfter` cursor.
+        plus ProductListing ID `searchAfter` cursor.
 
         Requires a Cognito JWT or an Aura access token with `search-filters:write`.
 
@@ -2814,8 +2799,7 @@ paths:
           description: Unique identifier of the search filter
           schema:
             type: string
-            format: uuid
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
         - name: language
           in: query
           required: false
@@ -2832,10 +2816,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: JSON-encoded `[RFC3339 match creation timestamp, product UUID]` cursor from the preceding page.
+          description: JSON-encoded `[RFC3339 match creation timestamp, ProductListing ID]` cursor from the preceding page.
           schema:
             type: string
-          example: '["2024-01-01T10:00:00Z","550e8400-e29b-41d4-a716-446655440111"]'
+          example: '["2024-01-01T10:00:00Z","pl_6zydvb8xqqfcntt760grgm41t4"]'
         - name: size
           in: query
           required: false
@@ -2870,11 +2854,11 @@ paths:
               example:
                 items:
                   - item:
-                      productListingId: 550e8400-e29b-41d4-a716-446655440111
+                      productListingId: pl_6zydvb8xqqfcntt760grgm41t4
                       productListingTitleSlugId: golden-accessory-a1b2c3
-                      eventId: 550e8400-e29b-41d4-a716-446655440222
+                      eventId: evt_08nrsmex2je2dvsyh01v2kh78a
                       source:
-                        listingSourceId: 550e8400-e29b-41d4-a716-446655440333
+                        listingSourceId: ls_47thsmbtzte7mb4jn2baczc2z2
                         name: Golden Listings
                         slugId: golden-listings
                       sourceListingId: accessory-1
@@ -2889,7 +2873,7 @@ paths:
                             currency: EUR
                         valuation:
                           type: CURRENT
-                          fxRateId: 550e8400-e29b-41d4-a716-446655440444
+                          fxRateId: fx_19d49874hpfeq8fsfpxpmrc9fp
                           capturedAt: "2026-08-15T10:00:00Z"
                       availability: IN_STOCK
                       lifecycle: ACTIVE
@@ -2914,7 +2898,7 @@ paths:
                 total: null
                 searchAfter:
                   - "2024-01-01T10:00:00Z"
-                  - 550e8400-e29b-41d4-a716-446655440111
+                  - pl_6zydvb8xqqfcntt760grgm41t4
         "400":
           description: Bad request - invalid parameters
           content:
@@ -2930,7 +2914,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: searchAfter
-                      sourceType: query
+                      type: QUERY
                     detail: Invalid RFC3339 timestamp format
                 missing_search_filter_id:
                   summary: Missing search filter ID
@@ -2940,17 +2924,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid UserSearchFilter ID
         "401":
           description: Unauthorized - missing or invalid Cognito JWT or Aura access token
           content:
@@ -3033,16 +3017,14 @@ paths:
           description: Unique identifier of the saved search filter that produced the match
           schema:
             type: string
-            format: uuid
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
         - name: productListingId
           in: path
           required: true
           description: Canonical identifier of the matched product
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440111
+          example: pl_6zydvb8xqqfcntt760grgm41t4
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -3095,20 +3077,20 @@ paths:
                 feedback_set_to_true:
                   summary: Match feedback stored as relevant
                   value:
-                    userId: 550e8400-e29b-41d4-a716-446655440000
-                    userSearchFilterId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
-                    productListingId: 550e8400-e29b-41d4-a716-446655440111
-                    originEventId: 550e8400-e29b-41d4-a716-446655440222
+                    userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                    userSearchFilterId: sf_4hyqf0gyxveazss7nby5hve5x2
+                    productListingId: pl_6zydvb8xqqfcntt760grgm41t4
+                    originEventId: evt_08nrsmex2je2dvsyh01v2kh78a
                     feedback: true
                     created: "2024-01-01T10:00:00Z"
                     updated: "2024-01-01T12:30:00Z"
                 no_op_patch:
                   summary: Empty patch returns the existing feedback state
                   value:
-                    userId: 550e8400-e29b-41d4-a716-446655440000
-                    userSearchFilterId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
-                    productListingId: 550e8400-e29b-41d4-a716-446655440111
-                    originEventId: 550e8400-e29b-41d4-a716-446655440222
+                    userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                    userSearchFilterId: sf_4hyqf0gyxveazss7nby5hve5x2
+                    productListingId: pl_6zydvb8xqqfcntt760grgm41t4
+                    originEventId: evt_08nrsmex2je2dvsyh01v2kh78a
                     feedback: true
                     created: "2024-01-01T10:00:00Z"
                     updated: "2024-01-01T10:00:00Z"
@@ -3127,7 +3109,7 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: userSearchFilterId
-                      sourceType: path
+                      type: PATH
                 missing_product_id:
                   summary: Missing product ID
                   value:
@@ -3136,27 +3118,27 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: productListingId
-                      sourceType: path
+                      type: PATH
                 invalid_search_filter_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userSearchFilterId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid UserSearchFilter ID
                 invalid_product_id:
                   summary: Invalid product ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: productListingId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid ProductListing ID
                 missing_body:
                   summary: Missing request body
                   value:
@@ -3250,10 +3232,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: "JSON array cursor returned by the preceding page: [RFC3339 timestamp, product UUID]."
+          description: "JSON array cursor returned by the preceding page: [RFC3339 timestamp, ProductListing ID]."
           schema:
             type: string
-          example: '["2026-08-04T12:34:56Z", "550e8400-e29b-41d4-a716-446655440000"]'
+          example: '["2026-08-04T12:34:56Z", "pl_5xdb465tg1enarx2knf04mxbxj"]'
       security:
         - BearerAuth: []
       responses:
@@ -3291,10 +3273,10 @@ paths:
               example:
                 items:
                   - item:
-                      productListingId: 550e8400-e29b-41d4-a716-446655440000
+                      productListingId: pl_5xdb465tg1enarx2knf04mxbxj
                       productListingTitleSlugId: smartphone-case-a1b2c3
-                      eventId: 550e8400-e29b-41d4-a716-446655440001
-                      listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                      eventId: evt_69wh1chr82fen9vvyk6n3mh80m
+                      listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                       sourceListingId: 6ba7b810
                       listingSourceName: Tech Store
                       title:
@@ -3395,7 +3377,7 @@ paths:
             schema:
               $ref: "#/components/schemas/PostWatchlistData"
             example:
-              productListingId: 550e8400-e29b-41d4-a716-446655440000
+              productListingId: pl_5xdb465tg1enarx2knf04mxbxj
               notifications: true
       responses:
         "201":
@@ -3411,8 +3393,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/WatchlistEntryData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
-                productListingId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                productListingId: pl_5xdb465tg1enarx2knf04mxbxj
                 notifications: true
                 state: ACTIVE
         "400":
@@ -3548,7 +3530,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: /api/v1/admin/listing-sources/550e8400-e29b-41d4-a716-446655440000
+              example: /api/v1/admin/listing-sources/ls_6rd827eqfefsva9teecmwa3ate
           content:
             application/json:
               schema:
@@ -3608,7 +3590,7 @@ paths:
         Results use deterministic cursor pagination. The default sort is `name` ascending;
         override it by providing both `sort` and `order`. Valid sort fields are `name`, `slug`,
         `created`, and `updated`; ListingSource ID is always the final deterministic tie-breaker.
-        Page sizes are clamped to 1–100, with a default of 21. The returned UUID `searchAfter`
+        Page sizes are clamped to 1–100, with a default of 21. The returned ListingSource ID `searchAfter`
         cursor is omitted on the terminal page and should be sent with the same filters and sort.
         Responses always use `Cache-Control: no-store`.
 
@@ -3639,11 +3621,10 @@ paths:
         - name: listingSourceId
           in: query
           required: false
-          description: Optional exact ListingSource UUID filter.
+          description: Optional exact ListingSource ID filter.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: ls_6rd827eqfefsva9teecmwa3ate
         - name: listingSourceSlugId
           in: query
           required: false
@@ -3654,11 +3635,10 @@ paths:
         - name: operatorPartyId
           in: query
           required: false
-          description: Optional exact operator Party UUID filter.
+          description: Optional exact operator Party ID filter.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440001
+          example: pty_11bczr8va9ek4abckdkrqda538
         - name: ingestionMethod
           in: query
           required: false
@@ -3686,11 +3666,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: Opaque ListingSource UUID cursor returned by the previous page. It is omitted when no next page exists.
+          description: Opaque ListingSource ID cursor returned by the previous page. It is omitted when no next page exists.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: ls_01jw7j4azge008000000000003
         - name: size
           in: query
           required: false
@@ -3721,11 +3700,11 @@ paths:
                 $ref: "#/components/schemas/ListingSourceSearchCollectionData"
               example:
                 items:
-                  - listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                  - listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                     listingSourceSlugId: antiques-and-more-550e8400-e29b-41d4-a716-446655440000
                     name: Antiques and More
                     operator:
-                      partyId: 550e8400-e29b-41d4-a716-446655440001
+                      partyId: pty_11bczr8va9ek4abckdkrqda538
                       partySlugId: antiques-operator-550e8400-e29b-41d4-a716-446655440001
                       name: Antiques Operator
                     ingestionMethods:
@@ -3739,7 +3718,7 @@ paths:
                     created: "2026-01-01T10:00:00Z"
                     updated: "2026-01-02T10:00:00Z"
                 size: 21
-                searchAfter: 550e8400-e29b-41d4-a716-446655440000
+                searchAfter: ls_6rd827eqfefsva9teecmwa3ate
         "400":
           description: Bad request - invalid ListingSource search parameters.
           content:
@@ -3756,8 +3735,18 @@ paths:
                     source:
                       field: sort
                       type: QUERY
+                invalid_object_id:
+                  summary: Invalid ListingSource ID
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_OBJECT_ID
+                    source:
+                      field: listingSourceId
+                      type: QUERY
+                    detail: Query parameter 'listingSourceId' must be a valid ListingSource ID
                 invalid_query:
-                  summary: Invalid UUID, ingestion method, page size, or cursor
+                  summary: Invalid ingestion method, page size, or cursor
                   value:
                     status: 400
                     title: Bad Request
@@ -3842,7 +3831,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: /api/v1/admin/parties/550e8400-e29b-41d4-a716-446655440000
+              example: /api/v1/admin/parties/pty_4k4snxc3pkecc9yw66heemzyp0
             Cache-Control:
               description: Responses are never stored because contact data is returned.
               schema:
@@ -3853,7 +3842,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PartyData"
               example:
-                partyId: 550e8400-e29b-41d4-a716-446655440000
+                partyId: pty_4k4snxc3pkecc9yw66heemzyp0
                 partySlugId: antiques-and-more-550e8400-e29b-41d4-a716-446655440000
                 name: Antiques and More
                 contact:
@@ -3945,7 +3934,7 @@ paths:
         Results use deterministic cursor pagination. The default sort is `name` ascending;
         override it by providing both `sort` and `order`. Valid sort fields are `name`, `email`,
         `phone`, `created`, and `updated`; Party ID is always the final deterministic tie-breaker.
-        Page sizes are clamped to 1–100, with a default of 21. The returned UUID `searchAfter`
+        Page sizes are clamped to 1–100, with a default of 21. The returned ListingSource ID `searchAfter`
         cursor is omitted on the terminal page and should be sent with the same filters and sort.
         Responses always use `Cache-Control: no-store` because contact data is returned.
       operationId: adminSearchParties
@@ -4035,11 +4024,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: Opaque Party UUID cursor returned by the previous page. It is omitted when no next page exists.
+          description: Opaque Party ID cursor returned by the previous page. It is omitted when no next page exists.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pty_01jw7j4azge008000000000002
         - name: size
           in: query
           required: false
@@ -4070,7 +4058,7 @@ paths:
                 $ref: "#/components/schemas/PartyCollectionData"
               example:
                 items:
-                  - partyId: 550e8400-e29b-41d4-a716-446655440000
+                  - partyId: pty_4k4snxc3pkecc9yw66heemzyp0
                     partySlugId: antiques-and-more-550e8400-e29b-41d4-a716-446655440000
                     name: Antiques and More
                     contact:
@@ -4079,7 +4067,7 @@ paths:
                     created: "2026-01-01T10:00:00Z"
                     updated: "2026-01-02T10:00:00Z"
                 size: 21
-                searchAfter: 550e8400-e29b-41d4-a716-446655440000
+                searchAfter: pty_4k4snxc3pkecc9yw66heemzyp0
         "400":
           description: Bad request - invalid query parameters.
           content:
@@ -4114,7 +4102,7 @@ paths:
                     source:
                       field: searchAfter
                       type: QUERY
-                    detail: "searchAfter must contain a party UUID."
+                    detail: "searchAfter must contain a valid Party ID."
                 invalid_size:
                   summary: Invalid page size
                   value:
@@ -4186,8 +4174,7 @@ paths:
           description: Stable Party identifier.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pty_4k4snxc3pkecc9yw66heemzyp0
       responses:
         "204":
           description: Party deleted successfully.
@@ -4198,7 +4185,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Invalid Party UUID.
+          description: Invalid Party ID.
           content:
             application/problem+json:
               schema:
@@ -4265,8 +4252,7 @@ paths:
           description: Stable Party identifier.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pty_4k4snxc3pkecc9yw66heemzyp0
       requestBody:
         required: true
         description: Party name/contact patch. Omit unchanged members; null clears phone/email only.
@@ -4306,7 +4292,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PartyData"
               example:
-                partyId: 550e8400-e29b-41d4-a716-446655440000
+                partyId: pty_4k4snxc3pkecc9yw66heemzyp0
                 partySlugId: antiques-and-more-550e8400-e29b-41d4-a716-446655440000
                 name: Antiques and More
                 contact:
@@ -4315,22 +4301,22 @@ paths:
                 created: "2026-01-01T10:00:00Z"
                 updated: "2026-01-02T10:00:00Z"
         "400":
-          description: Bad request - invalid Party UUID, empty/malformed body, or invalid Party value.
+          description: Bad request - invalid Party ID, empty/malformed body, or invalid Party value.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
               examples:
                 invalid_party_id:
-                  summary: Invalid Party UUID
+                  summary: Invalid Party ID
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: partyId
                       type: PATH
-                    detail: Path parameter 'partyId' must be a UUID.
+                    detail: must be a valid Party ID
                 invalid_name:
                   summary: Invalid Party name
                   value:
@@ -4419,7 +4405,7 @@ paths:
       description: |
         Gets one Party for an authenticated administrator.
 
-        `partyId` must be a UUID. The response contains the Party identity, immutable slug,
+        `partyId` must be a valid Party ID. The response contains the Party identity, immutable slug,
         name, optional phone/email contact information, and creation/update timestamps.
         Responses always use `Cache-Control: no-store` because contact data is returned.
       operationId: adminGetParty
@@ -4435,8 +4421,7 @@ paths:
           description: Stable Party identifier.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pty_4k4snxc3pkecc9yw66heemzyp0
       responses:
         "200":
           description: Party returned successfully.
@@ -4451,7 +4436,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PartyData"
               example:
-                partyId: 550e8400-e29b-41d4-a716-446655440000
+                partyId: pty_4k4snxc3pkecc9yw66heemzyp0
                 partySlugId: antiques-and-more-550e8400-e29b-41d4-a716-446655440000
                 name: Antiques and More
                 contact:
@@ -4460,7 +4445,7 @@ paths:
                 created: "2026-01-01T10:00:00Z"
                 updated: "2026-01-02T10:00:00Z"
         "400":
-          description: Bad request - invalid Party UUID.
+          description: Bad request - invalid Party ID.
           content:
             application/problem+json:
               schema:
@@ -4468,11 +4453,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: partyId
                   type: PATH
-                detail: Path parameter 'partyId' must be a UUID.
+                detail: must be a valid Party ID
         "401":
           description: Unauthorized - missing or invalid bearer credentials.
           content:
@@ -4668,15 +4653,15 @@ paths:
           in: query
           required: false
           description:
-            "Opaque UUID cursor for keyset pagination. Pass the `searchAfter` string returned by the previous response to fetch the next page.
+            "Opaque User ID cursor for keyset pagination. Pass the `searchAfter` string returned by the previous response to fetch the next page.
 
-            Requests may also provide the legacy JSON array form when its final element is the user UUID. The cursor is valid only with the same filters and sort used for the previous page.
+            Requests may also provide the legacy JSON array form when its final element is a valid User ID. The cursor is valid only with the same filters and sort used for the previous page.
 
             "
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_01jw7j4azge008000000000004
+        - name: sort
         - name: size
           in: query
           required: false
@@ -4707,21 +4692,21 @@ paths:
                 $ref: "#/components/schemas/UserCollectionData"
               example:
                 items:
-                  - userId: 550e8400-e29b-41d4-a716-446655440000
+                  - userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                     email: ada.admin@example.com
                     firstName: Ada
                     lastName: Lovelace
                     tier: ULTIMATE
                     role: ADMIN
                     stripeCustomerId: cus_admin_550e8400e29b41d4a716446655440000
-                  - userId: 7f1c2a88-4e18-4c3a-bf0d-6a0fd5e6d901
+                  - userId: usr_681w9znhe8eawrhebxd1046d44
                     email: grace.user@example.com
                     firstName: Grace
                     lastName: Hopper
                     tier: PRO
                     role: USER
                 size: 2
-                searchAfter: 7f1c2a88-4e18-4c3a-bf0d-6a0fd5e6d901
+                searchAfter: usr_681w9znhe8eawrhebxd1046d44
         "400":
           description: Bad request - invalid query parameters.
           content:
@@ -4743,7 +4728,7 @@ paths:
                     error: BAD_SORT_VALUE
                     source:
                       field: sort
-                      sourceType: query
+                      type: QUERY
                     detail:
                       "Expected any of: 'name', 'email', 'firstName', 'lastName', 'tier', 'role', 'updated',
                       'created'. Got: 'invalid'"
@@ -4755,7 +4740,7 @@ paths:
                     error: BAD_ORDER_VALUE
                     source:
                       field: order
-                      sourceType: query
+                      type: QUERY
                     detail: "Expected any of: 'asc', 'desc'. Got: 'invalid'"
                 invalid_search_after:
                   summary: Invalid searchAfter cursor
@@ -4765,8 +4750,8 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: searchAfter
-                      sourceType: query
-                    detail: "searchAfter must contain a user UUID."
+                      type: QUERY
+                    detail: "searchAfter must contain a valid User ID."
                 invalid_size:
                   summary: Invalid page size
                   value:
@@ -4775,7 +4760,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: size
-                      sourceType: query
+                      type: QUERY
                     detail: invalid digit found in string
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
@@ -4836,11 +4821,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user to retrieve.
+          description: Unique User ID for the user to retrieve.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -4863,7 +4847,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdminUserAccountData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 email: ada.admin@example.com
                 firstName: Ada
                 lastName: Lovelace
@@ -4940,11 +4924,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user to update.
+          description: Unique User ID for the user to update.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -4991,7 +4974,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdminUserAccountData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 email: ada.admin@example.com
                 firstName: Ada
                 lastName: Lovelace
@@ -5052,7 +5035,7 @@ paths:
                 status: 404
                 title: Not Found
                 error: USER_NOT_FOUND
-                detail: User with UserId '550e8400-e29b-41d4-a716-446655440000' not found.
+                detail: User with UserId 'usr_5pvhvpxyhve6ts31n9x8c2y513' not found.
         "409":
           description: Conflict - the last active administrator cannot be demoted.
           content:
@@ -5095,11 +5078,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user to delete.
+          description: Unique User ID for the user to delete.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -5113,7 +5095,7 @@ paths:
                 type: string
               example: "*"
         "400":
-          description: Bad request - the user ID is not a UUID.
+          description: Bad request - the user ID is invalid.
           content:
             application/problem+json:
               schema:
@@ -5121,7 +5103,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
+                source:
+                  field: userId
+                  type: PATH
+                detail: must be a valid User ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           content:
@@ -5196,7 +5182,7 @@ paths:
         must be `ADMIN`; delegated Aura Historia access tokens must also have `users:write`.
         Authorization is enforced in the User service, not only at the HTTP route.
 
-        `userId` must be a UUID. `reason` is required, must not be empty or whitespace-only, and
+        `userId` must be a valid User ID. `reason` is required, must not be empty or whitespace-only, and
         is limited to 1,000 bytes. It is emitted to structured operational logs, so it must not
         contain tokens, passwords, credentials, or other secrets. Common credential markers are
         rejected.
@@ -5211,11 +5197,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user to suspend.
+          description: Unique User ID for the user to suspend.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -5241,10 +5226,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/SuspendUserResponseData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 suspended: true
         "400":
-          description: Invalid target UUID or missing, empty, oversized, or secret-bearing suspension reason.
+          description: Invalid target User ID or missing, empty, oversized, or secret-bearing suspension reason.
           headers:
             Cache-Control:
               schema:
@@ -5259,10 +5244,11 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userId
-                      sourceType: path
+                      type: PATH
+                    detail: must be a valid User ID
                 missing_reason:
                   value:
                     status: 400
@@ -5391,7 +5377,7 @@ paths:
         must be `ADMIN`; delegated Aura Historia access tokens must also have `users:write`.
         Authorization is enforced in the User service, not only at the HTTP route.
 
-        `userId` must be a UUID and the target user must exist. Reactivation is idempotent: a
+        `userId` must be a valid User ID and the target user must exist. Reactivation is idempotent: a
         repeated request for an active user returns its active state without another write. The
         operation changes only suspension state; it preserves the user's profile, tier, role,
         credentials, and partnership relationships. Once committed, valid existing credentials can
@@ -5403,11 +5389,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user to reactivate.
+          description: Unique User ID for the user to reactivate.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -5425,10 +5410,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/UnsuspendUserResponseData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 suspended: false
         "400":
-          description: Invalid target UUID or a nonempty request body.
+          description: Invalid target User ID or a nonempty request body.
           headers:
             Cache-Control:
               schema:
@@ -5441,10 +5426,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: userId
-                  sourceType: path
+                  type: PATH
+                detail: must be a valid User ID
         "401":
           description: Invalid or missing bearer credentials, including a credential for a suspended user.
           headers:
@@ -5548,7 +5534,7 @@ paths:
         Authorization and the target-user check are enforced in the User service, not only at the
         HTTP route. The PostgreSQL authorization check completes before the external Cognito call.
 
-        `userId` must be a UUID and the target user must exist. Cognito global sign-out is safe to
+        `userId` must be a valid User ID and the target user must exist. Cognito global sign-out is safe to
         retry: it succeeds when there are no active sessions. The operation does not change the
         Aura user's profile, tier, role, suspension state, Aura access tokens, or partnerships.
         Every response sends `Cache-Control: no-store`.
@@ -5559,11 +5545,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user whose Cognito sessions are revoked.
+          description: Unique User ID for the user whose Cognito sessions are revoked.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -5577,7 +5562,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Invalid target UUID.
+          description: Invalid target User ID.
           headers:
             Cache-Control:
               schema:
@@ -5590,10 +5575,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: userId
-                  sourceType: path
+                  type: PATH
+                detail: must be a valid User ID
         "401":
           description: Invalid or missing bearer credentials.
           headers:
@@ -5680,10 +5666,10 @@ paths:
         must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:read`.
         Authorization is enforced in the User service, not only at the HTTP route.
 
-        `userId` must be a UUID and the target user must exist. Expired and current tokens are included.
-        Results use bounded keyset pagination in fixed `created ASC, access-token UUID ASC` order.
+        `userId` must be a valid User ID and the target user must exist. Expired and current tokens are included.
+        Results use bounded keyset pagination in fixed `created ASC, AccessToken ID ASC` order.
         Page sizes are clamped to 1–100, with a default of 21. `searchAfter` is a JSON-encoded
-        `[created RFC3339 timestamp, access-token UUID]` cursor and is omitted on the terminal page.
+        `[created RFC3339 timestamp, AccessToken ID]` cursor and is omitted on the terminal page.
         The cursor's creation timestamp is used only for continuation and is not returned as item metadata.
         Raw token values, token hashes, and masked token values are never returned.
       operationId: adminListUserAccessTokens
@@ -5693,11 +5679,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user whose token metadata is listed.
+          description: Unique User ID for the user whose token metadata is listed.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         - name: size
           in: query
           required: false
@@ -5711,10 +5696,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: JSON-encoded `[created RFC3339 timestamp, access-token UUID]` cursor from the previous page.
+          description: JSON-encoded `[created RFC3339 timestamp, AccessToken ID]` cursor from the previous page.
           schema:
             type: string
-          example: '["2026-09-04T12:00:00Z","01970f22-2bf0-7000-8000-000000000001"]'
+          example: '["2026-09-04T12:00:00Z","at_4ck23tcv0meqqrbyjaka24ra6g"]'
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -5738,8 +5723,8 @@ paths:
                 $ref: "#/components/schemas/AdminAccessTokenCollectionData"
               example:
                 items:
-                  - userId: 550e8400-e29b-41d4-a716-446655440000
-                    accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+                  - userId: usr_5pvhvpxyhve6ts31n9x8c2y513
+                    accessTokenId: at_4ck23tcv0meqqrbyjaka24ra6g
                     name: Incident review token
                     scopes:
                       - users:read
@@ -5748,9 +5733,9 @@ paths:
                 size: 21
                 searchAfter:
                   - "2026-09-04T12:00:00Z"
-                  - 01970f22-2bf0-7000-8000-000000000001
+                  - at_4ck23tcv0meqqrbyjaka24ra6g
         "400":
-          description: Bad request - invalid target user UUID, page size, or search-after cursor.
+          description: Bad request - invalid target User ID, page size, or search-after cursor.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -5767,11 +5752,11 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userId
-                      sourceType: path
-                    detail: Path parameter 'userId' must be a UUID.
+                      type: PATH
+                    detail: must be a valid User ID
                 invalid_query:
                   summary: Invalid page query
                   value:
@@ -5780,7 +5765,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: searchAfter
-                      sourceType: query
+                      type: QUERY
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           headers:
@@ -5872,7 +5857,7 @@ paths:
         must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:write`.
         Authorization is enforced in the User service, not only at the HTTP route.
 
-        `userId` must be a UUID and the target user must exist. An existing user with no tokens and
+        `userId` must be a valid User ID and the target user must exist. An existing user with no tokens and
         a repeated request both return `204 No Content`; a missing target user returns `404 USER_NOT_FOUND`.
         Deletion is scoped to the target user, leaves unrelated users' tokens untouched, and committed
         deletion makes the revoked credentials fail authentication. It never reveals raw token values or hashes.
@@ -5883,11 +5868,10 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user whose tokens are revoked.
+          description: Unique User ID for the user whose tokens are revoked.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -5906,7 +5890,7 @@ paths:
                 type: string
               example: "*"
         "400":
-          description: Bad request - the user ID is not a UUID.
+          description: Bad request - the user ID is invalid.
           content:
             application/problem+json:
               schema:
@@ -5914,11 +5898,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: userId
-                  sourceType: path
-                detail: Path parameter 'userId' must be a UUID.
+                  type: PATH
+                detail: must be a valid User ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           content:
@@ -5982,7 +5966,7 @@ paths:
         must be `ADMIN`; delegated Aura Historia access tokens must also have `access-tokens:write`.
         Authorization is enforced in the User service, not only at the HTTP route.
 
-        Both `userId` and `accessTokenId` must be UUIDs. The database deletion is scoped by both
+        Both `userId` and `accessTokenId` must be valid User and AccessToken IDs, respectively. The database deletion is scoped by both
         identifiers, so an access-token ID belonging to another user cannot revoke that user's
         credential. The operation is idempotent: it returns `204 No Content` when the token was
         deleted, was already absent, or belongs to another user. It never reveals raw token values
@@ -5994,19 +5978,17 @@ paths:
         - name: userId
           in: path
           required: true
-          description: Unique identifier (UUID) of the user whose token is revoked.
+          description: Unique User ID for the user whose token is revoked.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         - name: accessTokenId
           in: path
           required: true
-          description: Unique identifier (UUID) of the access token to revoke.
+          description: Unique AccessToken ID for the access token to revoke.
           schema:
             type: string
-            format: uuid
-          example: 01970f22-2bf0-7000-8000-000000000001
+          example: at_4ck23tcv0meqqrbyjaka24ra6g
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -6025,7 +6007,7 @@ paths:
                 type: string
               example: "*"
         "400":
-          description: Bad request - the user ID or access-token ID is not a UUID.
+          description: Bad request - the user ID or access-token ID is invalid.
           content:
             application/problem+json:
               schema:
@@ -6036,21 +6018,21 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userId
-                      sourceType: path
-                    detail: Path parameter 'userId' must be a UUID.
+                      type: PATH
+                    detail: must be a valid User ID
                 invalid_access_token_id:
                   summary: Invalid access-token identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: accessTokenId
-                      sourceType: path
-                    detail: Path parameter 'accessTokenId' must be a UUID.
+                      type: PATH
+                    detail: must be a valid AccessToken ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           content:
@@ -6196,7 +6178,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OwnUserAccountData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 email: user@example.com
                 firstName: John
                 lastName: Doe
@@ -6309,7 +6291,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OwnUserAccountData"
               example:
-                userId: 550e8400-e29b-41d4-a716-446655440000
+                userId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 email: jane.smith@example.com
                 firstName: Jane
                 lastName: Smith
@@ -6418,7 +6400,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GetAccessTokenData"
               example:
-                accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+                accessTokenId: at_4ck23tcv0meqqrbyjaka24ra6g
                 name: Partner product sync
                 scope:
                   - product-listings:write
@@ -6518,7 +6500,7 @@ paths:
                 one_token:
                   summary: One non-expired access token
                   value:
-                    - accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+                    - accessTokenId: at_4ck23tcv0meqqrbyjaka24ra6g
                       name: Partner product sync
                       scope:
                         - product-listings:write
@@ -6586,7 +6568,7 @@ paths:
             schema:
               $ref: "#/components/schemas/PatchAccessTokenData"
             example:
-              accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+              accessTokenId: at_4ck23tcv0meqqrbyjaka24ra6g
               name: Renamed partner sync token
               scopes:
                 - product-listings:write
@@ -6610,7 +6592,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GetAccessTokenData"
               example:
-                accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+                accessTokenId: at_4ck23tcv0meqqrbyjaka24ra6g
                 name: Renamed partner sync token
                 scope:
                   - product-listings:write
@@ -6639,8 +6621,11 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: BAD_BODY_VALUE
-                    detail: invalid character in UUID
+                    error: INVALID_OBJECT_ID
+                    source:
+                      field: accessTokenId
+                      type: BODY
+                    detail: must be a valid AccessToken ID
         "401":
           description: Unauthorized - invalid or missing JWT token
           content:
@@ -6694,8 +6679,7 @@ paths:
           description: Unique identifier of the access token
           schema:
             type: string
-            format: uuid
-            example: 01970f22-2bf0-7000-8000-000000000001
+            example: at_4ck23tcv0meqqrbyjaka24ra6g
       responses:
         "200":
           description: Access token retrieved successfully
@@ -6715,7 +6699,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/GetAccessTokenData"
               example:
-                accessTokenId: 01970f22-2bf0-7000-8000-000000000001
+                accessTokenId: at_4ck23tcv0meqqrbyjaka24ra6g
                 name: Partner product sync
                 scope:
                   - product-listings:write
@@ -6740,18 +6724,18 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: accessTokenId
-                      sourceType: path
+                      type: PATH
                     detail: Missing field 'accessTokenId'.
                 invalid_access_token_id:
                   summary: Invalid access-token identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: accessTokenId
-                      sourceType: path
-                    detail: invalid character in UUID
+                      type: PATH
+                    detail: must be a valid AccessToken ID
         "401":
           description: Unauthorized - invalid or missing JWT token
           content:
@@ -6806,8 +6790,7 @@ paths:
           description: Unique identifier of the access token to delete
           schema:
             type: string
-            format: uuid
-            example: 01970f22-2bf0-7000-8000-000000000001
+            example: at_4ck23tcv0meqqrbyjaka24ra6g
       responses:
         "204":
           description: Access token deleted successfully, or already absent for the authenticated user
@@ -6832,18 +6815,18 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: accessTokenId
-                      sourceType: path
+                      type: PATH
                     detail: Missing field 'accessTokenId'.
                 invalid_access_token_id:
                   summary: Invalid access-token identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: accessTokenId
-                      sourceType: path
-                    detail: invalid character in UUID
+                      type: PATH
+                    detail: must be a valid AccessToken ID
         "401":
           description: Unauthorized - invalid or missing JWT token
           content:
@@ -7210,8 +7193,7 @@ paths:
           description: Unique identifier of the product
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pl_5xdb465tg1enarx2knf04mxbxj
       security:
         - BearerAuth: []
       responses:
@@ -7238,17 +7220,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: productListingId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid product ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: productListingId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid ProductListing ID
         "401":
           description: Unauthorized - invalid or missing JWT token
           content:
@@ -7311,8 +7293,7 @@ paths:
           description: Unique identifier of the product
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pl_5xdb465tg1enarx2knf04mxbxj
         - name: language
           in: query
           required: false
@@ -7373,11 +7354,11 @@ paths:
                 $ref: "#/components/schemas/PersonalizedProductListingDetailsData"
               example:
                 item:
-                  productListingId: 550e8400-e29b-41d4-a716-446655440000
+                  productListingId: pl_5xdb465tg1enarx2knf04mxbxj
                   productListingTitleSlugId: smartphone-case-a1b2c3
-                  eventId: 550e8400-e29b-41d4-a716-446655440001
+                  eventId: evt_69wh1chr82fen9vvyk6n3mh80m
                   source:
-                    listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                    listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                     name: Tech Store
                     slugId: tech-store
                   sourceListingId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
@@ -7427,17 +7408,17 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: productListingId
-                      sourceType: path
-                invalid_uuid:
+                      type: PATH
+                invalid_object_id:
                   summary: Invalid product ID format
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: productListingId
-                      sourceType: path
-                    detail: Invalid UUID format
+                      type: PATH
+                    detail: must be a valid ProductListing ID
                 missing_body:
                   summary: Missing request body
                   value:
@@ -7553,7 +7534,7 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: Opaque JSON `[created RFC3339 timestamp, notification UUID]` cursor returned by the prior page.
+          description: Opaque JSON `[created RFC3339 timestamp, Notification ID]` cursor returned by the prior page.
           schema:
             type: string
       security:
@@ -7699,7 +7680,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
       requestBody:
         required: true
         content:
@@ -7747,7 +7727,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
       responses:
         "204":
           description: Notification deleted.
@@ -7883,7 +7862,7 @@ paths:
       description: |
         Gets one ListingSource for an authenticated administrator.
 
-        `listingSourceId` must be a UUID. The response uses the canonical ListingSource detail
+        `listingSourceId` must be a valid ListingSource ID. The response uses the canonical ListingSource detail
         representation and never exposes provider credentials, webhook secrets, or crawler-local
         configuration.
       operationId: adminGetListingSource
@@ -7895,7 +7874,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
       responses:
         "200":
           description: ListingSource returned successfully.
@@ -7904,7 +7882,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ListingSourceData"
         "400":
-          description: Bad request - invalid ListingSource UUID.
+          description: Bad request - invalid ListingSource ID.
           content:
             application/problem+json:
               schema:
@@ -7947,7 +7925,7 @@ paths:
       description: |
         Updates one ListingSource for an authenticated administrator.
 
-        `listingSourceId` must be a UUID. Omitted members remain unchanged; `null` clears only
+        `listingSourceId` must be a valid ListingSource ID. Omitted members remain unchanged; `null` clears only
         `woocommerceWebhookSecret`, `url`, `image`, and `referralConfiguration`. `name` and
         `ingestionConfiguration` are non-nullable and cannot be cleared. The ingestion
         configuration methods must match the ListingSource ingestion methods. An empty object is a
@@ -7969,8 +7947,7 @@ paths:
           description: Stable ListingSource identifier.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: ls_6rd827eqfefsva9teecmwa3ate
       requestBody:
         required: true
         description: ListingSource patch. Omit unchanged members; null clears only documented nullable members.
@@ -8014,25 +7991,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/ListingSourceReferenceData"
               example:
-                listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+                listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
                 listingSourceSlugId: antiques-and-more-550e8400-e29b-41d4-a716-446655440000
         "400":
-          description: Bad request - invalid ListingSource UUID, empty/malformed body, invalid values, or ingestion configuration mismatch.
+          description: Bad request - invalid ListingSource ID, empty/malformed body, invalid values, or ingestion configuration mismatch.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
               examples:
                 invalid_listing_source_id:
-                  summary: Invalid ListingSource UUID
+                  summary: Invalid ListingSource ID
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: listingSourceId
                       type: PATH
-                    detail: Path parameter 'listingSourceId' must be a UUID.
+                    detail: must be a valid ListingSource ID
                 invalid_patch:
                   summary: Invalid patch value
                   value:
@@ -8126,7 +8103,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
       responses:
         "204":
           description: ListingSource removed. The response body is empty.
@@ -8136,7 +8112,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Invalid ListingSource UUID (`INVALID_UUID`).
+          description: Invalid ListingSource ID (`INVALID_OBJECT_ID`).
           content:
             application/problem+json:
               schema:
@@ -8214,11 +8190,10 @@ paths:
         - name: client_id
           in: query
           required: true
-          description: UUIDv7 identifier of the registered OAuth client.
+          description: Canonical OAuthClient ID.
           schema:
             type: string
-            format: uuid
-          example: 01970f22-2bf0-7000-8000-000000000010
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
         - name: redirect_uri
           in: query
           required: true
@@ -8298,7 +8273,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: response_type
-                      sourceType: query
+                      type: QUERY
                     detail: Missing query parameter response_type
                 unsupported_response_type:
                   summary: Unsupported response_type value
@@ -8308,7 +8283,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: response_type
-                      sourceType: query
+                      type: QUERY
                     detail: Unsupported response_type 'token'
                 missing_code_challenge:
                   summary: Missing code_challenge query parameter
@@ -8318,7 +8293,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: code_challenge
-                      sourceType: query
+                      type: QUERY
                     detail: Missing query parameter code_challenge
                 unsupported_code_challenge_method:
                   summary: Unsupported code_challenge_method
@@ -8328,7 +8303,7 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: code_challenge_method
-                      sourceType: query
+                      type: QUERY
                     detail: Unsupported code_challenge_method 'plain'
                 invalid_scope:
                   summary: Requested scope not allowed for client
@@ -8338,7 +8313,7 @@ paths:
                     error: OAUTH_INVALID_SCOPE
                     source:
                       field: scope
-                      sourceType: query
+                      type: QUERY
                     detail: Requested scope is not allowed for client.
                 invalid_redirect_uri:
                   summary: Redirect URI not registered for client
@@ -8348,7 +8323,7 @@ paths:
                     error: OAUTH_INVALID_REDIRECT_URI
                     source:
                       field: redirect_uri
-                      sourceType: query
+                      type: QUERY
                     detail: Redirect URI is not registered for client.
                 malformed_redirect_uri:
                   summary: Redirect URI is not a valid absolute URI
@@ -8358,18 +8333,18 @@ paths:
                     error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: redirect_uri
-                      sourceType: query
+                      type: QUERY
                     detail: relative URL without a base
                 invalid_client_id:
                   summary: Invalid OAuth client identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: client_id
-                      sourceType: query
-                    detail: invalid character in UUID
+                      type: QUERY
+                    detail: must be a valid OAuthClient ID
         "401":
           description:
             Unauthorized — the Cognito bearer token is missing, invalid, or the OAuth client was not found / credentials
@@ -8463,9 +8438,8 @@ paths:
                   example: https://client.example/callback
                 client_id:
                   type: string
-                  format: uuid
-                  description: UUIDv7 OAuth client identifier.
-                  example: 01970f22-2bf0-7000-8000-000000000010
+                  description: Canonical OAuthClient ID.
+                  example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                 client_secret:
                   type: string
                   description: OAuth client secret.
@@ -8497,7 +8471,7 @@ paths:
                 third_party_exchange_code: 01970f22-2bf0-7000-8000-000000000099
         "400":
           description:
-            Bad request — a required form field is missing, `client_id` is not a valid UUID, `redirect_uri` is
+            Bad request — a required form field is missing, `client_id` is not a valid OAuthClient ID, `redirect_uri` is
             malformed, or an authorization code error occurred (code not found, expired, mismatched client or redirect URI,
             or invalid PKCE verifier).
           content:
@@ -8513,7 +8487,7 @@ paths:
                     error: BAD_BODY_VALUE
                     source:
                       field: grant_type
-                      sourceType: body
+                      type: BODY
                     detail: Missing form field grant_type
                 unsupported_grant_type:
                   summary: Unsupported grant_type
@@ -8523,7 +8497,7 @@ paths:
                     error: BAD_BODY_VALUE
                     source:
                       field: grant_type
-                      sourceType: body
+                      type: BODY
                     detail: Unsupported grant_type 'client_credentials'
                 code_not_found:
                   summary: Authorization code not found or already used
@@ -8568,18 +8542,18 @@ paths:
                     error: BAD_BODY_VALUE
                     source:
                       field: redirect_uri
-                      sourceType: body
+                      type: BODY
                     detail: relative URL without a base
                 invalid_client_id:
                   summary: Invalid OAuth client identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: client_id
-                      sourceType: body
-                    detail: invalid character in UUID
+                      type: BODY
+                    detail: must be a valid OAuthClient ID
         "401":
           description: Unauthorized — invalid OAuth client credentials or unknown OAuth client.
           content:
@@ -8679,18 +8653,18 @@ paths:
                     error: BAD_PATH_PARAMETER_VALUE
                     source:
                       field: thirdPartyCode
-                      sourceType: path
+                      type: PATH
                     detail: Missing path parameter thirdPartyCode
                 invalid_third_party_code:
                   summary: Invalid third-party exchange code
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: BAD_QUERY_PARAMETER_VALUE
                     source:
                       field: thirdPartyCode
-                      sourceType: path
-                    detail: invalid character in UUID
+                      type: PATH
+                    detail: Path parameter 'thirdPartyCode' is invalid.
                 exchange_code_not_found:
                   summary: Third-party exchange code not found
                   value:
@@ -8752,9 +8726,8 @@ paths:
                   example: aurahistoria_abcdefghijk_verylongtokenvalue
                 client_id:
                   type: string
-                  format: uuid
-                  description: UUIDv7 OAuth client identifier.
-                  example: 01970f22-2bf0-7000-8000-000000000010
+                  description: Canonical OAuthClient ID.
+                  example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                 client_secret:
                   type: string
                   description: OAuth client secret.
@@ -8770,7 +8743,7 @@ paths:
               example: no-store
         "400":
           description:
-            Bad request — a required form field is missing, `client_id` is not a valid UUID, or the token value
+            Bad request — a required form field is missing, `client_id` is not a valid OAuthClient ID, or the token value
             is invalid.
           content:
             application/problem+json:
@@ -8785,18 +8758,18 @@ paths:
                     error: BAD_BODY_VALUE
                     source:
                       field: token
-                      sourceType: body
+                      type: BODY
                     detail: Missing form field token
                 invalid_client_id:
                   summary: Invalid OAuth client identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: client_id
-                      sourceType: body
-                    detail: invalid character in UUID
+                      type: BODY
+                    detail: must be a valid OAuthClient ID
         "401":
           description: Unauthorized — invalid OAuth client credentials or unknown OAuth client.
           content:
@@ -8865,9 +8838,8 @@ paths:
                   example: aurahistoria_abcdefghijk_verylongtokenvalue
                 client_id:
                   type: string
-                  format: uuid
-                  description: UUIDv7 OAuth client identifier.
-                  example: 01970f22-2bf0-7000-8000-000000000010
+                  description: Canonical OAuthClient ID.
+                  example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                 client_secret:
                   type: string
                   description: OAuth client secret.
@@ -8891,8 +8863,8 @@ paths:
                   value:
                     active: true
                     scope: product-listings:write
-                    client_id: 01970f22-2bf0-7000-8000-000000000010
-                    sub: 0196580c-e4ca-723f-a7e0-1a73588380f1
+                    client_id: oc_7b0gwc1x49e0mvbt3tfexfqgb5
+                    sub: usr_4hzreqwxgvef69j056bszwwm17
                     token_type: Bearer
                     exp: 1780000000
                     iat: 1748400000
@@ -8902,7 +8874,7 @@ paths:
                     active: false
         "400":
           description:
-            Bad request — a required form field is missing, `client_id` is not a valid UUID, or the token value
+            Bad request — a required form field is missing, `client_id` is not a valid OAuthClient ID, or the token value
             is invalid.
           content:
             application/problem+json:
@@ -8917,18 +8889,18 @@ paths:
                     error: BAD_BODY_VALUE
                     source:
                       field: token
-                      sourceType: body
+                      type: BODY
                     detail: Missing form field token
                 invalid_client_id:
                   summary: Invalid OAuth client identifier
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: client_id
-                      sourceType: body
-                    detail: invalid character in UUID
+                      type: BODY
+                    detail: must be a valid OAuthClient ID
         "401":
           description: Unauthorized — invalid OAuth client credentials or unknown OAuth client.
           content:
@@ -8971,12 +8943,11 @@ paths:
         Delegated Aura Historia access-token callers must also have the `access-tokens:read`
         capability. The OAuth protocol routes remain under `/api/v1/oauth`.
 
-        Results use bounded keyset pagination in fixed `created` ascending, then OAuth client
-        UUID ascending order. Page sizes are clamped to 1–100, with a default of 21. The
-        `searchAfter` value is a JSON-encoded `[created RFC3339 timestamp, client UUID]`
+        Results use bounded keyset pagination in fixed `created` ascending, then OAuthClient ID ascending order. Page sizes are clamped to 1–100, with a default of 21. The
+        `searchAfter` value is a JSON-encoded `[created RFC3339 timestamp, OAuthClient ID]`
         cursor; it is omitted on the terminal page and must be sent with the same filters.
 
-        `clientId` is an exact UUID filter. `name` is a case-insensitive substring filter.
+        `clientId` is an exact OAuthClient ID filter. `name` is a case-insensitive substring filter.
         The response contains no plaintext client secret, secret hash, or masked secret value.
         Every success and error response uses `Cache-Control: no-store`.
       operationId: adminListOAuthClients
@@ -8989,11 +8960,10 @@ paths:
         - name: clientId
           in: query
           required: false
-          description: Optional exact UUID filter for one OAuth client.
+          description: Optional exact OAuthClient ID filter.
           schema:
             type: string
-            format: uuid
-          example: 01970f22-2bf0-7000-8000-000000000010
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
         - name: name
           in: query
           required: false
@@ -9004,10 +8974,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: JSON-encoded `[created RFC3339 timestamp, client UUID]` cursor returned by the previous page.
+          description: JSON-encoded `[created RFC3339 timestamp, OAuthClient ID]` cursor returned by the previous page.
           schema:
             type: string
-          example: '["2026-09-04T12:00:00Z","01970f22-2bf0-7000-8000-000000000010"]'
+          example: '["2026-09-04T12:00:00Z","oc_7b0gwc1x49e0mvbt3tfexfqgb5"]'
         - name: size
           in: query
           required: false
@@ -9034,7 +9004,7 @@ paths:
                 $ref: "#/components/schemas/OAuthClientAdminCollectionData"
               example:
                 items:
-                  - client_id: 01970f22-2bf0-7000-8000-000000000010
+                  - client_id: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                     client_name: Dashboard integration
                     tos_uri: https://client.example/tos
                     policy_uri: https://client.example/policy
@@ -9048,7 +9018,7 @@ paths:
                 size: 21
                 searchAfter:
                   - "2026-09-04T12:00:00Z"
-                  - 01970f22-2bf0-7000-8000-000000000010
+                  - oc_7b0gwc1x49e0mvbt3tfexfqgb5
         "400":
           description: Bad request — an OAuth client filter, page size, or cursor is invalid.
           headers:
@@ -9067,7 +9037,7 @@ paths:
                 error: BAD_QUERY_PARAMETER_VALUE
                 source:
                   field: searchAfter
-                  sourceType: QUERY
+                  type: QUERY
         "401":
           description: Unauthorized — invalid or missing bearer credentials.
           headers:
@@ -9177,7 +9147,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: /api/v1/admin/oauth-clients/01970f22-2bf0-7000-8000-000000000010
+              example: /api/v1/admin/oauth-clients/oc_7b0gwc1x49e0mvbt3tfexfqgb5
             Cache-Control:
               description: Always set to `no-store` because the response contains the raw secret.
               schema:
@@ -9188,7 +9158,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OAuthClientMetadataResponseData"
               example:
-                client_id: 01970f22-2bf0-7000-8000-000000000010
+                client_id: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                 client_secret: aurahistoria_oauth_client_secret_abcdefghijk_abcdefghijklmnopqrstuvwxyz1234567
                 client_name: Acceptance OAuth client
                 tos_uri: https://client.example/tos
@@ -9320,11 +9290,10 @@ paths:
         - name: clientId
           in: path
           required: true
-          description: UUIDv7 identifier of the OAuth client.
+          description: Canonical OAuthClient ID.
           schema:
             type: string
-            format: uuid
-          example: 01970f22-2bf0-7000-8000-000000000010
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
       responses:
         "200":
           description: OAuth client metadata retrieved successfully.
@@ -9339,7 +9308,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OAuthClientAdminData"
               example:
-                client_id: 01970f22-2bf0-7000-8000-000000000010
+                client_id: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                 client_name: Acceptance OAuth client
                 tos_uri: https://client.example/tos
                 policy_uri: https://client.example/policy
@@ -9351,7 +9320,7 @@ paths:
                   - product-listings:write
                 client_id_issued_at: 1748539200
         "400":
-          description: Bad request — the OAuth client path parameter is not a valid UUID.
+          description: Bad request — the OAuth client path parameter is not a valid OAuthClient ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -9365,10 +9334,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: clientId
-                  sourceType: PATH
+                  type: PATH
+                detail: must be a valid OAuthClient ID
         "401":
           description: Unauthorized — invalid or missing bearer credentials.
           headers:
@@ -9476,11 +9446,10 @@ paths:
         - name: clientId
           in: path
           required: true
-          description: UUIDv7 identifier of the OAuth client.
+          description: Canonical OAuthClient ID.
           schema:
             type: string
-            format: uuid
-          example: 01970f22-2bf0-7000-8000-000000000010
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
       requestBody:
         required: true
         description: Partial OAuth client metadata update payload.
@@ -9512,7 +9481,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OAuthClientAdminData"
               example:
-                client_id: 01970f22-2bf0-7000-8000-000000000010
+                client_id: oc_7b0gwc1x49e0mvbt3tfexfqgb5
                 client_name: Updated acceptance OAuth client
                 tos_uri: https://client.example/updated-tos
                 policy_uri: https://client.example/updated-policy
@@ -9541,10 +9510,11 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: clientId
-                      sourceType: PATH
+                      type: PATH
+                    detail: must be a valid OAuthClient ID
                 insecure_redirect_uri:
                   summary: Redirect URI must use HTTPS
                   value:
@@ -9653,11 +9623,10 @@ paths:
         - name: clientId
           in: path
           required: true
-          description: UUIDv7 identifier of the OAuth client.
+          description: Canonical OAuthClient ID.
           schema:
             type: string
-            format: uuid
-          example: 01970f22-2bf0-7000-8000-000000000010
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
       responses:
         "204":
           description: OAuth client and all client-issued credentials were deleted successfully.
@@ -9668,7 +9637,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Bad request — the OAuth client path parameter is not a valid UUID.
+          description: Bad request — the OAuth client path parameter is not a valid OAuthClient ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -9682,10 +9651,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: clientId
-                  sourceType: PATH
+                  type: PATH
+                detail: must be a valid OAuthClient ID
         "401":
           description: Unauthorized — invalid or missing bearer credentials.
           headers:
@@ -9978,7 +9948,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
       responses:
         "200":
           description: Success
@@ -10036,7 +10005,6 @@ paths:
           required: true
           schema:
             type: string
-            format: uuid
       responses:
         "204":
           description: PartnershipApplication withdrawn
@@ -10189,12 +10157,12 @@ paths:
         Lists active Partnerships for authenticated administrators.
 
         Results use bounded keyset cursor pagination in fixed `created` descending, then
-        partnership UUID descending order. Page sizes are clamped to 1–100, with a default
+        Partnership ID descending order. Page sizes are clamped to 1–100, with a default
         of 21. The returned `searchAfter` value is a JSON-encoded
-        `[created RFC3339 timestamp, partnership UUID]` cursor; it is omitted on the terminal
+        `[created RFC3339 timestamp, Partnership ID]` cursor; it is omitted on the terminal
         page and should be sent with the same filters for the next page.
 
-        Optional `partyId`, `memberUserId`, and `listingSourceId` filters are exact UUID
+        Optional `partyId`, `memberUserId`, and `listingSourceId` filters are exact object-ID
         matches and are combined when supplied. Each result is a safe summary containing
         the Partnership ID, Party ID/immutable slug/name, member count, ListingSource-grant
         count, and creation/update timestamps. Member identities, grant identities, Party
@@ -10211,34 +10179,31 @@ paths:
         - name: partyId
           in: query
           required: false
-          description: Optional exact Party UUID filter.
+          description: Optional exact Party ID filter.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pty_4k4snxc3pkecc9yw66heemzyp0
         - name: memberUserId
           in: query
           required: false
-          description: Optional exact member user UUID filter.
+          description: Optional exact member User ID filter.
           schema:
             type: string
-            format: uuid
-          example: 660e8400-e29b-41d4-a716-446655440000
+          example: usr_5kgk59yyskf6fb0gyc9fxn5gwk
         - name: listingSourceId
           in: query
           required: false
-          description: Optional exact ListingSource grant UUID filter.
+          description: Optional exact ListingSource grant ID filter.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: ls_0geqhfpd80f6ga8zv98d2vcd1v
         - name: searchAfter
           in: query
           required: false
-          description: JSON-encoded `[created RFC3339 timestamp, partnership UUID]` cursor returned by the previous page.
+          description: JSON-encoded `[created RFC3339 timestamp, Partnership ID]` cursor returned by the previous page.
           schema:
             type: string
-          example: '["2026-09-04T12:00:00Z","770e8400-e29b-41d4-a716-446655440000"]'
+          example: '["2026-09-04T12:00:00Z","psh_3q65ndcw7wfxqswjtrv1kfhwd1"]'
         - name: size
           in: query
           required: false
@@ -10265,9 +10230,9 @@ paths:
                 $ref: "#/components/schemas/AdminPartnershipCollectionData"
               example:
                 items:
-                  - partnershipId: 770e8400-e29b-41d4-a716-446655440000
+                  - partnershipId: psh_3q65ndcw7wfxqswjtrv1kfhwd1
                     party:
-                      partyId: 550e8400-e29b-41d4-a716-446655440000
+                      partyId: pty_4k4snxc3pkecc9yw66heemzyp0
                       partySlugId: safe-party
                       name: Safe Party
                     memberCount: 2
@@ -10277,7 +10242,7 @@ paths:
                 size: 21
                 searchAfter:
                   - "2026-09-04T12:00:00Z"
-                  - 770e8400-e29b-41d4-a716-446655440000
+                  - psh_3q65ndcw7wfxqswjtrv1kfhwd1
         "400":
           description: Bad request - invalid Partnership query parameter.
           headers:
@@ -10367,7 +10332,7 @@ paths:
 
         The response includes the Partnership identity, its Party reference, current member user
         references, and current ListingSource grant references. Member and grant references are
-        ordered by UUID and each array is bounded to at most 100 entries. `memberCount` and
+        ordered by ID and each array is bounded to at most 100 entries. `memberCount` and
         `listingSourceGrantCount` are complete counts, including references beyond the bounded arrays.
 
         Missing Partnerships return `PARTNERSHIP_NOT_FOUND`. All success and error responses use
@@ -10382,11 +10347,10 @@ paths:
         - name: partnershipId
           in: path
           required: true
-          description: Stable Partnership UUID.
+          description: Stable Partnership ID.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: psh_3q65ndcw7wfxqswjtrv1kfhwd1
       responses:
         "200":
           description: Partnership details returned successfully.
@@ -10401,23 +10365,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdminPartnershipDetailsData"
               example:
-                partnershipId: 770e8400-e29b-41d4-a716-446655440000
+                partnershipId: psh_3q65ndcw7wfxqswjtrv1kfhwd1
                 party:
-                  partyId: 550e8400-e29b-41d4-a716-446655440000
+                  partyId: pty_4k4snxc3pkecc9yw66heemzyp0
                   partySlugId: safe-party
                   name: Safe Party
                 memberUserIds:
-                  - 660e8400-e29b-41d4-a716-446655440000
-                  - 660e8400-e29b-41d4-a716-446655440001
+                  - usr_5kgk59yyskf6fb0gyc9fxn5gwk
+                  - usr_7hqr3y7dfze74sfm30pg9t3nvp
                 listingSourceIds:
-                  - 990e8400-e29b-41d4-a716-446655440000
-                  - 990e8400-e29b-41d4-a716-446655440001
+                  - ls_1jy6kc0gpnecws80wddqee2rtq
+                  - ls_25b9fry680eh9txe84nex6vk2a
                 memberCount: 2
                 listingSourceGrantCount: 2
                 created: "2026-09-04T12:00:00Z"
                 updated: "2026-09-04T13:00:00Z"
         "400":
-          description: Bad request - invalid Partnership UUID.
+          description: Bad request - invalid Partnership ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -10431,11 +10395,11 @@ paths:
               example:
                 status: 400
                 title: Bad Request
-                error: INVALID_UUID
+                error: INVALID_OBJECT_ID
                 source:
                   field: partnershipId
-                  sourceType: path
-                detail: Path parameter 'partnershipId' must be a UUID.
+                  type: PATH
+                detail: must be a valid Partnership ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           headers:
@@ -10536,10 +10500,9 @@ paths:
         - name: partnershipId
           in: path
           required: true
-          description: Stable Partnership UUID.
+          description: Stable Partnership ID.
           schema:
             type: string
-            format: uuid
       responses:
         "204":
           description: Partnership dissolved, or already dissolved.
@@ -10550,7 +10513,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Bad request - invalid Partnership UUID (`INVALID_UUID`).
+          description: Bad request - invalid Partnership ID (`INVALID_OBJECT_ID`).
         "401":
           description: Unauthorized - invalid or missing bearer credentials (`INVALID_CREDENTIALS`).
         "403":
@@ -10606,19 +10569,17 @@ paths:
         - name: partnershipId
           in: path
           required: true
-          description: Stable Partnership UUID.
+          description: Stable Partnership ID.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: psh_3q65ndcw7wfxqswjtrv1kfhwd1
         - name: listingSourceId
           in: path
           required: true
-          description: Existing ListingSource UUID to grant to the Partnership.
+          description: Existing ListingSource ID to grant to the Partnership.
           schema:
             type: string
-            format: uuid
-          example: 990e8400-e29b-41d4-a716-446655440000
+          example: ls_1jy6kc0gpnecws80wddqee2rtq
       responses:
         "204":
           description: ListingSource grant created, or ListingSource grant already existed.
@@ -10629,7 +10590,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Bad request - invalid Partnership or ListingSource UUID.
+          description: Bad request - invalid Partnership or ListingSource ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -10645,20 +10606,20 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: partnershipId
                       type: PATH
-                    detail: Path parameter 'partnershipId' must be a UUID.
+                    detail: must be a valid Partnership ID
                 invalidListingSourceId:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: listingSourceId
                       type: PATH
-                    detail: Path parameter 'listingSourceId' must be a UUID.
+                    detail: must be a valid ListingSource ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           headers:
@@ -10785,19 +10746,17 @@ paths:
         - name: partnershipId
           in: path
           required: true
-          description: Stable Partnership UUID.
+          description: Stable Partnership ID.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: psh_3q65ndcw7wfxqswjtrv1kfhwd1
         - name: listingSourceId
           in: path
           required: true
-          description: Existing ListingSource UUID whose Partnership grant should be revoked.
+          description: Existing ListingSource ID whose Partnership grant should be revoked.
           schema:
             type: string
-            format: uuid
-          example: 990e8400-e29b-41d4-a716-446655440000
+          example: ls_1jy6kc0gpnecws80wddqee2rtq
       responses:
         "204":
           description: ListingSource grant removed, or ListingSource grant was already absent.
@@ -10808,7 +10767,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Bad request - invalid Partnership or ListingSource UUID.
+          description: Bad request - invalid Partnership or ListingSource ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -10824,20 +10783,20 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: partnershipId
                       type: PATH
-                    detail: Path parameter 'partnershipId' must be a UUID.
+                    detail: must be a valid Partnership ID
                 invalidListingSourceId:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: listingSourceId
                       type: PATH
-                    detail: Path parameter 'listingSourceId' must be a UUID.
+                    detail: must be a valid ListingSource ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           headers:
@@ -10947,19 +10906,17 @@ paths:
         - name: partnershipId
           in: path
           required: true
-          description: Stable Partnership UUID.
+          description: Stable Partnership ID.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: psh_3q65ndcw7wfxqswjtrv1kfhwd1
         - name: userId
           in: path
           required: true
-          description: Existing user UUID to add as a Partnership member.
+          description: Existing User ID to add as a Partnership member.
           schema:
             type: string
-            format: uuid
-          example: 660e8400-e29b-41d4-a716-446655440000
+          example: usr_5kgk59yyskf6fb0gyc9fxn5gwk
       responses:
         "204":
           description: Membership granted, or membership already existed.
@@ -10970,7 +10927,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Bad request - invalid Partnership or user UUID.
+          description: Bad request - invalid Partnership or User ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -10986,20 +10943,20 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: partnershipId
                       type: PATH
-                    detail: Path parameter 'partnershipId' must be a UUID.
+                    detail: must be a valid Partnership ID
                 invalidUserId:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userId
                       type: PATH
-                    detail: Path parameter 'userId' must be a UUID.
+                    detail: must be a valid User ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           headers:
@@ -11109,19 +11066,17 @@ paths:
         - name: partnershipId
           in: path
           required: true
-          description: Stable Partnership UUID.
+          description: Stable Partnership ID.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: psh_3q65ndcw7wfxqswjtrv1kfhwd1
         - name: userId
           in: path
           required: true
-          description: Existing user UUID to remove from the Partnership.
+          description: Existing User ID to remove from the Partnership.
           schema:
             type: string
-            format: uuid
-          example: 660e8400-e29b-41d4-a716-446655440000
+          example: usr_5kgk59yyskf6fb0gyc9fxn5gwk
       responses:
         "204":
           description: Membership removed, or membership was already absent.
@@ -11132,7 +11087,7 @@ paths:
                 type: string
               example: no-store
         "400":
-          description: Bad request - invalid Partnership or user UUID.
+          description: Bad request - invalid Partnership or User ID.
           headers:
             Cache-Control:
               description: Error responses are never stored.
@@ -11148,20 +11103,20 @@ paths:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: partnershipId
                       type: PATH
-                    detail: Path parameter 'partnershipId' must be a UUID.
+                    detail: must be a valid Partnership ID
                 invalidUserId:
                   value:
                     status: 400
                     title: Bad Request
-                    error: INVALID_UUID
+                    error: INVALID_OBJECT_ID
                     source:
                       field: userId
                       type: PATH
-                    detail: Path parameter 'userId' must be a UUID.
+                    detail: must be a valid User ID
         "401":
           description: Unauthorized - invalid or missing bearer credentials.
           headers:
@@ -11266,7 +11221,7 @@ paths:
         Results use deterministic keyset cursor pagination. The default sort is `created` descending;
         override it by providing both `sort` and `order`. Valid sort fields are `created` and `updated`;
         PartnershipApplication ID is always the final deterministic tie-breaker. Page sizes are clamped
-        to 1–100, with a default of 21. The returned JSON `[timestamp, application UUID]` `searchAfter`
+        to 1–100, with a default of 21. The returned JSON `[timestamp, PartnershipApplication ID]` `searchAfter`
         cursor is omitted on the terminal page and must be sent with the same filters and sort.
         Results contain review-queue summary data only and never expose persistence version values.
         Responses always use `Cache-Control: no-store`.
@@ -11293,11 +11248,10 @@ paths:
         - name: applicantUserId
           in: query
           required: false
-          description: Optional applicant user UUID filter.
+          description: Optional applicant User ID filter.
           schema:
             type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         - name: proposalType
           in: query
           required: false
@@ -11313,11 +11267,10 @@ paths:
         - name: listingSourceId
           in: query
           required: false
-          description: Optional approved or existing-proposal ListingSource UUID filter.
+          description: Optional approved or existing-proposal ListingSource ID filter.
           schema:
             type: string
-            format: uuid
-          example: 660e8400-e29b-41d4-a716-446655440000
+          example: ls_7h03ebvas3fhj9qb5pr5s22029
         - name: "created[min]"
           in: query
           required: false
@@ -11373,10 +11326,10 @@ paths:
         - name: searchAfter
           in: query
           required: false
-          description: Opaque JSON-encoded `[timestamp, application UUID]` cursor returned by the previous page.
+          description: Opaque JSON-encoded `[timestamp, PartnershipApplication ID]` cursor returned by the previous page.
           schema:
             type: string
-          example: '["2026-09-04T12:00:00Z","770e8400-e29b-41d4-a716-446655440000"]'
+          example: '["2026-09-04T12:00:00Z","pa_0ckcsff4zne3qr4dsrvqk7fckd"]'
         - name: size
           in: query
           required: false
@@ -11402,12 +11355,12 @@ paths:
                 $ref: "#/components/schemas/AdminPartnershipApplicationCollectionData"
               example:
                 items:
-                  - id: 770e8400-e29b-41d4-a716-446655440000
-                    applicantUserId: 550e8400-e29b-41d4-a716-446655440000
+                  - id: pa_0ckcsff4zne3qr4dsrvqk7fckd
+                    applicantUserId: usr_5pvhvpxyhve6ts31n9x8c2y513
                     state: SUBMITTED
                     proposal:
                       type: EXISTING_LISTING_SOURCE
-                      listingSourceId: 660e8400-e29b-41d4-a716-446655440000
+                      listingSourceId: ls_7h03ebvas3fhj9qb5pr5s22029
                     approvedPartnershipId: null
                     approvedListingSourceId: null
                     created: "2026-09-04T12:00:00Z"
@@ -11415,7 +11368,7 @@ paths:
                 size: 21
                 searchAfter:
                   - "2026-09-04T12:00:00Z"
-                  - 770e8400-e29b-41d4-a716-446655440000
+                  - pa_0ckcsff4zne3qr4dsrvqk7fckd
         "400":
           description: Bad request - invalid query parameters.
           headers:
@@ -11547,11 +11500,10 @@ paths:
         - name: partnershipApplicationId
           in: path
           required: true
-          description: Unique identifier (UUID) of the PartnershipApplication to retrieve.
+          description: Unique PartnershipApplication ID for the PartnershipApplication to retrieve.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: pa_0ckcsff4zne3qr4dsrvqk7fckd
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -11569,14 +11521,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/AdminPartnershipApplicationData"
               example:
-                id: 770e8400-e29b-41d4-a716-446655440000
-                applicantUserId: 550e8400-e29b-41d4-a716-446655440000
+                id: pa_0ckcsff4zne3qr4dsrvqk7fckd
+                applicantUserId: usr_5pvhvpxyhve6ts31n9x8c2y513
                 state: APPROVED
                 proposal:
                   type: EXISTING_LISTING_SOURCE
-                  listingSourceId: 660e8400-e29b-41d4-a716-446655440000
-                approvedPartnershipId: 880e8400-e29b-41d4-a716-446655440000
-                approvedListingSourceId: 660e8400-e29b-41d4-a716-446655440000
+                  listingSourceId: ls_7h03ebvas3fhj9qb5pr5s22029
+                approvedPartnershipId: psh_4a5zxcsd5tf9wb5mgc4vreb3q7
+                approvedListingSourceId: ls_7h03ebvas3fhj9qb5pr5s22029
         "400":
           description: Bad request - invalid PartnershipApplication ID.
           headers:
@@ -11665,11 +11617,10 @@ paths:
         - name: partnershipApplicationId
           in: path
           required: true
-          description: Unique identifier (UUID) of the PartnershipApplication to mark in review.
+          description: Unique PartnershipApplication ID for the PartnershipApplication to mark in review.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: pa_0ckcsff4zne3qr4dsrvqk7fckd
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
@@ -11790,11 +11741,10 @@ paths:
         - name: partnershipApplicationId
           in: path
           required: true
-          description: Unique identifier (UUID) of the PartnershipApplication to decide.
+          description: Unique PartnershipApplication ID for the PartnershipApplication to decide.
           schema:
             type: string
-            format: uuid
-          example: 770e8400-e29b-41d4-a716-446655440000
+          example: pa_0ckcsff4zne3qr4dsrvqk7fckd
       requestBody:
         required: true
         content:
@@ -11932,11 +11882,10 @@ components:
             - SYSTEM
           description: Backend-initiated actor marker.
         - type: string
-          format: uuid
-          description: UUID of the user who performed the change.
+          description: User ID of the user who performed the change.
       description: "Audit actor encoded as a plain string.
 
-        Values are either the literal `SYSTEM` or the UUID of the acting user.
+        Values are either the literal `SYSTEM` or the User ID of the acting user.
 
         "
       example: SYSTEM
@@ -11958,7 +11907,6 @@ components:
       properties:
         productListingId:
           type: string
-          format: uuid
         productListingTitleSlugId:
           type: string
           minLength: 8
@@ -11968,7 +11916,6 @@ components:
           example: museum-cabinet-18-19-century-a1b2c3
         eventId:
           type: string
-          format: uuid
         source:
           $ref: "#/components/schemas/ProductListingSourceData"
         sourceListingId:
@@ -12020,7 +11967,6 @@ components:
                 - CURRENT
             fxRateId:
               type: string
-              format: uuid
             capturedAt:
               type: string
               format: date-time
@@ -12036,7 +11982,6 @@ components:
                 - SALE_OBSERVATION
             fxRateId:
               type: string
-              format: uuid
             observedAt:
               type: string
               format: date-time
@@ -12060,7 +12005,6 @@ components:
       properties:
         productListingId:
           type: string
-          format: uuid
         productListingTitleSlugId:
           type: string
           minLength: 8
@@ -12070,7 +12014,6 @@ components:
           example: museum-cabinet-18-19-century-a1b2c3
         eventId:
           type: string
-          format: uuid
         source:
           $ref: "#/components/schemas/ProductListingSourceData"
         sourceListingId:
@@ -12173,7 +12116,6 @@ components:
                 - CURRENT
             fxRateId:
               type: string
-              format: uuid
             capturedAt:
               type: string
               format: date-time
@@ -12190,7 +12132,6 @@ components:
                 - SALE_OBSERVATION
             fxRateId:
               type: string
-              format: uuid
             capturedAt:
               type: string
               format: date-time
@@ -12262,17 +12203,16 @@ components:
       properties:
         fxRateId:
           type: string
-          format: uuid
           description: Persisted FX snapshot used for active Product filtering and display values in this cursor chain.
         searchAfter:
           type: array
           items: {}
           description: Internal OpenSearch continuation token.
       example:
-        fxRateId: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+        fxRateId: fx_0cwktgjtwnf4tb6hf2f8zm0x5k
         searchAfter:
           - 2999
-          - 550e8400-e29b-41d4-a716-446655440000
+          - pl_5xdb465tg1enarx2knf04mxbxj
     PersonalizedProductListingSearchResultData:
       type: object
       description:
@@ -12313,7 +12253,7 @@ components:
 
             "
           nullable: true
-          example: '[2999, "550e8400-e29b-41d4-a716-446655440000"]'
+          example: '[2999, "pl_5xdb465tg1enarx2knf04mxbxj"]'
     ProductListingUserStateData:
       type: object
       description: User-specific state information for a product
@@ -12364,11 +12304,10 @@ components:
       properties:
         unseenNotificationIds:
           type: array
-          description: Every unseen notification UUID for this product. Empty when none exist.
+          description: Every unseen Notification ID for this product. Empty when none exist.
           default: []
           items:
             type: string
-            format: uuid
     SearchFilterUserStateData:
       type: object
       description: "User's saved-search-filter match state for a product.
@@ -12383,7 +12322,7 @@ components:
 
         When `hidden` is `true`, the match exceeds the user's monthly search-filter match quota and the
 
-        product data is anonymized (nil IDs, placeholder title, unknown enums, nulled timestamps).
+        product data is anonymized (valid synthetic object IDs, placeholder title, unknown enums, nulled timestamps).
 
         Only matches ranked beyond the quota (by ascending match creation time) are hidden;
 
@@ -12404,11 +12343,9 @@ components:
           description:
             "Whether this match is hidden because the user has exceeded their monthly search-filter match quota.
 
-            When `true`, the product data in the response is anonymized: the `productListingId` is set to a nil UUID,
+            When `true`, the product data in the response is anonymized: object-ID fields are replaced with valid synthetic IDs using their documented prefixes,
 
-            the title becomes a language-specific placeholder, all other UUID
-
-            fields are nil, enum fields are set to their unknown variants, optional fields are omitted, and
+            the title becomes a language-specific placeholder, enum fields are set to their unknown variants, optional fields are omitted, and
 
             timestamps are set to the Unix epoch.
 
@@ -12419,14 +12356,13 @@ components:
           example: false
         userSearchFilterId:
           type: string
-          format: uuid
           description:
             "The ID of the saved search filter that matched this product.
 
             Present only when `matched` is `true`; omitted otherwise.
 
             "
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
         userSearchFilterName:
           type: string
           description:
@@ -12523,11 +12459,9 @@ components:
           $ref: "#/components/schemas/ProductListingHistoryEntryTypeData"
         productListingId:
           type: string
-          format: uuid
           description: Unique internal ProductListing identifier
         eventId:
           type: string
-          format: uuid
           description: Unique identifier for this committed event
         payload:
           $ref: "#/components/schemas/ProductListingHistoryPayloadData"
@@ -12868,7 +12802,6 @@ components:
       properties:
         listingSourceId:
           type: string
-          format: uuid
         sourceListingId:
           type: string
         title:
@@ -13067,7 +13000,6 @@ components:
               format: date-time
             fxRateId:
               type: string
-              format: uuid
     ApiError:
       type: object
       description: Standard error response format (RFC 9457)
@@ -13099,21 +13031,21 @@ components:
       description: Information about the source of the error
       required:
         - field
-        - sourceType
+        - type
       properties:
         field:
           type: string
           description: Name of the field that caused the error
           example: listingSourceId
-        sourceType:
+        type:
           type: string
           enum:
-            - query
-            - path
-            - header
-            - body
+            - QUERY
+            - PATH
+            - HEADER
+            - BODY
           description: Type of parameter that caused the error
-          example: path
+          example: PATH
     ProductListingSearchData:
       type: object
       description: ProductListing search criteria used by saved search filters.
@@ -13136,21 +13068,18 @@ components:
           type: array
           items:
             type: string
-            format: uuid
           uniqueItems: true
           description: ProductListing IDs to exclude.
         listingSourceId:
           type: array
           items: &id002
             type: string
-            format: uuid
           uniqueItems: true
           description: ListingSource IDs to include.
         excludeListingSourceId:
           type: array
           items: &id003
             type: string
-            format: uuid
           uniqueItems: true
           description: ListingSource IDs to exclude.
         price:
@@ -13347,14 +13276,12 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Unique identifier of the user who owns this search filter
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         userSearchFilterId:
           type: string
-          format: uuid
           description: Unique identifier for this search filter
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
         name:
           type: string
           description: User-defined name for the search filter
@@ -13435,28 +13362,24 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Unique identifier of the user who owns the matched search filter.
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         userSearchFilterId:
           type: string
-          format: uuid
           description: Unique identifier of the saved search filter that matched the product.
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+          example: sf_4hyqf0gyxveazss7nby5hve5x2
         userSearchFilterName:
           type: string
           description: Saved-search name captured with the match, when available.
           example: Golden Accessories
         productListingId:
           type: string
-          format: uuid
           description: Unique internal identifier of the matched product.
-          example: 550e8400-e29b-41d4-a716-446655440111
+          example: pl_6zydvb8xqqfcntt760grgm41t4
         originEventId:
           type: string
-          format: uuid
           description: Product event that produced this match.
-          example: 550e8400-e29b-41d4-a716-446655440222
+          example: evt_08nrsmex2je2dvsyh01v2kh78a
         enhancedMatchReason:
           type: string
           description: Enhanced-match explanation, when matching supplied one.
@@ -13564,7 +13487,7 @@ components:
       description:
         "Cursor-paginated, secret-free access-token metadata for an administrator's explicit target user.
 
-        `searchAfter` is a `[created RFC3339 timestamp, access-token UUID]` cursor and is omitted
+        `searchAfter` is a `[created RFC3339 timestamp, AccessToken ID]` cursor and is omitted
 
         when the current page is terminal. The cursor timestamp is not returned as item metadata.
 
@@ -13593,11 +13516,11 @@ components:
           maxItems: 2
           items:
             type: string
-          description: "`[created RFC3339 timestamp, access-token UUID]` cursor for the next page, omitted when no more results are available."
+          description: "`[created RFC3339 timestamp, AccessToken ID]` cursor for the next page, omitted when no more results are available."
           nullable: true
           example:
             - "2026-09-04T12:00:00Z"
-            - 01970f22-2bf0-7000-8000-000000000001
+            - at_4ck23tcv0meqqrbyjaka24ra6g
     AdminAccessTokenData:
       type: object
       description:
@@ -13617,14 +13540,12 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Explicit target user who owns the access token.
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         accessTokenId:
           type: string
-          format: uuid
           description: Unique identifier of the access token.
-          example: 01970f22-2bf0-7000-8000-000000000001
+          example: at_4ck23tcv0meqqrbyjaka24ra6g
         name:
           type: string
           maxLength: 128
@@ -13669,9 +13590,8 @@ components:
       properties:
         accessTokenId:
           type: string
-          format: uuid
           description: Unique identifier of the access token.
-          example: 01970f22-2bf0-7000-8000-000000000001
+          example: at_4ck23tcv0meqqrbyjaka24ra6g
         name:
           type: string
           maxLength: 128
@@ -13762,9 +13682,8 @@ components:
       properties:
         accessTokenId:
           type: string
-          format: uuid
           description: Unique identifier of the access token to update.
-          example: 01970f22-2bf0-7000-8000-000000000001
+          example: at_4ck23tcv0meqqrbyjaka24ra6g
         name:
           type: string
           maxLength: 128
@@ -13916,9 +13835,8 @@ components:
       properties:
         client_id:
           type: string
-          format: uuid
-          description: UUIDv7 identifier of the OAuth client.
-          example: 01970f22-2bf0-7000-8000-000000000010
+          description: Canonical OAuthClient ID.
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
         client_secret:
           type: string
           description:
@@ -13979,7 +13897,7 @@ components:
       description:
         "Cursor-paginated OAuth client summaries for the administrator collection endpoint.
 
-        `searchAfter` is a `[created RFC3339 timestamp, client UUID]` cursor and is omitted
+        `searchAfter` is a `[created RFC3339 timestamp, OAuthClient ID]` cursor and is omitted
 
         when the current page is terminal. The collection and its items never contain client
 
@@ -14008,11 +13926,11 @@ components:
           maxItems: 2
           items:
             type: string
-          description: "`[created RFC3339 timestamp, client UUID]` cursor for the next page, omitted when no more results are available."
+          description: "`[created RFC3339 timestamp, OAuthClient ID]` cursor for the next page, omitted when no more results are available."
           nullable: true
           example:
             - "2026-09-04T12:00:00Z"
-            - 01970f22-2bf0-7000-8000-000000000010
+            - oc_7b0gwc1x49e0mvbt3tfexfqgb5
         total:
           type: integer
           format: int64
@@ -14043,9 +13961,8 @@ components:
       properties:
         client_id:
           type: string
-          format: uuid
-          description: UUIDv7 identifier of the OAuth client.
-          example: 01970f22-2bf0-7000-8000-000000000010
+          description: Canonical OAuthClient ID.
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
         client_name:
           type: string
           description: Display name of the OAuth client.
@@ -14162,16 +14079,14 @@ components:
           example: product-listings:write
         client_id:
           type: string
-          format: uuid
           description:
-            UUIDv7 OAuth client identifier that issued the token. Present only when `active` is `true` and the
+            OAuthClient ID that issued the token. Present only when `active` is `true` and the
             token was issued via the OAuth flow.
-          example: 01970f22-2bf0-7000-8000-000000000010
+          example: oc_7b0gwc1x49e0mvbt3tfexfqgb5
         sub:
           type: string
-          format: uuid
           description: Subject — the Aura Historia user ID who authorized the token. Present only when `active` is `true`.
-          example: 0196580c-e4ca-723f-a7e0-1a73588380f1
+          example: usr_4hzreqwxgvef69j056bszwwm17
         token_type:
           type: string
           description: Token type. Always `"Bearer"` when `active` is `true`.
@@ -14198,9 +14113,8 @@ components:
       properties:
         productListingId:
           type: string
-          format: uuid
           description: Canonical identifier of the product to add to the watchlist.
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pl_5xdb465tg1enarx2knf04mxbxj
         notifications:
           type: boolean
           description: Whether notifications are enabled for this entry. Defaults to `true`.
@@ -14217,14 +14131,12 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Identifier of the user who owns the entry.
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: usr_5pvhvpxyhve6ts31n9x8c2y513
         productListingId:
           type: string
-          format: uuid
           description: Canonical identifier of the watched product.
-          example: 550e8400-e29b-41d4-a716-446655440000
+          example: pl_5xdb465tg1enarx2knf04mxbxj
         notifications:
           type: boolean
           description: Whether notifications are enabled for this entry.
@@ -14329,7 +14241,6 @@ components:
       properties:
         partyId:
           type: string
-          format: uuid
           description: Stable Party identifier.
         partySlugId:
           type: string
@@ -14350,7 +14261,7 @@ components:
           description: When the Party was last updated.
     PartyCollectionData:
       type: object
-      description: "Cursor-paginated Party summaries for the admin search endpoint. `searchAfter` is a Party UUID cursor and is omitted when the current page is terminal."
+      description: "Cursor-paginated Party summaries for the admin search endpoint. `searchAfter` is a Party ID cursor and is omitted when the current page is terminal."
       required:
         - items
         - size
@@ -14368,9 +14279,8 @@ components:
           example: 21
         searchAfter:
           type: string
-          format: uuid
-          description: Party UUID cursor for the next page, omitted when no more results are available.
-          example: 7f1c2a88-4e18-4c3a-bf0d-6a0fd5e6d901
+          description: Party ID cursor for the next page, omitted when no more results are available.
+          example: pty_71m2jxjctefykb6crqka16yf6z
         total:
           type: integer
           minimum: 0
@@ -14389,7 +14299,6 @@ components:
       properties:
         partyId:
           type: string
-          format: uuid
           description: Stable Party identifier.
         partySlugId:
           type: string
@@ -14475,11 +14384,11 @@ components:
           maxItems: 2
           items:
             type: string
-          description: "[RFC3339 match creation timestamp, product UUID] cursor for the next page, when present."
+          description: "[RFC3339 match creation timestamp, ProductListing ID] cursor for the next page, when present."
           nullable: true
           example:
             - "2024-01-15T08:00:00Z"
-            - 550e8400-e29b-41d4-a716-446655440111
+            - pl_6zydvb8xqqfcntt760grgm41t4
         total:
           type: integer
           minimum: 0
@@ -14491,7 +14400,7 @@ components:
       description:
         "Cursor-paginated collection of users for the admin search endpoint.
 
-        Items are compact admin user summaries. `searchAfter` is a user UUID cursor for
+        Items are compact admin user summaries. `searchAfter` is a User ID cursor for
 
         the next page and is omitted when the current page is terminal. The cursor must
 
@@ -14515,9 +14424,8 @@ components:
           example: 21
         searchAfter:
           type: string
-          format: uuid
-          description: User UUID cursor for the next page, omitted when more results are unavailable.
-          example: 7f1c2a88-4e18-4c3a-bf0d-6a0fd5e6d901
+          description: User ID cursor for the next page, omitted when more results are unavailable.
+          example: usr_681w9znhe8eawrhebxd1046d44
         total:
           type: integer
           minimum: 0
@@ -14534,7 +14442,6 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Unique identifier for the user.
         email:
           type: string
@@ -14569,7 +14476,6 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Unique identifier for the user.
         email:
           type: string
@@ -14632,7 +14538,6 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Identifier of the target user.
         suspended:
           type: boolean
@@ -14646,7 +14551,6 @@ components:
       properties:
         userId:
           type: string
-          format: uuid
           description: Identifier of the target user.
         suspended:
           type: boolean
@@ -14868,7 +14772,6 @@ components:
       properties:
         notificationId:
           type: string
-          format: uuid
         kind:
           type: string
           enum:
@@ -14910,10 +14813,8 @@ components:
       properties:
         productListingId:
           type: string
-          format: uuid
         listingSourceId:
           type: string
-          format: uuid
         sourceListingId:
           type: string
         listingSourceSlugId:
@@ -15000,15 +14901,12 @@ components:
       properties:
         productListingId:
           type: string
-          format: uuid
         userSearchFilterId:
           type: string
-          format: uuid
         userSearchFilterName:
           type: string
         listingSourceId:
           type: string
-          format: uuid
         sourceListingId:
           type: string
         listingSourceSlugId:
@@ -15041,7 +14939,6 @@ components:
       properties:
         partnershipApplicationId:
           type: string
-          format: uuid
         decision:
           type: string
           enum:
@@ -15071,7 +14968,6 @@ components:
           minItems: 1
           items:
             type: string
-            format: uuid
         seen:
           type: boolean
     NotificationCollectionData:
@@ -15096,7 +14992,7 @@ components:
           items:
             type: string
           description:
-            Opaque `[created RFC3339 timestamp, notification UUID]` cursor for the next page; omitted when no further
+            Opaque `[created RFC3339 timestamp, Notification ID]` cursor for the next page; omitted when no further
             page exists.
     CreateProductListingData:
       type: object
@@ -15182,7 +15078,6 @@ components:
         properties:
           listingSourceId:
             type: string
-            format: uuid
             description: ListingSource that owns the failed product entry.
           sourceListingId:
             type: string
@@ -15192,7 +15087,7 @@ components:
             description: Stable API error key for the failed product entry.
             example: PRODUCT_LISTING_NOT_FOUND
       example:
-        - listingSourceId: 550e8400-e29b-41d4-a716-446655440000
+        - listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
           sourceListingId: baroque-violin-002
           error: PRODUCT_LISTING_NOT_FOUND
     WithdrawProductListingData:
@@ -15671,10 +15566,10 @@ components:
           description: Partnership cursor for the next page, omitted when no more results are available.
           example:
             - "2026-09-04T12:00:00Z"
-            - 770e8400-e29b-41d4-a716-446655440000
+            - psh_3q65ndcw7wfxqswjtrv1kfhwd1
     AdminPartnershipDetailsData:
       type: object
-      description: "Administrator Partnership detail. Member and ListingSource reference arrays are ordered by UUID and capped at 100 entries; count fields are complete."
+      description: "Administrator Partnership detail. Member and ListingSource reference arrays are ordered by ID and capped at 100 entries; count fields are complete."
       required:
         - partnershipId
         - party
@@ -15687,7 +15582,6 @@ components:
       properties:
         partnershipId:
           type: string
-          format: uuid
           description: Stable Partnership identifier.
         party:
           $ref: "#/components/schemas/PartnershipPartySummaryData"
@@ -15695,18 +15589,16 @@ components:
           type: array
           maxItems: 100
           uniqueItems: true
-          description: Current member user UUIDs in deterministic ascending UUID order. At most 100 references are returned.
+          description: Current member User IDs in deterministic ascending ID order. At most 100 references are returned.
           items:
             type: string
-            format: uuid
         listingSourceIds:
           type: array
           maxItems: 100
           uniqueItems: true
-          description: Current ListingSource grant UUIDs in deterministic ascending UUID order. At most 100 references are returned.
+          description: Current ListingSource grant IDs in deterministic ascending ID order. At most 100 references are returned.
           items:
             type: string
-            format: uuid
         memberCount:
           type: integer
           format: int64
@@ -15738,7 +15630,6 @@ components:
       properties:
         partnershipId:
           type: string
-          format: uuid
           description: Stable Partnership identifier.
         party:
           $ref: "#/components/schemas/PartnershipPartySummaryData"
@@ -15770,7 +15661,6 @@ components:
       properties:
         partyId:
           type: string
-          format: uuid
           description: Stable Party identifier.
         partySlugId:
           type: string
@@ -15796,7 +15686,6 @@ components:
       properties:
         id:
           type: string
-          format: uuid
         state:
           $ref: "#/components/schemas/PartnershipApplicationStateData"
         proposal:
@@ -15813,21 +15702,17 @@ components:
       properties:
         id:
           type: string
-          format: uuid
         applicantUserId:
           type: string
-          format: uuid
         state:
           $ref: "#/components/schemas/PartnershipApplicationStateData"
         proposal:
           $ref: "#/components/schemas/PartnershipApplicationProposalData"
         approvedPartnershipId:
           type: string
-          format: uuid
           nullable: true
         approvedListingSourceId:
           type: string
-          format: uuid
           nullable: true
     PartnershipProposalTypeData:
       type: string
@@ -15848,21 +15733,17 @@ components:
       properties:
         id:
           type: string
-          format: uuid
         applicantUserId:
           type: string
-          format: uuid
         state:
           $ref: "#/components/schemas/PartnershipApplicationStateData"
         proposal:
           $ref: "#/components/schemas/PartnershipApplicationProposalData"
         approvedPartnershipId:
           type: string
-          format: uuid
           nullable: true
         approvedListingSourceId:
           type: string
-          format: uuid
           nullable: true
         created:
           type: string
@@ -15891,7 +15772,7 @@ components:
           maxItems: 2
           items:
             type: string
-          description: JSON cursor containing the sort timestamp followed by the application UUID.
+          description: JSON cursor containing the sort timestamp followed by the PartnershipApplication ID.
         total:
           type: integer
           format: int64
@@ -15905,7 +15786,6 @@ components:
       properties:
         listingSourceId:
           type: string
-          format: uuid
         listingSourceSlugId:
           type: string
           example: ada-antiques
@@ -15922,7 +15802,6 @@ components:
       properties:
         listingSourceId:
           type: string
-          format: uuid
         listingSourceSlugId:
           type: string
         name:
@@ -15955,14 +15834,13 @@ components:
       properties:
         listingSourceId:
           type: string
-          format: uuid
         listingSourceSlugId:
           type: string
         name:
           type: string
     ListingSourceSearchCollectionData:
       type: object
-      description: "Cursor-paginated safe ListingSource summaries for the admin search endpoint. `searchAfter` is a ListingSource UUID cursor and is omitted when the current page is terminal."
+      description: "Cursor-paginated safe ListingSource summaries for the admin search endpoint. `searchAfter` is a ListingSource ID cursor and is omitted when the current page is terminal."
       required:
         - items
         - size
@@ -15980,9 +15858,8 @@ components:
           example: 21
         searchAfter:
           type: string
-          format: uuid
-          description: ListingSource UUID cursor for the next page, omitted when no more results are available.
-          example: 7f1c2a88-4e18-4c3a-bf0d-6a0fd5e6d901
+          description: ListingSource ID cursor for the next page, omitted when no more results are available.
+          example: ls_11j55nbvjfe7ds34s7gya899a9
         total:
           type: integer
           minimum: 0
@@ -16003,7 +15880,6 @@ components:
       properties:
         listingSourceId:
           type: string
-          format: uuid
           description: Stable ListingSource identifier.
         listingSourceSlugId:
           type: string
@@ -16128,7 +16004,6 @@ components:
       properties:
         partyId:
           type: string
-          format: uuid
         partySlugId:
           type: string
         name:
@@ -16146,7 +16021,6 @@ components:
                 - EXISTING
             partyId:
               type: string
-              format: uuid
         - type: object
           required:
             - type
@@ -16233,7 +16107,6 @@ components:
                 - EXISTING_LISTING_SOURCE
             listingSourceId:
               type: string
-              format: uuid
         - type: object
           required:
             - type
@@ -16307,7 +16180,6 @@ components:
       properties:
         listingSourceId:
           type: string
-          format: uuid
         name:
           type: string
         slugId:

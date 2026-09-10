@@ -3,6 +3,7 @@ use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_QUERY_PARAMETER_VALUE, OAUTH_INTERNAL_ERROR};
 use crate::pagination_data::JsonCursoredData;
 use crate::state::OAuthState;
+use crate::wire::parse_query_object_id;
 use application::pagination::{Cursor, CursoredResult};
 use axum::Json;
 use axum::extract::{RawQuery, State};
@@ -98,9 +99,7 @@ fn parse_list_oauth_clients_query(
         .map_err(|error| bad_query("query", error))?;
     let client_id = query
         .client_id
-        .map(|value| {
-            OAuthClientId::try_from(value.as_str()).map_err(|error| bad_query("clientId", error))
-        })
+        .map(|value| parse_query_object_id(&value, "clientId", "OAuthClient"))
         .transpose()?;
     let name_query = query
         .name
@@ -144,25 +143,26 @@ fn parse_search_after(value: &str) -> Result<OAuthClientSearchCursor, ApiError> 
     let value: Value = serde_json::from_str(value).map_err(|error| {
         bad_query(
             "searchAfter",
-            format!("searchAfter must be a JSON array containing timestamp and OAuth client UUID: {error}"),
+            format!(
+                "searchAfter must be a JSON array containing timestamp and OAuthClient ID: {error}"
+            ),
         )
     })?;
     let Value::Array(values) = value else {
         return Err(bad_query(
             "searchAfter",
-            "searchAfter must contain an RFC3339 timestamp and OAuth client UUID.",
+            "searchAfter must contain an RFC3339 timestamp and OAuthClient ID.",
         ));
     };
     let [Value::String(position), Value::String(client_id)] = values.as_slice() else {
         return Err(bad_query(
             "searchAfter",
-            "searchAfter must contain an RFC3339 timestamp and OAuth client UUID.",
+            "searchAfter must contain an RFC3339 timestamp and OAuthClient ID.",
         ));
     };
     let position = OffsetDateTime::parse(position, &Rfc3339)
         .map_err(|error| bad_query("searchAfter", error))?;
-    let client_id = OAuthClientId::try_from(client_id.as_str())
-        .map_err(|error| bad_query("searchAfter", error))?;
+    let client_id = parse_query_object_id(client_id, "searchAfter", "OAuthClient")?;
 
     Ok(OAuthClientSearchCursor {
         position,
@@ -196,7 +196,7 @@ fn serialize_search_after(cursor: OAuthClientSearchCursor) -> Result<Value, ApiE
         .position
         .format(&Rfc3339)
         .map_err(|_| ApiError::internal_server_error(OAUTH_INTERNAL_ERROR))?;
-    Ok(json!([position, cursor.client_id.to_string()]))
+    Ok(json!([position, cursor.client_id]))
 }
 
 fn bad_query(field: &'static str, detail: impl std::fmt::Display) -> ApiError {
@@ -246,10 +246,10 @@ mod tests {
     #[test]
     fn should_reject_invalid_oauth_client_query_values() {
         for query in [
-            "clientId=not-a-uuid",
+            "clientId=not-an-object-id",
             "size=not-a-number",
             "searchAfter=not-json",
-            "searchAfter=%5B%22not-a-timestamp%22%2C%22not-a-uuid%22%5D",
+            "searchAfter=%5B%22not-a-timestamp%22%2C%22not-an-object-id%22%5D",
         ] {
             assert!(
                 parse_list_oauth_clients_query(Some(query)).is_err(),

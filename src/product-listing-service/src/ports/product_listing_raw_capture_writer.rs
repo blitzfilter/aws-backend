@@ -7,49 +7,13 @@ use product_listing_normalization::{
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 const SHA256_BYTES: usize = 32;
 pub const MAX_PROVIDER_RECEIPT_SCOPE_UTF8_BYTES: usize = 128;
 pub const MAX_PROVIDER_RECEIPT_DELIVERY_ID_UTF8_BYTES: usize = 512;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProductListingRawStreamId(Uuid);
-
-impl ProductListingRawStreamId {
-    pub const fn from_uuid(value: Uuid) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_uuid(self) -> Uuid {
-        self.0
-    }
-}
-
-impl From<ProductListingRawStreamId> for Uuid {
-    fn from(value: ProductListingRawStreamId) -> Self {
-        value.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProductListingRawRevisionId(Uuid);
-
-impl ProductListingRawRevisionId {
-    pub const fn from_uuid(value: Uuid) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_uuid(self) -> Uuid {
-        self.0
-    }
-}
-
-impl From<ProductListingRawRevisionId> for Uuid {
-    fn from(value: ProductListingRawRevisionId) -> Self {
-        value.0
-    }
-}
+domain_primitives::object_id_newtype!(ProductListingRawStreamId, "prs");
+domain_primitives::object_id_newtype!(ProductListingRawRevisionId, "prr");
 
 /// Raw ingestion methods intentionally exclude `PARTNER_API`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
@@ -262,9 +226,38 @@ pub trait ProductListingRawCaptureWriterFactory<Tx>: Send + Sync {
 mod tests {
     use super::{
         MAX_PROVIDER_RECEIPT_DELIVERY_ID_UTF8_BYTES, MAX_PROVIDER_RECEIPT_SCOPE_UTF8_BYTES,
-        ProductListingRawProviderReceipt, ProviderReceiptDeliveryIdError, ProviderReceiptScope,
-        ProviderReceiptScopeError, SHA256_BYTES, SourceEvidenceSha256,
+        ProductListingRawProviderReceipt, ProductListingRawRevisionId, ProductListingRawStreamId,
+        ProviderReceiptDeliveryIdError, ProviderReceiptScope, ProviderReceiptScopeError,
+        SHA256_BYTES, SourceEvidenceSha256,
     };
+
+    #[test]
+    fn should_use_product_listing_raw_stream_object_id_prefix() {
+        let id = ProductListingRawStreamId::new();
+
+        assert_eq!("prs", ProductListingRawStreamId::PREFIX);
+        assert!(id.to_string().starts_with("prs_"));
+    }
+
+    #[test]
+    fn should_use_product_listing_raw_revision_object_id_prefix() {
+        let id = ProductListingRawRevisionId::new();
+
+        assert_eq!("prr", ProductListingRawRevisionId::PREFIX);
+        assert!(id.to_string().starts_with("prr_"));
+    }
+
+    #[cfg(feature = "test-data")]
+    #[test]
+    fn should_fake_uuid_v7_raw_product_listing_ids() {
+        use fake::{Fake, Faker};
+
+        let stream_id: ProductListingRawStreamId = Faker.fake();
+        let revision_id: ProductListingRawRevisionId = Faker.fake();
+
+        assert_eq!(7, stream_id.as_uuid().get_version_num());
+        assert_eq!(7, revision_id.as_uuid().get_version_num());
+    }
 
     #[test]
     fn should_accept_provider_receipt_scope_at_maximum_length()

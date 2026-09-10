@@ -1,7 +1,8 @@
 use crate::{
     auth::protected_context,
-    error::{ApiError, INVALID_UUID, LISTING_SOURCE_INTERNAL_ERROR},
+    error::{ApiError, LISTING_SOURCE_INTERNAL_ERROR},
     state::ListingSourcesState,
+    wire::parse_path_object_id,
 };
 use axum::{
     extract::{Path, State},
@@ -16,17 +17,11 @@ pub async fn delete_listing_source(
     headers: HeaderMap,
     Path(raw_listing_source_id): Path<String>,
 ) -> Response {
-    let listing_source_id = match ListingSourceId::try_from(raw_listing_source_id.as_str()) {
-        Ok(value) => value,
-        Err(_) => {
-            return no_store(
-                ApiError::bad_request(INVALID_UUID)
-                    .with_path_field("listingSourceId")
-                    .with_detail("Path parameter 'listingSourceId' must be a UUID.")
-                    .into_response(),
-            );
-        }
-    };
+    let listing_source_id: ListingSourceId =
+        match parse_path_object_id(&raw_listing_source_id, "listingSourceId", "ListingSource") {
+            Ok(value) => value,
+            Err(error) => return no_store(error.into_response()),
+        };
     let (context, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
         Ok(value) => value,
         Err(response) => return no_store(*response),
@@ -283,7 +278,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(0));
         let response = request(
             router(Ok(()), false, Arc::clone(&calls)),
-            "/api/v1/admin/listing-sources/not-a-uuid",
+            "/api/v1/admin/listing-sources/not-an-object-id",
         )
         .await;
 
@@ -299,9 +294,9 @@ mod tests {
             serde_json::json!({
                 "status": 400,
                 "title": "Bad Request",
-                "error": "INVALID_UUID",
+                "error": "INVALID_OBJECT_ID",
                 "source": {"field": "listingSourceId", "type": "PATH"},
-                "detail": "Path parameter 'listingSourceId' must be a UUID."
+                "detail": "must be a valid ListingSource ID"
             }),
             serde_json::from_slice::<serde_json::Value>(
                 &to_bytes(response.into_body(), usize::MAX)

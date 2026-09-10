@@ -1,8 +1,9 @@
 use super::types::PartyData;
 use crate::auth::protected_context;
-use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE};
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
 use crate::state::PartiesState;
+use crate::wire::parse_path_object_id;
 use application::patch_field::PatchField;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -13,7 +14,6 @@ use party_core::party_name::PartyName;
 use party_service::use_cases::commands::update_party::UpdatePartyCommand;
 use serde::Deserialize;
 use serde_email::Email;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,11 +77,7 @@ pub async fn update_party(
 }
 
 fn parse_party_id(raw: &str) -> Result<PartyId, ApiError> {
-    Uuid::parse_str(raw).map(PartyId::from).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field("partyId")
-            .with_detail("Path parameter 'partyId' must be a UUID.")
-    })
+    parse_path_object_id(raw, "partyId", "Party")
 }
 
 fn parse_body(body: &str) -> Result<UpdatePartyData, ApiError> {
@@ -207,12 +203,12 @@ mod tests {
     }
 
     #[test]
-    fn should_report_invalid_party_id_as_path_uuid_problem() {
-        let error = match parse_party_id("not-a-uuid") {
+    fn should_report_invalid_party_object_id_as_path_problem() {
+        let error = match parse_party_id("not-an-object-id") {
             Ok(_) => panic!("invalid Party ID was accepted"),
             Err(error) => error,
         };
 
-        assert_eq!(INVALID_UUID, error.code());
+        assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
     }
 }

@@ -8,5 +8,4 @@ application = { workspace = true }
 async-trait = { workspace = true }
 aws-sdk-cognitoidentityprovider = { workspace = true }
 thiserror = { workspace = true }
-user-core = { workspace = true }
 user-service = { workspace = true }

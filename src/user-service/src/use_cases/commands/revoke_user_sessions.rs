@@ -1,6 +1,7 @@
 use crate::ports::{
-    UserAccountReadError, UserAccountReader, UserAccountReaderFactory, UserAdminReadError,
-    UserAdminReaderFactory, UserSessionRevocationError, UserSessionRevoker,
+    UserAdminReadError, UserAdminReaderFactory, UserCognitoIdentityRegistry,
+    UserCognitoIdentityRegistryError, UserCognitoIdentityRegistryFactory,
+    UserSessionRevocationError, UserSessionRevoker,
 };
 use crate::use_cases::authorization::{
     RequireAdminActorError, require_admin_actor, require_admin_actor_credential,
@@ -60,30 +61,30 @@ pub trait RevokeUserSessionsUseCase: Send + Sync {
     ) -> Result<RevokeUserSessionsResult, RevokeUserSessionsError>;
 }
 
-pub struct RevokeUserSessionsHandler<U, A, V, S> {
+pub struct RevokeUserSessionsHandler<U, A, I, S> {
     unit_of_work: U,
     admin_reader: A,
-    user_reader: V,
+    identities: I,
     session_revoker: S,
 }
 
-impl<U, A, V, S> RevokeUserSessionsHandler<U, A, V, S> {
-    pub fn new(unit_of_work: U, admin_reader: A, user_reader: V, session_revoker: S) -> Self {
+impl<U, A, I, S> RevokeUserSessionsHandler<U, A, I, S> {
+    pub fn new(unit_of_work: U, admin_reader: A, identities: I, session_revoker: S) -> Self {
         Self {
             unit_of_work,
             admin_reader,
-            user_reader,
+            identities,
             session_revoker,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, A, V, S> RevokeUserSessionsUseCase for RevokeUserSessionsHandler<U, A, V, S>
+impl<U, A, I, S> RevokeUserSessionsUseCase for RevokeUserSessionsHandler<U, A, I, S>
 where
     U: UnitOfWork,
     A: UserAdminReaderFactory<U::Tx>,
-    V: UserAccountReaderFactory<U::Tx>,
+    I: UserCognitoIdentityRegistryFactory<U::Tx>,
     S: UserSessionRevoker,
 {
     #[tracing::instrument(
@@ -120,22 +121,17 @@ where
                 let mut admin_reader = self.admin_reader.in_transaction(&mut tx);
                 require_admin_actor(context, &mut admin_reader).await?;
             }
-            let target_exists = self
-                .user_reader
+            let identity = self
+                .identities
                 .in_transaction(&mut tx)
-                .find_by_id(command.user_id)
+                .find_by_user_id(command.user_id)
                 .await?
-                .is_some();
-            if !target_exists {
-                return Err(RevokeUserSessionsError::UserNotFound);
-            }
+                .ok_or(RevokeUserSessionsError::UserNotFound)?;
             tx.commit()
                 .await
                 .map_err(|_| RevokeUserSessionsError::CommitTransactionFailed)?;
 
-            self.session_revoker
-                .revoke_sessions(command.user_id)
-                .await?;
+            self.session_revoker.revoke_sessions(&identity).await?;
             Ok(RevokeUserSessionsResult {
                 user_id: command.user_id,
             })
@@ -214,16 +210,17 @@ impl From<UserAdminReadError> for RevokeUserSessionsError {
     }
 }
 
-impl From<UserAccountReadError> for RevokeUserSessionsError {
-    fn from(error: UserAccountReadError) -> Self {
+impl From<UserCognitoIdentityRegistryError> for RevokeUserSessionsError {
+    fn from(error: UserCognitoIdentityRegistryError) -> Self {
         match error {
-            UserAccountReadError::TemporarilyUnavailable { source } => {
+            UserCognitoIdentityRegistryError::Conflict { source }
+            | UserCognitoIdentityRegistryError::Internal { source } => Self::Internal { source },
+            UserCognitoIdentityRegistryError::TemporarilyUnavailable { source } => {
                 Self::TemporarilyUnavailable { source }
             }
-            UserAccountReadError::InvalidReadModel { source } => {
+            UserCognitoIdentityRegistryError::InvalidPersistedIdentity { source } => {
                 Self::InvalidPersistedState { source }
             }
-            UserAccountReadError::Internal { source } => Self::Internal { source },
         }
     }
 }
@@ -243,21 +240,21 @@ impl From<UserSessionRevocationError> for RevokeUserSessionsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::{UserAdminActorView, UserAdminReader, UserDetailsView};
+    use crate::ports::{
+        CognitoIdentity, CognitoIssuer, CognitoSubject, UserAdminActorView, UserAdminReader,
+    };
     use application::error::box_error;
     use application::operation_context::{CorrelationId, Principal, RequestId};
     use application::transaction::TransactionError;
-    use localization::Language;
-    use money::Currency;
-    use serde_email::Email;
     use std::sync::{Arc, Mutex, MutexGuard};
-    use user_core::{measurement_unit::MeasurementUnit, role::UserRole, tier::UserTier};
+    use user_core::role::UserRole;
 
     #[derive(Default)]
     struct State {
         begins: usize,
         commits: usize,
-        revocations: usize,
+        revoked_identities: Vec<(String, String)>,
+        operations: Vec<&'static str>,
     }
     #[derive(Clone, Default)]
     struct Fakes(Arc<Mutex<State>>);
@@ -265,7 +262,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct Admins(Option<UserRole>);
     #[derive(Clone, Copy)]
-    struct Users(bool);
+    struct Identities(bool);
     #[derive(Clone)]
     struct Revoker {
         fakes: Fakes,
@@ -290,27 +287,21 @@ mod tests {
             correlation_id: CorrelationId::new("corr-test"),
         }
     }
-    fn user_details(user_id: UserId) -> UserDetailsView {
-        UserDetailsView {
-            user_id,
-            email: Email::try_from("target@example.test")
-                .unwrap_or_else(|error| panic!("invalid test email: {error}")),
-            first_name: None,
-            last_name: None,
-            language: Some(Language::En),
-            currency: Some(Currency::Eur),
-            measurement_unit: Some(MeasurementUnit::Metric),
-            show_unassessed_or_sensitive_content: false,
-            tier: UserTier::Free,
-            role: UserRole::User,
-            stripe_customer_id: None,
+    fn cognito_identity() -> CognitoIdentity {
+        CognitoIdentity {
+            issuer: CognitoIssuer::try_from("https://issuer.example")
+                .unwrap_or_else(|error| panic!("invalid test issuer: {error}")),
+            subject: CognitoSubject::try_from("provider|opaque-subject")
+                .unwrap_or_else(|error| panic!("invalid test subject: {error}")),
         }
     }
 
     #[async_trait::async_trait]
     impl Transaction for FakeTx {
         async fn commit(self) -> Result<(), TransactionError> {
-            lock(&self.0.0).commits += 1;
+            let mut state = lock(&self.0.0);
+            state.commits += 1;
+            state.operations.push("commit");
             Ok(())
         }
     }
@@ -318,7 +309,9 @@ mod tests {
     impl UnitOfWork for Fakes {
         type Tx = FakeTx;
         async fn begin(&self) -> Result<Self::Tx, TransactionError> {
-            lock(&self.0).begins += 1;
+            let mut state = lock(&self.0);
+            state.begins += 1;
+            state.operations.push("begin");
             Ok(FakeTx(self.clone()))
         }
     }
@@ -337,25 +330,52 @@ mod tests {
             AdminReader(self.0)
         }
     }
-    struct UserReader(bool);
+    struct IdentityRegistry(bool);
     #[async_trait::async_trait]
-    impl UserAccountReader for UserReader {
-        async fn find_by_id(
+    impl UserCognitoIdentityRegistry for IdentityRegistry {
+        async fn lock_and_find_user_id(
             &mut self,
-            user_id: UserId,
-        ) -> Result<Option<UserDetailsView>, UserAccountReadError> {
-            Ok(self.0.then(|| user_details(user_id)))
+            _: &CognitoIdentity,
+        ) -> Result<Option<UserId>, UserCognitoIdentityRegistryError> {
+            Ok(None)
+        }
+
+        async fn find_by_user_id(
+            &mut self,
+            _: UserId,
+        ) -> Result<Option<CognitoIdentity>, UserCognitoIdentityRegistryError> {
+            Ok(self.0.then(cognito_identity))
+        }
+
+        async fn bind(
+            &mut self,
+            _: &CognitoIdentity,
+            _: UserId,
+        ) -> Result<(), UserCognitoIdentityRegistryError> {
+            Ok(())
         }
     }
-    impl UserAccountReaderFactory<FakeTx> for Users {
-        fn in_transaction<'tx>(&'tx self, _: &'tx mut FakeTx) -> impl UserAccountReader + 'tx {
-            UserReader(self.0)
+    impl UserCognitoIdentityRegistryFactory<FakeTx> for Identities {
+        fn in_transaction<'tx>(
+            &'tx self,
+            _: &'tx mut FakeTx,
+        ) -> impl UserCognitoIdentityRegistry + 'tx {
+            IdentityRegistry(self.0)
         }
     }
     #[async_trait::async_trait]
     impl UserSessionRevoker for Revoker {
-        async fn revoke_sessions(&self, _: UserId) -> Result<(), UserSessionRevocationError> {
-            lock(&self.fakes.0).revocations += 1;
+        async fn revoke_sessions(
+            &self,
+            identity: &CognitoIdentity,
+        ) -> Result<(), UserSessionRevocationError> {
+            let mut state = lock(&self.fakes.0);
+            state.revoked_identities.push((
+                identity.issuer.as_str().to_owned(),
+                identity.subject.as_str().to_owned(),
+            ));
+            state.operations.push("revoke");
+            drop(state);
             match self.error {
                 None => Ok(()),
                 Some(RevokerError::Temporary) => {
@@ -378,7 +398,7 @@ mod tests {
         RevokeUserSessionsHandler::new(
             fakes.clone(),
             Admins(role),
-            Users(user_exists),
+            Identities(user_exists),
             Revoker {
                 fakes: fakes.clone(),
                 error,
@@ -400,7 +420,14 @@ mod tests {
         let state = lock(&fakes.0);
         assert_eq!(1, state.begins);
         assert_eq!(1, state.commits);
-        assert_eq!(1, state.revocations);
+        assert_eq!(
+            vec![(
+                "https://issuer.example".to_owned(),
+                "provider|opaque-subject".to_owned(),
+            )],
+            state.revoked_identities
+        );
+        assert_eq!(vec!["begin", "commit", "revoke"], state.operations);
     }
 
     #[tokio::test]
@@ -427,7 +454,41 @@ mod tests {
             )
             .await;
         assert!(matches!(non_admin, Err(RevokeUserSessionsError::Forbidden)));
-        assert_eq!(0, lock(&fakes.0).revocations);
+        let state = lock(&fakes.0);
+        assert!(state.revoked_identities.is_empty());
+        assert_eq!(2, state.begins);
+        assert_eq!(0, state.commits);
+    }
+
+    #[tokio::test]
+    async fn should_reject_anonymous_or_unscoped_delegated_actor_before_transaction() {
+        let fakes = Fakes::default();
+        let anonymous = handler(&fakes, Some(UserRole::Admin), true, None)
+            .execute(
+                &context(Principal::Anonymous),
+                RevokeUserSessionsCommand {
+                    user_id: UserId::new(),
+                },
+            )
+            .await;
+        let delegated = handler(&fakes, Some(UserRole::Admin), true, None)
+            .execute(
+                &context(Principal::DelegatedUser {
+                    user_id: UserId::new(),
+                    capabilities: Default::default(),
+                }),
+                RevokeUserSessionsCommand {
+                    user_id: UserId::new(),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            anonymous,
+            Err(RevokeUserSessionsError::AuthenticatedActorRequired)
+        ));
+        assert!(matches!(delegated, Err(RevokeUserSessionsError::Forbidden)));
+        assert_eq!(0, lock(&fakes.0).begins);
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::mapping::{name, product_search_from_json, state, user_search_filter_uuid};
+use crate::mapping::{name, product_search_from_json, state};
 use application::error::box_error;
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use search_filter_service::ports::{
@@ -38,15 +38,7 @@ impl PeriodicSearchFilterCandidateReader for SqlxPeriodicSearchFilterCandidateRe
         &self,
         request: PeriodicSearchFilterCandidatePageRequest,
     ) -> Result<Vec<PeriodicSearchFilterCandidate>, PeriodicSearchFilterCandidateReadError> {
-        let after = request
-            .after
-            .map(user_search_filter_uuid)
-            .transpose()
-            .map_err(
-                |source| PeriodicSearchFilterCandidateReadError::ReadFailed {
-                    source: box_error(source),
-                },
-            )?;
+        let after = request.after.map(UserSearchFilterId::into_uuid);
         let limit = i64::try_from(request.page_size).map_err(|source| {
             PeriodicSearchFilterCandidateReadError::ReadFailed {
                 source: box_error(source),
@@ -83,8 +75,16 @@ impl PeriodicSearchFilterCandidateReader for SqlxPeriodicSearchFilterCandidateRe
         .into_iter()
         .map(|row| {
             Ok(PeriodicSearchFilterCandidate {
-                search_filter_id: UserSearchFilterId::from(row.user_search_filter_id),
-                user_id: user_core::user_id::UserId::from(row.user_id),
+                search_filter_id: UserSearchFilterId::try_from(row.user_search_filter_id).map_err(
+                    |source| PeriodicSearchFilterCandidateReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    },
+                )?,
+                user_id: user_core::user_id::UserId::try_from(row.user_id).map_err(|source| {
+                    PeriodicSearchFilterCandidateReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    }
+                })?,
                 name: name(row.name).map_err(|source| {
                     PeriodicSearchFilterCandidateReadError::InvalidPersistedState {
                         source: box_error(source),

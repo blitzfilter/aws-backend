@@ -1,7 +1,8 @@
 use crate::auth::{OptionalAuthExtractor, request_metadata};
-use crate::error::{ApiError, INVALID_UUID, PRODUCT_LISTING_INTERNAL_ERROR};
+use crate::error::{ApiError, PRODUCT_LISTING_INTERNAL_ERROR};
 use crate::product_listings::product_data::personalized_product_summary_data;
 use crate::state::ProductListingsState;
+use crate::wire::parse_path_object_id;
 use axum::Json;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -34,14 +35,13 @@ pub async fn get_similar_products_by_id(
     Path(raw_product_listing_id): Path<String>,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    let product_listing_id = match ProductListingId::try_from(raw_product_listing_id.as_str()) {
+    let product_listing_id = match parse_path_object_id::<ProductListingId>(
+        &raw_product_listing_id,
+        "productListingId",
+        "ProductListing",
+    ) {
         Ok(value) => value,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("productListingId")
-                .with_detail("Path parameter 'productListingId' must be a UUID.")
-                .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
     let query = match parse_query(raw_query.as_deref()) {
         Ok(query) => query,

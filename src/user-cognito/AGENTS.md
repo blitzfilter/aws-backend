@@ -7,7 +7,7 @@
 
 ## Core Design
 
-- Resolve Aura `UserId` from Cognito `sub`; use returned Cognito username for global sign-out.
+- Receive the complete persisted Cognito `(issuer, subject)` identity from `user-service`; reject issuer mismatch against the configured pool before using the subject to find the Cognito username for global sign-out. Never derive provider identity from Aura `UserId`.
 - Keep AWS SDK types and errors private.
 - Never log tokens or raw provider payloads.
 

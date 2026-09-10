@@ -97,7 +97,7 @@ async fn should_derive_partnerize_view_url_without_changing_raw_product_url() {
         "UPDATE listing_sources SET referral_configuration = $1 WHERE listing_source_id = $2",
     )
     .bind(config)
-    .bind(uuid::Uuid::from(product.listing_source_id()))
+    .bind(product.listing_source_id().into_uuid())
     .execute(&pool)
     .await;
     if let Err(error) = result {
@@ -275,10 +275,10 @@ async fn should_join_all_postgres_user_state_sections_for_authenticated_user() {
         ) VALUES ($1, $2, 'WATCHLIST_AVAILABILITY_CHANGED', $3, $4, $5, false)
         "#,
     )
-    .bind(uuid::Uuid::from(notification_id))
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::new_v4())
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(notification_id.into_uuid())
+    .bind(user_id.into_uuid())
+    .bind(uuid::Uuid::now_v7())
+    .bind(product.id().into_uuid())
     .bind(serde_json::json!({}))
     .execute(&pool)
     .await;
@@ -417,7 +417,7 @@ async fn should_keep_first_tied_free_tier_match_visible() {
     let user_id = seed_user(&pool, "FREE", false).await;
     let timestamp = OffsetDateTime::UNIX_EPOCH + Duration::days(61);
     let target = persist_product(&pool, "details-free-tied-target", None, None).await;
-    let target_filter_id = UserSearchFilterId::from(uuid::Uuid::from_u128(1));
+    let target_filter_id = deterministic_filter_id(1);
     insert_search_filter(&pool, user_id, target_filter_id, "First tied filter").await;
     insert_search_filter_match(
         &pool,
@@ -432,10 +432,10 @@ async fn should_keep_first_tied_free_tier_match_visible() {
     )
     .await;
 
-    for index in 2_u128..=11 {
+    for index in 2_u16..=11 {
         let product =
             persist_product(&pool, &format!("details-free-tied-{index}"), None, None).await;
-        let filter_id = UserSearchFilterId::from(uuid::Uuid::from_u128(index));
+        let filter_id = deterministic_filter_id(index);
         insert_search_filter(&pool, user_id, filter_id, &format!("Tied filter {index}")).await;
         insert_search_filter_match(
             &pool,
@@ -523,8 +523,8 @@ async fn should_select_earliest_search_filter_match_deterministically() {
     let pool = get_postgres_client().await;
     let product = persist_product(&pool, "details-match-selection", None, None).await;
     let user_id = seed_user(&pool, "FREE", false).await;
-    let earlier_filter_id = UserSearchFilterId::from(uuid::Uuid::from_u128(1));
-    let later_filter_id = UserSearchFilterId::from(uuid::Uuid::from_u128(2));
+    let earlier_filter_id = deterministic_filter_id(1);
+    let later_filter_id = deterministic_filter_id(2);
     let event_id = event_id_for_product(&pool, product.id()).await;
     insert_search_filter(&pool, user_id, later_filter_id, "Later filter").await;
     insert_search_filter(&pool, user_id, earlier_filter_id, "Earlier filter").await;
@@ -686,7 +686,7 @@ async fn insert_translation(
         WHERE product_listing_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .bind(language)
     .bind(title)
     .bind(description)
@@ -710,7 +710,7 @@ async fn seed_user(
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(format!("{user_id}@example.test"))
     .bind(show_unassessed_or_sensitive_content)
     .bind(tier)
@@ -738,8 +738,8 @@ async fn insert_watchlist(
         VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'ACTIVE' THEN now() ELSE NULL END, CASE WHEN $3 THEN now() ELSE NULL END)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .bind(notifications)
     .bind(state)
     .execute(pool)
@@ -750,11 +750,13 @@ async fn insert_watchlist(
     }
 }
 
-fn uuid_from_filter_id(filter_id: UserSearchFilterId) -> uuid::Uuid {
-    match uuid::Uuid::parse_str(&filter_id.to_string()) {
-        Ok(value) => value,
-        Err(error) => panic!("invalid user search filter ID: {error}"),
-    }
+fn deterministic_filter_id(sequence: u16) -> UserSearchFilterId {
+    let value = format!("01900000-0000-7000-8000-{sequence:012x}");
+    let uuid = value
+        .parse::<uuid::Uuid>()
+        .unwrap_or_else(|error| panic!("valid deterministic UUIDv7 fixture: {error}"));
+    UserSearchFilterId::try_from(uuid)
+        .unwrap_or_else(|error| panic!("valid deterministic search-filter ID: {error}"))
 }
 
 async fn insert_search_filter(
@@ -770,8 +772,8 @@ async fn insert_search_filter(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(uuid_from_filter_id(filter_id))
-    .bind(uuid::Uuid::from(user_id))
+    .bind(filter_id.into_uuid())
+    .bind(user_id.into_uuid())
     .bind(name)
     .bind(true)
     .bind("ACTIVE")
@@ -806,10 +808,10 @@ async fn insert_search_filter_match(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid_from_filter_id(filter_id))
-    .bind(uuid::Uuid::from(product_listing_id))
-    .bind(uuid::Uuid::from(origin_event_id))
+    .bind(user_id.into_uuid())
+    .bind(filter_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
+    .bind(origin_event_id.into_uuid())
     .bind(name)
     .bind(reason)
     .bind(feedback)
@@ -829,12 +831,13 @@ async fn event_id_for_product(
     let result = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT current_event_id FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .fetch_one(pool)
     .await;
 
     match result {
-        Ok(event_id) => EventId::from(event_id),
+        Ok(event_id) => EventId::try_from(event_id)
+            .unwrap_or_else(|error| panic!("invalid persisted ProductListing event ID: {error}")),
         Err(error) => panic!("failed to read product event ID: {error}"),
     }
 }
@@ -875,7 +878,7 @@ fn sample_product(
 }
 
 async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId {
-    let party_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
     let listing_source_id = ListingSourceId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
         .bind(party_id)
@@ -885,7 +888,7 @@ async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId
         .await
         .unwrap_or_else(|error| panic!("failed to seed listing-source party: {error}"));
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(listing_source_id.into_uuid())
         .bind(slug)
         .bind(slug)
         .bind(party_id)

@@ -79,7 +79,7 @@ impl NotificationDeliveryRepository for SqlxNotificationDeliveryRepository {
         let row = sqlx::query_as::<_, DeliveryClaimRow>(
             "UPDATE notification_deliveries SET status = 'PROCESSING', lease_token = $2, lease_expires_at = $3, completed_lease_token = NULL, completed_at = NULL, attempt_count = attempt_count + 1, updated = now() WHERE notification_delivery_id = $1 AND $3 > GREATEST($4, clock_timestamp()) AND (status = 'PENDING' OR (status = 'PROCESSING' AND lease_expires_at <= GREATEST($4, clock_timestamp()))) RETURNING notification_delivery_id, notification_id, lease_token, lease_expires_at, attempt_count",
         )
-        .bind(Uuid::from(notification_delivery_id))
+        .bind(notification_delivery_id.into_uuid())
         .bind(lease_token)
         .bind(lease_expires_at)
         .bind(now)
@@ -101,7 +101,7 @@ impl NotificationDeliveryRepository for SqlxNotificationDeliveryRepository {
         let source = sqlx::query_as::<_, DeliverySourceRow>(
             "SELECT d.notification_delivery_id, d.channel, d.target_key, u.language, u.show_unassessed_or_sensitive_content, n.notification_id, n.user_id, n.kind, n.origin_event_id, n.product_listing_id, n.user_search_filter_id, n.partnership_application_id, n.payload_version, n.payload, n.seen, n.created, n.updated FROM notification_deliveries d JOIN notifications n ON n.notification_id = d.notification_id JOIN users u ON u.user_id = n.user_id WHERE d.notification_delivery_id = $1",
         )
-        .bind(Uuid::from(notification_delivery_id))
+        .bind(notification_delivery_id.into_uuid())
         .fetch_optional(&mut *transaction)
         .await
         .map_err(DeliveryOperationFailed)?;
@@ -189,7 +189,7 @@ async fn load_unclaimed_outcome(
     let row = sqlx::query_as::<_, DeliveryStatusRow>(
         "SELECT status, lease_token, lease_expires_at, GREATEST($2, clock_timestamp()) AS observed_at FROM notification_deliveries WHERE notification_delivery_id = $1",
     )
-    .bind(Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(now)
     .fetch_optional(connection)
     .await
@@ -239,8 +239,15 @@ fn claimed_from_row(
         }
     })?;
     Ok(ClaimedNotificationDelivery {
-        notification_delivery_id: NotificationDeliveryId::from(row.notification_delivery_id),
-        notification_id: NotificationId::from(row.notification_id),
+        notification_delivery_id: NotificationDeliveryId::try_from(row.notification_delivery_id)
+            .map_err(|source| NotificationDeliveryError::InvalidPersistedState {
+                source: box_error(source),
+            })?,
+        notification_id: NotificationId::try_from(row.notification_id).map_err(|source| {
+            NotificationDeliveryError::InvalidPersistedState {
+                source: box_error(source),
+            }
+        })?,
         lease_token: row.lease_token,
         lease_expires_at: row.lease_expires_at,
         attempt_count,
@@ -269,7 +276,10 @@ fn source_from_row(
     })?;
 
     Ok(NotificationDeliverySource {
-        notification_delivery_id: NotificationDeliveryId::from(row.notification_delivery_id),
+        notification_delivery_id: NotificationDeliveryId::try_from(row.notification_delivery_id)
+            .map_err(|source| NotificationDeliveryError::InvalidPersistedState {
+                source: box_error(source),
+            })?,
         notification_id: notification.notification_id(),
         user_id: notification.user_id(),
         channel: channel_from_persisted(&row.channel).map_err(|source| {
@@ -338,7 +348,7 @@ async fn complete(
     let result = sqlx::query(
         "UPDATE notification_deliveries SET status = $3, lease_token = NULL, lease_expires_at = NULL, completed_lease_token = $2, completed_at = $4, provider_message_id = $5, last_error_code = $6, delivered_at = $7, updated = now() WHERE notification_delivery_id = $1 AND status = 'PROCESSING' AND lease_token = $2 AND lease_expires_at > $4 AND lease_expires_at > clock_timestamp()",
     )
-    .bind(Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(lease_token)
     .bind(status)
     .bind(completed_at)
@@ -358,7 +368,7 @@ async fn complete(
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM notification_deliveries WHERE notification_delivery_id = $1 AND status = $3 AND completed_lease_token = $2 AND completed_at = $4 AND provider_message_id IS NOT DISTINCT FROM $5 AND last_error_code IS NOT DISTINCT FROM $6 AND delivered_at IS NOT DISTINCT FROM $7)",
     )
-    .bind(Uuid::from(id))
+    .bind(id.into_uuid())
     .bind(lease_token)
     .bind(status)
     .bind(completed_at)
@@ -401,7 +411,7 @@ mod tests {
         id: NotificationDeliveryId,
     ) -> Result<PersistedDeliveryRow, sqlx::Error> {
         sqlx::query_as("SELECT status, attempt_count, lease_token, lease_expires_at, completed_lease_token, completed_at, provider_message_id, last_error_code, delivered_at, updated FROM notification_deliveries WHERE notification_delivery_id = $1")
-            .bind(Uuid::from(id)).fetch_one(pool).await
+            .bind(id.into_uuid()).fetch_one(pool).await
     }
 
     async fn seed(pool: &PgPool) -> Result<NotificationDeliveryId, sqlx::Error> {
@@ -420,7 +430,7 @@ mod tests {
             .bind(serde_json::json!({"type": "PARTNERSHIP_APPLICATION", "snapshot": {"party_name": "Test Party", "listing_source_name": "Test Source", "image": null}}))
             .execute(pool).await?;
         sqlx::query("INSERT INTO notification_deliveries (notification_delivery_id, notification_id, channel, target_key) VALUES ($1, $2, 'EMAIL', 'PRIMARY')")
-            .bind(Uuid::from(delivery_id)).bind(notification_id).execute(pool).await?;
+            .bind(delivery_id.into_uuid()).bind(notification_id).execute(pool).await?;
         Ok(delivery_id)
     }
 
@@ -577,7 +587,7 @@ mod tests {
             let now = OffsetDateTime::now_utc();
             let first = claim(&repository, id, now).await?;
             sqlx::query("UPDATE notification_deliveries SET lease_expires_at = $2 WHERE notification_delivery_id = $1")
-                .bind(Uuid::from(id)).bind(now - Duration::seconds(1)).execute(&pool).await?;
+                .bind(id.into_uuid()).bind(now - Duration::seconds(1)).execute(&pool).await?;
             let stored = persisted(&pool, id).await?;
             for completion in [
                 DeliveryCompletion::Delivered { provider_message_id: "accepted-before-expiry" },
@@ -773,7 +783,7 @@ mod tests {
                 // The claim UPDATE sees an active lease. Another connection completes
                 // before the adapter's fresh status read in this READ COMMITTED transaction.
                 let missed = sqlx::query("UPDATE notification_deliveries SET attempt_count = attempt_count + 1 WHERE notification_delivery_id = $1 AND (status = 'PENDING' OR (status = 'PROCESSING' AND lease_expires_at <= $2))")
-                    .bind(Uuid::from(id)).bind(now).execute(&mut *transaction).await?;
+                    .bind(id.into_uuid()).bind(now).execute(&mut *transaction).await?;
                 assert_eq!(0, missed.rows_affected());
                 assert!(complete(&pool, id, claimed.lease_token, completion, now).await?);
                 assert_eq!(expected, load_unclaimed_outcome(&mut transaction, id, now).await?);
@@ -836,7 +846,7 @@ mod tests {
             let repository = SqlxNotificationDeliveryRepository::new(pool.clone());
             let id = seed(&pool).await?;
             sqlx::query("UPDATE notifications SET payload = '{}'::jsonb WHERE notification_id = (SELECT notification_id FROM notification_deliveries WHERE notification_delivery_id = $1)")
-                .bind(Uuid::from(id)).execute(&pool).await?;
+                .bind(id.into_uuid()).execute(&pool).await?;
             let now = OffsetDateTime::now_utc();
             assert!(matches!(repository.claim_and_load_source(id, now, now + Duration::minutes(5), Uuid::now_v7()).await, Err(NotificationDeliveryError::InvalidPersistedState { .. })));
             let stored = persisted(&pool, id).await?;

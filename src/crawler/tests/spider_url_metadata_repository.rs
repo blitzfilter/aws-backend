@@ -16,7 +16,7 @@ async fn insert_source(pool: &sqlx::PgPool, listing_source_id: ListingSourceId) 
         "INSERT INTO listing_sources (listing_source_id, listing_source_name, listing_source_slug, crawl_enabled) \
          VALUES ($1, 'Test source', 'test-source', TRUE)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .execute(pool)
     .await
     .unwrap();
@@ -27,16 +27,18 @@ async fn insert_domain(
     listing_source_id: ListingSourceId,
     domain: &str,
 ) -> CrawlerDomainId {
-    sqlx::query_scalar::<_, uuid::Uuid>(
-        "INSERT INTO listing_source_domains (listing_source_id, listing_source_domain, crawl_root_host) \
-         VALUES ($1, $2, $2) RETURNING domain_id",
+    let domain_id = CrawlerDomainId::new();
+    sqlx::query(
+        "INSERT INTO listing_source_domains (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+         VALUES ($1, $2, $3, $3)",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(domain_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
     .bind(domain)
-    .fetch_one(pool)
+    .execute(pool)
     .await
-    .unwrap()
-    .into()
+    .unwrap();
+    domain_id
 }
 
 #[serial_test::serial]
@@ -78,7 +80,7 @@ async fn should_insert_and_update_url_for_its_same_owner() {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
@@ -117,7 +119,7 @@ async fn should_mark_owned_url_as_scraped() {
         "SELECT last_scraped_hash, last_scraped::text, crawler_disposition \
          FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
@@ -165,13 +167,13 @@ async fn should_transition_owned_url_to_dormant_without_reactivation() {
         "SELECT crawler_disposition, domain_id FROM listing_source_urls \
          WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(row.0, CrawlerDisposition::DormantSold.as_str());
-    assert_eq!(CrawlerDomainId::from(row.1), domain_id);
+    assert_eq!(row.1, *domain_id.as_uuid());
 }
 
 #[serial_test::serial]
@@ -226,7 +228,7 @@ async fn should_keep_dormant_sold_url_absorbing_during_rediscovery_and_active_up
         "SELECT crawler_disposition, last_scraped_hash FROM listing_source_urls \
          WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
@@ -301,7 +303,7 @@ async fn should_reject_batch_when_url_and_class_lengths_differ() {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
@@ -337,7 +339,7 @@ async fn should_reject_duplicate_urls_in_batch_without_persisting_any_row() {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM listing_source_urls WHERE listing_source_id = $1 AND url = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
+    .bind(listing_source_id.as_uuid())
     .bind(url.as_str())
     .fetch_one(&pool)
     .await
@@ -367,8 +369,8 @@ async fn should_delete_urls_when_their_domain_is_deleted() {
     sqlx::query(
         "DELETE FROM listing_source_domains WHERE listing_source_id = $1 AND domain_id = $2",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(uuid::Uuid::from(domain_id))
+    .bind(listing_source_id.as_uuid())
+    .bind(domain_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -439,8 +441,8 @@ async fn should_reject_cross_source_url_claim_when_requested_domain_does_not_own
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, uuid::Uuid::from(source_a));
-    assert_eq!(row.1, uuid::Uuid::from(domain_a));
+    assert_eq!(row.0, *source_a.as_uuid());
+    assert_eq!(row.1, *domain_a.as_uuid());
     assert_eq!(row.2, "product");
 }
 
@@ -452,12 +454,14 @@ async fn should_reject_duplicate_canonical_domain_for_same_source() {
     insert_source(&pool, source).await;
     insert_domain(&pool, source, "example.com").await;
 
+    let duplicate_domain_id = CrawlerDomainId::new();
     let duplicate = sqlx::query(
         "INSERT INTO listing_source_domains \
-         (listing_source_id, listing_source_domain, crawl_root_host) \
-         VALUES ($1, $2, $3)",
+         (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+         VALUES ($1, $2, $3, $4)",
     )
-    .bind(uuid::Uuid::from(source))
+    .bind(duplicate_domain_id.as_uuid())
+    .bind(source.as_uuid())
     .bind("example.com")
     .bind("www.example.com")
     .execute(&pool)

@@ -54,7 +54,7 @@ impl SearchFilterQuotaReader for SqlxSearchFilterQuotaReader<'_> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM search_filters WHERE user_id=$1 AND state='ACTIVE'",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_one(self.tx.connection())
         .await
         .map_err(SearchFilterQuotaQueryError)?;

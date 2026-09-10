@@ -21,7 +21,7 @@ impl UserAuthenticationReader for SqlxUserAuthenticationReader {
         user_id: UserId,
     ) -> Result<Option<bool>, UserAuthenticationReadError> {
         sqlx::query_scalar::<_, bool>("SELECT suspended FROM users WHERE user_id = $1")
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(

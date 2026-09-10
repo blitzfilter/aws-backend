@@ -1,10 +1,10 @@
 use localization::Language;
 use std::collections::HashMap;
 
-use crate::url::referral_configuration;
+use crate::{object_id::try_from_uuid, url::referral_configuration};
 use application::error::{BoxError, box_error, static_error};
 use domain_primitives::event_id::EventId;
-use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId, outbound_url};
+use listing_source_core::{ListingSourceName, ListingSourceSlugId, outbound_url};
 
 use platform_postgres::SqlxTransaction;
 use product_listing_core::{
@@ -165,8 +165,8 @@ impl ProductListingWatchlistNotificationSourceReader
             FOR SHARE OF product
             "#,
         )
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.as_uuid())
+        .bind(product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(WatchlistNotificationSourceQueryError)?;
@@ -224,16 +224,19 @@ impl ProductListingWatchlistNotificationSourceReader
         .map_err(WatchlistNotificationSourceMappingError::with_source)?;
         Ok(ProductListingWatchlistNotificationSourceReadOutcome::Found(
             ProductListingWatchlistNotificationSource {
-                event_id: EventId::from(row.event_id),
+                event_id: try_from_uuid(row.event_id, "event ID")
+                    .map_err(WatchlistNotificationSourceMappingError::with_source)?,
                 event_time: row.event_time,
-                product_listing_id: ProductListingId::from(row.product_listing_id),
+                product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                    .map_err(WatchlistNotificationSourceMappingError::with_source)?,
                 lifecycle: lifecycle(&row.lifecycle)?,
                 product_listing_title_slug_id: ProductListingSlugId::raw(
                     &row.product_listing_title_slug_id,
                 )
                 .map_err(WatchlistNotificationSourceMappingError::with_source)?,
                 source: ListingSourceSummary {
-                    listing_source_id: ListingSourceId::from(row.listing_source_id),
+                    listing_source_id: try_from_uuid(row.listing_source_id, "ListingSource ID")
+                        .map_err(WatchlistNotificationSourceMappingError::with_source)?,
                     name: ListingSourceName::try_from(row.listing_source_name)
                         .map_err(WatchlistNotificationSourceMappingError::with_source)?,
                     slug_id: ListingSourceSlugId::raw(&row.listing_source_slug_id)

@@ -40,7 +40,7 @@ impl ListingSourceSlugId {
             prefix.as_str()
         };
 
-        Self(format!("{prefix}-{listing_source_id}"))
+        Self(format!("{prefix}-{}", listing_source_id.as_uuid()))
     }
 }
 

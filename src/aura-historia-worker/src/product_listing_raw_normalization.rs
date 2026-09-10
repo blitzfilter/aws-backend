@@ -509,16 +509,35 @@ mod tests {
         task::JoinHandle,
     };
 
+    const UUID_V7_BASE: u128 = 0x0190_0000_0000_7000_8000_0000_0000_0000;
+
+    fn uuid_v7(low_bits: u64) -> uuid::Uuid {
+        uuid::Uuid::from_u128(UUID_V7_BASE | u128::from(low_bits))
+    }
+
+    fn raw_stream_id(low_bits: u64) -> ProductListingRawStreamId {
+        ProductListingRawStreamId::try_from(uuid_v7(low_bits))
+            .unwrap_or_else(|error| panic!("valid raw stream UUIDv7 fixture: {error}"))
+    }
+
+    fn raw_revision_id(low_bits: u64) -> ProductListingRawRevisionId {
+        ProductListingRawRevisionId::try_from(uuid_v7(low_bits))
+            .unwrap_or_else(|error| panic!("valid raw revision UUIDv7 fixture: {error}"))
+    }
+
     #[test]
     fn should_map_raw_revision_job_to_normalization_command() {
-        let product_listing_raw_stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::nil());
-        let product_listing_raw_revision_id =
-            ProductListingRawRevisionId::from_uuid(uuid::Uuid::max());
+        let product_listing_raw_stream_id = raw_stream_id(1);
+        let product_listing_raw_revision_id = raw_revision_id(2);
 
         let command = command_from_job(DomainJob {
             target_queue: WorkerQueue::ProductListingRawNormalization,
-            idempotency_key: IdempotencyKey::new("product-listing-raw-revision:test"),
-            ordering_key: OrderingKey::new("product-listing-raw-stream:test"),
+            idempotency_key: IdempotencyKey::new(format!(
+                "product-listing-raw-revision:{product_listing_raw_revision_id}"
+            )),
+            ordering_key: OrderingKey::new(format!(
+                "product-listing-raw-stream:{product_listing_raw_stream_id}"
+            )),
             payload: DomainJobPayload::ProductListingRawRevision(ProductListingRawRevisionJob {
                 product_listing_raw_stream_id,
                 product_listing_raw_revision_id,
@@ -557,18 +576,18 @@ mod tests {
 
     #[test]
     fn should_retain_global_cursor_when_continuation_fifo_is_full() {
-        let current_cursor = pending_stream_cursor(uuid::Uuid::from_u128(1));
-        let next_cursor = pending_stream_cursor(uuid::Uuid::from_u128(2));
+        let current_cursor = pending_stream_cursor(1);
+        let next_cursor = pending_stream_cursor(2);
         let mut state = ReconciliationState {
             pending_stream_cursor: Some(current_cursor),
             ..Default::default()
         };
         let queued_streams = (3..(MAX_PENDING_STREAM_CONTINUATIONS + 3))
-            .map(|value| ProductListingRawStreamId::from_uuid(uuid::Uuid::from_u128(value as u128)))
+            .map(|value| raw_stream_id(value as u64))
             .collect::<Vec<_>>();
         assert_eq!(0, state.schedule(queued_streams));
 
-        let deferred_stream = ProductListingRawStreamId::from_uuid(uuid::Uuid::from_u128(999));
+        let deferred_stream = raw_stream_id(999);
         let continuation_scheduling = state.record_completed_turn(
             ReconciliationTurn::Page,
             &NormalizeProductListingRawRevisionResult {
@@ -593,19 +612,20 @@ mod tests {
 
     #[test]
     fn should_reach_later_global_page_when_saturated_fifo_reserves_capacity() {
-        let current_cursor = pending_stream_cursor(uuid::Uuid::from_u128(1));
-        let next_cursor = pending_stream_cursor(uuid::Uuid::from_u128(2));
-        let popped_stream = ProductListingRawStreamId::from_uuid(uuid::Uuid::from_u128(3));
-        let deferred_stream = ProductListingRawStreamId::from_uuid(uuid::Uuid::from_u128(999));
+        let current_cursor = pending_stream_cursor(1);
+        let next_cursor = pending_stream_cursor(2);
+        let popped_stream = raw_stream_id(3);
+        let deferred_stream = raw_stream_id(999);
         let mut state = ReconciliationState {
             pending_stream_cursor: Some(current_cursor),
             continuation_turn_due: true,
             ..Default::default()
         };
         let queued_streams = std::iter::once(popped_stream)
-            .chain((4..(MAX_PENDING_STREAM_CONTINUATIONS + 3)).map(|value| {
-                ProductListingRawStreamId::from_uuid(uuid::Uuid::from_u128(value as u128))
-            }))
+            .chain(
+                (4..(MAX_PENDING_STREAM_CONTINUATIONS + 3))
+                    .map(|value| raw_stream_id(value as u64)),
+            )
             .collect::<Vec<_>>();
         assert_eq!(0, state.schedule(queued_streams));
 
@@ -682,7 +702,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn should_continue_from_cursor_after_a_failure_only_reconciliation_page()
     -> Result<(), Box<dyn std::error::Error>> {
-        let cursor = pending_stream_cursor(uuid::Uuid::max());
+        let cursor = pending_stream_cursor(999);
         let (_sender, shutdown, mut commands, consumer) = start_consumer(
             1,
             VecDeque::from([
@@ -709,8 +729,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn should_process_queued_cdc_job_after_a_reconciliation_page_before_another_due_page()
     -> Result<(), Box<dyn std::error::Error>> {
-        let cursor = pending_stream_cursor(uuid::Uuid::from_u128(1));
-        let next_cursor = pending_stream_cursor(uuid::Uuid::from_u128(2));
+        let cursor = pending_stream_cursor(1);
+        let next_cursor = pending_stream_cursor(2);
         let (first_page_release, first_page_wait) = oneshot::channel();
         let (sender, shutdown, mut commands, consumer) = start_consumer(
             1,
@@ -751,9 +771,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn should_alternate_capped_continuation_and_global_page_without_direct_cdc_moving_state()
     -> Result<(), Box<dyn std::error::Error>> {
-        let cursor = pending_stream_cursor(uuid::Uuid::from_u128(4));
-        let next_cursor = pending_stream_cursor(uuid::Uuid::from_u128(5));
-        let continuation_stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::from_u128(6));
+        let cursor = pending_stream_cursor(4);
+        let next_cursor = pending_stream_cursor(5);
+        let continuation_stream_id = raw_stream_id(6);
         let (first_page_release, first_page_wait) = oneshot::channel();
         let (sender, shutdown, mut commands, consumer) = start_consumer(
             1,
@@ -853,7 +873,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn should_retain_cursor_after_failed_turns_without_in_process_retries()
     -> Result<(), Box<dyn std::error::Error>> {
-        let cursor = pending_stream_cursor(uuid::Uuid::from_u128(3));
+        let cursor = pending_stream_cursor(3);
         let (_sender, shutdown, mut commands, consumer) = start_consumer(
             1,
             VecDeque::from([
@@ -1041,27 +1061,27 @@ mod tests {
         ));
     }
 
-    fn pending_stream_cursor(stream_id: uuid::Uuid) -> PendingProductListingRawStreamCursor {
+    fn pending_stream_cursor(low_bits: u64) -> PendingProductListingRawStreamCursor {
         PendingProductListingRawStreamCursor {
             oldest_pending_at: time::OffsetDateTime::UNIX_EPOCH,
-            product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(stream_id),
+            product_listing_raw_stream_id: raw_stream_id(low_bits),
         }
     }
 
     fn raw_revision_job(revision: u64) -> DomainJob {
+        let product_listing_raw_stream_id = raw_stream_id(1);
+        let product_listing_raw_revision_id = raw_revision_id(revision + 10);
         DomainJob {
             target_queue: WorkerQueue::ProductListingRawNormalization,
             idempotency_key: IdempotencyKey::new(format!(
-                "product-listing-raw-revision:{revision}"
+                "product-listing-raw-revision:{product_listing_raw_revision_id}"
             )),
-            ordering_key: OrderingKey::new("product-listing-raw-stream:test"),
+            ordering_key: OrderingKey::new(format!(
+                "product-listing-raw-stream:{product_listing_raw_stream_id}"
+            )),
             payload: DomainJobPayload::ProductListingRawRevision(ProductListingRawRevisionJob {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    uuid::Uuid::nil(),
-                ),
-                product_listing_raw_revision_id: ProductListingRawRevisionId::from_uuid(
-                    uuid::Uuid::from_u128(revision as u128 + 10),
-                ),
+                product_listing_raw_stream_id,
+                product_listing_raw_revision_id,
                 revision,
             }),
         }
@@ -1072,9 +1092,7 @@ mod tests {
     ) -> NormalizeProductListingRawRevisionResult {
         NormalizeProductListingRawRevisionResult {
             stream_failures: vec![ProductListingRawNormalizationStreamFailure {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    uuid::Uuid::nil(),
-                ),
+                product_listing_raw_stream_id: raw_stream_id(1),
                 error_code: "TEST_FAILURE",
             }],
             pending_stream_page_count: Some(1),
@@ -1088,9 +1106,7 @@ mod tests {
     ) -> NormalizeProductListingRawRevisionResult {
         NormalizeProductListingRawRevisionResult {
             revisions: vec![NormalizedRawRevisionResult {
-                product_listing_raw_stream_id: ProductListingRawStreamId::from_uuid(
-                    uuid::Uuid::nil(),
-                ),
+                product_listing_raw_stream_id: raw_stream_id(1),
                 revision: 1,
                 outcome: ProductListingRawNormalizationOutcome::Applied,
             }],

@@ -54,8 +54,10 @@ impl FromRow<'_, sqlx::postgres::PgRow> for ListingSourceUrlPatternRecord {
             Domain::try_from(row.try_get::<String, _>("listing_source_domain")?)
                 .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
         Ok(Self {
-            listing_source_id: listing_source_id.into(),
-            domain_id: row.try_get::<uuid::Uuid, _>("domain_id")?.into(),
+            listing_source_id: ListingSourceId::try_from(listing_source_id)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
+            domain_id: CrawlerDomainId::try_from(row.try_get::<uuid::Uuid, _>("domain_id")?)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
             listing_source_domain,
             url_pattern: row.try_get("url_pattern")?,
             url_pattern_state: UrlPatternState::from_persisted(
@@ -126,7 +128,7 @@ impl ListingSourceUrlPatternRepository for ListingSourceUrlPatternRepositoryImpl
              WHERE listing_source_id = $1 AND domain_id = $2",
         )
         .bind(uuid::Uuid::from(*listing_source_id))
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .fetch_optional(&self.pool)
         .await
     }
@@ -144,7 +146,7 @@ impl ListingSourceUrlPatternRepository for ListingSourceUrlPatternRepositoryImpl
              WHERE listing_source_id = $1 AND domain_id = $2",
         )
         .bind(uuid::Uuid::from(*listing_source_id))
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .bind(pattern)
         .execute(&self.pool)
         .await?;
@@ -165,7 +167,7 @@ impl ListingSourceUrlPatternRepository for ListingSourceUrlPatternRepositoryImpl
              WHERE listing_source_id = $1 AND domain_id = $2",
         )
         .bind(uuid::Uuid::from(*listing_source_id))
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .execute(&self.pool)
         .await?;
         if result.rows_affected() == 0 {
@@ -185,7 +187,7 @@ impl ListingSourceUrlPatternRepository for ListingSourceUrlPatternRepositoryImpl
              WHERE listing_source_id = $1 AND domain_id = $2",
         )
         .bind(uuid::Uuid::from(*listing_source_id))
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .execute(&self.pool)
         .await?;
         if result.rows_affected() == 0 {

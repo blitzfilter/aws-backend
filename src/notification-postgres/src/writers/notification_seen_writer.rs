@@ -25,7 +25,7 @@ impl NotificationSeenWriter for SqlxNotificationSeenWriter {
         seen: bool,
     ) -> Result<bool, NotificationSeenWriteError> {
         let result = sqlx::query("UPDATE notifications SET seen = $3, updated = now() WHERE user_id = $1 AND notification_id = $2")
-            .bind(uuid::Uuid::from(user_id)).bind(uuid::Uuid::from(notification_id)).bind(seen).execute(&self.pool).await
+            .bind(user_id.into_uuid()).bind(notification_id.into_uuid()).bind(seen).execute(&self.pool).await
             .map_err(|source| NotificationSeenWriteError::UpdateFailed { source: box_error(source) })?;
         Ok(result.rows_affected() == 1)
     }
@@ -41,10 +41,10 @@ impl NotificationSeenWriter for SqlxNotificationSeenWriter {
         let ids = notification_ids
             .iter()
             .copied()
-            .map(uuid::Uuid::from)
+            .map(NotificationId::into_uuid)
             .collect::<Vec<_>>();
         sqlx::query("UPDATE notifications SET seen = $3, updated = now() WHERE user_id = $1 AND notification_id = ANY($2)")
-            .bind(uuid::Uuid::from(user_id)).bind(ids).bind(seen).execute(&self.pool).await
+            .bind(user_id.into_uuid()).bind(ids).bind(seen).execute(&self.pool).await
             .map(|result| result.rows_affected()).map_err(|source| NotificationSeenWriteError::UpdateFailed { source: box_error(source) })
     }
     async fn set_seen_all(
@@ -53,7 +53,7 @@ impl NotificationSeenWriter for SqlxNotificationSeenWriter {
         seen: bool,
     ) -> Result<u64, NotificationSeenWriteError> {
         sqlx::query("UPDATE notifications SET seen = $2, updated = now() WHERE user_id = $1")
-            .bind(uuid::Uuid::from(user_id))
+            .bind(user_id.into_uuid())
             .bind(seen)
             .execute(&self.pool)
             .await

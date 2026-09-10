@@ -1,10 +1,11 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
-    seed_access_token_for, seed_listing_source, seed_operator_partnership_listing_source_grant,
+    seed_access_token_for, seed_operator_partnership_listing_source_grant,
     seed_partnership_membership, seed_user,
 };
 use base64::Engine;
+use listing_source_core::ListingSourceId;
 use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_normalization::SourcePayload;
@@ -84,7 +85,8 @@ fn assert_test_result(result: TestResult) {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_capture_changed_woocommerce_product_after_signature_validation() {
+async fn should_capture_changed_woocommerce_product_with_valid_listing_source_id_after_signature_validation()
+ {
     let result: TestResult = async {
         let (listing_source_id, token) = webhook_auth().await?;
         let body = json!({
@@ -120,7 +122,7 @@ async fn should_capture_changed_woocommerce_product_after_signature_validation()
              WHERE s.listing_source_id = $1 AND s.ingestion_method = 'WOOCOMMERCE' \
                AND s.source_record_key = '17'",
         )
-        .bind(uuid::Uuid::parse_str(&listing_source_id)?)
+        .bind(listing_source_uuid(&listing_source_id)?)
         .fetch_one(&pool)
         .await?;
         assert_eq!("UPSERT", row.0);
@@ -134,11 +136,11 @@ async fn should_capture_changed_woocommerce_product_after_signature_validation()
         assert_eq!(Some("delivery-1".to_owned()), row.4);
         assert_eq!(
             0,
-            product_count(uuid::Uuid::parse_str(&listing_source_id)?).await?
+            product_count(listing_source_uuid(&listing_source_id)?).await?
         );
         assert_eq!(
             0,
-            product_listing_event_count(uuid::Uuid::parse_str(&listing_source_id)?).await?
+            product_listing_event_count(listing_source_uuid(&listing_source_id)?).await?
         );
         Ok(())
     }
@@ -150,7 +152,7 @@ async fn should_capture_changed_woocommerce_product_after_signature_validation()
 async fn should_normalize_woocommerce_machine_decimal_prices_and_preserve_provider_strings() {
     let result: TestResult = async {
         let (listing_source_id, token) = webhook_auth().await?;
-        let listing_source_uuid = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_uuid = listing_source_uuid(&listing_source_id)?;
         let cases = [
             (28, "42.000", Some(4_200_i64)),
             (29, "42.5", Some(4_250_i64)),
@@ -220,7 +222,7 @@ async fn should_not_create_revision_when_only_woocommerce_delivery_id_changes() 
             assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
         }
 
-        let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_id = listing_source_uuid(&listing_source_id)?;
         assert_eq!(1, raw_revision_count(listing_source_id, "20").await?);
         assert_eq!(2, provider_receipt_count(listing_source_id, "20").await?);
         assert_eq!(
@@ -286,7 +288,8 @@ async fn should_capture_woocommerce_e1_a_e2_b_retry_e1_and_e3_a_in_provider_orde
             .status()
         );
 
-        let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_path = listing_source_id;
+        let listing_source_id = listing_source_uuid(&listing_source_path)?;
         assert_eq!(
             2,
             raw_revision_count(listing_source_id, source_record_key).await?
@@ -304,7 +307,7 @@ async fn should_capture_woocommerce_e1_a_e2_b_retry_e1_and_e3_a_in_provider_orde
         assert_eq!(
             reqwest::StatusCode::NO_CONTENT,
             send(
-                &listing_source_id.to_string(),
+                &listing_source_path,
                 &token,
                 "product.created",
                 &e1_retry,
@@ -330,7 +333,7 @@ async fn should_capture_woocommerce_e1_a_e2_b_retry_e1_and_e3_a_in_provider_orde
         assert_eq!(
             reqwest::StatusCode::NO_CONTENT,
             send(
-                &listing_source_id.to_string(),
+                &listing_source_path,
                 &token,
                 "product.updated",
                 &e3,
@@ -489,7 +492,8 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
             .status()
         );
 
-        let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_path = listing_source_id;
+        let listing_source_id = listing_source_uuid(&listing_source_path)?;
         assert_eq!(
             1,
             raw_revision_count(listing_source_id, source_record_key).await?
@@ -500,7 +504,7 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
         );
 
         let receipt_conflict = send(
-            &listing_source_id.to_string(),
+            &listing_source_path,
             &token,
             "product.updated",
             &changed,
@@ -514,7 +518,7 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
         );
 
         let source_order_conflict = send(
-            &listing_source_id.to_string(),
+            &listing_source_path,
             &token,
             "product.updated",
             &same_timestamp_changed,
@@ -538,7 +542,7 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
             ),
         ] {
             let invalid_timestamp_response = send(
-                &listing_source_id.to_string(),
+                &listing_source_path,
                 &token,
                 "product.updated",
                 body,
@@ -560,7 +564,7 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
         assert_eq!(
             reqwest::StatusCode::NO_CONTENT,
             send(
-                &listing_source_id.to_string(),
+                &listing_source_path,
                 &token,
                 "product.updated",
                 &stale,
@@ -572,7 +576,7 @@ async fn should_acknowledge_unchanged_woocommerce_receipts_and_enforce_receipt_a
         assert_eq!(
             reqwest::StatusCode::NO_CONTENT,
             send(
-                &listing_source_id.to_string(),
+                &listing_source_path,
                 &token,
                 "product.updated",
                 &stale,
@@ -655,7 +659,7 @@ async fn should_capture_changed_unknown_woocommerce_payload_key() {
         }
 
         let pool = get_postgres_client().await;
-        let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_id = listing_source_uuid(&listing_source_id)?;
         assert_eq!(2, raw_revision_count(listing_source_id, "21").await?);
         let availability: serde_json::Value = sqlx::query_scalar(
             "SELECT r.raw_values -> 'availability' \
@@ -710,11 +714,11 @@ async fn should_capture_delete_before_asynchronous_withdrawal() {
              WHERE s.listing_source_id = $1 AND s.source_record_key = '22' \
              ORDER BY r.revision",
         )
-        .bind(uuid::Uuid::parse_str(&listing_source_id)?)
+        .bind(listing_source_uuid(&listing_source_id)?)
         .fetch_all(&pool)
         .await?;
         assert_eq!(vec!["UPSERT", "DELETE"], operations);
-        let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_id = listing_source_uuid(&listing_source_id)?;
         assert_eq!(0, provider_receipt_count(listing_source_id, "22").await?);
         assert_eq!(
             RawStreamSourceOrder::UnknownDelete {
@@ -751,7 +755,7 @@ async fn should_not_capture_woocommerce_webhook_with_invalid_signature() {
         );
         assert_eq!(
             0,
-            raw_revision_count(uuid::Uuid::parse_str(&listing_source_id)?, "23").await?
+            raw_revision_count(listing_source_uuid(&listing_source_id)?, "23").await?
         );
         Ok(())
     }
@@ -769,6 +773,7 @@ async fn should_reject_published_deleted_or_ignored_woocommerce_webhooks_without
         seed_partnership_membership(user_id, listing_source).await;
         seed_operator_partnership_listing_source_grant(listing_source).await;
         let token = String::from(seed_access_token_for(user_id, HashSet::new()).await);
+        let listing_source_path = ListingSourceId::try_from(listing_source)?.to_string();
         let cases = [
             (
                 "published",
@@ -791,7 +796,7 @@ async fn should_reject_published_deleted_or_ignored_woocommerce_webhooks_without
         ];
 
         for (case, topic, source_record_key, body) in cases {
-            let response = send(&listing_source.to_string(), &token, topic, &body, None).await?;
+            let response = send(&listing_source_path, &token, topic, &body, None).await?;
 
             assert_eq!(reqwest::StatusCode::FORBIDDEN, response.status(), "{case}");
             assert_eq!(
@@ -822,6 +827,7 @@ async fn should_reject_published_deleted_or_ignored_woocommerce_webhooks_when_wr
         let token = String::from(
             seed_access_token_for(user_id, HashSet::from([Scope::ProductListingsWrite])).await,
         );
+        let listing_source_path = ListingSourceId::try_from(listing_source)?.to_string();
         let cases = [
             (
                 "published",
@@ -844,7 +850,7 @@ async fn should_reject_published_deleted_or_ignored_woocommerce_webhooks_when_wr
         ];
 
         for (case, topic, source_record_key, body) in cases {
-            let response = send(&listing_source.to_string(), &token, topic, &body, None).await?;
+            let response = send(&listing_source_path, &token, topic, &body, None).await?;
 
             assert_eq!(reqwest::StatusCode::FORBIDDEN, response.status(), "{case}");
             assert_eq!(
@@ -883,7 +889,7 @@ async fn should_acknowledge_authorized_signed_ignored_woocommerce_webhook_withou
 
         assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
         assert!(response.bytes().await?.is_empty());
-        let listing_source_id = uuid::Uuid::parse_str(&listing_source_id)?;
+        let listing_source_id = listing_source_uuid(&listing_source_id)?;
         assert_eq!(
             0,
             raw_revision_count(listing_source_id, source_record_key).await?
@@ -892,6 +898,51 @@ async fn should_acknowledge_authorized_signed_ignored_woocommerce_webhook_withou
             0,
             provider_receipt_count(listing_source_id, source_record_key).await?
         );
+        Ok(())
+    }
+    .await;
+    assert_test_result(result);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_wrong_prefix_bare_and_malformed_woocommerce_listing_source_ids() {
+    let result: TestResult = async {
+        let (listing_source_id, token) = webhook_auth().await?;
+        let bare_id = listing_source_uuid(&listing_source_id)?.to_string();
+        let cases = [
+            ("wrong prefix", listing_source_id.replacen("ls_", "usr_", 1)),
+            ("bare", bare_id),
+            ("malformed", "not-an-object-id".to_owned()),
+        ];
+        let body = product_body(32, "42.00", "publish", Some("instock"));
+
+        for (case, invalid_id) in cases {
+            let response = send(
+                &invalid_id,
+                &token,
+                "product.created",
+                &body,
+                Some("opaque-provider-delivery/32"),
+            )
+            .await?;
+
+            assert_eq!(
+                reqwest::StatusCode::BAD_REQUEST,
+                response.status(),
+                "{case}"
+            );
+            assert_eq!(
+                json!({
+                    "status": 400,
+                    "title": "Bad Request",
+                    "error": "INVALID_OBJECT_ID",
+                    "source": {"field": "listingSourceId", "type": "PATH"},
+                    "detail": "must be a valid ListingSource ID"
+                }),
+                response.json::<serde_json::Value>().await?,
+                "{case}"
+            );
+        }
         Ok(())
     }
     .await;
@@ -920,7 +971,7 @@ async fn should_reject_missing_or_malformed_woocommerce_webhook_without_capture(
         }
         assert_eq!(
             0,
-            raw_revision_count(uuid::Uuid::parse_str(&listing_source_id)?, "25").await?
+            raw_revision_count(listing_source_uuid(&listing_source_id)?, "25").await?
         );
         Ok(())
     }
@@ -928,9 +979,60 @@ async fn should_reject_missing_or_malformed_woocommerce_webhook_without_capture(
     assert_test_result(result);
 }
 
+async fn seed_listing_source() -> uuid::Uuid {
+    let listing_source_id = uuid::Uuid::now_v7();
+    let party_id = uuid::Uuid::now_v7();
+    let pool = get_postgres_client().await;
+    let mut transaction = pool.begin().await.unwrap_or_else(|error| {
+        panic!("failed to begin WooCommerce listing-source seed transaction: {error}")
+    });
+
+    sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+        .bind(party_id)
+        .bind(format!("woocommerce-webhook-party-{party_id}"))
+        .bind(format!("WooCommerce Webhook Party {party_id}"))
+        .execute(&mut *transaction)
+        .await
+        .unwrap_or_else(|error| panic!("failed to seed WooCommerce party: {error}"));
+    sqlx::query(
+        "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id, url) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(listing_source_id)
+    .bind(format!("woocommerce-webhook-source-{listing_source_id}"))
+    .bind(format!("WooCommerce Webhook Listing Source {listing_source_id}"))
+    .bind(party_id)
+    .bind("https://woocommerce-webhook.example/")
+    .execute(&mut *transaction)
+    .await
+    .unwrap_or_else(|error| panic!("failed to seed WooCommerce listing source: {error}"));
+    sqlx::query(
+        "INSERT INTO listing_source_ingestion_methods (listing_source_id, ingestion_method) VALUES ($1, 'PARTNER_API')",
+    )
+    .bind(listing_source_id)
+    .execute(&mut *transaction)
+    .await
+    .unwrap_or_else(|error| {
+        panic!("failed to seed WooCommerce listing-source ingestion method: {error}")
+    });
+    sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
+        .bind(uuid::Uuid::now_v7())
+        .bind(party_id)
+        .execute(&mut *transaction)
+        .await
+        .unwrap_or_else(|error| panic!("failed to seed WooCommerce partnership: {error}"));
+    transaction.commit().await.unwrap_or_else(|error| {
+        panic!("failed to commit WooCommerce listing-source seed transaction: {error}")
+    });
+    listing_source_id
+}
+
+fn listing_source_uuid(value: &str) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
+    Ok(value.parse::<ListingSourceId>()?.into_uuid())
+}
+
 async fn webhook_auth() -> Result<(String, String), Box<dyn std::error::Error>> {
     let listing_source = seed_listing_source().await;
-    let listing_source_id = listing_source.to_string();
+    let listing_source_id = ListingSourceId::try_from(listing_source)?.to_string();
     configure_woocommerce_source(listing_source).await?;
     let user_id = seed_user("USER").await;
     seed_partnership_membership(user_id, listing_source).await;

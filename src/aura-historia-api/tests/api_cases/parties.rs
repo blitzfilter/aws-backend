@@ -1,6 +1,8 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{assert_problem, json_response, seed_access_token_for, seed_party, seed_user};
+use listing_source_core::ListingSourceId;
+use party_core::party_id::PartyId;
 use serde_json::json;
 use test_api::{IntegrationTestService, aura_integration_test};
 
@@ -87,7 +89,7 @@ async fn should_return_party_summary_for_admin_with_no_store_cache_control() {
         body["items"][0]["partyId"]
     );
     assert_eq!(
-        serde_json::json!(format!("api-acceptance-party-{party_id}")),
+        serde_json::json!(format!("api-acceptance-party-{}", party_id.as_uuid())),
         body["items"][0]["partySlugId"]
     );
     assert_eq!(serde_json::json!("Admin Party"), body["items"][0]["name"]);
@@ -254,20 +256,31 @@ async fn should_reject_invalid_party_search_query_values() {
         "BAD_QUERY_PARAMETER_VALUE",
     );
 
-    let invalid_cursor = client
-        .get(format!("{}/api/v1/admin/parties", AURA_API.base_url()))
-        .bearer_auth(String::from(token))
-        .query(&[("searchAfter", "not-a-uuid")])
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to validate party cursor: {error}"));
-    let (status, body) = json_response(invalid_cursor).await;
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "BAD_QUERY_PARAMETER_VALUE",
-    );
+    let party_id = PartyId::new();
+    for invalid_id in [
+        ListingSourceId::new().to_string(),
+        party_id.as_uuid().to_string(),
+        "pty_not-a-typeid".to_owned(),
+    ] {
+        let invalid_cursor = client
+            .get(format!("{}/api/v1/admin/parties", AURA_API.base_url()))
+            .bearer_auth(String::from(token.clone()))
+            .query(&[("searchAfter", invalid_id)])
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate party cursor: {error}"));
+        let (status, body) = json_response(invalid_cursor).await;
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "searchAfter", "type": "QUERY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -315,7 +328,10 @@ async fn should_create_party_with_identity_location_and_contact() {
 
     let party_id = body["partyId"]
         .as_str()
-        .unwrap_or_else(|| panic!("created response has no party ID"));
+        .unwrap_or_else(|| panic!("created response has no party ID"))
+        .parse::<PartyId>()
+        .unwrap_or_else(|error| panic!("created response has invalid Party ID: {error}"));
+    assert!(party_id.to_string().starts_with("pty_"));
     assert_eq!(reqwest::StatusCode::CREATED, status);
     assert_eq!(Some(format!("/api/v1/admin/parties/{party_id}")), location);
     assert_eq!(Some("no-store".to_owned()), cache_control);
@@ -326,7 +342,7 @@ async fn should_create_party_with_identity_location_and_contact() {
         body["contact"]["email"]
     );
     assert_eq!(
-        json!(format!("created-party-{party_id}")),
+        json!(format!("created-party-{}", party_id.as_uuid())),
         body["partySlugId"]
     );
 }
@@ -470,7 +486,7 @@ async fn should_return_party_detail_for_admin_with_no_store_cache_control() {
     assert_eq!(Some("no-store".to_owned()), cache_control);
     assert_eq!(json!(party_id.to_string()), body["partyId"]);
     assert_eq!(
-        json!(format!("api-acceptance-party-{party_id}")),
+        json!(format!("api-acceptance-party-{}", party_id.as_uuid())),
         body["partySlugId"]
     );
     assert_eq!(json!("Detailed Party"), body["name"]);
@@ -484,28 +500,35 @@ async fn should_return_party_detail_for_admin_with_no_store_cache_control() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_party_detail_id() {
+async fn should_reject_noncanonical_party_detail_ids() {
     let admin_id = seed_user("ADMIN").await;
     let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let party_id = PartyId::new();
 
-    let response = reqwest::Client::new()
-        .get(format!(
-            "{}/api/v1/admin/parties/not-a-uuid",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to validate party detail ID: {error}"));
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        ListingSourceId::new().to_string(),
+        party_id.as_uuid().to_string(),
+        "pty_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/admin/parties/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate party detail ID: {error}"));
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
-    assert_eq!(json!({"field": "partyId", "type": "PATH"}), body["source"]);
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(json!({"field": "partyId", "type": "PATH"}), body["source"]);
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -515,8 +538,9 @@ async fn should_return_not_found_for_missing_party_detail() {
 
     let response = reqwest::Client::new()
         .get(format!(
-            "{}/api/v1/admin/parties/550e8400-e29b-41d4-a716-446655440000",
-            AURA_API.base_url()
+            "{}/api/v1/admin/parties/{}",
+            AURA_API.base_url(),
+            PartyId::new()
         ))
         .bearer_auth(String::from(token))
         .send()
@@ -580,7 +604,7 @@ async fn should_update_party_name_and_contact_with_tri_state_patch() {
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
     let client = reqwest::Client::new();
     let path = format!("{}/api/v1/admin/parties/{party_id}", AURA_API.base_url());
-    let original_slug = json!(format!("api-acceptance-party-{party_id}"));
+    let original_slug = json!(format!("api-acceptance-party-{}", party_id.as_uuid()));
 
     let renamed = client
         .patch(&path)
@@ -699,8 +723,9 @@ async fn should_return_not_found_for_missing_party_update() {
 
     let response = reqwest::Client::new()
         .patch(format!(
-            "{}/api/v1/admin/parties/550e8400-e29b-41d4-a716-446655440000",
-            AURA_API.base_url()
+            "{}/api/v1/admin/parties/{}",
+            AURA_API.base_url(),
+            PartyId::new()
         ))
         .bearer_auth(String::from(token))
         .json(&json!({"name": "Missing Party"}))
@@ -756,13 +781,13 @@ async fn should_require_admin_authentication_for_party_update() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_party_update_id() {
+async fn should_reject_malformed_party_update_id() {
     let admin_id = seed_user("ADMIN").await;
     let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
 
     let response = reqwest::Client::new()
         .patch(format!(
-            "{}/api/v1/admin/parties/not-a-uuid",
+            "{}/api/v1/admin/parties/pty_not-a-typeid",
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(token))
@@ -776,7 +801,7 @@ async fn should_reject_invalid_party_update_id() {
         status,
         &body,
         reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "INVALID_OBJECT_ID",
     );
     assert_eq!(json!({"field": "partyId", "type": "PATH"}), body["source"]);
 }

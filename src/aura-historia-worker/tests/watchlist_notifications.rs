@@ -3,6 +3,7 @@ use aura_historia_worker::{WorkerRunError, WorkerScope, serve_with_runtime};
 
 use application::transaction::{Transaction, UnitOfWork};
 use domain_primitives::event_id::EventId;
+use listing_source_core::ListingSourceId;
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_core::product_listing_id::ProductListingId;
 use std::sync::Arc;
@@ -277,8 +278,8 @@ async fn notify_historical_change_after_later_active_product_event()
             ))
             .json(&json!({
                 "record": {
-                    "event_id": historical_event_id.to_string(),
-                    "product_listing_id": product_listing_id.to_string(),
+                    "event_id": historical_event_id.as_uuid().to_string(),
+                    "product_listing_id": product_listing_id.as_uuid().to_string(),
                     "event_type": "PRODUCT_LISTING_CHANGED",
                     "event_group": "DOMAIN",
                     "event_type_schema_version": 1,
@@ -531,8 +532,8 @@ async fn no_notification_for_watcher_created_after_product_event()
             ))
             .json(&json!({
                 "record": {
-                    "event_id": event_id.to_string(),
-                    "product_listing_id": product_listing_id.to_string(),
+                    "event_id": event_id.as_uuid().to_string(),
+                    "product_listing_id": product_listing_id.as_uuid().to_string(),
                     "event_type": "PRODUCT_LISTING_CHANGED",
                     "event_group": "DOMAIN",
                     "event_type_schema_version": 1,
@@ -585,8 +586,8 @@ async fn preserve_one_notification_when_product_event_delivery_is_retried()
             ))
             .json(&json!({
                 "record": {
-                    "event_id": event_id.to_string(),
-                    "product_listing_id": product_listing_id.to_string(),
+                    "event_id": event_id.as_uuid().to_string(),
+                    "product_listing_id": product_listing_id.as_uuid().to_string(),
                     "event_type": "PRODUCT_LISTING_CHANGED",
                     "event_group": "DOMAIN",
                     "event_type_schema_version": 1,
@@ -772,7 +773,10 @@ async fn seed_user(pool: &sqlx::PgPool, label: &str) -> Result<UserId, sqlx::Err
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
     .bind(uuid::Uuid::from(user_id))
-    .bind(format!("worker-watchlist-{label}-{user_id}@example.test"))
+    .bind(format!(
+        "worker-watchlist-{label}-{}@example.test",
+        user_id.as_uuid()
+    ))
     .execute(pool)
     .await?;
     Ok(user_id)
@@ -784,19 +788,21 @@ async fn seed_product(
 ) -> Result<ProductListingId, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let product_uuid = uuid::Uuid::from(product_listing_id);
-    let listing_source_id = uuid::Uuid::new_v4();
-    let product_slug_suffix = product_uuid.simple().to_string()[..6].to_owned();
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, $3, party_id FROM operator")
-        .bind(listing_source_id)
-        .bind(format!("worker-watchlist-source-{listing_source_id}"))
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let product_slug_suffix = product_uuid.simple().to_string()[26..].to_owned();
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), concat($3, ' operator')) RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $4, $2, $3, party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!("worker-watchlist-source-{}", listing_source_id.as_uuid()))
         .bind("Worker watchlist source")
+        .bind(listing_source_id.as_uuid())
         .execute(&mut **transaction)
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Worker watchlist product', 'en', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')")
         .bind(product_uuid)
         .bind(format!("worker-watchlist-product-{product_slug_suffix}"))
         .bind(uuid::Uuid::from(event_id))
-        .bind(listing_source_id)
+        .bind(listing_source_id.as_uuid())
         .bind(product_uuid.to_string())
 
         .execute(&mut **transaction)

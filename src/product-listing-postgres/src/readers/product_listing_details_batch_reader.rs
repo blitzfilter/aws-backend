@@ -20,23 +20,14 @@ impl SqlxProductListingDetailsBatchReader {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("product details batch search-filter identifier conversion failed")]
-struct ProductListingDetailsBatchSearchFilterIdError(#[source] uuid::Error);
-
-#[derive(Debug, thiserror::Error)]
 #[error("product details batch SQL query failed")]
 struct ProductListingDetailsBatchQuerySqlxError(#[source] sqlx::Error);
 
 #[derive(Debug, thiserror::Error)]
 #[error("product details batch row could not map to the read model")]
-struct ProductListingDetailsBatchReadModelMappingError;
-
-impl From<ProductListingDetailsBatchSearchFilterIdError> for ProductListingDetailsBatchReadError {
-    fn from(source: ProductListingDetailsBatchSearchFilterIdError) -> Self {
-        Self::QueryFailed {
-            source: box_error(source),
-        }
-    }
+struct ProductListingDetailsBatchReadModelMappingError {
+    #[source]
+    source: super::product_listing_details_reader::ProductListingDetailsRowMappingError,
 }
 
 impl From<ProductListingDetailsBatchQuerySqlxError> for ProductListingDetailsBatchReadError {
@@ -72,10 +63,9 @@ impl ProductListingDetailsBatchReader for SqlxProductListingDetailsBatchReader {
             .product_listing_ids
             .iter()
             .copied()
-            .map(uuid::Uuid::from)
+            .map(|id| id.into_uuid())
             .collect::<Vec<_>>();
-        let search_filter_id = uuid::Uuid::parse_str(&request.search_filter_id.to_string())
-            .map_err(ProductListingDetailsBatchSearchFilterIdError)?;
+        let search_filter_id = request.search_filter_id.as_uuid();
         let select = product_details_select(
             r#"
     requested_products AS (
@@ -107,7 +97,7 @@ impl ProductListingDetailsBatchReader for SqlxProductListingDetailsBatchReader {
         let rows = query
             .build_query_as::<ProductListingDetailsRow>()
             .bind(request.language.as_str())
-            .bind(uuid::Uuid::from(request.user_id))
+            .bind(request.user_id.as_uuid())
             .bind(product_listing_ids)
             .bind(search_filter_id)
             .fetch_all(&self.pool)
@@ -116,10 +106,9 @@ impl ProductListingDetailsBatchReader for SqlxProductListingDetailsBatchReader {
 
         rows.into_iter()
             .map(|row| {
-                let product_listing_id = ProductListingId::from(row.product_listing_id);
                 let details = PersonalizedProductListingDetailsReadModel::try_from(row)
-                    .map_err(|_| ProductListingDetailsBatchReadModelMappingError)?;
-                Ok((product_listing_id, details))
+                    .map_err(|source| ProductListingDetailsBatchReadModelMappingError { source })?;
+                Ok((details.item.product_listing_id, details))
             })
             .collect()
     }
@@ -148,7 +137,10 @@ mod tests {
     #[test]
     fn should_map_read_model_failure_without_exposing_row() {
         let error: ProductListingDetailsBatchReadError =
-            ProductListingDetailsBatchReadModelMappingError.into();
+            ProductListingDetailsBatchReadModelMappingError {
+                source: crate::readers::product_listing_details_reader::ProductListingDetailsRowMappingError::InvalidValue,
+            }
+            .into();
 
         let ProductListingDetailsBatchReadError::InvalidReadModel { source } = error else {
             panic!("expected invalid batch read model");

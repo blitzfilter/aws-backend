@@ -114,14 +114,15 @@ async fn should_disable_absent_source_before_spider_and_scraper_select_work() {
         .apply_snapshot(&[registered_listing_source(listing_source_id)])
         .await
         .unwrap_or_else(|error| panic!("seed enabled crawler ListingSource: {error}"));
-    let domain_id = sqlx::query_scalar::<_, uuid::Uuid>(
+    let domain_id = CrawlerDomainId::new();
+    sqlx::query(
         "INSERT INTO listing_source_domains \
-         (listing_source_id, listing_source_domain, crawl_root_host) \
-         VALUES ($1, 'crawler-admission.example', 'crawler-admission.example') \
-         RETURNING domain_id",
+         (domain_id, listing_source_id, listing_source_domain, crawl_root_host) \
+         VALUES ($1, $2, 'crawler-admission.example', 'crawler-admission.example')",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .fetch_one(&pool)
+    .bind(domain_id.as_uuid())
+    .bind(listing_source_id.as_uuid())
+    .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("seed crawler domain: {error}"));
     sqlx::query(
@@ -129,8 +130,8 @@ async fn should_disable_absent_source_before_spider_and_scraper_select_work() {
          (listing_source_id, domain_id, url, url_class) \
          VALUES ($1, $2, 'https://crawler-admission.example/products/1', 'product')",
     )
-    .bind(uuid::Uuid::from(listing_source_id))
-    .bind(domain_id)
+    .bind(listing_source_id.as_uuid())
+    .bind(domain_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("seed crawler product URL: {error}"));
@@ -191,7 +192,7 @@ async fn should_disable_absent_source_before_spider_and_scraper_select_work() {
         let enabled = sqlx::query_scalar::<_, bool>(
             "SELECT crawl_enabled FROM listing_sources WHERE listing_source_id = $1",
         )
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("read refreshed crawler ListingSource: {error}"));

@@ -58,6 +58,16 @@ async fn should_search_active_and_sold_products_with_one_pinned_price_plan_impl(
 
     assert_eq!(Some(2), result.total);
     assert_eq!(2, result.items.len());
+    let tie_break = result
+        .cursor
+        .search_after
+        .as_ref()
+        .and_then(Value::as_array)
+        .and_then(|sort| sort.last())
+        .and_then(Value::as_str)
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "typed ID sort value missing"))?;
+    let parsed_tie_break = tie_break.parse::<ProductListingId>()?;
+    assert_eq!(tie_break, parsed_tie_break.to_string());
     assert!(result.items.iter().all(|item| {
         item.display_price
             == Some(ProductListingPrice::Monetary(money::Price::new(

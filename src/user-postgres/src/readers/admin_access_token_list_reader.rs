@@ -72,18 +72,13 @@ impl AdminAccessTokenListReader for SqlxAdminAccessTokenListReader<'_> {
         let mut query = QueryBuilder::<Postgres>::new(
             "SELECT access_token_id, user_id, name, scopes, origin, oauth_client_id, expires_at, created FROM access_tokens WHERE user_id = ",
         );
-        query.push_bind(uuid::Uuid::from(user_id));
+        query.push_bind(user_id.into_uuid());
         if let Some(search_after) = cursor.search_after {
-            let access_token_id =
-                crate::access_token_mapping::access_token_id_uuid(search_after.access_token_id)
-                    .map_err(|source| AdminAccessTokenListReadError::InvalidReadModel {
-                        source: box_error(source),
-                    })?;
             query
                 .push(" AND (created, access_token_id) > (")
                 .push_bind(search_after.position)
                 .push(", ")
-                .push_bind(access_token_id)
+                .push_bind(search_after.access_token_id.into_uuid())
                 .push(")");
         }
         query

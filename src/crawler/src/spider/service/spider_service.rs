@@ -697,8 +697,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl(
@@ -743,8 +743,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl(
@@ -790,8 +790,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl(&mut mock_spider, crawl_root_url, item_pages());
@@ -832,8 +832,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         mock_spider
@@ -883,8 +883,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl(&mut mock_spider, crawl_root_url, vec!["/"]);
@@ -924,8 +924,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl(
@@ -970,8 +970,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl_with_diagnostics(
@@ -1024,8 +1024,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl_with_diagnostics(
@@ -1070,8 +1070,8 @@ mod service_tests {
         let mut mock_pattern_service = MockUrlPatternService::new();
         let mut mock_url_repo = MockUrlMetadataRepository::new();
 
-        let listing_source_id: ListingSourceId = uuid::Uuid::new_v4().into();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let listing_source_id = ListingSourceId::new();
+        let domain_id = CrawlerDomainId::new();
         let crawl_root_url = "https://example.com";
 
         setup_mock_crawl(&mut mock_spider, crawl_root_url, vec!["/item/1", "/item/2"]);

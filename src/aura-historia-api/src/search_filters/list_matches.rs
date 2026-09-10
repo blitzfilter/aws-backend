@@ -5,6 +5,7 @@ use crate::product_listings::product_data::{
     PersonalizedProductListingDetailsData, personalized_product_details_data,
 };
 use crate::state::SearchFiltersState;
+use crate::wire::parse_query_object_id;
 use axum::Json;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::HeaderMap;
@@ -135,18 +136,18 @@ fn parse_matches_cursor(raw: &str) -> Result<SearchFilterMatchCursor, ApiError> 
     let [Value::String(created), Value::String(product_listing_id)] = values.as_slice() else {
         return Err(ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("searchAfter")
-            .with_detail("searchAfter must contain an RFC3339 timestamp and product UUID."));
+            .with_detail("searchAfter must contain an RFC3339 timestamp and ProductListing ID."));
     };
     let created = OffsetDateTime::parse(created, &Rfc3339).map_err(|error| {
         ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("searchAfter")
             .with_detail(error.to_string())
     })?;
-    let product_listing_id = ProductListingId::try_from(product_listing_id).map_err(|_| {
-        ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
-            .with_query_field("searchAfter")
-            .with_detail("searchAfter must contain a product UUID.")
-    })?;
+    let product_listing_id = parse_query_object_id::<ProductListingId>(
+        product_listing_id,
+        "searchAfter",
+        "ProductListing",
+    )?;
     Ok(SearchFilterMatchCursor {
         created,
         product_listing_id,
@@ -167,6 +168,7 @@ fn matches_cursor_value(cursor: SearchFilterMatchCursor) -> Result<Value, ApiErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use listing_source_core::ListingSourceId;
 
     #[test]
     fn should_default_match_currency_to_eur_and_parse_requested_currency()
@@ -195,6 +197,17 @@ mod tests {
             matches_cursor_value(cursor)?,
             json!(["2026-08-05T12:30:00Z", product_listing_id])
         );
+        for invalid_id in [
+            ListingSourceId::new().to_string(),
+            product_listing_id.as_uuid().to_string(),
+            "pl_not-a-typeid".to_owned(),
+        ] {
+            let raw = json!(["2026-08-05T12:30:00Z", invalid_id]).to_string();
+            let Err(error) = parse_matches_cursor(&raw) else {
+                return Err("noncanonical ProductListing cursor ID was accepted".into());
+            };
+            assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
+        }
         Ok(())
     }
 }

@@ -45,7 +45,7 @@ async fn should_clear_business_rows_without_removing_pg_ttl_configuration() {
         sqlx::query(
             "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'FREE', 'USER')",
         )
-        .bind(uuid::Uuid::new_v4())
+        .bind(uuid::Uuid::now_v7())
         .bind("teardown-check@example.com"),
     )
     .await
@@ -157,41 +157,48 @@ async fn should_apply_intentional_secondary_index_definitions() {
 async fn should_support_core_business_relations() {
     let pool = get_postgres_client().await;
     let product_listing_title_slug_id = product_listing_title_slug_id("A vase");
+    let user_id = uuid::Uuid::now_v7();
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let partnership_id = uuid::Uuid::now_v7();
+    let product_listing_id = uuid::Uuid::now_v7();
+    let event_id = uuid::Uuid::now_v7();
+    let user_search_filter_id = uuid::Uuid::now_v7();
     let business_fixture_sql = r#"
         INSERT INTO users (user_id, email, tier, role)
-        VALUES ('10000000-0000-0000-0000-000000000001', 'user@example.com', 'FREE', 'USER');
+        VALUES ('__USER_ID__', 'user@example.com', 'FREE', 'USER');
 
         INSERT INTO parties (party_id, party_slug_id, name)
         VALUES (
-            '20000000-0000-0000-0000-000000000001',
+            '__PARTY_ID__',
             'source-operator',
             'Source Operator'
         );
 
         INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id)
         VALUES (
-            '20000000-0000-0000-0000-000000000002',
+            '__LISTING_SOURCE_ID__',
             'source-one',
             'Source One',
-            '20000000-0000-0000-0000-000000000001'
+            '__PARTY_ID__'
         );
 
         INSERT INTO partnerships (partnership_id, party_id)
         VALUES (
-            '60000000-0000-0000-0000-000000000001',
-            '20000000-0000-0000-0000-000000000001'
+            '__PARTNERSHIP_ID__',
+            '__PARTY_ID__'
         );
 
         INSERT INTO partnership_members (user_id, partnership_id)
         VALUES (
-            '10000000-0000-0000-0000-000000000001',
-            '60000000-0000-0000-0000-000000000001'
+            '__USER_ID__',
+            '__PARTNERSHIP_ID__'
         );
 
         INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id)
         VALUES (
-            '60000000-0000-0000-0000-000000000001',
-            '20000000-0000-0000-0000-000000000002'
+            '__PARTNERSHIP_ID__',
+            '__LISTING_SOURCE_ID__'
         );
 
         BEGIN;
@@ -212,12 +219,12 @@ async fn should_support_core_business_relations() {
             product_images
         )
         VALUES (
-            '30000000-0000-0000-0000-000000000001',
+            '__PRODUCT_LISTING_ID__',
             '__PRODUCT_LISTING_TITLE_SLUG_ID__',
-            '40000000-0000-0000-0000-000000000001',
-            '40000000-0000-0000-0000-000000000001',
-            '40000000-0000-0000-0000-000000000001',
-            '20000000-0000-0000-0000-000000000002',
+            '__EVENT_ID__',
+            '__EVENT_ID__',
+            '__EVENT_ID__',
+            '__LISTING_SOURCE_ID__',
             'external-1',
             'A vase',
             'en',
@@ -237,12 +244,12 @@ async fn should_support_core_business_relations() {
             event_time
         )
         VALUES (
-            '40000000-0000-0000-0000-000000000001',
-            '30000000-0000-0000-0000-000000000001',
+            '__EVENT_ID__',
+            '__PRODUCT_LISTING_ID__',
             'PRODUCT_LISTING_DISCOVERED',
             'DOMAIN',
             1,
-            '{"listingSourceId":"20000000-0000-0000-0000-000000000002","sourceListingId":"external-1","title":{"language":"en","text":"A vase"},"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://shop.example.com/product_listings/external-1","imageCount":1,"auction":{"start":null,"end":null}}',
+            '{"listingSourceId":"__LISTING_SOURCE_ID__","sourceListingId":"external-1","title":{"language":"en","text":"A vase"},"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://shop.example.com/product_listings/external-1","imageCount":1,"auction":{"start":null,"end":null}}',
             now()
         );
 
@@ -250,8 +257,8 @@ async fn should_support_core_business_relations() {
 
         INSERT INTO product_listing_watchlist (user_id, product_listing_id, state, active_since, notifications_enabled_since)
         VALUES (
-            '10000000-0000-0000-0000-000000000001',
-            '30000000-0000-0000-0000-000000000001',
+            '__USER_ID__',
+            '__PRODUCT_LISTING_ID__',
             'ACTIVE',
             now(),
             now()
@@ -267,8 +274,8 @@ async fn should_support_core_business_relations() {
             currency
         )
         VALUES (
-            '50000000-0000-0000-0000-000000000001',
-            '10000000-0000-0000-0000-000000000001',
+            '__USER_SEARCH_FILTER_ID__',
+            '__USER_ID__',
             'Vases',
             'ACTIVE',
             '{"product_listing_query": ["vase"]}',
@@ -283,12 +290,22 @@ async fn should_support_core_business_relations() {
             origin_event_id
         )
         VALUES (
-            '10000000-0000-0000-0000-000000000001',
-            '50000000-0000-0000-0000-000000000001',
-            '30000000-0000-0000-0000-000000000001',
-            '40000000-0000-0000-0000-000000000001'
+            '__USER_ID__',
+            '__USER_SEARCH_FILTER_ID__',
+            '__PRODUCT_LISTING_ID__',
+            '__EVENT_ID__'
         );
         "#
+    .replace("__USER_ID__", &user_id.to_string())
+    .replace("__PARTY_ID__", &party_id.to_string())
+    .replace("__LISTING_SOURCE_ID__", &listing_source_id.to_string())
+    .replace("__PARTNERSHIP_ID__", &partnership_id.to_string())
+    .replace("__PRODUCT_LISTING_ID__", &product_listing_id.to_string())
+    .replace("__EVENT_ID__", &event_id.to_string())
+    .replace(
+        "__USER_SEARCH_FILTER_ID__",
+        &user_search_filter_id.to_string(),
+    )
     .replace(
         "__PRODUCT_LISTING_TITLE_SLUG_ID__",
         &product_listing_title_slug_id,
@@ -311,7 +328,7 @@ async fn should_reject_noncanonical_persisted_enum_values() {
 
     let result =
         sqlx::query("INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, $3, $4)")
-            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::now_v7())
             .bind("invalid-state@example.com")
             .bind("FREE")
             .bind("User")

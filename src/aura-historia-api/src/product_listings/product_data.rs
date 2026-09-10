@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use domain_primitives::event_id::EventId;
 
 use fxrate_core::FxRateId;
+use listing_source_core::ListingSourceId;
 
 use notification_core::{
     notification_id::NotificationId, presentation::NotificationImagePresentation,
@@ -124,7 +125,7 @@ struct SearchFilterUserStateData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ListingSourceSummaryData {
-    listing_source_id: uuid::Uuid,
+    listing_source_id: ListingSourceId,
     name: String,
     slug_id: String,
 }
@@ -132,7 +133,7 @@ struct ListingSourceSummaryData {
 impl From<ListingSourceSummary> for ListingSourceSummaryData {
     fn from(source: ListingSourceSummary) -> Self {
         Self {
-            listing_source_id: source.listing_source_id.into(),
+            listing_source_id: source.listing_source_id,
             name: source.name.as_ref().to_owned(),
             slug_id: source.slug_id.to_string(),
         }

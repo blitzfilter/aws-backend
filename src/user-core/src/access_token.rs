@@ -1,6 +1,6 @@
 use crate::user_id::UserId;
 use credential_core::oauth_client_id::OAuthClientId;
-use domain_primitives::{string_newtype, uuid_v7_newtype};
+use domain_primitives::{object_id_newtype, string_newtype};
 use prefixed_api_key::{
     PrefixedApiKey, PrefixedApiKeyController,
     sha2::{Digest, Sha256},
@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::marker::PhantomData;
 use time::OffsetDateTime;
 
-uuid_v7_newtype!(AccessTokenId);
+object_id_newtype!(AccessTokenId, "at");
 string_newtype!(AccessTokenName, max_length(128));
 
 pub use credential_core::scope::Scope;
@@ -780,8 +780,30 @@ mod tests {
     }
 
     #[test]
-    fn should_create_distinct_ids_when_default_for_access_token_id() {
-        assert_ne!(AccessTokenId::default(), AccessTokenId::default());
+    fn should_create_distinct_at_object_ids_when_default() {
+        let first = AccessTokenId::default();
+        let second = AccessTokenId::default();
+
+        assert_ne!(first, second);
+        assert_eq!("at", AccessTokenId::PREFIX);
+        assert_eq!(7, first.as_uuid().get_version_num());
+        assert!(first.to_string().starts_with("at_"));
+    }
+
+    #[test]
+    fn should_use_at_object_id_contract() -> Result<(), Box<dyn std::error::Error>> {
+        const UUID_TEXT: &str = "01890a5d-ac96-774b-bf1d-d5586c639f75";
+        const TYPE_ID_SUFFIX: &str = "01h455vb4pex5vy7enb1p677vn";
+
+        let uuid = uuid::Uuid::parse_str(UUID_TEXT)?;
+        let id = AccessTokenId::try_from(uuid)?;
+
+        assert_eq!(format!("at_{TYPE_ID_SUFFIX}"), id.to_string());
+        assert_eq!(uuid, id.into_uuid());
+        assert!(AccessTokenId::try_from(UUID_TEXT).is_err());
+        assert!(AccessTokenId::try_from(format!("usr_{TYPE_ID_SUFFIX}")).is_err());
+
+        Ok(())
     }
 
     // ── TryFrom<String>: valid cases ──────────────────────────────────────

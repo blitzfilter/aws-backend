@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use application::error::{box_error, static_error};
 use domain_primitives::event_id::EventId;
 use localization::Language;
@@ -79,8 +80,8 @@ impl ProductListingEmbeddingSourceReader for SqlxProductListingEmbeddingSourceRe
             WHERE event.event_id = $1 AND event.product_listing_id = $2
         "#,
         )
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.as_uuid())
+        .bind(product_listing_id.as_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(
@@ -97,9 +98,14 @@ impl TryFrom<ProductListingEmbeddingSourceRow> for ProductListingEmbeddingSource
 
     fn try_from(row: ProductListingEmbeddingSourceRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            product_listing_id: ProductListingId::from(row.product_listing_id),
-            event_id: EventId::from(row.event_id),
-            embedding_source_event_id: EventId::from(row.embedding_source_event_id),
+            product_listing_id: try_from_uuid(row.product_listing_id, "ProductListing ID")
+                .map_err(mapping_error_source)?,
+            event_id: try_from_uuid(row.event_id, "event ID").map_err(mapping_error_source)?,
+            embedding_source_event_id: try_from_uuid(
+                row.embedding_source_event_id,
+                "embedding source event ID",
+            )
+            .map_err(mapping_error_source)?,
             event: embedding_event(&row)?,
             title: localized_title(row.title_text, row.title_language)?,
             description: localized_description(row.description_text, row.description_language)?,
@@ -216,6 +222,16 @@ fn mapping_error(message: &'static str) -> ProductListingEmbeddingSourceReadErro
     ProductListingEmbeddingSourceReadError::InvalidPersistedState {
         source: box_error(ProductListingEmbeddingSourceMappingError {
             source: static_error(message),
+        }),
+    }
+}
+
+fn mapping_error_source(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> ProductListingEmbeddingSourceReadError {
+    ProductListingEmbeddingSourceReadError::InvalidPersistedState {
+        source: box_error(ProductListingEmbeddingSourceMappingError {
+            source: box_error(source),
         }),
     }
 }

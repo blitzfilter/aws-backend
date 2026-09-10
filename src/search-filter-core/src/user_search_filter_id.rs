@@ -1,68 +1,17 @@
-use uuid::Uuid;
+domain_primitives::object_id_newtype!(UserSearchFilterId, "sf");
 
-#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
-#[derive(
-    Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-#[serde(into = "String", try_from = "String")]
-pub struct UserSearchFilterId(Uuid);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl Default for UserSearchFilterId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+    #[test]
+    fn should_use_sf_prefix_for_user_search_filter_id()
+    -> Result<(), domain_primitives::object_id::ObjectIdError> {
+        let id = UserSearchFilterId::try_from("sf_01h455vb4pex5vy7enb1p677vn")?;
 
-impl UserSearchFilterId {
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-}
-
-impl std::fmt::Display for UserSearchFilterId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
-
-impl From<Uuid> for UserSearchFilterId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-
-impl From<UserSearchFilterId> for Uuid {
-    fn from(value: UserSearchFilterId) -> Self {
-        value.0
-    }
-}
-
-impl From<UserSearchFilterId> for String {
-    fn from(value: UserSearchFilterId) -> Self {
-        value.0.to_string()
-    }
-}
-
-impl TryFrom<String> for UserSearchFilterId {
-    type Error = uuid::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Uuid::parse_str(&value).map(Self)
-    }
-}
-
-impl TryFrom<&str> for UserSearchFilterId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Uuid::parse_str(value).map(Self)
-    }
-}
-
-impl TryFrom<&String> for UserSearchFilterId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &String) -> Result<Self, Self::Error> {
-        Self::try_from(value.as_str())
+        assert_eq!("sf", UserSearchFilterId::PREFIX);
+        assert_eq!("sf_01h455vb4pex5vy7enb1p677vn", id.to_string());
+        assert_eq!(7, id.as_uuid().get_version_num());
+        Ok(())
     }
 }

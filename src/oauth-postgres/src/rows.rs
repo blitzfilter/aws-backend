@@ -34,7 +34,7 @@ pub(crate) struct OAuthClientViewRow {
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct AuthorizationCodeRow {
-    pub(crate) code: Uuid,
+    pub(crate) code: String,
     pub(crate) client_id: Uuid,
     pub(crate) user_id: Uuid,
     pub(crate) redirect_uri: String,
@@ -46,7 +46,7 @@ pub(crate) struct AuthorizationCodeRow {
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct ThirdPartyExchangeCodeRow {
-    pub(crate) code: Uuid,
+    pub(crate) code: String,
     pub(crate) access_token_id: Uuid,
     pub(crate) access_token: String,
     pub(crate) access_token_expires: Option<OffsetDateTime>,

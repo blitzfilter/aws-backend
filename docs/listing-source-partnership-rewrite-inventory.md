@@ -21,8 +21,8 @@ Iteration 6 is complete. Aura-owned listing-source, partner, and onboarding cont
 - WooCommerce intake: `/api/v1/webhooks/woocommerce/{listingSourceId}`.
 - Applicant PartnershipApplication routes: `/api/v1/me/partnership-applications`.
 - Admin PartnershipApplication collection, detail, mark-in-review, and decision: `/api/v1/admin/partnership-applications` and `/api/v1/admin/partnership-applications/{partnershipApplicationId}` (with `/decision` for decisions).
-- Admin Partnership collection: `GET /api/v1/admin/partnerships`; admin-only, no-store, bounded cursor pages (default 21, maximum 100), fixed `created DESC, partnership UUID DESC` order, exact Party/member/ListingSource filters, and safe Party/count summaries.
-- Admin Partnership detail: `GET /api/v1/admin/partnerships/{partnershipId}`; admin-only, no-store, one joined read with UUID-ordered member and ListingSource references capped at 100 each, complete association counts, and canonical invalid-ID/not-found problems.
+- Admin Partnership collection: `GET /api/v1/admin/partnerships`; admin-only, no-store, bounded cursor pages (default 21, maximum 100), fixed `created DESC, Partnership ID DESC` order by backing UUID, exact Party/member/ListingSource filters, and safe Party/count summaries.
+- Admin Partnership detail: `GET /api/v1/admin/partnerships/{partnershipId}`; admin-only, no-store, one joined read with typed member and ListingSource references ordered by backing UUID capped at 100 each, complete association counts, and canonical invalid-ID/not-found problems.
 
 ## Final scan checklist
 

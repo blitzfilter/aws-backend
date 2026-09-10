@@ -18,4 +18,4 @@ uuid = { workspace = true, features = ["v4"] }
 
 [features]
 default = []
-test-data = ["fake"]
+test-data = ["fake", "domain-primitives/test-data"]

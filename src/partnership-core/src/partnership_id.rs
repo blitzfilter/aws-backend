@@ -1,30 +1,17 @@
-use uuid::Uuid;
+domain_primitives::object_id_newtype!(PartnershipId, "psh");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PartnershipId(Uuid);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl PartnershipId {
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-}
-impl Default for PartnershipId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl std::fmt::Display for PartnershipId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-impl From<Uuid> for PartnershipId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-impl From<PartnershipId> for Uuid {
-    fn from(value: PartnershipId) -> Self {
-        value.0
+    #[test]
+    fn should_use_psh_prefix_for_partnership_id()
+    -> Result<(), domain_primitives::object_id::ObjectIdError> {
+        let id = PartnershipId::try_from("psh_01h455vb4pex5vy7enb1p677vn")?;
+
+        assert_eq!("psh", PartnershipId::PREFIX);
+        assert_eq!("psh_01h455vb4pex5vy7enb1p677vn", id.to_string());
+        assert_eq!(7, id.as_uuid().get_version_num());
+        Ok(())
     }
 }

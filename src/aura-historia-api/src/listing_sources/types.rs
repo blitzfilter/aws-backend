@@ -1,5 +1,8 @@
-use crate::error::{ApiError, BAD_BODY_VALUE};
 use crate::patch_value::{PatchValue, clearable};
+use crate::{
+    error::{ApiError, BAD_BODY_VALUE},
+    wire::parse_body_object_id,
+};
 use application::patch_field::PatchField;
 use listing_source_core::{
     Domain, ListingIngestionMethod, ListingSourceId, ListingSourceName, PartnerizeCamref,
@@ -24,7 +27,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use url::Url;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,7 +50,7 @@ pub(crate) struct CreateListingSourceData {
 pub(crate) enum ListingSourceOperatorData {
     Existing {
         #[serde(rename = "partyId")]
-        party_id: Uuid,
+        party_id: String,
     },
     New {
         name: String,
@@ -64,9 +66,9 @@ impl TryFrom<ListingSourceOperatorData> for ListingSourceOperator {
 
     fn try_from(value: ListingSourceOperatorData) -> Result<Self, Self::Error> {
         match value {
-            ListingSourceOperatorData::Existing { party_id } => {
-                Ok(Self::Existing(PartyId::from(party_id)))
-            }
+            ListingSourceOperatorData::Existing { party_id } => Ok(Self::Existing(
+                parse_body_object_id(&party_id, "operator.partyId", "Party")?,
+            )),
             ListingSourceOperatorData::New { name, phone, email } => Ok(Self::New(NewParty {
                 id: PartyId::new(),
                 name: PartyName::try_from(name).map_err(|_| {
@@ -223,7 +225,7 @@ impl TryFrom<ReferralConfigurationData> for ReferralConfiguration {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ListingSourceData {
-    listing_source_id: String,
+    listing_source_id: ListingSourceId,
     listing_source_slug_id: String,
     name: String,
     operator: OperatorPartyData,
@@ -241,11 +243,11 @@ pub(crate) struct ListingSourceData {
 impl From<ListingSourceDetails> for ListingSourceData {
     fn from(value: ListingSourceDetails) -> Self {
         Self {
-            listing_source_id: value.listing_source_id.to_string(),
+            listing_source_id: value.listing_source_id,
             listing_source_slug_id: value.slug_id.to_string(),
             name: value.name.to_string(),
             operator: OperatorPartyData {
-                party_id: value.operator_party_id.to_string(),
+                party_id: value.operator_party_id,
                 party_slug_id: value.operator_slug_id.to_string(),
                 name: value.operator_name.to_string(),
             },
@@ -264,7 +266,7 @@ pub(crate) struct ListingSourceSearchCollectionData {
     pub(crate) items: Vec<ListingSourceSearchSummaryData>,
     pub(crate) size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) search_after: Option<String>,
+    pub(crate) search_after: Option<ListingSourceId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) total: Option<u64>,
 }
@@ -278,7 +280,7 @@ impl From<SearchListingSourcesResult> for ListingSourceSearchCollectionData {
                 .map(ListingSourceSearchSummaryData::from)
                 .collect(),
             size: value.cursor.size,
-            search_after: value.cursor.search_after.map(|id| id.to_string()),
+            search_after: value.cursor.search_after,
             total: value.total,
         }
     }
@@ -287,7 +289,7 @@ impl From<SearchListingSourcesResult> for ListingSourceSearchCollectionData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ListingSourceSearchSummaryData {
-    pub(crate) listing_source_id: String,
+    pub(crate) listing_source_id: ListingSourceId,
     pub(crate) listing_source_slug_id: String,
     pub(crate) name: String,
     operator: OperatorPartyData,
@@ -304,11 +306,11 @@ pub(crate) struct ListingSourceSearchSummaryData {
 impl From<ListingSourceSearchSummary> for ListingSourceSearchSummaryData {
     fn from(value: ListingSourceSearchSummary) -> Self {
         Self {
-            listing_source_id: value.listing_source_id.to_string(),
+            listing_source_id: value.listing_source_id,
             listing_source_slug_id: value.listing_source_slug_id.to_string(),
             name: value.name.to_string(),
             operator: OperatorPartyData {
-                party_id: value.operator.party_id.to_string(),
+                party_id: value.operator.party_id,
                 party_slug_id: value.operator.party_slug_id.to_string(),
                 name: value.operator.name.to_string(),
             },
@@ -336,7 +338,7 @@ pub(crate) struct ListingSourcePresentationData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OperatorPartyData {
-    party_id: String,
+    party_id: PartyId,
     party_slug_id: String,
     name: String,
 }
@@ -344,7 +346,7 @@ struct OperatorPartyData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ListingSourceReferenceData {
-    listing_source_id: String,
+    listing_source_id: ListingSourceId,
     listing_source_slug_id: String,
 }
 
@@ -355,7 +357,7 @@ impl From<(ListingSourceId, listing_source_core::ListingSourceSlugId)>
         (listing_source_id, slug_id): (ListingSourceId, listing_source_core::ListingSourceSlugId),
     ) -> Self {
         Self {
-            listing_source_id: listing_source_id.to_string(),
+            listing_source_id,
             listing_source_slug_id: slug_id.to_string(),
         }
     }
@@ -364,7 +366,7 @@ impl From<(ListingSourceId, listing_source_core::ListingSourceSlugId)>
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AdministeredListingSourceData {
-    listing_source_id: String,
+    listing_source_id: ListingSourceId,
     listing_source_slug_id: String,
     name: String,
 }
@@ -372,7 +374,7 @@ pub(crate) struct AdministeredListingSourceData {
 impl From<AdministeredListingSource> for AdministeredListingSourceData {
     fn from(value: AdministeredListingSource) -> Self {
         Self {
-            listing_source_id: value.listing_source_id.to_string(),
+            listing_source_id: value.listing_source_id,
             listing_source_slug_id: value.slug_id.to_string(),
             name: value.name.to_string(),
         }
@@ -469,7 +471,7 @@ mod tests {
         let source: CreateListingSourceData = serde_json::from_str(
             r#"{
                 "name":"Source",
-                "operator":{"type":"EXISTING","partyId":"550e8400-e29b-41d4-a716-446655440000"},
+                "operator":{"type":"EXISTING","partyId":"pty_01h455vb4pex5vy7enb1p677vn"},
                 "ingestionConfiguration":[{"type":"WEB_CRAWL","fallbackCurrency":"ZAR"},{"type":"PARTNER_API"}]
             }"#,
         )?;

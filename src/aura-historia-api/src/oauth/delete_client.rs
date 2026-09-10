@@ -1,7 +1,8 @@
 use super::no_store;
 use crate::auth::protected_context;
-use crate::error::{ApiError, INVALID_UUID};
+use crate::error::ApiError;
 use crate::state::OAuthState;
+use crate::wire::parse_path_object_id;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -18,15 +19,9 @@ pub async fn delete_client(
         Ok(value) => value,
         Err(response) => return no_store(*response),
     };
-    let client_id = match OAuthClientId::try_from(raw.as_str()) {
+    let client_id: OAuthClientId = match parse_path_object_id(&raw, "clientId", "OAuthClient") {
         Ok(value) => value,
-        Err(_) => {
-            return no_store(
-                ApiError::bad_request(INVALID_UUID)
-                    .with_path_field("clientId")
-                    .into_response(),
-            );
-        }
+        Err(error) => return no_store(error.into_response()),
     };
     match state.delete_client.execute(&context, &client_id).await {
         Ok(_) => no_store(StatusCode::NO_CONTENT.into_response()),

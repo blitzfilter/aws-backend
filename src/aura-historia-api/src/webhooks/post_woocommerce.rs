@@ -1,6 +1,7 @@
 use crate::auth::protected_context;
-use crate::error::{ApiError, BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE, BAD_HEADER_VALUE};
 use crate::state::WebhooksState;
+use crate::wire::parse_path_object_id;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -19,7 +20,11 @@ pub async fn post_woocommerce(
     Path(raw_listing_source_id): Path<String>,
     body: Bytes,
 ) -> Response {
-    let listing_source_id = match parse_listing_source_id(&raw_listing_source_id) {
+    let listing_source_id = match parse_path_object_id::<ListingSourceId>(
+        &raw_listing_source_id,
+        "listingSourceId",
+        "ListingSource",
+    ) {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
@@ -61,16 +66,6 @@ pub async fn post_woocommerce(
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => ApiError::from(error).into_response(),
     }
-}
-
-fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ApiError> {
-    uuid::Uuid::parse_str(value)
-        .map(ListingSourceId::from)
-        .map_err(|_| {
-            ApiError::bad_request(INVALID_UUID)
-                .with_path_field("listingSourceId")
-                .with_detail("Path parameter 'listingSourceId' must be a UUID.")
-        })
 }
 
 fn event_kind(headers: &HeaderMap) -> Result<WoocommerceProductEventKind, ApiError> {
@@ -126,8 +121,14 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
+    use crate::error::INVALID_OBJECT_ID;
+
+    fn parse_listing_source_id(value: &str) -> Result<ListingSourceId, ApiError> {
+        parse_path_object_id(value, "listingSourceId", "ListingSource")
+    }
+
     #[test]
-    fn should_parse_listing_source_id() {
+    fn should_parse_valid_listing_source_id() {
         let listing_source_id = ListingSourceId::new();
 
         let parsed = parse_listing_source_id(&listing_source_id.to_string());
@@ -136,10 +137,30 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_invalid_listing_source_id() {
-        let error = parse_listing_source_id("not-a-uuid");
+    fn should_reject_wrong_prefix_listing_source_id() {
+        let value = ListingSourceId::new()
+            .to_string()
+            .replacen("ls_", "usr_", 1);
 
-        assert!(matches!(error, Err(error) if error.code() == INVALID_UUID));
+        let error = parse_listing_source_id(&value);
+
+        assert!(matches!(error, Err(error) if error.code() == INVALID_OBJECT_ID));
+    }
+
+    #[test]
+    fn should_reject_bare_listing_source_id() {
+        let value = ListingSourceId::new().into_uuid().to_string();
+
+        let error = parse_listing_source_id(&value);
+
+        assert!(matches!(error, Err(error) if error.code() == INVALID_OBJECT_ID));
+    }
+
+    #[test]
+    fn should_reject_malformed_listing_source_id() {
+        let error = parse_listing_source_id("not-an-object-id");
+
+        assert!(matches!(error, Err(error) if error.code() == INVALID_OBJECT_ID));
     }
 
     #[test]

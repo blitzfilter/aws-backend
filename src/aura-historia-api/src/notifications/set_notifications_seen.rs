@@ -1,7 +1,8 @@
-use super::types::{UpdateNotificationsSeenData, notification_id, parse_json};
+use super::types::{UpdateNotificationsSeenData, parse_json};
 use crate::auth::protected_context;
 use crate::error::ApiError;
 use crate::state::NotificationsState;
+use crate::wire::parse_body_object_id;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -20,17 +21,22 @@ pub(super) async fn update_notifications(
         Ok(value) => value,
         Err(response) => return response,
     };
+    let notification_ids = match data
+        .notification_ids
+        .into_iter()
+        .map(|value| parse_body_object_id(&value, "notificationIds", "Notification"))
+        .collect()
+    {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
 
     match state
         .update_notifications_seen
         .execute(
             &context,
             UpdateNotificationsSeenCommand {
-                notification_ids: data
-                    .notification_ids
-                    .into_iter()
-                    .map(notification_id)
-                    .collect(),
+                notification_ids,
                 seen: data.seen,
             },
         )

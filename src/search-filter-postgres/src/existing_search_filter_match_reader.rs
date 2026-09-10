@@ -1,4 +1,3 @@
-use crate::mapping::user_search_filter_uuid;
 use application::error::box_error;
 use product_listing_core::product_listing_id::ProductListingId;
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
@@ -28,19 +27,24 @@ impl ExistingSearchFilterMatchReader for SqlxExistingSearchFilterMatchReader {
         if product_listing_ids.is_empty() {
             return Ok(HashSet::new());
         }
-        let search_filter_id = user_search_filter_uuid(search_filter_id).map_err(|source| {
-            ExistingSearchFilterMatchReadError::ReadFailed {
-                source: box_error(source),
-            }
-        })?;
+        let search_filter_id = search_filter_id.into_uuid();
         let ids = product_listing_ids
             .iter()
             .copied()
-            .map(uuid::Uuid::from)
+            .map(ProductListingId::into_uuid)
             .collect::<Vec<_>>();
         let existing = sqlx::query_scalar::<_, uuid::Uuid>("SELECT product_listing_id FROM search_filter_matches WHERE user_search_filter_id = $1 AND product_listing_id = ANY($2)")
             .bind(search_filter_id).bind(ids).fetch_all(&self.pool).await
             .map_err(|source| ExistingSearchFilterMatchReadError::ReadFailed { source: box_error(source) })?;
-        Ok(existing.into_iter().map(ProductListingId::from).collect())
+        existing
+            .into_iter()
+            .map(|id| {
+                ProductListingId::try_from(id).map_err(|source| {
+                    ExistingSearchFilterMatchReadError::ReadFailed {
+                        source: box_error(source),
+                    }
+                })
+            })
+            .collect()
     }
 }

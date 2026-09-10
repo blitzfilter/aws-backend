@@ -1,4 +1,4 @@
-use crate::CrawlerDomainId;
+use crate::{CrawlerDomainId, CrawlerReviewId};
 use listing_source_core::ListingSourceId;
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ pub enum UrlPatternServiceError {
     )]
     PendingReview {
         listing_source_id: ListingSourceId,
-        review_id: uuid::Uuid,
+        review_id: CrawlerReviewId,
     },
 }
 
@@ -272,7 +272,7 @@ mod tests {
     #[tokio::test]
     async fn should_not_reclassify_completed_no_pattern_domain_until_reset() {
         let listing_source_id = ListingSourceId::new();
-        let domain_id = CrawlerDomainId::from(uuid::Uuid::new_v4());
+        let domain_id = CrawlerDomainId::new();
         let mut repository = MockListingSourceUrlPatternRepository::new();
         repository
             .expect_find_pattern()

@@ -1,7 +1,5 @@
 use crate::{
-    auth::protected_context,
-    error::{ApiError, INVALID_UUID},
-    state::PartnershipsState,
+    auth::protected_context, error::ApiError, state::PartnershipsState, wire::parse_path_object_id,
 };
 use axum::{
     Json,
@@ -10,21 +8,23 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use listing_source_core::ListingSourceId;
 use partnership_core::partnership_id::PartnershipId;
 use partnership_service::use_cases::queries::get_admin_partnership::{
     AdminPartnershipDetailsView, GetAdminPartnershipRequest,
 };
+use party_core::party_id::PartyId;
 use serde::Serialize;
 use time::OffsetDateTime;
-use uuid::Uuid;
+use user_core::user_id::UserId;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AdminPartnershipDetailsData {
-    partnership_id: Uuid,
+    partnership_id: PartnershipId,
     party: AdminPartnershipPartyData,
-    member_user_ids: Vec<Uuid>,
-    listing_source_ids: Vec<Uuid>,
+    member_user_ids: Vec<UserId>,
+    listing_source_ids: Vec<ListingSourceId>,
     member_count: u64,
     listing_source_grant_count: u64,
     #[serde(with = "time::serde::rfc3339")]
@@ -36,7 +36,7 @@ struct AdminPartnershipDetailsData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AdminPartnershipPartyData {
-    party_id: Uuid,
+    party_id: PartyId,
     party_slug_id: String,
     name: String,
 }
@@ -44,14 +44,10 @@ struct AdminPartnershipPartyData {
 impl From<AdminPartnershipDetailsView> for AdminPartnershipDetailsData {
     fn from(value: AdminPartnershipDetailsView) -> Self {
         Self {
-            partnership_id: value.partnership_id.into(),
+            partnership_id: value.partnership_id,
             party: AdminPartnershipPartyData::from(value.party),
-            member_user_ids: value.member_user_ids.into_iter().map(Uuid::from).collect(),
-            listing_source_ids: value
-                .listing_source_ids
-                .into_iter()
-                .map(Uuid::from)
-                .collect(),
+            member_user_ids: value.member_user_ids,
+            listing_source_ids: value.listing_source_ids,
             member_count: value.member_count,
             listing_source_grant_count: value.listing_source_grant_count,
             created: value.created,
@@ -67,7 +63,7 @@ impl From<partnership_service::use_cases::queries::list_admin_partnerships::Part
         value: partnership_service::use_cases::queries::list_admin_partnerships::PartnershipPartySummary,
     ) -> Self {
         Self {
-            party_id: value.party_id.into(),
+            party_id: value.party_id,
             party_slug_id: value.party_slug_id.to_string(),
             name: value.name.to_string(),
         }
@@ -99,11 +95,7 @@ pub(super) async fn get_admin(
 }
 
 fn parse_partnership_id(raw: &str) -> Result<PartnershipId, ApiError> {
-    Uuid::parse_str(raw).map(PartnershipId::from).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_path_field("partnershipId")
-            .with_detail("Path parameter 'partnershipId' must be a UUID.")
-    })
+    parse_path_object_id(raw, "partnershipId", "Partnership")
 }
 
 fn no_store(mut response: Response) -> Response {
@@ -309,24 +301,24 @@ mod tests {
 
     fn details() -> AdminPartnershipDetailsView {
         AdminPartnershipDetailsView {
-            partnership_id: PartnershipId::from(Uuid::from_u128(
-                0x770e8400e29b41d4a716446655440000,
-            )),
+            partnership_id: PartnershipId::try_from("psh_01h455vb4pex5vy7enb1p677vn")
+                .unwrap_or_else(|error| panic!("valid Partnership ID: {error}")),
             party: partnership_service::use_cases::queries::list_admin_partnerships::PartnershipPartySummary {
-                party_id: party_core::party_id::PartyId::from(Uuid::from_u128(
-                    0x550e8400e29b41d4a716446655440000,
-                )),
+                party_id: PartyId::try_from("pty_01h455vb4pex5vy7enb1p677vn")
+                    .unwrap_or_else(|error| panic!("valid Party ID: {error}")),
                 party_slug_id: party_core::party_slug_id::PartySlugId::raw("safe-party")
                     .unwrap_or_else(|error| panic!("valid party slug: {error}")),
                 name: party_core::party_name::PartyName::try_from("Safe Party")
                     .unwrap_or_else(|error| panic!("valid party name: {error}")),
             },
-            member_user_ids: vec![UserId::from(Uuid::from_u128(
-                0x660e8400e29b41d4a716446655440000,
-            ))],
-            listing_source_ids: vec![ListingSourceId::from(Uuid::from_u128(
-                0x990e8400e29b41d4a716446655440000,
-            ))],
+            member_user_ids: vec![
+                UserId::try_from("usr_01h455vb4pex5vy7enb1p677vn")
+                    .unwrap_or_else(|error| panic!("valid User ID: {error}")),
+            ],
+            listing_source_ids: vec![
+                ListingSourceId::try_from("ls_01h455vb4pex5vy7enb1p677vn")
+                    .unwrap_or_else(|error| panic!("valid ListingSource ID: {error}")),
+            ],
             member_count: 2,
             listing_source_grant_count: 3,
             created: datetime!(2026-01-02 12:00 UTC),
@@ -351,7 +343,7 @@ mod tests {
             Arc::new(UnusedGrantPartnershipListingSourceUseCase),
             Arc::new(UnusedRevokePartnershipListingSourceUseCase),
             Arc::new(FakeAuthenticator {
-                user_id: UserId::from(Uuid::from_u128(0x880e8400e29b41d4a716446655440000)),
+                user_id: UserId::new(),
                 reject: reject_auth,
             }),
         );
@@ -369,19 +361,19 @@ mod tests {
     }
 
     #[test]
-    fn should_map_partnership_id_from_uuid_path_value() {
-        let id = parse_partnership_id("770e8400-e29b-41d4-a716-446655440000")
+    fn should_map_partnership_id_from_typed_path_value() {
+        let id = parse_partnership_id("psh_01h455vb4pex5vy7enb1p677vn")
             .unwrap_or_else(|error| panic!("failed to parse partnership ID: {error}"));
-        assert_eq!("770e8400-e29b-41d4-a716-446655440000", id.to_string());
+        assert_eq!("psh_01h455vb4pex5vy7enb1p677vn", id.to_string());
     }
 
     #[test]
-    fn should_report_invalid_partnership_id_as_path_uuid_problem() {
-        let error = parse_partnership_id("not-a-uuid")
+    fn should_report_invalid_partnership_object_id_as_path_problem() {
+        let error = parse_partnership_id("not-an-object-id")
             .err()
             .unwrap_or_else(|| panic!("invalid partnership ID was accepted"));
 
-        assert_eq!(INVALID_UUID, error.code());
+        assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
         let response = error.into_response();
         assert_eq!(StatusCode::BAD_REQUEST, response.status());
     }
@@ -392,7 +384,7 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let response = test_router(Ok(details()), Arc::clone(&requests), false)
             .oneshot(
-                Request::get("/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000")
+                Request::get("/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn")
                     .header("Authorization", "Bearer valid")
                     .body(Body::empty())?,
             )
@@ -408,14 +400,14 @@ mod tests {
         );
         assert_eq!(
             serde_json::json!({
-                "partnershipId": "770e8400-e29b-41d4-a716-446655440000",
+                "partnershipId": "psh_01h455vb4pex5vy7enb1p677vn",
                 "party": {
-                    "partyId": "550e8400-e29b-41d4-a716-446655440000",
+                    "partyId": "pty_01h455vb4pex5vy7enb1p677vn",
                     "partySlugId": "safe-party",
                     "name": "Safe Party"
                 },
-                "memberUserIds": ["660e8400-e29b-41d4-a716-446655440000"],
-                "listingSourceIds": ["990e8400-e29b-41d4-a716-446655440000"],
+                "memberUserIds": ["usr_01h455vb4pex5vy7enb1p677vn"],
+                "listingSourceIds": ["ls_01h455vb4pex5vy7enb1p677vn"],
                 "memberCount": 2,
                 "listingSourceGrantCount": 3,
                 "created": "2026-01-02T12:00:00Z",
@@ -436,7 +428,7 @@ mod tests {
             false,
         )
         .oneshot(
-            Request::get("/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000")
+            Request::get("/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn")
                 .header("Authorization", "Bearer valid")
                 .body(Body::empty())?,
         )
@@ -455,12 +447,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_reject_invalid_uuid_without_calling_service()
+    async fn should_reject_invalid_object_id_without_calling_service()
     -> Result<(), Box<dyn std::error::Error>> {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let response = test_router(Ok(details()), Arc::clone(&requests), false)
             .oneshot(
-                Request::get("/api/v1/admin/partnerships/not-a-uuid")
+                Request::get("/api/v1/admin/partnerships/not-an-object-id")
                     .header("Authorization", "Bearer valid")
                     .body(Body::empty())?,
             )
@@ -475,7 +467,7 @@ mod tests {
                 .and_then(|value| value.to_str().ok())
         );
         let body = json(response).await?;
-        assert_eq!("INVALID_UUID", body["error"]);
+        assert_eq!("INVALID_OBJECT_ID", body["error"]);
         assert_eq!(
             serde_json::json!({"field": "partnershipId", "type": "PATH"}),
             body["source"]
@@ -490,7 +482,7 @@ mod tests {
         for (authorization, reject_auth) in [(None, false), (Some("Bearer invalid"), true)] {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let mut builder =
-                Request::get("/api/v1/admin/partnerships/770e8400-e29b-41d4-a716-446655440000");
+                Request::get("/api/v1/admin/partnerships/psh_01h455vb4pex5vy7enb1p677vn");
             if let Some(authorization) = authorization {
                 builder = builder.header("Authorization", authorization);
             }

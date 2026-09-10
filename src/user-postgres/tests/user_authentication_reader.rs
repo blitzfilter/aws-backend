@@ -45,7 +45,7 @@ async fn should_read_user_suspension_from_postgres() {
 async fn set_suspension(pool: &sqlx::PgPool, user_id: user_core::user_id::UserId, suspended: bool) {
     if let Err(error) = sqlx::query("UPDATE users SET suspended = $1 WHERE user_id = $2")
         .bind(suspended)
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .execute(pool)
         .await
     {

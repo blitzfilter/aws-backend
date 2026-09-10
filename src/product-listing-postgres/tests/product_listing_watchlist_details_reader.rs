@@ -125,7 +125,7 @@ async fn should_retain_withdrawn_product_in_watchlist_collection() {
     sqlx::query(
         "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product.id()))
+    .bind(product.id().into_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("withdraw product fixture: {error}"));
@@ -162,7 +162,7 @@ async fn should_order_watchlisted_products_by_created_desc_then_product_listing_
 
     let product_listings = find_for_user(&pool, user_id, Language::En).await;
     let mut tied_ids = [first_tied.id(), second_tied.id()];
-    tied_ids.sort_by_key(|product_listing_id| uuid::Uuid::from(*product_listing_id));
+    tied_ids.sort_by_key(|product_listing_id| (*product_listing_id).into_uuid());
     let product_listing_ids = product_listings
         .into_iter()
         .map(|product| product.item.product_listing_id)
@@ -197,7 +197,7 @@ async fn should_page_watchlisted_products_by_created_desc_then_product_listing_i
     .await;
 
     let mut tied_ids = [first_tied.id(), second_tied.id(), third_tied.id()];
-    tied_ids.sort_by_key(|product_listing_id| uuid::Uuid::from(*product_listing_id));
+    tied_ids.sort_by_key(|product_listing_id| (*product_listing_id).into_uuid());
     let first_page = find_for_user_page(
         &pool,
         &ProductListingWatchlistDetailsRequest {
@@ -367,7 +367,7 @@ async fn insert_translation(
         WHERE product_listing_id = $1
         "#,
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .bind(language)
     .bind(title)
     .bind(description)
@@ -391,7 +391,7 @@ async fn seed_user(
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(format!("{user_id}@example.test"))
     .bind(show_unassessed_or_sensitive_content)
     .bind(tier)
@@ -419,8 +419,8 @@ async fn insert_watchlist(
         VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'ACTIVE' THEN $5 ELSE NULL END, CASE WHEN $3 THEN $5 ELSE NULL END, $5, $5)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .bind(notifications)
     .bind("ACTIVE")
     .bind(created)
@@ -468,7 +468,7 @@ fn sample_product(
 }
 
 async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId {
-    let party_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
     let listing_source_id = ListingSourceId::new();
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
         .bind(party_id)
@@ -478,7 +478,7 @@ async fn seed_listing_source(pool: &sqlx::PgPool, slug: &str) -> ListingSourceId
         .await
         .unwrap_or_else(|error| panic!("failed to seed listing-source party: {error}"));
     sqlx::query("INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)")
-        .bind(uuid::Uuid::from(listing_source_id))
+        .bind(listing_source_id.into_uuid())
         .bind(slug)
         .bind(slug)
         .bind(party_id)

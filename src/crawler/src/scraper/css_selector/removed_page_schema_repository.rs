@@ -80,7 +80,8 @@ fn row_to_schema(
     let removed_page_schemas: Vec<RemovedPageSchema> =
         serde_json::from_value(schema_json).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
     Ok(ListingSourceRemovedPageSchema {
-        listing_source_id: ListingSourceId::from(listing_source_id_uuid),
+        listing_source_id: ListingSourceId::try_from(listing_source_id_uuid)
+            .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
         removed_page_schemas,
         created,
         updated,

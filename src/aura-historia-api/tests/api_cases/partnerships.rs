@@ -1,16 +1,100 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 use api_support::{
-    assert_problem, json_response, seed_access_token_for, seed_approved_partnership_application,
-    seed_current_fx_snapshot, seed_listing_source, seed_listing_source_for_search,
-    seed_operator_partnership_listing_source_grant, seed_partnership_for_search,
-    seed_partnership_membership, seed_user,
+    assert_problem, json_response, seed_access_token_for,
+    seed_approved_partnership_application as seed_raw_approved_partnership_application,
+    seed_current_fx_snapshot, seed_listing_source as seed_raw_listing_source,
+    seed_listing_source_for_search as seed_raw_listing_source_for_search,
+    seed_operator_partnership_listing_source_grant as seed_raw_operator_partnership_listing_source_grant,
+    seed_partnership_for_search as seed_raw_partnership_for_search,
+    seed_partnership_membership as seed_raw_partnership_membership, seed_user,
 };
+use listing_source_core::ListingSourceId;
+use partnership_core::{
+    partnership_application_id::PartnershipApplicationId, partnership_id::PartnershipId,
+};
+use party_core::party_id::PartyId;
 use serde_json::{Value, json};
 
 use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
-use time::macros::datetime;
-use user_core::access_token::Scope;
+use time::{OffsetDateTime, macros::datetime};
+use user_core::{access_token::Scope, user_id::UserId};
 use uuid::Uuid;
+
+async fn seed_listing_source() -> ListingSourceId {
+    ListingSourceId::try_from(seed_raw_listing_source().await)
+        .unwrap_or_else(|error| panic!("central ListingSource fixture must use UUIDv7: {error}"))
+}
+
+async fn seed_listing_source_for_search(
+    name: &str,
+    operator_name: &str,
+    ingestion_method: &str,
+    referral_configuration: Option<Value>,
+) -> (ListingSourceId, PartyId, String) {
+    let (listing_source_id, party_id, slug_id) = seed_raw_listing_source_for_search(
+        name,
+        operator_name,
+        ingestion_method,
+        referral_configuration,
+    )
+    .await;
+    (
+        ListingSourceId::try_from(listing_source_id).unwrap_or_else(|error| {
+            panic!("central ListingSource search fixture must use UUIDv7: {error}")
+        }),
+        PartyId::try_from(party_id).unwrap_or_else(|error| {
+            panic!("central Party search fixture must use UUIDv7: {error}")
+        }),
+        slug_id,
+    )
+}
+
+async fn seed_partnership_for_search(
+    party_name: &str,
+    created: OffsetDateTime,
+    updated: OffsetDateTime,
+    member_user_ids: &[UserId],
+    listing_source_ids: &[ListingSourceId],
+) -> (PartnershipId, PartyId) {
+    let raw_listing_source_ids = listing_source_ids
+        .iter()
+        .map(|id| id.into_uuid())
+        .collect::<Vec<_>>();
+    seed_raw_partnership_for_search(
+        party_name,
+        created,
+        updated,
+        member_user_ids,
+        &raw_listing_source_ids,
+    )
+    .await
+}
+
+async fn seed_approved_partnership_application(
+    applicant_user_id: UserId,
+    created: OffsetDateTime,
+    updated: OffsetDateTime,
+) -> (PartnershipApplicationId, PartnershipId, ListingSourceId) {
+    let (application_id, partnership_id, listing_source_id) =
+        seed_raw_approved_partnership_application(applicant_user_id, created, updated).await;
+    (
+        application_id,
+        PartnershipId::try_from(partnership_id).unwrap_or_else(|error| {
+            panic!("central Partnership approval fixture must use UUIDv7: {error}")
+        }),
+        ListingSourceId::try_from(listing_source_id).unwrap_or_else(|error| {
+            panic!("central ListingSource approval fixture must use UUIDv7: {error}")
+        }),
+    )
+}
+
+async fn seed_partnership_membership(user_id: UserId, listing_source_id: ListingSourceId) {
+    seed_raw_partnership_membership(user_id, listing_source_id.into_uuid()).await;
+}
+
+async fn seed_operator_partnership_listing_source_grant(listing_source_id: ListingSourceId) {
+    seed_raw_operator_partnership_listing_source_grant(listing_source_id.into_uuid()).await;
+}
 
 async fn get_partnerships(
     token: &str,
@@ -134,7 +218,7 @@ fn assert_no_store(cache_control: Option<String>) {
     assert_eq!(Some("no-store".to_owned()), cache_control);
 }
 
-fn item_ids(body: &Value) -> Vec<Uuid> {
+fn item_ids(body: &Value) -> Vec<PartnershipId> {
     body["items"]
         .as_array()
         .unwrap_or_else(|| panic!("partnership response did not contain an items array"))
@@ -143,8 +227,8 @@ fn item_ids(body: &Value) -> Vec<Uuid> {
             item["partnershipId"]
                 .as_str()
                 .unwrap_or_else(|| panic!("partnership item did not contain partnershipId"))
-                .parse::<Uuid>()
-                .unwrap_or_else(|error| panic!("partnership ID was not a UUID: {error}"))
+                .parse::<PartnershipId>()
+                .unwrap_or_else(|error| panic!("partnership ID was not canonical: {error}"))
         })
         .collect()
 }
@@ -191,7 +275,7 @@ async fn should_return_safe_admin_partnership_summary_without_cache() {
                 "partnershipId": partnership_id.to_string(),
                 "party": {
                     "partyId": party_id.to_string(),
-                    "partySlugId": format!("api-partnership-party-{party_id}"),
+                    "partySlugId": format!("api-partnership-party-{}", party_id.as_uuid()),
                     "name": "Safe Admin Partnership"
                 },
                 "memberCount": 2,
@@ -202,6 +286,16 @@ async fn should_return_safe_admin_partnership_summary_without_cache() {
             "size": 1
         }),
         body
+    );
+    assert!(
+        body["items"][0]["partnershipId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("psh_"))
+    );
+    assert!(
+        body["items"][0]["party"]["partyId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pty_"))
     );
     assert!(body.to_string().find("secret").is_none());
     assert!(body.to_string().find("token").is_none());
@@ -254,7 +348,7 @@ async fn should_filter_admin_partnerships_by_party_member_and_listing_source() {
         assert_eq!(reqwest::StatusCode::OK, status, "filter {field}");
         assert_no_store(cache_control);
         assert_eq!(
-            vec![Uuid::from(matching_partnership)],
+            vec![matching_partnership],
             item_ids(&body),
             "filter {field}"
         );
@@ -274,13 +368,13 @@ async fn should_filter_admin_partnerships_by_party_member_and_listing_source() {
     .await;
     assert_eq!(reqwest::StatusCode::OK, status);
     assert_no_store(cache_control);
-    assert_eq!(vec![Uuid::from(matching_partnership)], item_ids(&body));
-    assert!(!item_ids(&body).contains(&Uuid::from(other_partnership)));
+    assert_eq!(vec![matching_partnership], item_ids(&body));
+    assert!(!item_ids(&body).contains(&other_partnership));
     assert_ne!(matching_party, other_party);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_follow_admin_partnership_cursor_with_uuid_tie_breaking() {
+async fn should_follow_admin_partnership_cursor_with_typed_id_tie_breaking() {
     let timestamp = datetime!(2026-07-20 12:00 UTC);
     let first =
         seed_partnership_for_search("Cursor Partnership One", timestamp, timestamp, &[], &[]).await;
@@ -289,11 +383,7 @@ async fn should_follow_admin_partnership_cursor_with_uuid_tie_breaking() {
     let third =
         seed_partnership_for_search("Cursor Partnership Three", timestamp, timestamp, &[], &[])
             .await;
-    let mut expected = [
-        Uuid::from(first.0),
-        Uuid::from(second.0),
-        Uuid::from(third.0),
-    ];
+    let mut expected = [first.0, second.0, third.0];
     expected.sort_by(|left, right| right.cmp(left));
 
     let admin_id = seed_user("ADMIN").await;
@@ -306,6 +396,11 @@ async fn should_follow_admin_partnership_cursor_with_uuid_tie_breaking() {
     assert_no_store(first_cache_control);
     assert_eq!(json!(2), first_body["size"]);
     assert_eq!(expected[..2], item_ids(&first_body)[..]);
+    assert!(
+        first_body["searchAfter"][1]
+            .as_str()
+            .is_some_and(|value| value.starts_with("psh_"))
+    );
     let cursor = serde_json::to_string(&first_body["searchAfter"])
         .unwrap_or_else(|error| panic!("failed to serialize partnership cursor: {error}"));
 
@@ -323,7 +418,7 @@ async fn should_return_empty_admin_partnership_collection_with_default_size() {
     let admin_id = seed_user("ADMIN").await;
     let token =
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
-    let missing_party = Uuid::new_v4().to_string();
+    let missing_party = PartyId::new().to_string();
 
     let (status, body, cache_control) =
         get_partnerships(&token, &[("partyId", &missing_party)]).await;
@@ -340,22 +435,74 @@ async fn should_reject_invalid_admin_partnership_query_values_with_field_errors(
     let admin_id = seed_user("ADMIN").await;
     let token =
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
-    let invalid_queries = [
-        ("partyId", "not-a-uuid"),
-        ("memberUserId", "not-a-uuid"),
-        ("listingSourceId", "not-a-uuid"),
-        ("size", "not-a-number"),
-        ("searchAfter", "not-json"),
-        ("searchAfter", r#"{"timestamp":"2026-07-20T12:00:00Z"}"#),
+    let partnership_id = PartnershipId::new();
+    let party_id = PartyId::new();
+    let user_id = UserId::new();
+    let listing_source_id = ListingSourceId::new();
+
+    for (field, values) in [
+        (
+            "partyId",
+            [
+                UserId::new().to_string(),
+                party_id.as_uuid().to_string(),
+                "pty_not-a-typeid".to_owned(),
+            ],
+        ),
+        (
+            "memberUserId",
+            [
+                PartyId::new().to_string(),
+                user_id.as_uuid().to_string(),
+                "usr_not-a-typeid".to_owned(),
+            ],
+        ),
+        (
+            "listingSourceId",
+            [
+                PartyId::new().to_string(),
+                listing_source_id.as_uuid().to_string(),
+                "ls_not-a-typeid".to_owned(),
+            ],
+        ),
         (
             "searchAfter",
-            r#"["not-a-timestamp","550e8400-e29b-41d4-a716-446655440000"]"#,
+            [
+                json!(["2026-07-20T12:00:00Z", PartyId::new()]).to_string(),
+                json!(["2026-07-20T12:00:00Z", partnership_id.as_uuid().to_string()]).to_string(),
+                json!(["2026-07-20T12:00:00Z", "psh_not-a-typeid"]).to_string(),
+            ],
         ),
-        ("searchAfter", r#"["2026-07-20T12:00:00Z","not-a-uuid"]"#),
+    ] {
+        for value in values {
+            let (status, body, cache_control) = get_partnerships(&token, &[(field, &value)]).await;
+            assert_no_store(cache_control);
+            assert_problem(
+                status,
+                &body,
+                reqwest::StatusCode::BAD_REQUEST,
+                "INVALID_OBJECT_ID",
+            );
+            assert_eq!(json!({"field": field, "type": "QUERY"}), body["source"]);
+        }
+    }
+
+    let typed_partnership_id = PartnershipId::new();
+    let invalid_queries = [
+        ("size", "not-a-number".to_owned()),
+        ("searchAfter", "not-json".to_owned()),
+        (
+            "searchAfter",
+            json!({"timestamp": "2026-07-20T12:00:00Z"}).to_string(),
+        ),
+        (
+            "searchAfter",
+            json!(["not-a-timestamp", typed_partnership_id]).to_string(),
+        ),
     ];
 
     for (field, value) in invalid_queries {
-        let (status, body, cache_control) = get_partnerships(&token, &[(field, value)]).await;
+        let (status, body, cache_control) = get_partnerships(&token, &[(field, &value)]).await;
         assert_no_store(cache_control);
         assert_problem(
             status,
@@ -408,7 +555,7 @@ async fn should_return_bounded_admin_partnership_detail_with_current_references(
     let admin_id = seed_user("ADMIN").await;
     let token =
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
-    let mut expected_member_ids = [Uuid::from(member_one), Uuid::from(member_two)];
+    let mut expected_member_ids = [member_one, member_two];
     expected_member_ids.sort();
     let mut expected_listing_source_ids = [listing_source_one, listing_source_two];
     expected_listing_source_ids.sort();
@@ -423,7 +570,7 @@ async fn should_return_bounded_admin_partnership_detail_with_current_references(
             "partnershipId": partnership_id.to_string(),
             "party": {
                 "partyId": party_id.to_string(),
-                "partySlugId": format!("api-partnership-party-{party_id}"),
+                "partySlugId": format!("api-partnership-party-{}", party_id.as_uuid()),
                 "name": "Admin Partnership Detail"
             },
             "memberUserIds": expected_member_ids,
@@ -435,6 +582,28 @@ async fn should_return_bounded_admin_partnership_detail_with_current_references(
         }),
         body
     );
+    assert!(
+        body["partnershipId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("psh_"))
+    );
+    assert!(
+        body["party"]["partyId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pty_"))
+    );
+    assert!(body["memberUserIds"].as_array().is_some_and(|values| {
+        values.iter().all(|value| {
+            value
+                .as_str()
+                .is_some_and(|value| value.starts_with("usr_"))
+        })
+    }));
+    assert!(body["listingSourceIds"].as_array().is_some_and(|values| {
+        values
+            .iter()
+            .all(|value| value.as_str().is_some_and(|value| value.starts_with("ls_")))
+    }));
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -464,24 +633,85 @@ async fn should_return_empty_admin_partnership_detail_associations() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_admin_partnership_detail_id() {
+async fn should_reject_noncanonical_admin_partnership_path_ids() {
     let admin_id = seed_user("ADMIN").await;
     let token =
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
+    let partnership_id = PartnershipId::new();
+    let user_id = UserId::new();
+    let listing_source_id = ListingSourceId::new();
 
-    let (status, body, cache_control) = get_partnership_detail(&token, "not-a-uuid").await;
+    for invalid_id in [
+        PartyId::new().to_string(),
+        partnership_id.as_uuid().to_string(),
+        "psh_not-a-typeid".to_owned(),
+    ] {
+        let (status, body, cache_control) = get_partnership_detail(&token, &invalid_id).await;
 
-    assert_no_store(cache_control);
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
-    assert_eq!(
-        json!({"field": "partnershipId", "type": "PATH"}),
-        body["source"]
-    );
+        assert_no_store(cache_control);
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "partnershipId", "type": "PATH"}),
+            body["source"]
+        );
+    }
+
+    for invalid_id in [
+        PartyId::new().to_string(),
+        user_id.as_uuid().to_string(),
+        "usr_not-a-typeid".to_owned(),
+    ] {
+        let response =
+            put_partnership_member(&token, &partnership_id.to_string(), &invalid_id).await;
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        assert_no_store(cache_control);
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(json!({"field": "userId", "type": "PATH"}), body["source"]);
+    }
+
+    for invalid_id in [
+        PartyId::new().to_string(),
+        listing_source_id.as_uuid().to_string(),
+        "ls_not-a-typeid".to_owned(),
+    ] {
+        let response =
+            put_partnership_listing_source_grant(&token, &partnership_id.to_string(), &invalid_id)
+                .await;
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        assert_no_store(cache_control);
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "listingSourceId", "type": "PATH"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -491,7 +721,7 @@ async fn should_return_not_found_for_missing_admin_partnership_detail() {
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
 
     let (status, body, cache_control) =
-        get_partnership_detail(&token, &Uuid::new_v4().to_string()).await;
+        get_partnership_detail(&token, &PartnershipId::new().to_string()).await;
 
     assert_no_store(cache_control);
     assert_problem(
@@ -509,7 +739,7 @@ async fn should_reject_non_admin_admin_partnership_detail_access() {
         String::from(seed_access_token_for(user_id, std::collections::HashSet::new()).await);
 
     let (status, body, cache_control) =
-        get_partnership_detail(&token, &Uuid::new_v4().to_string()).await;
+        get_partnership_detail(&token, &PartnershipId::new().to_string()).await;
 
     assert_no_store(cache_control);
     assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
@@ -647,8 +877,8 @@ async fn should_revoke_admin_partnership_membership_idempotently_and_preserve_re
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_members WHERE user_id = $1 AND partnership_id = $2",
         )
-        .bind(Uuid::from(target_user_id))
-        .bind(partnership_id)
+        .bind(target_user_id.as_uuid())
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to count revoked membership: {error}"))
@@ -656,7 +886,7 @@ async fn should_revoke_admin_partnership_membership_idempotently_and_preserve_re
     assert_eq!(
         1,
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE user_id = $1")
-            .bind(Uuid::from(target_user_id))
+            .bind(target_user_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap_or_else(|error| panic!("failed to verify preserved user: {error}"))
@@ -666,7 +896,7 @@ async fn should_revoke_admin_partnership_membership_idempotently_and_preserve_re
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnerships WHERE partnership_id = $1",
         )
-        .bind(partnership_id)
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to verify preserved Partnership: {error}"))
@@ -676,7 +906,7 @@ async fn should_revoke_admin_partnership_membership_idempotently_and_preserve_re
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM listing_sources WHERE listing_source_id = $1",
         )
-        .bind(listing_source_id)
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to verify preserved ListingSource: {error}"))
@@ -686,7 +916,7 @@ async fn should_revoke_admin_partnership_membership_idempotently_and_preserve_re
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_applications WHERE partnership_application_id = $1",
         )
-        .bind(Uuid::from(application_id))
+        .bind(application_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!(
@@ -858,8 +1088,8 @@ async fn should_revoke_admin_partnership_listing_source_idempotently_and_preserv
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE partnership_id = $1 AND listing_source_id = $2",
         )
-        .bind(partnership_id)
-        .bind(listing_source_id)
+        .bind(partnership_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to count revoked ListingSource grant: {error}"))
@@ -869,8 +1099,8 @@ async fn should_revoke_admin_partnership_listing_source_idempotently_and_preserv
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_members WHERE user_id = $1 AND partnership_id = $2",
         )
-        .bind(Uuid::from(partner_id))
-        .bind(partnership_id)
+        .bind(partner_id.as_uuid())
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to verify preserved Partnership member: {error}"))
@@ -878,7 +1108,7 @@ async fn should_revoke_admin_partnership_listing_source_idempotently_and_preserv
     assert_eq!(
         1,
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE user_id = $1")
-            .bind(Uuid::from(partner_id))
+            .bind(partner_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap_or_else(|error| panic!("failed to verify preserved user: {error}"))
@@ -888,7 +1118,7 @@ async fn should_revoke_admin_partnership_listing_source_idempotently_and_preserv
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnerships WHERE partnership_id = $1",
         )
-        .bind(partnership_id)
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to verify preserved Partnership: {error}"))
@@ -898,7 +1128,7 @@ async fn should_revoke_admin_partnership_listing_source_idempotently_and_preserv
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM listing_sources WHERE listing_source_id = $1",
         )
-        .bind(listing_source_id)
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to verify preserved ListingSource: {error}"))
@@ -908,7 +1138,7 @@ async fn should_revoke_admin_partnership_listing_source_idempotently_and_preserv
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_applications WHERE partnership_application_id = $1",
         )
-        .bind(Uuid::from(application_id))
+        .bind(application_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!(
@@ -953,8 +1183,8 @@ async fn should_reject_admin_listing_source_grant_for_a_different_party() {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE partnership_id = $1 AND listing_source_id = $2",
         )
-        .bind(Uuid::from(partnership_id))
-        .bind(listing_source_id)
+        .bind(partnership_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to count mismatched grant: {error}"))
@@ -979,7 +1209,7 @@ async fn should_return_not_found_for_missing_admin_listing_source_grant_targets(
     let response = put_partnership_listing_source_grant(
         &token,
         &partnership_id.to_string(),
-        &Uuid::new_v4().to_string(),
+        &ListingSourceId::new().to_string(),
     )
     .await;
     let cache_control = response
@@ -998,7 +1228,7 @@ async fn should_return_not_found_for_missing_admin_listing_source_grant_targets(
 
     let response = put_partnership_listing_source_grant(
         &token,
-        &Uuid::new_v4().to_string(),
+        &PartnershipId::new().to_string(),
         &listing_source_id.to_string(),
     )
     .await;
@@ -1065,7 +1295,7 @@ async fn should_return_not_found_for_missing_admin_listing_source_grant_revoke_t
     let response = delete_partnership_listing_source_grant(
         &token,
         &partnership_id.to_string(),
-        &Uuid::new_v4().to_string(),
+        &ListingSourceId::new().to_string(),
     )
     .await;
     let cache_control = response
@@ -1084,7 +1314,7 @@ async fn should_return_not_found_for_missing_admin_listing_source_grant_revoke_t
 
     let response = delete_partnership_listing_source_grant(
         &token,
-        &Uuid::new_v4().to_string(),
+        &PartnershipId::new().to_string(),
         &listing_source_id.to_string(),
     )
     .await;
@@ -1138,8 +1368,8 @@ async fn should_reject_non_admin_partnership_listing_source_grant_revoke() {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE partnership_id = $1 AND listing_source_id = $2",
         )
-        .bind(partnership_id)
-        .bind(listing_source_id)
+        .bind(partnership_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to verify grant after rejected revoke: {error}"))
@@ -1163,7 +1393,7 @@ async fn should_return_user_not_found_when_grant_target_is_missing() {
     let response = put_partnership_member(
         &token,
         &partnership_id.to_string(),
-        &Uuid::new_v4().to_string(),
+        &UserId::new().to_string(),
     )
     .await;
     let cache_control = response
@@ -1191,7 +1421,7 @@ async fn should_return_partnership_not_found_when_grant_partnership_is_missing()
 
     let response = put_partnership_member(
         &token,
-        &Uuid::new_v4().to_string(),
+        &PartnershipId::new().to_string(),
         &target_user_id.to_string(),
     )
     .await;
@@ -1260,7 +1490,7 @@ async fn should_return_user_not_found_when_revoke_target_is_missing() {
     let response = delete_partnership_member(
         &token,
         &partnership_id.to_string(),
-        &Uuid::new_v4().to_string(),
+        &UserId::new().to_string(),
     )
     .await;
     let cache_control = response
@@ -1288,7 +1518,7 @@ async fn should_return_partnership_not_found_when_revoke_partnership_is_missing(
 
     let response = delete_partnership_member(
         &token,
-        &Uuid::new_v4().to_string(),
+        &PartnershipId::new().to_string(),
         &target_user_id.to_string(),
     )
     .await;
@@ -1431,7 +1661,7 @@ async fn should_dissolve_partnership_idempotently_revoke_access_and_preserve_his
         sqlx::query_scalar::<_, String>(
             "SELECT business_state FROM partnerships WHERE partnership_id = $1",
         )
-        .bind(partnership_id)
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to read dissolved Partnership: {error}"))
@@ -1441,7 +1671,7 @@ async fn should_dissolve_partnership_idempotently_revoke_access_and_preserve_his
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_members WHERE partnership_id = $1",
         )
-        .bind(partnership_id)
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to count dissolved members: {error}"))
@@ -1451,17 +1681,17 @@ async fn should_dissolve_partnership_idempotently_revoke_access_and_preserve_his
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE partnership_id = $1",
         )
-        .bind(partnership_id)
+        .bind(partnership_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to count dissolved grants: {error}"))
     );
     assert_eq!(
-        Some(partnership_id),
+        Some(*partnership_id.as_uuid()),
         sqlx::query_scalar::<_, Option<Uuid>>(
             "SELECT approved_partnership_id FROM partnership_applications WHERE partnership_application_id = $1",
         )
-        .bind(Uuid::from(application_id))
+        .bind(application_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap_or_else(|error| panic!("failed to read historical PartnershipApplication: {error}"))
@@ -1477,16 +1707,20 @@ async fn should_reject_invalid_missing_and_non_admin_partnership_dissolution() {
     let user_token =
         String::from(seed_access_token_for(user_id, std::collections::HashSet::new()).await);
 
-    let response = delete_partnership(&admin_token, "not-a-uuid").await;
+    let response = delete_partnership(&admin_token, "psh_not-a-typeid").await;
     let (status, body) = json_response(response).await;
     assert_problem(
         status,
         &body,
         reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
+        "INVALID_OBJECT_ID",
+    );
+    assert_eq!(
+        json!({"field": "partnershipId", "type": "PATH"}),
+        body["source"]
     );
 
-    let response = delete_partnership(&admin_token, &Uuid::new_v4().to_string()).await;
+    let response = delete_partnership(&admin_token, &PartnershipId::new().to_string()).await;
     let (status, body) = json_response(response).await;
     assert_problem(
         status,

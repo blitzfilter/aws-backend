@@ -1,11 +1,46 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
-    assert_problem, json_response, seed_access_token_for, seed_listing_source,
-    seed_listing_source_for_search, seed_party, seed_product, seed_user,
+    assert_problem, json_response, seed_access_token_for,
+    seed_listing_source as seed_raw_listing_source,
+    seed_listing_source_for_search as seed_raw_listing_source_for_search, seed_party, seed_product,
+    seed_user,
 };
+use listing_source_core::ListingSourceId;
+use party_core::party_id::PartyId;
+use product_listing_core::product_listing_id::ProductListingId;
 use serde_json::json;
 use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
+use user_core::user_id::UserId;
+
+async fn seed_listing_source() -> ListingSourceId {
+    ListingSourceId::try_from(seed_raw_listing_source().await)
+        .unwrap_or_else(|error| panic!("central ListingSource fixture must use UUIDv7: {error}"))
+}
+
+async fn seed_listing_source_for_search(
+    name: &str,
+    operator_name: &str,
+    ingestion_method: &str,
+    referral_configuration: Option<serde_json::Value>,
+) -> (ListingSourceId, PartyId, String) {
+    let (listing_source_id, party_id, slug_id) = seed_raw_listing_source_for_search(
+        name,
+        operator_name,
+        ingestion_method,
+        referral_configuration,
+    )
+    .await;
+    (
+        ListingSourceId::try_from(listing_source_id).unwrap_or_else(|error| {
+            panic!("central ListingSource search fixture must use UUIDv7: {error}")
+        }),
+        PartyId::try_from(party_id).unwrap_or_else(|error| {
+            panic!("central Party search fixture must use UUIDv7: {error}")
+        }),
+        slug_id,
+    )
+}
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_delete_unused_listing_source_and_reject_a_repeat() {
@@ -22,7 +57,7 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
         "INSERT INTO partnership_listing_source_grants (partnership_id, listing_source_id) VALUES ($1, $2)",
     )
     .bind(partnership_id)
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to seed listing-source grant: {error}"));
@@ -38,7 +73,7 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     let product_count_before_delete = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM product_listings WHERE listing_source_id = $1",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("count eligible source ProductListings: {error}"));
@@ -69,28 +104,28 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     let source_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM listing_sources WHERE listing_source_id = $1",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to count deleted listing source: {error}"));
     let method_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM listing_source_ingestion_methods WHERE listing_source_id = $1",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to count deleted ingestion methods: {error}"));
     let product_count_after_delete = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM product_listings WHERE listing_source_id = $1",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("count deleted source ProductListings: {error}"));
     let grant_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM partnership_listing_source_grants WHERE listing_source_id = $1",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to count deleted grants: {error}"));
@@ -101,7 +136,7 @@ async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     let unrelated_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
     )
-    .bind(unrelated_listing_source_id)
+    .bind(unrelated_listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to check unrelated source: {error}"));
@@ -141,13 +176,16 @@ async fn should_preserve_live_and_withdrawn_product_listing_source_dependencies_
  {
     let product_listing_id = seed_product().await;
     let pool = get_postgres_client().await;
-    let listing_source_id = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT listing_source_id FROM product_listings WHERE product_listing_id = $1",
+    let listing_source_id = ListingSourceId::try_from(
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT listing_source_id FROM product_listings WHERE product_listing_id = $1",
+        )
+        .bind(product_listing_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("failed to find product listing source: {error}")),
     )
-    .bind(uuid::Uuid::from(product_listing_id))
-    .fetch_one(&pool)
-    .await
-    .unwrap_or_else(|error| panic!("failed to find product listing source: {error}"));
+    .unwrap_or_else(|error| panic!("ProductListing fixture must reference UUIDv7: {error}"));
     let admin_id = seed_user("ADMIN").await;
     let token =
         String::from(seed_access_token_for(admin_id, std::collections::HashSet::new()).await);
@@ -168,7 +206,7 @@ async fn should_preserve_live_and_withdrawn_product_listing_source_dependencies_
     sqlx::query(
         "UPDATE product_listings SET lifecycle = 'WITHDRAWN', availability = NULL, projection_version = projection_version + 1 WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.as_uuid())
     .execute(&pool)
     .await
     .unwrap_or_else(|error| panic!("withdraw protected product listing: {error}"));
@@ -186,14 +224,14 @@ async fn should_preserve_live_and_withdrawn_product_listing_source_dependencies_
     let source_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM listing_sources WHERE listing_source_id = $1)",
     )
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to check blocked source: {error}"));
     let product = sqlx::query_as::<_, (String, Option<String>, i64)>(
         "SELECT lifecycle, availability, projection_version FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.as_uuid())
     .fetch_one(&pool)
     .await
     .unwrap_or_else(|error| panic!("failed to check protected product: {error}"));
@@ -250,7 +288,7 @@ async fn should_return_safe_listing_source_summary_for_admin_with_no_store_cache
         body["items"][0]["operator"]["partyId"]
     );
     assert_eq!(
-        json!(format!("api-search-party-{operator_party_id}")),
+        json!(format!("api-search-party-{}", operator_party_id.as_uuid())),
         body["items"][0]["operator"]["partySlugId"]
     );
     assert_eq!(
@@ -478,10 +516,7 @@ async fn should_reject_invalid_listing_source_search_query_values() {
 
     for (field, value) in [
         ("size", "not-a-number"),
-        ("searchAfter", "not-a-uuid"),
-        ("listingSourceId", "not-a-uuid"),
         ("listingSourceSlugId", "Not-A-Slug"),
-        ("operatorPartyId", "not-a-uuid"),
         ("ingestionMethod", "UNKNOWN"),
     ] {
         let response = client
@@ -498,6 +533,55 @@ async fn should_reject_invalid_listing_source_search_query_values() {
             reqwest::StatusCode::BAD_REQUEST,
             "BAD_QUERY_PARAMETER_VALUE",
         );
+    }
+
+    let listing_source_id = ListingSourceId::new();
+    let party_id = PartyId::new();
+    for (field, values) in [
+        (
+            "searchAfter",
+            [
+                ProductListingId::new().to_string(),
+                listing_source_id.as_uuid().to_string(),
+                "ls_not-a-typeid".to_owned(),
+            ],
+        ),
+        (
+            "listingSourceId",
+            [
+                ProductListingId::new().to_string(),
+                listing_source_id.as_uuid().to_string(),
+                "ls_not-a-typeid".to_owned(),
+            ],
+        ),
+        (
+            "operatorPartyId",
+            [
+                UserId::new().to_string(),
+                party_id.as_uuid().to_string(),
+                "pty_not-a-typeid".to_owned(),
+            ],
+        ),
+    ] {
+        for value in values {
+            let response = client
+                .get(&url)
+                .bearer_auth(token.clone())
+                .query(&[(field, value)])
+                .send()
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("failed to validate listing-source {field}: {error}")
+                });
+            let (status, body) = json_response(response).await;
+            assert_problem(
+                status,
+                &body,
+                reqwest::StatusCode::BAD_REQUEST,
+                "INVALID_OBJECT_ID",
+            );
+            assert_eq!(json!({"field": field, "type": "QUERY"}), body["source"]);
+        }
     }
 }
 
@@ -558,7 +642,7 @@ async fn should_return_listing_source_detail_for_admin_without_provider_secrets(
         body["operator"]["partyId"]
     );
     assert_eq!(
-        json!(format!("api-search-party-{operator_party_id}")),
+        json!(format!("api-search-party-{}", operator_party_id.as_uuid())),
         body["operator"]["partySlugId"]
     );
     assert_eq!(json!("Detailed Listing Operator"), body["operator"]["name"]);
@@ -577,31 +661,38 @@ async fn should_return_listing_source_detail_for_admin_without_provider_secrets(
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_invalid_listing_source_detail_id() {
+async fn should_reject_noncanonical_listing_source_detail_ids() {
     let admin_id = seed_user("ADMIN").await;
     let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let listing_source_id = ListingSourceId::new();
 
-    let response = reqwest::Client::new()
-        .get(format!(
-            "{}/api/v1/admin/listing-sources/not-a-uuid",
-            AURA_API.base_url()
-        ))
-        .bearer_auth(String::from(token))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to validate listing-source detail ID: {error}"));
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        ProductListingId::new().to_string(),
+        listing_source_id.as_uuid().to_string(),
+        "ls_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "{}/api/v1/admin/listing-sources/{invalid_id}",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate listing-source detail ID: {error}"));
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
-    assert_eq!(
-        json!({"field": "listingSourceId", "type": "PATH"}),
-        body["source"]
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "listingSourceId", "type": "PATH"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -611,8 +702,9 @@ async fn should_return_not_found_for_missing_listing_source_detail() {
 
     let response = reqwest::Client::new()
         .get(format!(
-            "{}/api/v1/admin/listing-sources/550e8400-e29b-41d4-a716-446655440000",
-            AURA_API.base_url()
+            "{}/api/v1/admin/listing-sources/{}",
+            AURA_API.base_url(),
+            ListingSourceId::new()
         ))
         .bearer_auth(String::from(token))
         .send()
@@ -701,6 +793,8 @@ async fn should_create_listing_source_for_existing_party_at_admin_route() {
         .as_str()
         .unwrap_or_else(|| panic!("created response has no listing source ID"))
         .to_owned();
+    assert!(listing_source_id.parse::<ListingSourceId>().is_ok());
+    assert!(listing_source_id.starts_with("ls_"));
     assert_eq!(reqwest::StatusCode::CREATED, status);
     assert_eq!(
         Some(format!("/api/v1/admin/listing-sources/{listing_source_id}")),
@@ -730,6 +824,46 @@ async fn should_create_listing_source_for_existing_party_at_admin_route() {
         json!({"type": "PARTNERIZE", "camref": "campaign123"}),
         body["items"][0]["referralConfiguration"]
     );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_noncanonical_party_ids_in_listing_source_body() {
+    let admin_id = seed_user("ADMIN").await;
+    let token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let party_id = PartyId::new();
+
+    for invalid_id in [
+        UserId::new().to_string(),
+        party_id.as_uuid().to_string(),
+        "pty_not-a-typeid".to_owned(),
+    ] {
+        let response = reqwest::Client::new()
+            .post(format!(
+                "{}/api/v1/admin/listing-sources",
+                AURA_API.base_url()
+            ))
+            .bearer_auth(String::from(token.clone()))
+            .json(&json!({
+                "name": "Invalid Existing Operator",
+                "operator": {"type": "EXISTING", "partyId": invalid_id},
+                "ingestionConfiguration": [{"type": "PARTNER_API"}]
+            }))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate operator Party ID: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            json!({"field": "operator.partyId", "type": "BODY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -916,7 +1050,7 @@ async fn should_update_listing_source_at_admin_route_with_tri_state_patch() {
         "{}/api/v1/admin/listing-sources/{listing_source_id}",
         AURA_API.base_url()
     );
-    let original_slug = format!("api-acceptance-source-{listing_source_id}");
+    let original_slug = format!("api-acceptance-source-{}", listing_source_id.as_uuid());
 
     let updated = client
         .patch(&path)
@@ -1145,8 +1279,9 @@ async fn should_return_not_found_for_missing_listing_source_update() {
 
     let response = reqwest::Client::new()
         .patch(format!(
-            "{}/api/v1/admin/listing-sources/550e8400-e29b-41d4-a716-446655440000",
-            AURA_API.base_url()
+            "{}/api/v1/admin/listing-sources/{}",
+            AURA_API.base_url(),
+            ListingSourceId::new()
         ))
         .bearer_auth(String::from(token))
         .json(&json!({"name": "Missing ListingSource"}))

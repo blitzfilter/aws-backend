@@ -1,4 +1,3 @@
-use crate::CrawlerDomainId;
 use crate::review::assets::{
     APP_JS, INDEX_HTML, STYLES_CSS, instrument_live_html, instrument_review_page,
 };
@@ -10,6 +9,7 @@ use crate::scraper::scraper_service::service::{FetchError, HtmlFetcher, ReqwestH
 use crate::service::crawler_domain_configuration::{
     CrawlerDomainAdministration, CrawlerDomainConfigurationError,
 };
+use crate::{CrawlerDomainId, CrawlerReviewId, CrawlerReviewPageId};
 use dashmap::DashMap;
 use listing_source_core::{Domain, ListingSourceId};
 use serde::Deserialize;
@@ -241,7 +241,7 @@ impl ReviewServer {
                         .into_iter()
                         .map(|domain| {
                             json!({
-                                "domain_id": uuid::Uuid::from(domain.domain_id),
+                                "domain_id": domain.domain_id,
                                 "listing_source_id": domain.listing_source_id,
                                 "domain": domain.domain.as_str(),
                             })
@@ -281,7 +281,7 @@ impl ReviewServer {
                 Ok(domain) => HttpResponse::json(
                     if domain.created { 201 } else { 200 },
                     &json!({
-                        "domain_id": uuid::Uuid::from(domain.domain_id),
+                        "domain_id": domain.domain_id,
                         "listing_source_id": domain.listing_source_id,
                         "domain": domain.domain.as_str(),
                         "created": domain.created,
@@ -310,7 +310,7 @@ impl ReviewServer {
                 Ok(removal) => HttpResponse::json(
                     200,
                     &json!({
-                        "domain_id": uuid::Uuid::from(removal.domain_id),
+                        "domain_id": removal.domain_id,
                         "removed_url_count": removal.removed_url_count,
                         "removed_url_pattern_review_count": removal.removed_url_pattern_review_count,
                     }),
@@ -603,7 +603,7 @@ impl ReviewServer {
 
     async fn live_review_pages(
         &self,
-        review_id: uuid::Uuid,
+        review_id: CrawlerReviewId,
     ) -> Result<Vec<(CrawlerReviewPage, String)>, HttpResponse> {
         let detail = self
             .repository
@@ -620,7 +620,7 @@ impl ReviewServer {
 
     async fn cached_schema_matrix(
         &self,
-        review_id: uuid::Uuid,
+        review_id: CrawlerReviewId,
     ) -> Result<Option<SchemaMatrix>, ReviewRepositoryError> {
         let detail = self.repository.get_review(review_id).await?;
         let Some(value) = detail.review.validation_summary.get("schema_matrix") else {
@@ -641,7 +641,7 @@ impl ReviewServer {
 
     async fn refresh_schema_matrix(
         &self,
-        review_id: uuid::Uuid,
+        review_id: CrawlerReviewId,
     ) -> Result<SchemaMatrix, HttpResponse> {
         let pages = self.live_review_pages(review_id).await?;
         let evaluated = self
@@ -658,7 +658,7 @@ impl ReviewServer {
 
     async fn live_review_page(
         &self,
-        review_page_id: uuid::Uuid,
+        review_page_id: CrawlerReviewPageId,
     ) -> Result<Option<(CrawlerReviewPage, String)>, HttpResponse> {
         let Some(page) = self
             .repository
@@ -911,12 +911,12 @@ fn expired_session_cookie(config: &ReviewServerConfig) -> String {
     session_cookie(config, uuid::Uuid::nil(), Duration::ZERO)
 }
 
-fn parse_review_id(path: &str) -> Option<uuid::Uuid> {
+fn parse_review_id(path: &str) -> Option<CrawlerReviewId> {
     let id = path.strip_prefix("/api/reviews/")?;
-    uuid::Uuid::parse_str(id).ok()
+    id.parse().ok()
 }
 
-fn parse_review_id_with_suffix(path: &str, suffix: &str) -> Option<uuid::Uuid> {
+fn parse_review_id_with_suffix(path: &str, suffix: &str) -> Option<CrawlerReviewId> {
     let without_suffix = path.strip_suffix(suffix)?;
     parse_review_id(without_suffix)
 }
@@ -924,22 +924,19 @@ fn parse_review_id_with_suffix(path: &str, suffix: &str) -> Option<uuid::Uuid> {
 fn parse_listing_source_id_with_suffix(path: &str, suffix: &str) -> Option<ListingSourceId> {
     let without_suffix = path.strip_suffix(suffix)?;
     let id = without_suffix.strip_prefix("/api/listing-sources/")?;
-    uuid::Uuid::parse_str(id).ok().map(Into::into)
+    id.parse().ok()
 }
 
 fn parse_listing_source_domain_id(path: &str) -> Option<(ListingSourceId, CrawlerDomainId)> {
     let rest = path.strip_prefix("/api/listing-sources/")?;
     let (listing_source_id, domain_id) = rest.split_once("/domains/")?;
-    Some((
-        uuid::Uuid::parse_str(listing_source_id).ok()?.into(),
-        uuid::Uuid::parse_str(domain_id).ok()?.into(),
-    ))
+    Some((listing_source_id.parse().ok()?, domain_id.parse().ok()?))
 }
 
-fn parse_page_id_with_suffix(path: &str, suffix: &str) -> Option<uuid::Uuid> {
+fn parse_page_id_with_suffix(path: &str, suffix: &str) -> Option<CrawlerReviewPageId> {
     let without_suffix = path.strip_suffix(suffix)?;
     let id = without_suffix.strip_prefix("/api/review-pages/")?;
-    uuid::Uuid::parse_str(id).ok()
+    id.parse().ok()
 }
 
 fn domain_configuration_error(error: CrawlerDomainConfigurationError) -> HttpResponse {

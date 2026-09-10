@@ -1,3 +1,4 @@
+pub mod object_id;
 pub mod query;
 pub mod slug_id;
 pub mod sort;
@@ -35,13 +36,7 @@ pub mod change_outcome {
 }
 
 pub mod event_id {
-    crate::uuid_v7_newtype!(EventId);
-
-    impl From<EventId> for uuid::Uuid {
-        fn from(id: EventId) -> Self {
-            id.0
-        }
-    }
+    crate::object_id_newtype!(EventId, "evt");
 }
 
 pub mod event {
@@ -95,6 +90,45 @@ pub mod version {
     }
 }
 
+#[doc(hidden)]
+pub mod __private {
+    pub use serde;
+    pub use strong_id::prefix as object_id_prefix;
+    pub use uuid::Uuid;
+
+    #[cfg(feature = "test-data")]
+    pub use fake::{Dummy, Faker, RngExt};
+}
+
+#[cfg(feature = "test-data")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __object_id_dummy {
+    ($name:ident) => {
+        impl $crate::__private::Dummy<$crate::__private::Faker> for $name {
+            fn dummy_with_rng<R: $crate::__private::RngExt + ?Sized>(
+                _config: &$crate::__private::Faker,
+                rng: &mut R,
+            ) -> Self {
+                let mut bytes = $crate::__private::Uuid::now_v7().into_bytes();
+                let random: [u8; 10] = $crate::__private::RngExt::random(rng);
+                bytes[6] = 0b0111_0000 | (random[0] & 0b0000_1111);
+                bytes[7] = random[1];
+                bytes[8] = 0b1000_0000 | (random[2] & 0b0011_1111);
+                bytes[9..].copy_from_slice(&random[3..]);
+                Self($crate::__private::Uuid::from_bytes(bytes))
+            }
+        }
+    };
+}
+
+#[cfg(not(feature = "test-data"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __object_id_dummy {
+    ($name:ident) => {};
+}
+
 pub mod versioned {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Versioned<T, V> {
@@ -111,81 +145,6 @@ pub mod versioned {
             self.value
         }
     }
-}
-
-#[macro_export]
-macro_rules! uuid_v4_newtype {
-    ($name:ident) => {
-        #[cfg_attr(feature = "test-data", derive(::fake::Dummy))]
-        #[derive(
-            Debug,
-            Clone,
-            Copy,
-            PartialEq,
-            PartialOrd,
-            Eq,
-            Ord,
-            Hash,
-            ::serde::Serialize,
-            ::serde::Deserialize,
-        )]
-        #[serde(into = "String", try_from = "String")]
-        pub struct $name(::uuid::Uuid);
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl $name {
-            pub fn new() -> Self {
-                Self(::uuid::Uuid::new_v4())
-            }
-        }
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-
-        impl From<::uuid::Uuid> for $name {
-            fn from(uuid: ::uuid::Uuid) -> Self {
-                Self(uuid)
-            }
-        }
-
-        impl TryFrom<String> for $name {
-            type Error = ::uuid::Error;
-
-            fn try_from(value: String) -> Result<Self, Self::Error> {
-                ::uuid::Uuid::parse_str(&value).map(Self)
-            }
-        }
-
-        impl From<$name> for String {
-            fn from(id: $name) -> Self {
-                id.0.to_string()
-            }
-        }
-
-        impl TryFrom<&str> for $name {
-            type Error = ::uuid::Error;
-
-            fn try_from(value: &str) -> Result<Self, Self::Error> {
-                ::uuid::Uuid::parse_str(value).map(Self)
-            }
-        }
-
-        impl TryFrom<&String> for $name {
-            type Error = ::uuid::Error;
-
-            fn try_from(value: &String) -> Result<Self, Self::Error> {
-                ::uuid::Uuid::parse_str(value).map(Self)
-            }
-        }
-    };
 }
 
 #[macro_export]
@@ -502,7 +461,7 @@ mod tests {
     use crate::versioned::Versioned;
 
     crate::version_newtype!(TestVersion);
-    crate::uuid_v4_newtype!(TestId);
+
     crate::uuid_v7_newtype!(TestEventId);
     crate::string_newtype!(BoundedText, max_length(10));
 
@@ -517,7 +476,7 @@ mod tests {
     #[test]
     fn should_map_event_payload_without_changing_metadata() {
         let event = Event {
-            aggregate_id: TestId::new(),
+            aggregate_id: TestEventId::new(),
             event_id: EventId::new(),
             timestamp: time::OffsetDateTime::now_utc(),
             payload: "old",
@@ -528,6 +487,7 @@ mod tests {
 
         assert_eq!(event_id, mapped.event_id);
         assert_eq!(3, mapped.payload);
+        assert!(mapped.event_id.to_string().starts_with("evt_"));
     }
 
     #[test]
@@ -552,7 +512,10 @@ mod tests {
     }
 
     #[test]
-    fn should_create_uuid_newtypes() {
-        assert_ne!(TestId::new().to_string(), TestEventId::new().to_string());
+    fn should_create_uuid_v7_newtype() -> Result<(), uuid::Error> {
+        let uuid = uuid::Uuid::parse_str(&TestEventId::new().to_string())?;
+
+        assert_eq!(7, uuid.get_version_num());
+        Ok(())
     }
 }

@@ -445,6 +445,10 @@ Avoid a boundary mirror such as `ListingIngestionMethodDto` plus exhaustive iden
 
 For bounded-context enums, this workspace uses the policy that the canonical value set equals the REST value set when the API delegates to the canonical identifier. Adding a canonical variant therefore intentionally makes it REST-visible. A REST-specific alias, subset, or compatibility value still requires an API-local codec and review.
 
+### 5.1.2 Object identifiers
+
+Aura object identities use concrete semantic newtypes backed by UUIDv7. Domain, REST, semantic worker, logs, and rebuildable search documents use strict prefixed TypeID text. PostgreSQL PK/FK columns remain native `uuid`; CDC reflects that storage form and maps it immediately into typed IDs. Internal persisted JSON uses an adapter-owned explicit UUID codec where documented and MUST NOT derive storage encoding from an ID's `Display` implementation. Bare UUID object-ID input and wrong prefixes are invalid. The complete registry, exclusions, and addition recipe live in [`object-ids.md`](object-ids.md).
+
 ### 5.2 Visibility rules
 
 Use the narrowest visibility that satisfies a real production crate boundary.
@@ -1116,7 +1120,7 @@ pub(crate) struct RenameRecordRequestDto {
 
 #[derive(serde::Serialize)]
 pub(crate) struct RenameRecordResponseDto {
-    pub id: Uuid,
+    pub id: RecordId,
     pub title: String,
 }
 ```
@@ -1150,7 +1154,7 @@ Use `From` for infallible result-to-response conversion:
 impl From<RenameRecordResult> for RenameRecordResponseDto {
     fn from(result: RenameRecordResult) -> Self {
         Self {
-            id: result.record_id.into_uuid(),
+            id: result.record_id,
             title: result.title,
         }
     }
@@ -1208,9 +1212,13 @@ impl TryFrom<RecordRow> for Versioned<Record, RecordStorageVersion> {
 
     fn try_from(row: RecordRow) -> Result<Self, Self::Error> {
         let version = RecordStorageVersion::try_from(row.version)?;
+        let record_id = RecordId::try_from(row.id)
+            .map_err(RecordRowMappingError::InvalidRecordId)?;
+        let workspace_id = WorkspaceId::try_from(row.workspace_id)
+            .map_err(RecordRowMappingError::InvalidWorkspaceId)?;
         let record = Record::rehydrate(
-            RecordId::from_uuid(row.id),
-            WorkspaceId::from_uuid(row.workspace_id),
+            record_id,
+            workspace_id,
             RecordTitle::try_from(row.title)?,
             RecordStatus::try_from(row.status.as_str())?,
         )
@@ -1259,16 +1267,20 @@ struct RecordDetailsRow {
 It maps directly to the application read model:
 
 ```rust
-impl From<RecordDetailsRow> for RecordBaseDetails {
-    fn from(row: RecordDetailsRow) -> Self {
-        Self {
-            record_id: RecordId::from_uuid(row.record_id),
+impl TryFrom<RecordDetailsRow> for RecordBaseDetails {
+    type Error = RecordDetailsRowMappingError;
+
+    fn try_from(row: RecordDetailsRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            record_id: RecordId::try_from(row.record_id)
+                .map_err(RecordDetailsRowMappingError::InvalidRecordId)?,
             title: row.record_title,
             container: ContainerSummary {
-                container_id: ContainerId::from_uuid(row.container_id),
+                container_id: ContainerId::try_from(row.container_id)
+                    .map_err(RecordDetailsRowMappingError::InvalidContainerId)?,
                 name: row.container_name,
             },
-        }
+        })
     }
 }
 ```
@@ -1355,7 +1367,7 @@ A search adapter owns its document:
 ```rust
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct RecordDocument {
-    id: String,
+    id: RecordId,
     title: String,
     container_name: String,
     projection_version: u64,
@@ -1919,7 +1931,7 @@ Tables or columns consumed by CDC MUST NOT be renamed or removed without reviewi
 * projection handlers;
 * replay and rebuild procedures.
 
-The current SQS envelope explicitly requires `schema_version = 1`, exact scope/job discriminators, canonical IDs, and validated idempotency/ordering keys; jobs are at most 16 KiB and contain compact identifiers, never raw source rows. Unknown additive envelope/payload fields are deliberately tolerated. Missing required fields, unsupported versions/types, wrong scope, and mismatched keys fail explicitly without deletion. This compatibility rule does not relax strict ProductListing CDC event-payload validation.
+The current SQS envelope explicitly requires `schema_version = 2`, exact scope/job discriminators, canonical TypeID object fields, and validated TypeID-derived idempotency/ordering keys; jobs are at most 16 KiB and contain compact identifiers, never raw source rows. CDC still reads canonical PostgreSQL UUID text and converts it immediately into typed UUIDv7 IDs before job construction. Unknown additive envelope/payload fields are deliberately tolerated. Schema 1, missing required fields, unsupported versions/types, wrong prefixes/scopes, bare UUID object fields, and mismatched keys fail explicitly without deletion. This wire rule does not relax strict ProductListing CDC event-payload validation.
 
 The initial business schema defines `completed_lease_token` and `completed_at`. Exact finalization retries reuse the original token, result/receipt/error, and completion timestamp; an exact persisted completion receipt confirms a lost response without another send or write. Preserve these columns and fencing semantics across rollback.
 

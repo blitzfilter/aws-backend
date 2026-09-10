@@ -7,6 +7,7 @@ use embedding::{
     EMBEDDING_DIMENSIONS, EmbeddingError, EmbeddingGenerator, EmbeddingImageUrl, EmbeddingText,
     EmbeddingVector,
 };
+use listing_source_core::ListingSourceId;
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
@@ -73,7 +74,7 @@ async fn should_embed_committed_created_product_event_and_persist_canonical_targ
         .fetch_one(&worker.pool)
         .await?;
         assert_eq!(
-            serde_json::json!({"sourceEventId": source_event_id.to_string()}),
+            serde_json::json!({"sourceEventId": source_event_id.as_uuid().to_string()}),
             payload
         );
         Ok(())
@@ -269,7 +270,7 @@ impl EmbeddingWorker {
         .fetch_one(&self.pool)
         .await?;
         let response = reqwest::Client::new().post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
-            .json(&serde_json::json!({"record":{"event_id":event_id.to_string(),"product_listing_id":product_listing_id.to_string(),"event_type":event_type,"event_group":event_group,"event_type_schema_version":1,"payload":payload},"action":"insert","metadata":{"table_schema":"public","table_name":"product_listing_events"}}))
+            .json(&serde_json::json!({"record":{"event_id":event_id.as_uuid().to_string(),"product_listing_id":product_listing_id.as_uuid().to_string(),"event_type":event_type,"event_group":event_group,"event_type_schema_version":1,"payload":payload},"action":"insert","metadata":{"table_schema":"public","table_name":"product_listing_events"}}))
             .send().await?;
         if response.status() != reqwest::StatusCode::ACCEPTED {
             return Err(std::io::Error::other("worker did not accept redelivery").into());
@@ -299,23 +300,30 @@ async fn insert_product_with_event(
     event_group: &str,
 ) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
+    let product_listing_uuid = uuid::Uuid::from(product_listing_id);
     let event_id = EventId::new();
     let title_slug_id = ProductListingSlugId::from_title_and_suffix(
         "embedding worker product",
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &product_listing_uuid.simple().to_string()[26..],
     )
     .map_err(|_| sqlx::Error::Protocol("invalid fixture title slug".to_owned()))?;
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let source_listing_id = "embedding-fixture-product";
     let mut tx = pool.begin().await?;
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, 'Embedding worker source', party_id FROM operator")
-        .bind(listing_source_id).bind(format!("embedding-worker-source-{listing_source_id}")).execute(&mut *tx).await?;
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $3, $2, 'Embedding worker source', party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!("embedding-worker-source-{}", listing_source_id.as_uuid()))
+        .bind(listing_source_id.as_uuid())
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Antiker Eichenstuhl', 'de', 'Bemalter Stuhl', 'de', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[{\"url\": \"https://example.test/image.jpg\"}]')")
-        .bind(uuid::Uuid::from(product_listing_id)).bind(title_slug_id.as_ref()).bind(uuid::Uuid::from(event_id)).bind(listing_source_id).bind(product_listing_id.to_string())
+        .bind(product_listing_uuid).bind(title_slug_id.as_ref()).bind(event_id.as_uuid()).bind(listing_source_id.as_uuid()).bind(source_listing_id)
         .execute(&mut *tx).await?;
     let payload = match event_type {
         "PRODUCT_LISTING_DISCOVERED" => serde_json::json!({
-            "listingSourceId": listing_source_id.to_string(),
-            "sourceListingId": product_listing_id.to_string(),
+            "listingSourceId": listing_source_id.as_uuid().to_string(),
+            "sourceListingId": source_listing_id,
             "title": {"language": "de", "text": "Antiker Eichenstuhl"},
             "description": {"language": "de", "text": "Bemalter Stuhl"},
             "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
@@ -328,11 +336,11 @@ async fn insert_product_with_event(
             "availability": {"previous": null, "current": "AVAILABLE"}
         }),
         _ => serde_json::json!({
-            "sourceEventId": event_id.to_string()
+            "sourceEventId": event_id.as_uuid().to_string()
         }),
     };
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, $3, $4, 1, $5, now())")
-        .bind(uuid::Uuid::from(event_id)).bind(uuid::Uuid::from(product_listing_id)).bind(event_type).bind(event_group).bind(payload).execute(&mut *tx).await?;
+        .bind(event_id.as_uuid()).bind(product_listing_uuid).bind(event_type).bind(event_group).bind(payload).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok((product_listing_id, event_id))
 }
@@ -341,25 +349,35 @@ async fn insert_product_with_event_then_rollback(
     pool: &sqlx::PgPool,
 ) -> Result<ProductListingId, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
+    let product_listing_uuid = uuid::Uuid::from(product_listing_id);
     let event_id = EventId::new();
     let title_slug_id = ProductListingSlugId::from_title_and_suffix(
         "rollback embedding worker product",
-        &uuid::Uuid::from(product_listing_id).simple().to_string()[..6],
+        &product_listing_uuid.simple().to_string()[26..],
     )
     .map_err(|_| sqlx::Error::Protocol("invalid fixture title slug".to_owned()))?;
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
+    let operator_party_id = uuid::Uuid::now_v7();
+    let source_listing_id = "rollback-embedding-fixture-product";
     let mut tx = pool.begin().await?;
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, 'Rollback embedding source', party_id FROM operator")
-        .bind(listing_source_id).bind(format!("rollback-embedding-source-{listing_source_id}")).execute(&mut *tx).await?;
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $3, $2, 'Rollback embedding source', party_id FROM operator")
+        .bind(operator_party_id)
+        .bind(format!(
+            "rollback-embedding-source-{}",
+            listing_source_id.as_uuid()
+        ))
+        .bind(listing_source_id.as_uuid())
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Antiker Eichenstuhl', 'de', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')")
-        .bind(uuid::Uuid::from(product_listing_id)).bind(title_slug_id.as_ref()).bind(uuid::Uuid::from(event_id)).bind(listing_source_id).bind(product_listing_id.to_string())
+        .bind(product_listing_uuid).bind(title_slug_id.as_ref()).bind(event_id.as_uuid()).bind(listing_source_id.as_uuid()).bind(source_listing_id)
         .execute(&mut *tx).await?;
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.as_uuid())
+        .bind(product_listing_uuid)
         .bind(serde_json::json!({
-            "listingSourceId": listing_source_id.to_string(),
-            "sourceListingId": product_listing_id.to_string(),
+            "listingSourceId": listing_source_id.as_uuid().to_string(),
+            "sourceListingId": source_listing_id,
             "title": {"language": "de", "text": "Antiker Eichenstuhl"},
             "description": null,
             "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},

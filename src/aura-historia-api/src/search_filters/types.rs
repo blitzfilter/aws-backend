@@ -18,8 +18,7 @@ use search_filter_core::user_search_filter_name::UserSearchFilterName;
 use user_core::user_id::UserId;
 
 use product_listing_core::product_listing_search::{
-    EnhancedSearchDescription, EnhancedSearchDescriptionError, ListingAvailabilityQuery,
-    ProductListingSearch,
+    EnhancedSearchDescription, ListingAvailabilityQuery, ProductListingSearch,
 };
 use search_filter_core::search_filter_state::SearchFilterState;
 use search_filter_service::ports::{SearchFilterMatchView, SearchFilterView};
@@ -27,6 +26,8 @@ use search_filter_service::use_cases::ProductListingSearchPatch;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use std::collections::HashSet;
+use std::hash::Hash;
+use std::str::FromStr;
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -199,12 +200,6 @@ impl UpdateSearchFilterData {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(super) enum ProductListingSearchDataMappingError {
-    #[error(transparent)]
-    EnhancedSearchDescription(#[from] EnhancedSearchDescriptionError),
-}
-
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProductListingSearchPatchData {
@@ -219,9 +214,9 @@ pub(super) struct ProductListingSearchPatchData {
     #[serde(rename = "enhancedSearchDescription", default)]
     enhanced_search_description: PatchValue<String>,
     #[serde(rename = "listingSourceId", default)]
-    listing_source_id_query: PatchValue<HashSet<uuid::Uuid>>,
+    listing_source_id_query: PatchValue<HashSet<String>>,
     #[serde(rename = "excludeListingSourceId", default)]
-    exclude_listing_source_id_query: PatchValue<HashSet<uuid::Uuid>>,
+    exclude_listing_source_id_query: PatchValue<HashSet<String>>,
     #[serde(rename = "price", default)]
     price_query: PatchValue<RangeQuery<u64>>,
     #[serde(rename = "availability", default)]
@@ -278,23 +273,21 @@ impl ProductListingSearchPatchData {
                 ),
             },
             listing_source_id_query: non_nullable_patch(
-                self.listing_source_id_query.map(|values| {
-                    values
-                        .into_iter()
-                        .map(ListingSourceId::from)
-                        .collect::<HashSet<_>>()
-                        .into()
-                }),
+                parse_body_object_id_patch::<ListingSourceId>(
+                    self.listing_source_id_query,
+                    "search.listingSourceId",
+                    "ListingSource",
+                )?
+                .map(Into::into),
                 "search.listingSourceId",
             )?,
             exclude_listing_source_id_query: non_nullable_patch(
-                self.exclude_listing_source_id_query.map(|values| {
-                    values
-                        .into_iter()
-                        .map(ListingSourceId::from)
-                        .collect::<HashSet<_>>()
-                        .into()
-                }),
+                parse_body_object_id_patch::<ListingSourceId>(
+                    self.exclude_listing_source_id_query,
+                    "search.excludeListingSourceId",
+                    "ListingSource",
+                )?
+                .map(Into::into),
                 "search.excludeListingSourceId",
             )?,
             price_query: clearable(
@@ -311,6 +304,37 @@ impl ProductListingSearchPatchData {
             auction_start_query: clearable(self.auction_start_query),
             auction_end_query: clearable(self.auction_end_query),
         })
+    }
+}
+
+fn parse_body_object_ids<T>(
+    values: HashSet<String>,
+    field: &'static str,
+    semantic_type: &'static str,
+) -> Result<HashSet<T>, crate::error::ApiError>
+where
+    T: FromStr + Eq + Hash,
+{
+    values
+        .into_iter()
+        .map(|value| crate::wire::parse_body_object_id(&value, field, semantic_type))
+        .collect()
+}
+
+fn parse_body_object_id_patch<T>(
+    values: PatchValue<HashSet<String>>,
+    field: &'static str,
+    semantic_type: &'static str,
+) -> Result<PatchValue<HashSet<T>>, crate::error::ApiError>
+where
+    T: FromStr + Eq + Hash,
+{
+    match values {
+        PatchValue::Omitted => Ok(PatchValue::Omitted),
+        PatchValue::Null => Ok(PatchValue::Null),
+        PatchValue::Value(values) => {
+            parse_body_object_ids(values, field, semantic_type).map(PatchValue::Value)
+        }
     }
 }
 
@@ -371,7 +395,10 @@ impl UpdateSearchFilterMatchFeedbackData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ProductListingSearchData {
+#[serde(bound(
+    deserialize = "ProductId: Deserialize<'de> + Eq + Hash, SourceId: Deserialize<'de> + Eq + Hash"
+))]
+pub(super) struct ProductListingSearchData<ProductId = String, SourceId = String> {
     #[serde(default)]
     #[serde(with = "crate::wire::language")]
     language: Language,
@@ -394,19 +421,19 @@ pub(super) struct ProductListingSearchData {
         skip_serializing_if = "HashSet::is_empty",
         default
     )]
-    exclude_product_listing_id_query: HashSet<ProductListingId>,
+    exclude_product_listing_id_query: HashSet<ProductId>,
     #[serde(
         rename = "listingSourceId",
         skip_serializing_if = "HashSet::is_empty",
         default
     )]
-    listing_source_id_query: HashSet<uuid::Uuid>,
+    listing_source_id_query: HashSet<SourceId>,
     #[serde(
         rename = "excludeListingSourceId",
         skip_serializing_if = "HashSet::is_empty",
         default
     )]
-    exclude_listing_source_id_query: HashSet<uuid::Uuid>,
+    exclude_listing_source_id_query: HashSet<SourceId>,
     #[serde(rename = "price", skip_serializing_if = "Option::is_none", default)]
     price_query: Option<RangeQuery<u64>>,
     #[serde(
@@ -459,10 +486,10 @@ pub(super) struct ProductListingSearchData {
     auction_end_query: Option<RangeQuery<OffsetDateTime>>,
 }
 
-impl TryFrom<ProductListingSearchData> for ProductListingSearch {
-    type Error = ProductListingSearchDataMappingError;
+impl TryFrom<ProductListingSearchData<String, String>> for ProductListingSearch {
+    type Error = crate::error::ApiError;
 
-    fn try_from(data: ProductListingSearchData) -> Result<Self, Self::Error> {
+    fn try_from(data: ProductListingSearchData<String, String>) -> Result<Self, Self::Error> {
         Ok(Self {
             language: data.language,
             currency: data.currency,
@@ -470,20 +497,30 @@ impl TryFrom<ProductListingSearchData> for ProductListingSearch {
             enhanced_search_description: data
                 .enhanced_search_description
                 .map(EnhancedSearchDescription::try_from)
-                .transpose()?,
-            exclude_product_listing_id_query: data.exclude_product_listing_id_query.into(),
-            listing_source_id_query: data
-                .listing_source_id_query
-                .into_iter()
-                .map(ListingSourceId::from)
-                .collect::<HashSet<_>>()
-                .into(),
-            exclude_listing_source_id_query: data
-                .exclude_listing_source_id_query
-                .into_iter()
-                .map(ListingSourceId::from)
-                .collect::<HashSet<_>>()
-                .into(),
+                .transpose()
+                .map_err(|error| {
+                    crate::error::ApiError::bad_request(crate::error::BAD_BODY_VALUE)
+                        .with_body_field("search.enhancedSearchDescription")
+                        .with_detail(error.to_string())
+                })?,
+            exclude_product_listing_id_query: parse_body_object_ids::<ProductListingId>(
+                data.exclude_product_listing_id_query,
+                "search.excludeProductId",
+                "ProductListing",
+            )?
+            .into(),
+            listing_source_id_query: parse_body_object_ids::<ListingSourceId>(
+                data.listing_source_id_query,
+                "search.listingSourceId",
+                "ListingSource",
+            )?
+            .into(),
+            exclude_listing_source_id_query: parse_body_object_ids::<ListingSourceId>(
+                data.exclude_listing_source_id_query,
+                "search.excludeListingSourceId",
+                "ListingSource",
+            )?
+            .into(),
             price_query: data
                 .price_query
                 .map(|query| query.map(MonetaryAmount::from)),
@@ -500,7 +537,7 @@ impl TryFrom<ProductListingSearchData> for ProductListingSearch {
     }
 }
 
-impl From<ProductListingSearch> for ProductListingSearchData {
+impl From<ProductListingSearch> for ProductListingSearchData<ProductListingId, ListingSourceId> {
     fn from(search: ProductListingSearch) -> Self {
         Self {
             language: search.language,
@@ -508,16 +545,8 @@ impl From<ProductListingSearch> for ProductListingSearchData {
             product_listing_query: search.product_listing_query,
             enhanced_search_description: search.enhanced_search_description.map(Into::into),
             exclude_product_listing_id_query: search.exclude_product_listing_id_query.into(),
-            listing_source_id_query: search
-                .listing_source_id_query
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            exclude_listing_source_id_query: search
-                .exclude_listing_source_id_query
-                .into_iter()
-                .map(Into::into)
-                .collect(),
+            listing_source_id_query: search.listing_source_id_query.into(),
+            exclude_listing_source_id_query: search.exclude_listing_source_id_query.into(),
             price_query: search.price_query.map(|query| query.map(u64::from)),
             availability_query: search
                 .availability_query
@@ -548,7 +577,7 @@ pub(super) struct SearchFilterData {
     notifications: bool,
     #[serde(with = "crate::wire::search_filter_state")]
     state: SearchFilterState,
-    search: ProductListingSearchData,
+    search: ProductListingSearchData<ProductListingId, ListingSourceId>,
     #[serde(
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none"

@@ -8,6 +8,11 @@ use aws_sdk_s3::{
 use aws_sdk_sesv2::Client as SesClient;
 
 use application::error::box_error;
+use domain_primitives::event_id::EventId;
+use listing_source_core::ListingSourceId;
+use notification_core::{
+    notification_delivery_id::NotificationDeliveryId, notification_id::NotificationId,
+};
 use notification_email_aws::{EmailDeliveryConfig, SesNotificationChannelSender};
 use notification_postgres::SqlxEmailDeliveryTargetReader;
 use notification_postgres::SqlxNotificationDeliveryRepository;
@@ -23,6 +28,7 @@ use notification_service::{
         DeliverNotificationHandler, DeliverNotificationUseCase,
     },
 };
+use product_listing_core::product_listing_id::ProductListingId;
 use serde_json::json;
 use std::sync::{
     Arc, Mutex,
@@ -35,6 +41,7 @@ use test_api::{
 };
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use user_core::user_id::UserId;
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 mod support;
@@ -294,7 +301,7 @@ async fn redeliver_after_expired_lease() -> Result<(), Box<dyn std::error::Error
         sqlx::query(
             "UPDATE notification_deliveries SET lease_expires_at = now() - interval '1 second' WHERE notification_delivery_id = $1",
         )
-        .bind(delivery.delivery_id)
+        .bind(delivery.delivery_id.as_uuid())
         .execute(&worker.pool)
         .await?;
 
@@ -395,7 +402,7 @@ impl FailOnceFinalizationRepository {
 impl NotificationDeliveryRepository for FailOnceFinalizationRepository {
     async fn claim_and_load_source(
         &self,
-        notification_delivery_id: notification_core::notification_delivery_id::NotificationDeliveryId,
+        notification_delivery_id: NotificationDeliveryId,
         now: time::OffsetDateTime,
         lease_expires_at: time::OffsetDateTime,
         lease_token: uuid::Uuid,
@@ -407,7 +414,7 @@ impl NotificationDeliveryRepository for FailOnceFinalizationRepository {
 
     async fn mark_delivered(
         &self,
-        notification_delivery_id: notification_core::notification_delivery_id::NotificationDeliveryId,
+        notification_delivery_id: NotificationDeliveryId,
         lease_token: uuid::Uuid,
         provider_message_id: &str,
         delivered_at: time::OffsetDateTime,
@@ -436,7 +443,7 @@ impl NotificationDeliveryRepository for FailOnceFinalizationRepository {
 
     async fn mark_retryable_failure(
         &self,
-        notification_delivery_id: notification_core::notification_delivery_id::NotificationDeliveryId,
+        notification_delivery_id: NotificationDeliveryId,
         lease_token: uuid::Uuid,
         error_code: &str,
         completed_at: time::OffsetDateTime,
@@ -453,7 +460,7 @@ impl NotificationDeliveryRepository for FailOnceFinalizationRepository {
 
     async fn mark_permanent_failure(
         &self,
-        notification_delivery_id: notification_core::notification_delivery_id::NotificationDeliveryId,
+        notification_delivery_id: NotificationDeliveryId,
         lease_token: uuid::Uuid,
         error_code: &str,
         completed_at: time::OffsetDateTime,
@@ -489,7 +496,7 @@ async fn should_preserve_provider_receipts_after_reversed_duplicate_sqs_deliveri
                 assert_eq!(receipt, persisted.provider_message_id);
                 assert_email_count_for(&delivery.recipient_email, 1).await?;
                 let completion: (Option<uuid::Uuid>, Option<time::OffsetDateTime>) = sqlx::query_as("SELECT completed_lease_token, completed_at FROM notification_deliveries WHERE notification_delivery_id = $1")
-                    .bind(delivery.delivery_id).fetch_one(&worker.pool).await?;
+                    .bind(delivery.delivery_id.as_uuid()).fetch_one(&worker.pool).await?;
                 assert!(completion.0.is_some());
                 assert!(completion.1.is_some());
             }
@@ -510,7 +517,7 @@ async fn should_retain_sqs_work_while_database_lease_is_active_then_deliver_with
             let mut tx = worker.pool.begin().await?;
             let delivery = insert_delivery_in_transaction(&mut tx, DeliveryState::ActiveLease).await?;
             let expires: time::OffsetDateTime = sqlx::query_scalar("UPDATE notification_deliveries SET lease_expires_at = now() + interval '8 seconds' WHERE notification_delivery_id = $1 RETURNING lease_expires_at")
-                .bind(delivery.delivery_id).fetch_one(&mut *tx).await?;
+                .bind(delivery.delivery_id.as_uuid()).fetch_one(&mut *tx).await?;
             tx.commit().await?;
             // Only Sequin publishes. The queue must keep the message, not acknowledge AlreadyClaimed.
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -697,8 +704,8 @@ enum DeliveryState {
 }
 
 struct NotificationDeliveryFixture {
-    delivery_id: uuid::Uuid,
-    notification_id: uuid::Uuid,
+    delivery_id: NotificationDeliveryId,
+    notification_id: NotificationId,
     recipient_email: String,
 }
 
@@ -733,17 +740,17 @@ async fn insert_delivery_in_transaction_with_language(
     state: DeliveryState,
     language: &str,
 ) -> Result<NotificationDeliveryFixture, sqlx::Error> {
-    let user_id = uuid::Uuid::new_v4();
-    let notification_id = uuid::Uuid::new_v4();
-    let delivery_id = uuid::Uuid::new_v4();
-    let origin_event_id = uuid::Uuid::new_v4();
-    let product_listing_id = uuid::Uuid::new_v4();
+    let user_id = UserId::new();
+    let notification_id = NotificationId::new();
+    let delivery_id = NotificationDeliveryId::new();
+    let origin_event_id = EventId::new();
+    let product_listing_id = ProductListingId::new();
     let recipient_email = format!("notification-delivery-{delivery_id}@example.test");
 
     sqlx::query(
         "INSERT INTO users (user_id, email, language, show_unassessed_or_sensitive_content, tier, role) VALUES ($1, $2, $3, false, 'ULTIMATE', 'USER')",
     )
-    .bind(user_id)
+    .bind(user_id.as_uuid())
     .bind(&recipient_email)
     .bind(language)
     .execute(&mut **transaction)
@@ -751,10 +758,10 @@ async fn insert_delivery_in_transaction_with_language(
     sqlx::query(
         "INSERT INTO notifications (notification_id, user_id, kind, origin_event_id, product_listing_id, payload_version, payload, seen) VALUES ($1, $2, 'WATCHLIST_AVAILABILITY_CHANGED', $3, $4, 1, $5, false)",
     )
-    .bind(notification_id)
-    .bind(user_id)
-    .bind(origin_event_id)
-    .bind(product_listing_id)
+    .bind(notification_id.as_uuid())
+    .bind(user_id.as_uuid())
+    .bind(origin_event_id.as_uuid())
+    .bind(product_listing_id.as_uuid())
     .bind(notification_payload())
     .execute(&mut **transaction)
     .await?;
@@ -764,8 +771,8 @@ async fn insert_delivery_in_transaction_with_language(
             sqlx::query(
                 "INSERT INTO notification_deliveries (notification_delivery_id, notification_id, channel, target_key) VALUES ($1, $2, 'EMAIL', 'PRIMARY')",
             )
-            .bind(delivery_id)
-            .bind(notification_id)
+            .bind(delivery_id.as_uuid())
+            .bind(notification_id.as_uuid())
             .execute(&mut **transaction)
             .await?;
         }
@@ -773,8 +780,8 @@ async fn insert_delivery_in_transaction_with_language(
             sqlx::query(
                 "INSERT INTO notification_deliveries (notification_delivery_id, notification_id, channel, target_key, last_error_code) VALUES ($1, $2, 'EMAIL', 'PRIMARY', 'S3_TEMPLATE_FETCH_RETRYABLE')",
             )
-            .bind(delivery_id)
-            .bind(notification_id)
+            .bind(delivery_id.as_uuid())
+            .bind(notification_id.as_uuid())
             .execute(&mut **transaction)
             .await?;
         }
@@ -782,8 +789,8 @@ async fn insert_delivery_in_transaction_with_language(
             sqlx::query(
                 "INSERT INTO notification_deliveries (notification_delivery_id, notification_id, channel, target_key, status, attempt_count, lease_token, lease_expires_at) VALUES ($1, $2, 'EMAIL', 'PRIMARY', 'PROCESSING', 4, $3, now() + interval '1 hour')",
             )
-            .bind(delivery_id)
-            .bind(notification_id)
+            .bind(delivery_id.as_uuid())
+            .bind(notification_id.as_uuid())
             .bind(uuid::Uuid::new_v4())
             .execute(&mut **transaction)
             .await?;
@@ -798,10 +805,12 @@ async fn insert_delivery_in_transaction_with_language(
 }
 
 fn notification_payload() -> serde_json::Value {
+    let listing_source_id = ListingSourceId::new();
+
     json!({
         "type": "WATCHLIST",
         "snapshot": {
-            "listing_source_id": uuid::Uuid::new_v4(),
+            "listing_source_id": listing_source_id.as_uuid().to_string(),
             "source_listing_id": "worker-notification-delivery-product",
             "listing_source_slug_id": "worker-delivery-source",
             "product_listing_title_slug_id": "worker-delivery-product-abcdef",
@@ -833,7 +842,7 @@ struct DeliveryRow {
 
 async fn wait_for_delivery(
     pool: &sqlx::PgPool,
-    delivery_id: uuid::Uuid,
+    delivery_id: NotificationDeliveryId,
     expected_status: &str,
 ) -> Result<DeliveryRow, Box<dyn std::error::Error>> {
     for _ in 0..POLL_ATTEMPTS {
@@ -852,19 +861,19 @@ async fn wait_for_delivery(
 
 async fn delivery_row(
     pool: &sqlx::PgPool,
-    delivery_id: uuid::Uuid,
+    delivery_id: NotificationDeliveryId,
 ) -> Result<Option<DeliveryRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT status, attempt_count, lease_token, lease_expires_at, provider_message_id, last_error_code, delivered_at FROM notification_deliveries WHERE notification_delivery_id = $1",
     )
-    .bind(delivery_id)
+    .bind(delivery_id.as_uuid())
     .fetch_optional(pool)
     .await
 }
 
 async fn post_cdc_change(
-    delivery_id: uuid::Uuid,
-    notification_id: uuid::Uuid,
+    delivery_id: NotificationDeliveryId,
+    notification_id: NotificationId,
     table_name: &str,
     action: &str,
 ) -> Result<reqwest::StatusCode, reqwest::Error> {
@@ -874,7 +883,12 @@ async fn post_cdc_change(
             get_sequin_worker_webhook_bind_addr()
         ))
         .json(&json!({
-            "record": {"notification_delivery_id": delivery_id, "notification_id": notification_id, "channel": "EMAIL", "status": "PENDING"},
+            "record": {
+                "notification_delivery_id": delivery_id.as_uuid().to_string(),
+                "notification_id": notification_id.as_uuid().to_string(),
+                "channel": "EMAIL",
+                "status": "PENDING"
+            },
             "action": action,
             "metadata": {"table_schema": "public", "table_name": table_name}
         }))

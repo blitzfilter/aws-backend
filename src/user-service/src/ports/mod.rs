@@ -3,6 +3,7 @@ pub mod access_token_details_reader;
 pub mod access_token_list_reader;
 pub mod access_token_repository;
 pub mod admin_access_token_list_reader;
+pub mod cognito_identity;
 pub mod newsletter_profile_reader;
 pub mod newsletter_subscription_writer;
 pub mod user_account_reader;
@@ -27,6 +28,11 @@ pub use access_token_repository::{
 };
 pub use admin_access_token_list_reader::{
     AdminAccessTokenListReadError, AdminAccessTokenListReader, AdminAccessTokenListReaderFactory,
+};
+pub use cognito_identity::{
+    CognitoIdentity, CognitoIssuer, CognitoSubject, CognitoUserIdentityReadError,
+    CognitoUserIdentityReader, InvalidCognitoIdentityValue, UserCognitoIdentityRegistry,
+    UserCognitoIdentityRegistryError, UserCognitoIdentityRegistryFactory,
 };
 
 pub use newsletter_profile_reader::{

@@ -1,3 +1,4 @@
+use crate::CrawlerReviewId;
 use crate::network::policy::NetworkErrorKind;
 use crate::scraper::css_selector::product_schema::ApplySchemaError;
 use crate::scraper::css_selector::product_schema_service::ProductListingSchemaServiceError;
@@ -71,5 +72,8 @@ pub enum ScraperError {
     },
 
     #[error("Scraping '{url}' is blocked pending product schema review '{review_id}'")]
-    PendingSchemaReview { url: Url, review_id: uuid::Uuid },
+    PendingSchemaReview {
+        url: Url,
+        review_id: CrawlerReviewId,
+    },
 }

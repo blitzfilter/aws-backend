@@ -1,61 +1,33 @@
-use uuid::Uuid;
+domain_primitives::object_id_newtype!(OAuthClientId, "oc");
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-#[serde(into = "String", try_from = "String")]
-pub struct OAuthClientId(Uuid);
+#[cfg(test)]
+mod tests {
+    use super::OAuthClientId;
+    use std::error::Error;
+    use uuid::Uuid;
 
-impl Default for OAuthClientId {
-    fn default() -> Self {
-        Self::new()
+    const UUID_TEXT: &str = "01890a5d-ac96-774b-bf1d-d5586c639f75";
+    const TYPE_ID_SUFFIX: &str = "01h455vb4pex5vy7enb1p677vn";
+
+    #[test]
+    fn should_use_oc_object_id_contract() -> Result<(), Box<dyn Error>> {
+        let uuid = Uuid::parse_str(UUID_TEXT)?;
+        let id = OAuthClientId::try_from(uuid)?;
+
+        assert_eq!("oc", OAuthClientId::PREFIX);
+        assert_eq!(format!("oc_{TYPE_ID_SUFFIX}"), id.to_string());
+        assert_eq!(uuid, id.into_uuid());
+        assert!(OAuthClientId::try_from(UUID_TEXT).is_err());
+        assert!(OAuthClientId::try_from(format!("usr_{TYPE_ID_SUFFIX}")).is_err());
+
+        Ok(())
     }
-}
 
-impl OAuthClientId {
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-}
+    #[test]
+    fn should_generate_uuid_v7_oauth_client_id_with_oc_prefix() {
+        let id = OAuthClientId::new();
 
-impl std::fmt::Display for OAuthClientId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
-
-impl From<Uuid> for OAuthClientId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-
-impl TryFrom<String> for OAuthClientId {
-    type Error = uuid::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Uuid::parse_str(&value).map(Self)
-    }
-}
-
-impl From<OAuthClientId> for String {
-    fn from(value: OAuthClientId) -> Self {
-        value.0.to_string()
-    }
-}
-
-impl TryFrom<&str> for OAuthClientId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Uuid::parse_str(value).map(Self)
-    }
-}
-
-impl TryFrom<&String> for OAuthClientId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &String) -> Result<Self, Self::Error> {
-        Self::try_from(value.as_str())
+        assert_eq!(7, id.as_uuid().get_version_num());
+        assert!(id.to_string().starts_with("oc_"));
     }
 }

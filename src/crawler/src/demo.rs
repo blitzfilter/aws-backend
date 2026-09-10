@@ -119,10 +119,11 @@ fn demo_listing_sources() -> Vec<RegisteredListingSource> {
     .into_iter()
     .map(
         |(index, listing_source_name, listing_source_slug)| RegisteredListingSource {
-            listing_source_id: ListingSourceId::from(
-                uuid::Uuid::parse_str(&format!("a1000000-0000-0000-0000-{index:012}"))
+            listing_source_id: ListingSourceId::try_from(
+                uuid::Uuid::parse_str(&format!("01890a5d-ac96-774b-af1d-d5586c639f7{index}"))
                     .unwrap_or_else(|error| panic!("invalid demo ListingSource ID: {error}")),
-            ),
+            )
+            .unwrap_or_else(|error| panic!("invalid demo ListingSource ID version: {error}")),
             listing_source_name: listing_source_core::ListingSourceName::try_from(
                 listing_source_name,
             )

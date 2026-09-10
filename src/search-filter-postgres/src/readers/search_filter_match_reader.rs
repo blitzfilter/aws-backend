@@ -1,7 +1,8 @@
 use super::SqlxSearchFilterReader;
-use crate::mapping::{MATCH_COLUMNS, MatchRow, user_search_filter_uuid};
+use crate::mapping::{MATCH_COLUMNS, MatchRow};
 use application::pagination::{Cursor, CursoredResult};
 use domain_primitives::sort::SortOrder;
+use product_listing_core::product_listing_id::ProductListingId;
 use search_filter_service::ports::{
     SearchFilterMatchCursor, SearchFilterMatchListItem, SearchFilterMatchListQuery,
     SearchFilterMatchReadError, SearchFilterMatchReader,
@@ -17,13 +18,12 @@ impl SearchFilterMatchReader for SqlxSearchFilterReader {
         Option<CursoredResult<SearchFilterMatchListItem, SearchFilterMatchCursor>>,
         SearchFilterMatchReadError,
     > {
-        let filter_id = user_search_filter_uuid(query.search_filter_id)
-            .map_err(|_| SearchFilterMatchReadError::ReadFailed)?;
+        let filter_id = query.search_filter_id.into_uuid();
         let owned: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM search_filters WHERE user_search_filter_id=$1 AND user_id=$2)",
         )
         .bind(filter_id)
-        .bind(uuid::Uuid::from(query.user_id))
+        .bind(query.user_id.into_uuid())
         .fetch_one(&self.pool)
         .await
         .map_err(|_| SearchFilterMatchReadError::ReadFailed)?;
@@ -47,11 +47,14 @@ impl SearchFilterMatchReader for SqlxSearchFilterReader {
         }
         let items = rows
             .into_iter()
-            .map(|row| SearchFilterMatchListItem {
-                product_listing_id: row.product_listing_id.into(),
-                created: row.created,
+            .map(|row| {
+                Ok(SearchFilterMatchListItem {
+                    product_listing_id: ProductListingId::try_from(row.product_listing_id)
+                        .map_err(|_| SearchFilterMatchReadError::InvalidPersistedState)?,
+                    created: row.created,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, SearchFilterMatchReadError>>()?;
         let search_after = has_more
             .then(|| {
                 items.last().map(|item| SearchFilterMatchCursor {
@@ -109,7 +112,7 @@ async fn match_rows(
     if let Some(after) = after {
         query = query
             .bind(after.created)
-            .bind(uuid::Uuid::from(after.product_listing_id));
+            .bind(after.product_listing_id.into_uuid());
     }
     query
         .bind(i64::try_from(size).map_err(|_| SearchFilterMatchReadError::ReadFailed)?)

@@ -1,9 +1,10 @@
 use super::types::{PatchWatchlistData, WatchlistEntryData, watchlist_state};
 use super::util::parse_json;
 use crate::auth::protected_context;
-use crate::error::{ApiError, INVALID_UUID};
+use crate::error::ApiError;
 use crate::patch_value::non_nullable_option;
 use crate::state::WatchlistState;
+use crate::wire::parse_path_object_id;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -21,14 +22,13 @@ pub async fn patch_watchlist(
         Ok(v) => v,
         Err(r) => return *r,
     };
-    let product_listing_id = match ProductListingId::try_from(raw_product_listing_id.as_str()) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("productListingId")
-                .with_detail("Path parameter 'productListingId' must be a product UUID.")
-                .into_response();
-        }
+    let product_listing_id = match parse_path_object_id::<ProductListingId>(
+        &raw_product_listing_id,
+        "productListingId",
+        "ProductListing",
+    ) {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
     };
     let data: PatchWatchlistData = match parse_json(&body) {
         Ok(v) => v,

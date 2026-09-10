@@ -21,9 +21,9 @@ async fn should_search_parties_with_filters_bounded_pages_and_stable_cursor() {
     let pool = get_postgres_client().await;
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let reader_factory = SqlxPartySearchReaderFactory::new();
-    let first_id = PartyId::from(Uuid::from_u128(1));
-    let second_id = PartyId::from(Uuid::from_u128(2));
-    let third_id = PartyId::from(Uuid::from_u128(3));
+    let first_id = ordered_party_id(1);
+    let second_id = ordered_party_id(2);
+    let third_id = ordered_party_id(3);
 
     insert_party(
         &pool,
@@ -180,8 +180,8 @@ async fn insert_party(
     if let Err(error) = sqlx::query(
         "INSERT INTO parties (party_id, party_slug_id, name, phone, email, created, updated) VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(Uuid::from(party_id))
-    .bind(format!("same-party-{party_id}"))
+    .bind(party_id.into_uuid())
+    .bind(format!("same-party-{}", party_id.as_uuid().simple()))
     .bind(name)
     .bind(phone)
     .bind(email)
@@ -192,6 +192,12 @@ async fn insert_party(
     {
         panic!("failed to insert party fixture: {error}");
     }
+}
+
+fn ordered_party_id(sequence: u128) -> PartyId {
+    let uuid = Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0000 | sequence);
+    PartyId::try_from(uuid)
+        .unwrap_or_else(|error| panic!("invalid ordered Party ID fixture: {error}"))
 }
 
 fn text(value: &str) -> TextQuery<0> {

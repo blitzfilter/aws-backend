@@ -1,4 +1,4 @@
-use crate::mapping::{FILTER_COLUMNS, FilterRow, user_search_filter_uuid};
+use crate::mapping::{FILTER_COLUMNS, FilterRow};
 use application::error::box_error;
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use search_filter_service::ports::{
@@ -23,11 +23,7 @@ impl SearchFilterIndexReader for SqlxSearchFilterIndexReader {
         &self,
         search_filter_id: UserSearchFilterId,
     ) -> Result<Option<SearchFilterProjection>, SearchFilterIndexReadError> {
-        let search_filter_id = user_search_filter_uuid(search_filter_id).map_err(|source| {
-            SearchFilterIndexReadError::ReadFailed {
-                source: box_error(source),
-            }
-        })?;
+        let search_filter_id = search_filter_id.into_uuid();
         let mut query = QueryBuilder::<Postgres>::new("SELECT ");
         query
             .push(FILTER_COLUMNS)
@@ -49,12 +45,7 @@ impl SearchFilterIndexReader for SqlxSearchFilterIndexReader {
         after: Option<UserSearchFilterId>,
         limit: usize,
     ) -> Result<Vec<SearchFilterProjection>, SearchFilterIndexReadError> {
-        let after = after
-            .map(user_search_filter_uuid)
-            .transpose()
-            .map_err(|source| SearchFilterIndexReadError::ReadFailed {
-                source: box_error(source),
-            })?;
+        let after = after.map(UserSearchFilterId::into_uuid);
         let limit =
             i64::try_from(limit).map_err(|source| SearchFilterIndexReadError::ReadFailed {
                 source: box_error(source),

@@ -1,60 +1,24 @@
-use std::fmt::{Display, Formatter};
+domain_primitives::object_id_newtype!(ListingSourceId, "ls");
 
-use uuid::Uuid;
+#[cfg(test)]
+mod tests {
+    use super::ListingSourceId;
 
-#[cfg_attr(feature = "test-data", derive(fake::Dummy))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(into = "String", try_from = "String")]
-pub struct ListingSourceId(Uuid);
+    #[test]
+    fn should_use_listing_source_object_id_prefix() {
+        let id = ListingSourceId::new();
 
-impl ListingSourceId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
+        assert_eq!("ls", ListingSourceId::PREFIX);
+        assert!(id.to_string().starts_with("ls_"));
     }
-}
 
-impl Default for ListingSourceId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+    #[cfg(feature = "test-data")]
+    #[test]
+    fn should_fake_uuid_v7_listing_source_id() {
+        use fake::{Fake, Faker};
 
-impl Display for ListingSourceId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
+        let id: ListingSourceId = Faker.fake();
 
-impl From<Uuid> for ListingSourceId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
-
-impl From<ListingSourceId> for Uuid {
-    fn from(value: ListingSourceId) -> Self {
-        value.0
-    }
-}
-
-impl TryFrom<String> for ListingSourceId {
-    type Error = uuid::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Uuid::parse_str(&value).map(Self)
-    }
-}
-
-impl TryFrom<&str> for ListingSourceId {
-    type Error = uuid::Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Uuid::parse_str(value).map(Self)
-    }
-}
-
-impl From<ListingSourceId> for String {
-    fn from(value: ListingSourceId) -> Self {
-        value.0.to_string()
+        assert_eq!(7, id.as_uuid().get_version_num());
     }
 }

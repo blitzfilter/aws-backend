@@ -6,6 +6,7 @@ use crate::product_listings::product_data::{
     PersonalizedProductListingDetailsData, personalized_product_details_data,
 };
 use crate::state::WatchlistState;
+use crate::wire::parse_query_object_id;
 use application::pagination::{Cursor, CursoredResult};
 use axum::Json;
 use axum::extract::{RawQuery, State};
@@ -129,18 +130,18 @@ fn parse_watchlist_cursor(value: Value) -> Result<ProductListingWatchlistDetails
     let [Value::String(created), Value::String(product_listing_id)] = values.as_slice() else {
         return Err(ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("searchAfter")
-            .with_detail("searchAfter must contain an RFC3339 timestamp and product UUID."));
+            .with_detail("searchAfter must contain an RFC3339 timestamp and ProductListing ID."));
     };
     let watchlist_created = OffsetDateTime::parse(created, &Rfc3339).map_err(|error| {
         ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
             .with_query_field("searchAfter")
             .with_detail(error.to_string())
     })?;
-    let product_listing_id = ProductListingId::try_from(product_listing_id).map_err(|_| {
-        ApiError::bad_request(BAD_QUERY_PARAMETER_VALUE)
-            .with_query_field("searchAfter")
-            .with_detail("searchAfter must contain a product UUID.")
-    })?;
+    let product_listing_id = parse_query_object_id::<ProductListingId>(
+        product_listing_id,
+        "searchAfter",
+        "ProductListing",
+    )?;
     Ok(ProductListingWatchlistDetailsCursor {
         watchlist_created,
         product_listing_id,
@@ -437,6 +438,17 @@ mod tests {
             parse_watchlist_cursor(watchlist_cursor_value(search_after)?)?
         );
         assert!(watchlist_cursor(Some(1), Some("invalid")).is_err());
+        for invalid_id in [
+            ListingSourceId::new().to_string(),
+            product_listing_id.as_uuid().to_string(),
+            "pl_not-a-typeid".to_owned(),
+        ] {
+            let Err(error) = parse_watchlist_cursor(json!(["1970-01-01T00:00:00Z", invalid_id]))
+            else {
+                return Err("noncanonical ProductListing cursor ID was accepted".into());
+            };
+            assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
+        }
         Ok(())
     }
 

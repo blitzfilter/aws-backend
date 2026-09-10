@@ -1,4 +1,5 @@
 use super::{SqlxListingSourceReaders, invalid_read, read_error};
+use domain_primitives::object_id::ObjectIdError;
 use listing_source_core::ListingSourceId;
 use listing_source_service::ports::{
     ListingSourceReadError, WoocommerceSource, WoocommerceSourceReader,
@@ -11,6 +12,24 @@ struct WooRow {
     listing_source_id: uuid::Uuid,
     currency: Option<String>,
     language: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid ListingSource ID persisted")]
+struct InvalidWoocommerceSourceId(#[source] ObjectIdError);
+
+impl TryFrom<WooRow> for WoocommerceSource {
+    type Error = ListingSourceReadError;
+
+    fn try_from(row: WooRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            listing_source_id: ListingSourceId::try_from(row.listing_source_id)
+                .map_err(InvalidWoocommerceSourceId)
+                .map_err(invalid_read)?,
+            currency: parse_optional_currency(row.currency.as_deref())?,
+            language: parse_optional_language(row.language.as_deref())?,
+        })
+    }
 }
 
 fn parse_optional_currency(
@@ -62,17 +81,34 @@ impl WoocommerceSourceReader for SqlxListingSourceReaders {
                      AND source_grant.listing_source_id=c.listing_source_id \
                )",
         )
-        .bind(uuid::Uuid::from(id))
+        .bind(id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(read_error)?
-        .map(|row| {
-            Ok(WoocommerceSource {
-                listing_source_id: ListingSourceId::from(row.listing_source_id),
-                currency: parse_optional_currency(row.currency.as_deref())?,
-                language: parse_optional_language(row.language.as_deref())?,
-            })
-        })
+        .map(WoocommerceSource::try_from)
         .transpose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(listing_source_id: uuid::Uuid) -> WooRow {
+        WooRow {
+            listing_source_id,
+            currency: Some("EUR".to_owned()),
+            language: Some("en".to_owned()),
+        }
+    }
+
+    #[test]
+    fn should_map_valid_uuidv7_listing_source_id() {
+        assert!(WoocommerceSource::try_from(row(uuid::Uuid::now_v7())).is_ok());
+    }
+
+    #[test]
+    fn should_reject_wrong_version_listing_source_id() {
+        assert!(WoocommerceSource::try_from(row(uuid::Uuid::new_v4())).is_err());
     }
 }

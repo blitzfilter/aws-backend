@@ -1,7 +1,8 @@
 use crate::{
     auth::protected_context,
-    error::{ApiError, INVALID_UUID, PARTNERSHIP_INTERNAL_ERROR},
+    error::{ApiError, PARTNERSHIP_INTERNAL_ERROR},
     state::PartnershipsState,
+    wire::parse_path_object_id,
 };
 use axum::{
     extract::{Path, State},
@@ -10,7 +11,6 @@ use axum::{
 };
 use partnership_core::partnership_id::PartnershipId;
 use partnership_service::use_cases::commands::dissolve_partnership::DissolvePartnershipCommand;
-use uuid::Uuid;
 
 pub(super) async fn delete_partnership(
     State(state): State<PartnershipsState>,
@@ -21,17 +21,11 @@ pub(super) async fn delete_partnership(
         Ok(value) => value,
         Err(response) => return no_store(*response),
     };
-    let partnership_id = match Uuid::parse_str(&raw_partnership_id).map(PartnershipId::from) {
-        Ok(value) => value,
-        Err(_) => {
-            return no_store(
-                ApiError::bad_request(INVALID_UUID)
-                    .with_path_field("partnershipId")
-                    .with_detail("Path parameter 'partnershipId' must be a UUID.")
-                    .into_response(),
-            );
-        }
-    };
+    let partnership_id: PartnershipId =
+        match parse_path_object_id(&raw_partnership_id, "partnershipId", "Partnership") {
+            Ok(value) => value,
+            Err(error) => return no_store(error.into_response()),
+        };
     let Some(dissolve) = state.dissolve else {
         return no_store(
             ApiError::internal_server_error(PARTNERSHIP_INTERNAL_ERROR)

@@ -19,8 +19,8 @@ const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 async fn should_return_complete_state_with_safe_and_unsafe_content_and_free_tier_limit() {
     let pool = get_postgres_client().await;
     let user_id = seed_user(&pool, "FREE", false).await;
-    let first_filter_id = UserSearchFilterId::from(uuid::Uuid::from_u128(1));
-    let later_filter_id = UserSearchFilterId::from(uuid::Uuid::from_u128(2));
+    let first_filter_id = deterministic_filter_id(1);
+    let later_filter_id = deterministic_filter_id(2);
     let month_start = OffsetDateTime::UNIX_EPOCH + Duration::days(31);
     let unsafe_product = seed_product(&pool).await;
     let safe_product = seed_product(&pool).await;
@@ -247,8 +247,8 @@ async fn should_return_all_unseen_notification_ids_newest_first_without_cross_pr
     let update = sqlx::query(
         "UPDATE notifications SET seen = true WHERE user_id = $1 AND product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .execute(&pool)
     .await;
     if let Err(error) = update {
@@ -342,7 +342,7 @@ async fn seed_user(
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(format!("{user_id}@example.test"))
     .bind(show_unassessed_or_sensitive_content)
     .bind(tier)
@@ -360,9 +360,9 @@ async fn seed_user(
 async fn seed_product(pool: &sqlx::PgPool) -> ProductListingId {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
-    let raw_product_listing_id = uuid::Uuid::from(product_listing_id);
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let raw_product_listing_id = product_listing_id.into_uuid();
     let mut transaction = match pool.begin().await {
         Ok(transaction) => transaction,
         Err(error) => panic!("failed to begin product seed transaction: {error}"),
@@ -403,10 +403,10 @@ async fn seed_product(pool: &sqlx::PgPool) -> ProductListingId {
     )
     .bind(raw_product_listing_id)
     .bind(format!(
-            "product-user-state-{}",
-            &raw_product_listing_id.simple().to_string()[..6]
-        ))
-    .bind(uuid::Uuid::from(event_id))
+        "product-user-state-{}",
+        &raw_product_listing_id.simple().to_string()[26..]
+    ))
+    .bind(event_id.into_uuid())
     .bind(listing_source_id)
     .bind(raw_product_listing_id.to_string())
     .bind("AVAILABLE")
@@ -425,7 +425,7 @@ async fn seed_product(pool: &sqlx::PgPool) -> ProductListingId {
         ) VALUES ($1, $2, $3, $4, 1, $5, $6)
         "#,
     )
-    .bind(uuid::Uuid::from(event_id))
+    .bind(event_id.into_uuid())
     .bind(raw_product_listing_id)
     .bind("PRODUCT_LISTING_DISCOVERED")
     .bind("DOMAIN")
@@ -463,7 +463,7 @@ async fn set_product_images(
         "UPDATE product_listings SET product_images = $1 WHERE product_listing_id = $2",
     )
     .bind(images)
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .execute(pool)
     .await;
 
@@ -487,10 +487,10 @@ async fn insert_watchlist_notification(
         ) VALUES ($1, $2, 'WATCHLIST_AVAILABILITY_CHANGED', $3, $4, $5, $6, $7)
         "#,
     )
-    .bind(uuid::Uuid::from(notification_id))
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::new_v4())
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(notification_id.into_uuid())
+    .bind(user_id.into_uuid())
+    .bind(uuid::Uuid::now_v7())
+    .bind(product_listing_id.into_uuid())
     .bind(serde_json::json!({}))
     .bind(seen)
     .bind(created)
@@ -519,11 +519,11 @@ async fn insert_search_filter_notification(
         ) VALUES ($1, $2, 'SEARCH_FILTER_MATCH', $3, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(uuid::Uuid::from(notification_id))
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::new_v4())
-    .bind(uuid::Uuid::from(product_listing_id))
-    .bind(uuid_from_filter_id(filter_id))
+    .bind(notification_id.into_uuid())
+    .bind(user_id.into_uuid())
+    .bind(uuid::Uuid::now_v7())
+    .bind(product_listing_id.into_uuid())
+    .bind(filter_id.into_uuid())
     .bind(serde_json::json!({}))
     .bind(seen)
     .bind(created)
@@ -547,8 +547,8 @@ async fn insert_watchlist(
         VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'ACTIVE' THEN now() ELSE NULL END, CASE WHEN $3 THEN now() ELSE NULL END)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(user_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .bind(notifications)
     .bind("ACTIVE")
     .execute(pool)
@@ -572,8 +572,8 @@ async fn insert_search_filter(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(uuid_from_filter_id(filter_id))
-    .bind(uuid::Uuid::from(user_id))
+    .bind(filter_id.into_uuid())
+    .bind(user_id.into_uuid())
     .bind(name)
     .bind(true)
     .bind("ACTIVE")
@@ -608,10 +608,10 @@ async fn insert_search_filter_match(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(uuid::Uuid::from(user_id))
-    .bind(uuid_from_filter_id(filter_id))
-    .bind(uuid::Uuid::from(product_listing_id))
-    .bind(origin_event_id)
+    .bind(user_id.into_uuid())
+    .bind(filter_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
+    .bind(origin_event_id.into_uuid())
     .bind(name)
     .bind(reason)
     .bind(feedback)
@@ -627,23 +627,26 @@ async fn insert_search_filter_match(
 async fn event_id_for_product(
     pool: &sqlx::PgPool,
     product_listing_id: ProductListingId,
-) -> uuid::Uuid {
+) -> EventId {
     let result = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT current_event_id FROM product_listings WHERE product_listing_id = $1",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .fetch_one(pool)
     .await;
 
     match result {
-        Ok(event_id) => event_id,
+        Ok(event_id) => EventId::try_from(event_id)
+            .unwrap_or_else(|error| panic!("invalid persisted ProductListing event ID: {error}")),
         Err(error) => panic!("failed to read product event ID: {error}"),
     }
 }
 
-fn uuid_from_filter_id(filter_id: UserSearchFilterId) -> uuid::Uuid {
-    match uuid::Uuid::parse_str(&filter_id.to_string()) {
-        Ok(value) => value,
-        Err(error) => panic!("invalid user search filter ID: {error}"),
-    }
+fn deterministic_filter_id(sequence: u16) -> UserSearchFilterId {
+    let value = format!("01900000-0000-7000-8000-{sequence:012x}");
+    let uuid = value
+        .parse::<uuid::Uuid>()
+        .unwrap_or_else(|error| panic!("valid deterministic UUIDv7 fixture: {error}"));
+    UserSearchFilterId::try_from(uuid)
+        .unwrap_or_else(|error| panic!("valid deterministic search-filter ID: {error}"))
 }

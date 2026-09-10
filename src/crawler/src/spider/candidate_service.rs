@@ -58,7 +58,7 @@ impl SpiderCandidateService for SpiderCandidateServiceImpl {
         let excluded_domain_ids: Vec<uuid::Uuid> = excluded_domain_ids
             .iter()
             .copied()
-            .map(Into::into)
+            .map(CrawlerDomainId::into_uuid)
             .collect();
         let rows = sqlx::query_as::<_, SpiderCandidateRow>(
             r#"
@@ -82,16 +82,19 @@ impl SpiderCandidateService for SpiderCandidateServiceImpl {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|row| SpiderCandidate {
-                listing_source_id: ListingSourceId::from(row.listing_source_id),
-                domain_id: row.domain_id.into(),
-                listing_source_domain: row.listing_source_domain,
-                crawl_failure_count: row.crawl_failure_count,
-                last_crawl_error_kind: row.last_crawl_error_kind,
+        rows.into_iter()
+            .map(|row| {
+                Ok(SpiderCandidate {
+                    listing_source_id: ListingSourceId::try_from(row.listing_source_id)
+                        .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
+                    domain_id: CrawlerDomainId::try_from(row.domain_id)
+                        .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
+                    listing_source_domain: row.listing_source_domain,
+                    crawl_failure_count: row.crawl_failure_count,
+                    last_crawl_error_kind: row.last_crawl_error_kind,
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn mark_crawl_failure(
@@ -108,7 +111,7 @@ impl SpiderCandidateService for SpiderCandidateServiceImpl {
                  next_crawl_at = $4
              WHERE domain_id = $1",
         )
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .bind(error_kind)
         .bind(crawl_failure_count)
         .bind(next_crawl_at)
@@ -126,7 +129,7 @@ impl SpiderCandidateService for SpiderCandidateServiceImpl {
                  next_crawl_at = NULL
              WHERE domain_id = $1",
         )
-        .bind(uuid::Uuid::from(*domain_id))
+        .bind(domain_id.as_uuid())
         .execute(&self.pool)
         .await?;
 

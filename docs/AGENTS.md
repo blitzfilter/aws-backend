@@ -45,6 +45,7 @@
 - `durable-worker-runbook.md` — durable SQS settings, identity/Sequin handoff, safe operations, tombstones, and notification recovery.
 - `product-listing-inventory.md` — ProductListing rewrite scope and final scan checklist.
 - `listing-source-partnership-rewrite-inventory.md` — ListingSource and Partnership rewrite completion checklist.
+- `object-ids.md` — prefixed UUIDv7 object-ID registry and boundary contract.
 - `storage.md` — canonical storage contracts.
 - `events/flow.md` — durable event and scheduled-flow contracts.
 - `swagger.yaml` — public REST contract

@@ -4,6 +4,7 @@ use aura_historia_worker::{
     product_listing_opensearch::consume_product_listing_opensearch_queue, serve_with_runtime,
 };
 use domain_primitives::event_id::EventId;
+use fxrate_core::FxRateId;
 use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
 use listing_source_core::ListingSourceId;
 use listing_source_postgres::SqlxListingSourceRepositoryFactory;
@@ -55,6 +56,10 @@ async fn should_project_committed_active_product_with_native_source_price_and_no
         assert_eq!(
             Some(fixture.product_listing_id.to_string().as_str()),
             document.get("productListingId").and_then(Value::as_str)
+        );
+        assert_eq!(
+            Some(fixture.listing_source_id.to_string().as_str()),
+            document.get("listingSourceId").and_then(Value::as_str)
         );
         assert_eq!(
             Some(fixture.event_id.to_string().as_str()),
@@ -439,7 +444,7 @@ async fn should_reject_unrouted_product_cdc_without_creating_a_projection() {
         for (table, operation) in [("product_listing_events", "update"), ("product_listings", "insert")] {
             let response = reqwest::Client::new()
                 .post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
-                .json(&json!({"changes": [{"table": table, "operation": operation, "record": {"product_listing_id": id}}]}))
+                .json(&json!({"changes": [{"table": table, "operation": operation, "record": {"product_listing_id": id.as_uuid()}}]}))
                 .send().await?;
             assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
         }
@@ -556,8 +561,8 @@ impl ProductListingOpenSearchWorker {
             ))
             .json(&json!({
                 "record": {
-                    "event_id": event_id.to_string(),
-                    "product_listing_id": product_listing_id.to_string(),
+                    "event_id": event_id.as_uuid(),
+                    "product_listing_id": product_listing_id.as_uuid(),
                     "event_type": event_type,
                     "event_group": event_group,
                     "event_type_schema_version": 1,
@@ -602,7 +607,7 @@ async fn insert_active_product_with_event(
 ) -> Result<ProductListingFixture, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let mut tx = pool.begin().await?;
     insert_listing_source(&mut tx, listing_source_id, "active-os").await?;
     sqlx::query(
@@ -611,7 +616,7 @@ async fn insert_active_product_with_event(
     .bind(uuid::Uuid::from(product_listing_id))
     .bind(product_slug("active-os", product_listing_id))
     .bind(uuid::Uuid::from(event_id))
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(product_listing_id.to_string())
     .bind(projection_version)
 
@@ -621,7 +626,7 @@ async fn insert_active_product_with_event(
     tx.commit().await?;
     Ok(ProductListingFixture {
         product_listing_id,
-        listing_source_id: ListingSourceId::from(listing_source_id),
+        listing_source_id,
         event_id,
     })
 }
@@ -631,7 +636,7 @@ async fn insert_product_with_event_then_rollback(
 ) -> Result<ProductListingId, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let mut tx = pool.begin().await?;
     insert_listing_source(&mut tx, listing_source_id, "rollback-os").await?;
     sqlx::query(
@@ -640,7 +645,7 @@ async fn insert_product_with_event_then_rollback(
     .bind(uuid::Uuid::from(product_listing_id))
     .bind(product_slug("rollback-os", product_listing_id))
     .bind(uuid::Uuid::from(event_id))
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(product_listing_id.to_string())
 
         .execute(&mut *tx)
@@ -722,11 +727,11 @@ async fn restore_product_listing(
 
 async fn insert_sold_product_with_event(
     pool: &sqlx::PgPool,
-    fx_rate_id: uuid::Uuid,
+    fx_rate_id: FxRateId,
 ) -> Result<ProductListingFixture, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let mut tx = pool.begin().await?;
     insert_listing_source(&mut tx, listing_source_id, "sold-os").await?;
     sqlx::query(
@@ -735,9 +740,9 @@ async fn insert_sold_product_with_event(
     .bind(uuid::Uuid::from(product_listing_id))
     .bind(product_slug("sold-os", product_listing_id))
     .bind(uuid::Uuid::from(event_id))
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(product_listing_id.to_string())
-    .bind(fx_rate_id)
+    .bind(fx_rate_id.as_uuid())
 
         .execute(&mut *tx)
     .await?;
@@ -745,18 +750,18 @@ async fn insert_sold_product_with_event(
     tx.commit().await?;
     Ok(ProductListingFixture {
         product_listing_id,
-        listing_source_id: ListingSourceId::from(listing_source_id),
+        listing_source_id,
         event_id,
     })
 }
 
 async fn insert_sold_product_without_main_price_with_event(
     pool: &sqlx::PgPool,
-    fx_rate_id: uuid::Uuid,
+    fx_rate_id: FxRateId,
 ) -> Result<ProductListingFixture, sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let event_id = EventId::new();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let listing_source_id = ListingSourceId::new();
     let mut tx = pool.begin().await?;
     insert_listing_source(&mut tx, listing_source_id, "sold-no-price-os").await?;
     sqlx::query(
@@ -765,9 +770,9 @@ async fn insert_sold_product_without_main_price_with_event(
     .bind(uuid::Uuid::from(product_listing_id))
     .bind(product_slug("sold-no-price-os", product_listing_id))
     .bind(uuid::Uuid::from(event_id))
-    .bind(listing_source_id)
+    .bind(listing_source_id.as_uuid())
     .bind(product_listing_id.to_string())
-    .bind(fx_rate_id)
+    .bind(fx_rate_id.as_uuid())
 
         .execute(&mut *tx)
     .await?;
@@ -775,7 +780,7 @@ async fn insert_sold_product_without_main_price_with_event(
     tx.commit().await?;
     Ok(ProductListingFixture {
         product_listing_id,
-        listing_source_id: ListingSourceId::from(listing_source_id),
+        listing_source_id,
         event_id,
     })
 }
@@ -799,21 +804,22 @@ async fn correct_sold_product_main_price(
 }
 
 fn product_slug(prefix: &str, product_listing_id: ProductListingId) -> String {
-    let product_uuid = uuid::Uuid::from(product_listing_id);
-    let suffix = product_uuid.simple().to_string();
-    format!("{prefix}-{}", &suffix[..6])
+    let suffix = product_listing_id.as_uuid().simple().to_string();
+    format!("{prefix}-{}", &suffix[26..])
 }
 
 async fn insert_listing_source(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    listing_source_id: uuid::Uuid,
+    listing_source_id: ListingSourceId,
     slug_prefix: &str,
 ) -> Result<(), sqlx::Error> {
+    let operator_party_id = uuid::Uuid::now_v7();
     sqlx::query(
-        "WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, 'ProductListing OpenSearch worker source', party_id FROM operator",
+        "WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $3, $2, 'ProductListing OpenSearch worker source', party_id FROM operator",
     )
-    .bind(listing_source_id)
-    .bind(format!("{slug_prefix}-{listing_source_id}"))
+    .bind(operator_party_id)
+    .bind(format!("{slug_prefix}-{}", listing_source_id.as_uuid()))
+    .bind(listing_source_id.as_uuid())
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -856,13 +862,13 @@ async fn insert_product_event_with_type(
     Ok(())
 }
 
-async fn insert_equal_rate_snapshot(pool: &sqlx::PgPool) -> Result<uuid::Uuid, sqlx::Error> {
-    let fx_rate_id = uuid::Uuid::new_v4();
+async fn insert_equal_rate_snapshot(pool: &sqlx::PgPool) -> Result<FxRateId, sqlx::Error> {
+    let fx_rate_id = FxRateId::new();
     sqlx::query(
         "INSERT INTO fx_rates (fx_rate_id, captured_at, source, source_event_id) VALUES ($1, now(), 'fxratesapi', $2)",
     )
-    .bind(fx_rate_id)
-    .bind(fx_rate_id.to_string())
+    .bind(fx_rate_id.as_uuid())
+    .bind(fx_rate_id.as_uuid().to_string())
     .execute(pool)
     .await?;
     for currency in [
@@ -872,7 +878,7 @@ async fn insert_equal_rate_snapshot(pool: &sqlx::PgPool) -> Result<uuid::Uuid, s
         sqlx::query(
             "INSERT INTO fx_rate_quotes (fx_rate_id, currency, units_per_eur) VALUES ($1, $2, 1000000)",
         )
-        .bind(fx_rate_id)
+        .bind(fx_rate_id.as_uuid())
         .bind(currency)
         .execute(pool)
         .await?;
@@ -941,7 +947,7 @@ async fn wait_for_product_tombstone(
 }
 
 async fn assert_product_readers_empty() -> support::TestResult {
-    use fxrate_core::{FX_RATE_SCALE, FxRateId, FxRateQuote, FxRateSource, NewFxRateSnapshot};
+    use fxrate_core::{FX_RATE_SCALE, FxRateQuote, FxRateSource, NewFxRateSnapshot};
     use localization::Language;
     use money::Currency;
     use product_listing_core::product_listing_search::ProductListingSearch;

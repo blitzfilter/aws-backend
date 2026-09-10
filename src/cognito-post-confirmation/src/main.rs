@@ -5,16 +5,19 @@ use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use platform_observability::{LogLevel, LoggingConfig, init};
 use platform_postgres::{PostgresPoolConfig, SqlxUnitOfWork};
 use std::{fmt::Display, str::FromStr};
-use user_postgres::SqlxUserRepositoryFactory;
-use user_service::use_cases::CreateUserHandler;
+use user_postgres::{SqlxUserCognitoIdentityRegistryFactory, SqlxUserRepositoryFactory};
+use user_service::use_cases::RegisterCognitoUserHandler;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     init(logging_config_from_env());
 
     let pool = postgres_config_from_env()?.connect().await?;
-    let service =
-        CreateUserHandler::new(SqlxUnitOfWork::new(pool), SqlxUserRepositoryFactory::new());
+    let service = RegisterCognitoUserHandler::new(
+        SqlxUnitOfWork::new(pool),
+        SqlxUserRepositoryFactory::new(),
+        SqlxUserCognitoIdentityRegistryFactory::new(),
+    );
 
     debug!("Lambda initialized.");
 

@@ -1,6 +1,7 @@
 use super::{no_store, parse_form, required_form};
-use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE};
 use crate::state::OAuthState;
+use crate::wire::parse_body_object_id;
 use application::operation_context::{CorrelationId, OperationContext, Principal, RequestId};
 use axum::{
     extract::State,
@@ -31,11 +32,12 @@ fn request(
                 .with_detail(error.to_string())
                 .into_response()
         })?;
-    let client_id = OAuthClientId::try_from(required_form(form, "client_id")?).map_err(|_| {
-        ApiError::bad_request(INVALID_UUID)
-            .with_detail("Form field 'client_id' must be a UUID.")
-            .into_response()
-    })?;
+    let client_id: OAuthClientId = parse_body_object_id(
+        required_form(form, "client_id")?,
+        "client_id",
+        "OAuthClient",
+    )
+    .map_err(IntoResponse::into_response)?;
     let client_secret = RawOAuthClientSecret::try_from(
         required_form(form, "client_secret")?.to_owned(),
     )

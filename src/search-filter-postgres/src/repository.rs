@@ -1,6 +1,5 @@
 use crate::mapping::{
     FILTER_COLUMNS, FilterRow, ProductListingSearchJsonMappingError, product_search_to_json,
-    user_search_filter_uuid,
 };
 use application::error::box_error;
 use platform_postgres::SqlxTransaction;
@@ -28,15 +27,11 @@ impl SearchFilterRepositoryFactory<SqlxTransaction> for SqlxSearchFilterReposito
 
 #[derive(Debug)]
 enum SearchFilterRepositoryAdapterError {
-    LookupIdentifier(uuid::Error),
     LookupSqlx(sqlx::Error),
     InsertSearchSerialization(ProductListingSearchJsonMappingError),
-    InsertIdentifier(uuid::Error),
     InsertSqlx(sqlx::Error),
     UpdateSearchSerialization(ProductListingSearchJsonMappingError),
-    UpdateIdentifier(uuid::Error),
     UpdateSqlx(sqlx::Error),
-    DeleteIdentifier(uuid::Error),
     DeleteSqlx(sqlx::Error),
     DeleteNoRowsAffected,
 }
@@ -44,27 +39,15 @@ enum SearchFilterRepositoryAdapterError {
 impl std::fmt::Display for SearchFilterRepositoryAdapterError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LookupIdentifier(_) => {
-                formatter.write_str("search filter lookup identifier conversion failed")
-            }
             Self::LookupSqlx(_) => formatter.write_str("search filter lookup SQL query failed"),
             Self::InsertSearchSerialization(_) => {
                 formatter.write_str("search filter insert search serialization failed")
-            }
-            Self::InsertIdentifier(_) => {
-                formatter.write_str("search filter insert identifier conversion failed")
             }
             Self::InsertSqlx(_) => formatter.write_str("search filter insert SQL query failed"),
             Self::UpdateSearchSerialization(_) => {
                 formatter.write_str("search filter update search serialization failed")
             }
-            Self::UpdateIdentifier(_) => {
-                formatter.write_str("search filter update identifier conversion failed")
-            }
             Self::UpdateSqlx(_) => formatter.write_str("search filter update SQL query failed"),
-            Self::DeleteIdentifier(_) => {
-                formatter.write_str("search filter delete identifier conversion failed")
-            }
             Self::DeleteSqlx(_) => formatter.write_str("search filter delete SQL query failed"),
             Self::DeleteNoRowsAffected => {
                 formatter.write_str("search filter delete did not affect exactly one row")
@@ -76,10 +59,6 @@ impl std::fmt::Display for SearchFilterRepositoryAdapterError {
 impl std::error::Error for SearchFilterRepositoryAdapterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::LookupIdentifier(source)
-            | Self::InsertIdentifier(source)
-            | Self::UpdateIdentifier(source)
-            | Self::DeleteIdentifier(source) => Some(source),
             Self::LookupSqlx(source)
             | Self::InsertSqlx(source)
             | Self::UpdateSqlx(source)
@@ -95,22 +74,18 @@ impl std::error::Error for SearchFilterRepositoryAdapterError {
 impl From<SearchFilterRepositoryAdapterError> for SearchFilterRepositoryError {
     fn from(source: SearchFilterRepositoryAdapterError) -> Self {
         match source {
-            SearchFilterRepositoryAdapterError::LookupIdentifier(_)
-            | SearchFilterRepositoryAdapterError::LookupSqlx(_) => Self::LookupFailed {
+            SearchFilterRepositoryAdapterError::LookupSqlx(_) => Self::LookupFailed {
                 source: box_error(source),
             },
             SearchFilterRepositoryAdapterError::InsertSearchSerialization(_)
-            | SearchFilterRepositoryAdapterError::InsertIdentifier(_)
             | SearchFilterRepositoryAdapterError::InsertSqlx(_) => Self::InsertFailed {
                 source: box_error(source),
             },
             SearchFilterRepositoryAdapterError::UpdateSearchSerialization(_)
-            | SearchFilterRepositoryAdapterError::UpdateIdentifier(_)
             | SearchFilterRepositoryAdapterError::UpdateSqlx(_) => Self::UpdateFailed {
                 source: box_error(source),
             },
-            SearchFilterRepositoryAdapterError::DeleteIdentifier(_)
-            | SearchFilterRepositoryAdapterError::DeleteSqlx(_)
+            SearchFilterRepositoryAdapterError::DeleteSqlx(_)
             | SearchFilterRepositoryAdapterError::DeleteNoRowsAffected => Self::DeleteFailed {
                 source: box_error(source),
             },
@@ -123,8 +98,7 @@ impl SearchFilterRepository for SqlxSearchFilterRepository<'_> {
         &mut self,
         id: UserSearchFilterId,
     ) -> Result<Option<PersistedSearchFilter>, SearchFilterRepositoryError> {
-        let id = user_search_filter_uuid(id)
-            .map_err(SearchFilterRepositoryAdapterError::LookupIdentifier)?;
+        let id = id.into_uuid();
         let mut query = QueryBuilder::<Postgres>::new("SELECT ");
         query
             .push(FILTER_COLUMNS)
@@ -144,8 +118,7 @@ impl SearchFilterRepository for SqlxSearchFilterRepository<'_> {
     ) -> Result<PersistedSearchFilter, SearchFilterRepositoryError> {
         let search = product_search_to_json(filter.search())
             .map_err(SearchFilterRepositoryAdapterError::InsertSearchSerialization)?;
-        let id = user_search_filter_uuid(filter.id())
-            .map_err(SearchFilterRepositoryAdapterError::InsertIdentifier)?;
+        let id = filter.id().into_uuid();
         let mut query = QueryBuilder::<Postgres>::new(
             "INSERT INTO search_filters (user_search_filter_id,user_id,name,notifications,state,search,enhanced_search_description,embedding,language,currency) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ",
         );
@@ -153,7 +126,7 @@ impl SearchFilterRepository for SqlxSearchFilterRepository<'_> {
         let row = query
             .build_query_as::<FilterRow>()
             .bind(id)
-            .bind(uuid::Uuid::from(filter.user_id()))
+            .bind(filter.user_id().into_uuid())
             .bind(filter.name().as_ref())
             .bind(filter.notifications())
             .bind(filter.state().as_str())
@@ -188,8 +161,7 @@ impl SearchFilterRepository for SqlxSearchFilterRepository<'_> {
     ) -> Result<PersistedSearchFilter, SearchFilterRepositoryError> {
         let search = product_search_to_json(filter.search())
             .map_err(SearchFilterRepositoryAdapterError::UpdateSearchSerialization)?;
-        let id = user_search_filter_uuid(filter.id())
-            .map_err(SearchFilterRepositoryAdapterError::UpdateIdentifier)?;
+        let id = filter.id().into_uuid();
         let mut query = QueryBuilder::<Postgres>::new(
             "UPDATE search_filters SET name=$2,notifications=$3,state=$4,search=$5,enhanced_search_description=$6,embedding=$7,language=$8,currency=$9,version=version+1,updated=now() WHERE user_search_filter_id=$1 AND version=$10 RETURNING ",
         );
@@ -219,8 +191,7 @@ impl SearchFilterRepository for SqlxSearchFilterRepository<'_> {
         row.into_persisted()
     }
     async fn delete(&mut self, id: UserSearchFilterId) -> Result<(), SearchFilterRepositoryError> {
-        let id = user_search_filter_uuid(id)
-            .map_err(SearchFilterRepositoryAdapterError::DeleteIdentifier)?;
+        let id = id.into_uuid();
         let result = sqlx::query("DELETE FROM search_filters WHERE user_search_filter_id=$1")
             .bind(id)
             .execute(self.tx.connection())

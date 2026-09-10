@@ -1,4 +1,4 @@
-use crate::mapping::{name, product_search_from_json, user_search_filter_uuid};
+use crate::mapping::{name, product_search_from_json};
 use application::error::box_error;
 use platform_postgres::SqlxTransaction;
 use search_filter_core::user_search_filter_id::UserSearchFilterId;
@@ -51,17 +51,12 @@ impl ActiveSearchFilterMatchCandidateReader for SqlxActiveSearchFilterMatchCandi
 
         let user_ids = candidates
             .iter()
-            .map(|candidate| uuid::Uuid::from(candidate.user_id))
+            .map(|candidate| candidate.user_id.into_uuid())
             .collect::<Vec<_>>();
         let filter_ids = candidates
             .iter()
-            .map(|candidate| user_search_filter_uuid(candidate.search_filter_id))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(
-                |source| ActiveSearchFilterMatchCandidateReadError::ReadFailed {
-                    source: box_error(source),
-                },
-            )?;
+            .map(|candidate| candidate.search_filter_id.into_uuid())
+            .collect::<Vec<_>>();
         let candidates_by_id = candidates
             .iter()
             .map(|candidate| ((candidate.user_id, candidate.search_filter_id), candidate))
@@ -98,8 +93,17 @@ impl ActiveSearchFilterMatchCandidateReader for SqlxActiveSearchFilterMatchCandi
         )?;
         let mut active = Vec::with_capacity(rows.len());
         for row in rows {
-            let user_id = UserId::from(row.user_id);
-            let search_filter_id = UserSearchFilterId::from(row.user_search_filter_id);
+            let user_id = UserId::try_from(row.user_id).map_err(|source| {
+                ActiveSearchFilterMatchCandidateReadError::InvalidPersistedState {
+                    source: box_error(source),
+                }
+            })?;
+            let search_filter_id = UserSearchFilterId::try_from(row.user_search_filter_id)
+                .map_err(|source| {
+                    ActiveSearchFilterMatchCandidateReadError::InvalidPersistedState {
+                        source: box_error(source),
+                    }
+                })?;
             let search = product_search_from_json(row.search).map_err(|source| {
                 ActiveSearchFilterMatchCandidateReadError::InvalidPersistedState {
                     source: box_error(source),

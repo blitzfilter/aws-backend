@@ -65,7 +65,7 @@ impl ProductListingContentAssessmentSnapshotReader
             WHERE product.product_listing_id = $1
             "#,
         )
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(

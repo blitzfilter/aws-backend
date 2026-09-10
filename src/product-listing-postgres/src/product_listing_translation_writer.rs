@@ -1,3 +1,4 @@
+use crate::object_id::try_from_uuid;
 use domain_primitives::event_id::EventId;
 use platform_postgres::SqlxTransaction;
 use product_listing_service::ports::{
@@ -47,7 +48,7 @@ impl ProductListingTranslationWriter for SqlxProductListingTranslationWriter<'_>
         let content_source_event_id = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT content_source_event_id FROM product_listings WHERE product_listing_id = $1 FOR UPDATE",
         )
-        .bind(uuid::Uuid::from(write.product_listing_id))
+        .bind(write.product_listing_id.as_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(ProductListingTranslationWriteSqlxError)?;
@@ -65,7 +66,13 @@ impl ProductListingTranslationWriter for SqlxProductListingTranslationWriter<'_>
                 ),
             });
         }
-        if EventId::from(content_source_event_id) != write.source_event_id {
+        let content_source_event_id =
+            try_from_uuid::<EventId>(content_source_event_id, "content source event ID").map_err(
+                |source| ProductListingTranslationWriteError::WriteFailed {
+                    source: application::error::box_error(source),
+                },
+            )?;
+        if content_source_event_id != write.source_event_id {
             return Ok(ProductListingTranslationWriteOutcome::Stale);
         }
 
@@ -81,10 +88,10 @@ impl ProductListingTranslationWriter for SqlxProductListingTranslationWriter<'_>
                     updated = now()
                 "#,
             )
-            .bind(uuid::Uuid::from(write.product_listing_id))
+            .bind(write.product_listing_id.as_uuid())
             .bind(language.as_str())
             .bind(title.as_ref())
-            .bind(uuid::Uuid::from(write.source_event_id))
+            .bind(write.source_event_id.as_uuid())
             .execute(&mut *self.connection)
             .await
             .map_err(ProductListingTranslationWriteSqlxError)?;
@@ -96,7 +103,7 @@ impl ProductListingTranslationWriter for SqlxProductListingTranslationWriter<'_>
             .map(|language| language.as_str())
             .collect::<Vec<_>>();
         let payload = json!({
-            "sourceEventId": write.source_event_id.to_string(),
+            "sourceEventId": write.source_event_id.as_uuid().to_string(),
             "sourceLanguage": write.source_language.as_str(),
             "targetLanguages": target_languages,
         });
@@ -108,8 +115,8 @@ impl ProductListingTranslationWriter for SqlxProductListingTranslationWriter<'_>
             ) VALUES ($1, $2, 'ENRICHMENT_TRANSLATED_TITLES', 'ENRICHMENT', 1, $3, now())
             "#,
         )
-        .bind(uuid::Uuid::from(write.enrichment_event_id))
-        .bind(uuid::Uuid::from(write.product_listing_id))
+        .bind(write.enrichment_event_id.as_uuid())
+        .bind(write.product_listing_id.as_uuid())
         .bind(payload)
         .execute(&mut *self.connection)
         .await
@@ -118,9 +125,9 @@ impl ProductListingTranslationWriter for SqlxProductListingTranslationWriter<'_>
         let update = sqlx::query(
             "UPDATE product_listings SET current_event_id = $1, projection_version = projection_version + 1, updated = now() WHERE product_listing_id = $2 AND content_source_event_id = $3",
         )
-        .bind(uuid::Uuid::from(write.enrichment_event_id))
-        .bind(uuid::Uuid::from(write.product_listing_id))
-        .bind(uuid::Uuid::from(write.source_event_id))
+        .bind(write.enrichment_event_id.as_uuid())
+        .bind(write.product_listing_id.as_uuid())
+        .bind(write.source_event_id.as_uuid())
         .execute(&mut *self.connection)
         .await
         .map_err(ProductListingTranslationWriteSqlxError)?;
@@ -153,8 +160,8 @@ async fn duplicate_translation_exists(
         )
         "#,
     )
-    .bind(uuid::Uuid::from(write.product_listing_id))
-    .bind(write.source_event_id.to_string())
+    .bind(write.product_listing_id.as_uuid())
+    .bind(write.source_event_id.as_uuid().to_string())
     .fetch_one(&mut *connection)
     .await
     .map_err(|source| ProductListingTranslationWriteSqlxError(source).into())
@@ -167,8 +174,8 @@ async fn translation_rows_exist(
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM product_listing_translations WHERE product_listing_id = $1 AND source_event_id = $2)",
     )
-    .bind(uuid::Uuid::from(write.product_listing_id))
-    .bind(uuid::Uuid::from(write.source_event_id))
+    .bind(write.product_listing_id.as_uuid())
+    .bind(write.source_event_id.as_uuid())
     .fetch_one(&mut *connection)
     .await
     .map_err(|source| ProductListingTranslationWriteSqlxError(source).into())

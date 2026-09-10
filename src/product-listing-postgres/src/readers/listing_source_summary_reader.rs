@@ -1,4 +1,4 @@
-use crate::url::referral_configuration;
+use crate::{object_id::try_from_uuid, url::referral_configuration};
 use application::error::box_error;
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use product_listing_service::ports::{
@@ -62,7 +62,7 @@ impl ListingSourceSummaryReader for SqlxListingSourceSummaryReader {
             listing_source_ids
                 .iter()
                 .copied()
-                .map(uuid::Uuid::from)
+                .map(|id| id.into_uuid())
                 .collect::<Vec<_>>(),
         )
         .fetch_all(&self.pool)
@@ -86,7 +86,12 @@ impl TryFrom<ListingSourceSummaryRow> for ListingSourceSummaryWithReferral {
     fn try_from(row: ListingSourceSummaryRow) -> Result<Self, Self::Error> {
         Ok(Self {
             summary: ListingSourceSummary {
-                listing_source_id: ListingSourceId::from(row.listing_source_id),
+                listing_source_id: try_from_uuid(row.listing_source_id, "ListingSource ID")
+                    .map_err(|source| ListingSourceSummaryReadError::InvalidReadModel {
+                        source: box_error(ListingSourceSummaryMappingError {
+                            source: box_error(source),
+                        }),
+                    })?,
                 name: ListingSourceName::try_from(row.name).map_err(|source| {
                     ListingSourceSummaryReadError::InvalidReadModel {
                         source: box_error(ListingSourceSummaryMappingError {
@@ -121,7 +126,7 @@ mod tests {
     #[test]
     fn should_reject_invalid_persisted_listing_source_name_and_slug() {
         let error = ListingSourceSummaryWithReferral::try_from(ListingSourceSummaryRow {
-            listing_source_id: uuid::Uuid::new_v4(),
+            listing_source_id: ListingSourceId::new().into_uuid(),
             name: "\u{2003}".to_owned(),
             listing_source_slug_id: "".to_owned(),
             referral_configuration: None,

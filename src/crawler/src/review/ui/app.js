@@ -572,7 +572,7 @@ function renderCoverageSummary(matrix) {
         return '<div class="muted">No schema coverage data available.</div>';
     }
     const pageRefs = matrix.candidates[0].pages || [];
-    const covered = pageRefs.filter(page => pageCovered(matrix, page.page_id)).length;
+    const covered = pageRefs.filter(page => pageCovered(matrix, page.page_reference)).length;
     const failures = currentCandidateFailures(matrix);
     return `<div class="hint-card">
       <strong>Coverage</strong>
@@ -581,9 +581,23 @@ function renderCoverageSummary(matrix) {
     </div>`;
 }
 
-function pageCovered(matrix, pageId) {
-    return matrix.candidates.some(candidate =>
-        (candidate.pages || []).some(page => page.page_id === pageId && page.apply_ok)
+function pageReferenceKey(reference) {
+    if (!reference || typeof reference !== 'object') return '';
+    if (reference.kind === 'persisted' && reference.review_page_id) {
+        return `persisted:${reference.review_page_id}`;
+    }
+    if (reference.kind === 'input' && Number.isInteger(reference.page_index)) {
+        return `input:${reference.page_index}`;
+    }
+    return '';
+}
+
+function pageCovered(matrix, pageReference) {
+    const referenceKey = pageReferenceKey(pageReference);
+    return referenceKey !== '' && matrix.candidates.some(candidate =>
+        (candidate.pages || []).some(page =>
+            pageReferenceKey(page.page_reference) === referenceKey && page.apply_ok
+        )
     );
 }
 
@@ -608,7 +622,9 @@ function renderCurrentExtractedData(matrix) {
 }
 
 function selectedMatrixPage(candidate) {
-    return (candidate.pages || []).find(page => page.page_id === selectedPageId) || (candidate.pages || [])[0] || null;
+    return (candidate.pages || []).find(page =>
+        pageReferenceKey(page.page_reference) === `persisted:${selectedPageId}`
+    ) || (candidate.pages || [])[0] || null;
 }
 
 function selectedCandidate(matrix) {

@@ -1,9 +1,9 @@
-use crate::error::{ApiError, BAD_BODY_VALUE, INVALID_UUID};
+use crate::error::{ApiError, BAD_BODY_VALUE};
+use crate::wire::parse_path_object_id;
 use axum::http::{HeaderValue, header};
 use axum::response::Response;
 use partnership_core::partnership_application_id::PartnershipApplicationId;
 use serde::Deserialize;
-use uuid::Uuid;
 
 pub(super) fn no_store(mut response: Response) -> Response {
     response
@@ -13,13 +13,7 @@ pub(super) fn no_store(mut response: Response) -> Response {
 }
 
 pub(super) fn parse_id(raw: &str) -> Result<PartnershipApplicationId, ApiError> {
-    Uuid::parse_str(raw)
-        .map(PartnershipApplicationId::from)
-        .map_err(|_| {
-            ApiError::bad_request(INVALID_UUID)
-                .with_path_field("partnershipApplicationId")
-                .with_detail("Path parameter 'partnershipApplicationId' must be a UUID.")
-        })
+    parse_path_object_id(raw, "partnershipApplicationId", "PartnershipApplication")
 }
 
 pub(super) fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, ApiError> {

@@ -4,13 +4,18 @@ use api_support::{
     assert_problem, json_response, seed_access_token_for, seed_product, seed_user,
     seed_user_with_consent,
 };
+use domain_primitives::event_id::EventId;
+use listing_source_core::ListingSourceId;
+use notification_core::notification_id::NotificationId;
+use partnership_core::partnership_application_id::PartnershipApplicationId;
+use product_listing_core::product_listing_id::ProductListingId;
+use search_filter_core::user_search_filter_id::UserSearchFilterId;
 use serde_json::Value;
 use std::collections::HashSet;
 use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use user_core::access_token::RawAccessToken;
 use user_core::user_id::UserId;
-use uuid::Uuid;
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_require_valid_authentication_for_notifications() {
@@ -76,6 +81,7 @@ async fn should_list_canonical_notifications_without_legacy_fields_and_follow_cu
         Some(value) => value,
         None => panic!("notification list item is missing notificationId"),
     };
+    assert!(first_page_id.starts_with("ntf_"));
     assert!(
         [
             first_notification_id.to_string(),
@@ -91,8 +97,8 @@ async fn should_list_canonical_notifications_without_legacy_fields_and_follow_cu
     assert!(
         item["payload"]["partnershipApplicationId"]
             .as_str()
-            .is_some(),
-        "payload is missing partnershipApplicationId"
+            .is_some_and(|value| value.starts_with("pa_")),
+        "payload is missing canonical partnershipApplicationId"
     );
     assert_eq!(serde_json::json!("APPROVED"), item["payload"]["decision"]);
     for legacy_field in [
@@ -131,6 +137,11 @@ async fn should_list_canonical_notifications_without_legacy_fields_and_follow_cu
         None => panic!("notification list page is missing searchAfter cursor"),
     };
     assert_eq!(serde_json::json!(first_page_id), body["searchAfter"][1]);
+    assert!(
+        body["searchAfter"][1]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ntf_"))
+    );
     assert!(body["searchAfter"][0].as_str().is_some());
 
     let response = client
@@ -161,7 +172,7 @@ async fn should_paginate_notifications_without_advertising_terminal_pages() {
     let partial_token = notification_token(partial_user_id).await;
     let partial_created = OffsetDateTime::from_unix_timestamp(1_777_777_700)
         .unwrap_or_else(|error| panic!("invalid partial timestamp: {error}"));
-    seed_notification_at(partial_user_id, Uuid::from_u128(100), partial_created).await;
+    seed_notification_at(partial_user_id, NotificationId::new(), partial_created).await;
     let partial = list_notification_page(&partial_token, 2, None).await;
     assert_eq!(1, partial["items"].as_array().map_or(0, Vec::len));
     assert!(partial.get("searchAfter").is_none());
@@ -170,9 +181,13 @@ async fn should_paginate_notifications_without_advertising_terminal_pages() {
     let token = notification_token(user_id).await;
     let created = OffsetDateTime::from_unix_timestamp(1_777_777_777)
         .unwrap_or_else(|error| panic!("invalid pagination timestamp: {error}"));
-    let oldest = Uuid::from_u128(1);
-    let middle = Uuid::from_u128(2);
-    let newest = Uuid::from_u128(3);
+    let mut notification_ids = [
+        NotificationId::new(),
+        NotificationId::new(),
+        NotificationId::new(),
+    ];
+    notification_ids.sort();
+    let [oldest, middle, newest] = notification_ids;
     seed_notification_at(user_id, oldest, created).await;
     seed_notification_at(user_id, middle, created).await;
     seed_notification_at(user_id, newest, created).await;
@@ -217,15 +232,16 @@ async fn should_paginate_notifications_without_advertising_terminal_pages() {
 
     let exact_user_id = seed_user("USER").await;
     let exact_token = notification_token(exact_user_id).await;
-    seed_notification_at(exact_user_id, Uuid::from_u128(10), created).await;
-    seed_notification_at(exact_user_id, Uuid::from_u128(11), created).await;
+    seed_notification_at(exact_user_id, NotificationId::new(), created).await;
+    seed_notification_at(exact_user_id, NotificationId::new(), created).await;
     let exact = list_notification_page(&exact_token, 2, None).await;
     assert_eq!(2, exact["items"].as_array().map_or(0, Vec::len));
     assert!(exact.get("searchAfter").is_none());
 
-    let malformed = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let malformed = client
         .get(notifications_path())
-        .bearer_auth(String::from(token))
+        .bearer_auth(String::from(token.clone()))
         .query(&[("searchAfter", "not-a-json-cursor")])
         .send()
         .await
@@ -237,6 +253,39 @@ async fn should_paginate_notifications_without_advertising_terminal_pages() {
         reqwest::StatusCode::BAD_REQUEST,
         "BAD_QUERY_PARAMETER_VALUE",
     );
+
+    let notification_id = NotificationId::new();
+    for invalid_id in [
+        "ntf_not-a-typeid".to_owned(),
+        notification_id.as_uuid().to_string(),
+        ProductListingId::new().to_string(),
+    ] {
+        let cursor = serde_json::json!([
+            created.format(&Rfc3339).unwrap_or_else(|error| panic!(
+                "failed to format notification cursor timestamp: {error}"
+            )),
+            invalid_id
+        ])
+        .to_string();
+        let response = client
+            .get(notifications_path())
+            .bearer_auth(String::from(token.clone()))
+            .query(&[("searchAfter", cursor)])
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate notification cursor: {error}"));
+        let (status, body) = json_response(response).await;
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "searchAfter", "type": "QUERY"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -281,9 +330,14 @@ async fn should_return_localized_reason_specific_notification_payloads() {
         price_change["payload"]["image"]
     );
     assert!(
+        price_change["payload"]["productListingId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pl_"))
+    );
+    assert!(
         price_change["payload"]["listingSourceId"]
             .as_str()
-            .is_some()
+            .is_some_and(|value| value.starts_with("ls_"))
     );
     assert!(
         price_change["payload"]["sourceListingId"]
@@ -325,15 +379,30 @@ async fn should_return_localized_reason_specific_notification_payloads() {
         search_filter["payload"]["userSearchFilterName"]
     );
     assert!(
+        search_filter["payload"]["productListingId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pl_"))
+    );
+    assert!(
+        search_filter["payload"]["listingSourceId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ls_"))
+    );
+    assert!(
         search_filter["payload"]["userSearchFilterId"]
             .as_str()
-            .is_some()
+            .is_some_and(|value| value.starts_with("sf_"))
     );
 
     let approved = notification_with_kind(items, "PARTNERSHIP_APPLICATION_APPROVED");
     assert_eq!(
         serde_json::json!("APPROVED"),
         approved["payload"]["decision"]
+    );
+    assert!(
+        approved["payload"]["partnershipApplicationId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pa_"))
     );
     assert_eq!(
         serde_json::json!("Approved Party"),
@@ -353,6 +422,11 @@ async fn should_return_localized_reason_specific_notification_payloads() {
         serde_json::json!("REJECTED"),
         rejected["payload"]["decision"]
     );
+    assert!(
+        rejected["payload"]["partnershipApplicationId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("pa_"))
+    );
     assert_eq!(
         serde_json::json!("Rejected Party"),
         rejected["payload"]["partyName"]
@@ -364,6 +438,11 @@ async fn should_return_localized_reason_specific_notification_payloads() {
     assert!(rejected["payload"]["image"].is_null());
 
     for item in items {
+        assert!(
+            item["notificationId"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("ntf_"))
+        );
         assert!(item.get("originEventId").is_none());
         assert!(item.get("deliveryChannel").is_none());
         assert!(item.get("deliveryStatus").is_none());
@@ -390,7 +469,7 @@ async fn should_present_notification_images_from_immutable_snapshot_and_current_
     set_current_assessment(product_listing_id, "REQUIRES_CONSENT", Some("NAZI_GERMANY")).await;
     seed_unsafe_image_notification(
         user_id,
-        uuid::Uuid::from(product_listing_id),
+        product_listing_id,
         serde_json::json!({ "decision": "ALLOWED", "category": null }),
     )
     .await;
@@ -403,12 +482,11 @@ async fn should_present_notification_images_from_immutable_snapshot_and_current_
     set_current_assessment(product_listing_id, "ALLOWED", None).await;
     seed_unsafe_image_notification(
         user_id,
-        uuid::Uuid::from(product_listing_id),
+        product_listing_id,
         serde_json::json!({ "decision": "REQUIRES_CONSENT", "category": "NAZI_GERMANY" }),
     )
     .await;
-    seed_unsafe_image_notification(user_id, uuid::Uuid::from(product_listing_id), Value::Null)
-        .await;
+    seed_unsafe_image_notification(user_id, product_listing_id, Value::Null).await;
 
     let hidden = list_notification_page(&token, 10, None).await;
     let hidden_images = hidden["items"]
@@ -447,25 +525,36 @@ async fn should_present_notification_images_from_immutable_snapshot_and_current_
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_reject_malformed_notification_id() {
+async fn should_reject_noncanonical_notification_ids() {
     let user_id = seed_user("USER").await;
     let token = notification_token(user_id).await;
+    let notification_id = NotificationId::new();
 
-    let response = reqwest::Client::new()
-        .patch(format!("{}/not-a-uuid", notifications_path()))
-        .bearer_auth(String::from(token))
-        .json(&serde_json::json!({"seen": true}))
-        .send()
-        .await
-        .unwrap_or_else(|error| panic!("failed to patch malformed notification ID: {error}"));
-    let (status, body) = json_response(response).await;
+    for invalid_id in [
+        "ntf_not-a-typeid".to_owned(),
+        notification_id.as_uuid().to_string(),
+        ProductListingId::new().to_string(),
+    ] {
+        let response = reqwest::Client::new()
+            .patch(format!("{}/{invalid_id}", notifications_path()))
+            .bearer_auth(String::from(token.clone()))
+            .json(&serde_json::json!({"seen": true}))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to validate notification ID: {error}"));
+        let (status, body) = json_response(response).await;
 
-    assert_problem(
-        status,
-        &body,
-        reqwest::StatusCode::BAD_REQUEST,
-        "INVALID_UUID",
-    );
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+        assert_eq!(
+            serde_json::json!({"field": "notificationId", "type": "PATH"}),
+            body["source"]
+        );
+    }
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -593,7 +682,7 @@ async fn should_delete_all_notifications() {
 async fn should_return_not_found_for_missing_notification_mutations() {
     let user_id = seed_user("USER").await;
     let token = notification_token(user_id).await;
-    let notification_id = Uuid::new_v4();
+    let notification_id = NotificationId::new();
     let client = reqwest::Client::new();
 
     let update = client
@@ -678,7 +767,7 @@ fn notifications_path() -> String {
     format!("{}/api/v1/me/notifications", AURA_API.base_url())
 }
 
-fn notification_path(notification_id: Uuid) -> String {
+fn notification_path(notification_id: NotificationId) -> String {
     format!("{}/{}", notifications_path(), notification_id)
 }
 
@@ -686,8 +775,9 @@ async fn notification_token(user_id: UserId) -> RawAccessToken {
     seed_access_token_for(user_id, HashSet::new()).await
 }
 
-async fn seed_notification(user_id: UserId, seen: bool) -> Uuid {
-    let notification_id = Uuid::new_v4();
+async fn seed_notification(user_id: UserId, seen: bool) -> NotificationId {
+    let notification_id = NotificationId::new();
+    let partnership_application_id = PartnershipApplicationId::new();
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query(
         r#"
@@ -701,9 +791,9 @@ async fn seed_notification(user_id: UserId, seen: bool) -> Uuid {
         ) VALUES ($1, $2, 'PARTNERSHIP_APPLICATION_APPROVED', $3, $4, $5)
         "#,
     )
-    .bind(notification_id)
-    .bind(uuid::Uuid::from(user_id))
-    .bind(Uuid::new_v4())
+    .bind(notification_id.into_uuid())
+    .bind(user_id.into_uuid())
+    .bind(partnership_application_id.into_uuid())
     .bind(serde_json::json!({
         "type": "PARTNERSHIP_APPLICATION",
         "snapshot": {
@@ -723,20 +813,20 @@ async fn seed_notification(user_id: UserId, seen: bool) -> Uuid {
 
 async fn seed_unsafe_image_notification(
     user_id: UserId,
-    product_listing_id: Uuid,
+    product_listing_id: ProductListingId,
     content_policy: Value,
 ) {
     seed_notification_with_payload(
         user_id,
         "WATCHLIST_AVAILABILITY_CHANGED",
-        Some(Uuid::new_v4()),
+        Some(EventId::new()),
         Some(product_listing_id),
         None,
         None,
         serde_json::json!({
             "type": "WATCHLIST",
             "snapshot": {
-                "listing_source_id": Uuid::new_v4(),
+                "listing_source_id": ListingSourceId::new().into_uuid().to_string(),
                 "source_listing_id": "unsafe-product",
                 "listing_source_slug_id": "unsafe-listing-source",
                 "product_listing_title_slug_id": "unsafe-product-abcdef",
@@ -757,7 +847,12 @@ async fn seed_unsafe_image_notification(
     .await;
 }
 
-async fn seed_notification_at(user_id: UserId, notification_id: Uuid, created: OffsetDateTime) {
+async fn seed_notification_at(
+    user_id: UserId,
+    notification_id: NotificationId,
+    created: OffsetDateTime,
+) {
+    let partnership_application_id = PartnershipApplicationId::new();
     let pool = get_postgres_client().await;
     if let Err(error) = sqlx::query(
         r#"
@@ -766,9 +861,9 @@ async fn seed_notification_at(user_id: UserId, notification_id: Uuid, created: O
         ) VALUES ($1, $2, 'PARTNERSHIP_APPLICATION_APPROVED', $3, $4, false, $5, $5)
         "#,
     )
-    .bind(notification_id)
-    .bind(uuid::Uuid::from(user_id))
-    .bind(Uuid::new_v4())
+    .bind(notification_id.into_uuid())
+    .bind(user_id.into_uuid())
+    .bind(partnership_application_id.into_uuid())
     .bind(serde_json::json!({
         "type": "PARTNERSHIP_APPLICATION",
         "snapshot": {
@@ -808,7 +903,7 @@ async fn list_notification_page(
 }
 
 async fn set_current_assessment(
-    product_listing_id: product_listing_core::product_listing_id::ProductListingId,
+    product_listing_id: ProductListingId,
     decision: &str,
     category: Option<&str>,
 ) {
@@ -816,7 +911,7 @@ async fn set_current_assessment(
     sqlx::query(
         "INSERT INTO product_listing_content_assessments (product_listing_id, source_event_id, decision, category) SELECT product_listing_id, content_source_event_id, $2, $3 FROM product_listings WHERE product_listing_id = $1 ON CONFLICT (product_listing_id) DO UPDATE SET decision = EXCLUDED.decision, category = EXCLUDED.category, source_event_id = EXCLUDED.source_event_id",
     )
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(product_listing_id.into_uuid())
     .bind(decision)
     .bind(category)
     .execute(&pool)
@@ -827,7 +922,7 @@ async fn set_current_assessment(
 async fn set_user_content_preference(user_id: UserId, show: bool) {
     let pool = get_postgres_client().await;
     sqlx::query("UPDATE users SET show_unassessed_or_sensitive_content = $2 WHERE user_id = $1")
-        .bind(Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(show)
         .execute(&pool)
         .await
@@ -837,7 +932,7 @@ async fn set_user_content_preference(user_id: UserId, show: bool) {
 async fn set_user_currency(user_id: UserId, currency: &str) {
     let pool = get_postgres_client().await;
     sqlx::query("UPDATE users SET currency = $2 WHERE user_id = $1")
-        .bind(Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .bind(currency)
         .execute(&pool)
         .await
@@ -850,7 +945,7 @@ async fn seed_price_notification(
     old_amount: Option<u64>,
     new_amount: Option<u64>,
 ) {
-    let product_listing_id = Uuid::new_v4();
+    let product_listing_id = ProductListingId::new();
     let price = |amount| {
         serde_json::json!({
             "type": "MONETARY",
@@ -861,14 +956,14 @@ async fn seed_price_notification(
     seed_notification_with_payload(
         user_id,
         "WATCHLIST_PRICE_CHANGED",
-        Some(Uuid::new_v4()),
+        Some(EventId::new()),
         Some(product_listing_id),
         None,
         None,
         serde_json::json!({
             "type": "WATCHLIST",
             "snapshot": {
-                "listing_source_id": Uuid::new_v4(),
+                "listing_source_id": ListingSourceId::new().into_uuid().to_string(),
                 "source_listing_id": "source-currency-product",
                 "listing_source_slug_id": "source-currency-listing-source",
                 "product_listing_title_slug_id": "source-currency-product-a1b2c3",
@@ -889,10 +984,10 @@ async fn seed_price_notification(
 }
 
 async fn seed_notification_payloads(user_id: UserId) {
-    let product_listing_id = Uuid::new_v4();
+    let product_listing_id = ProductListingId::new();
     let product_snapshot = |title: serde_json::Value, image: serde_json::Value| {
         serde_json::json!({
-            "listing_source_id": Uuid::new_v4(),
+            "listing_source_id": ListingSourceId::new().into_uuid().to_string(),
             "source_listing_id": "listing-source-product-123",
             "listing_source_slug_id": "test-listing-source",
             "product_listing_title_slug_id": "test-product-a1b2c3",
@@ -912,7 +1007,7 @@ async fn seed_notification_payloads(user_id: UserId) {
     seed_notification_with_payload(
         user_id,
         "WATCHLIST_PRICE_CHANGED",
-        Some(Uuid::new_v4()),
+        Some(EventId::new()),
         Some(product_listing_id),
         None,
         None,
@@ -930,7 +1025,7 @@ async fn seed_notification_payloads(user_id: UserId) {
     seed_notification_with_payload(
         user_id,
         "WATCHLIST_AVAILABILITY_CHANGED",
-        Some(Uuid::new_v4()),
+        Some(EventId::new()),
         Some(product_listing_id),
         None,
         None,
@@ -941,11 +1036,11 @@ async fn seed_notification_payloads(user_id: UserId) {
         }),
     )
     .await;
-    let filter_id = Uuid::new_v4();
+    let filter_id = UserSearchFilterId::new();
     seed_notification_with_payload(
         user_id,
         "SEARCH_FILTER_MATCH",
-        Some(Uuid::new_v4()),
+        Some(EventId::new()),
         Some(product_listing_id),
         Some(filter_id),
         None,
@@ -962,7 +1057,7 @@ async fn seed_notification_payloads(user_id: UserId) {
         None,
         None,
         None,
-        Some(Uuid::new_v4()),
+        Some(PartnershipApplicationId::new()),
         serde_json::json!({
             "type": "PARTNERSHIP_APPLICATION",
             "snapshot": {
@@ -979,7 +1074,7 @@ async fn seed_notification_payloads(user_id: UserId) {
         None,
         None,
         None,
-        Some(Uuid::new_v4()),
+        Some(PartnershipApplicationId::new()),
         serde_json::json!({
             "type": "PARTNERSHIP_APPLICATION",
             "snapshot": {
@@ -995,10 +1090,10 @@ async fn seed_notification_payloads(user_id: UserId) {
 async fn seed_notification_with_payload(
     user_id: UserId,
     kind: &str,
-    origin_event_id: Option<Uuid>,
-    product_listing_id: Option<Uuid>,
-    user_search_filter_id: Option<Uuid>,
-    partnership_application_id: Option<Uuid>,
+    origin_event_id: Option<EventId>,
+    product_listing_id: Option<ProductListingId>,
+    user_search_filter_id: Option<UserSearchFilterId>,
+    partnership_application_id: Option<PartnershipApplicationId>,
     payload: serde_json::Value,
 ) {
     let pool = get_postgres_client().await;
@@ -1010,13 +1105,13 @@ async fn seed_notification_with_payload(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)
         "#,
     )
-    .bind(Uuid::new_v4())
-    .bind(Uuid::from(user_id))
+    .bind(NotificationId::new().into_uuid())
+    .bind(user_id.into_uuid())
     .bind(kind)
-    .bind(origin_event_id)
-    .bind(product_listing_id)
-    .bind(user_search_filter_id)
-    .bind(partnership_application_id)
+    .bind(origin_event_id.map(EventId::into_uuid))
+    .bind(product_listing_id.map(ProductListingId::into_uuid))
+    .bind(user_search_filter_id.map(UserSearchFilterId::into_uuid))
+    .bind(partnership_application_id.map(PartnershipApplicationId::into_uuid))
     .bind(payload)
     .execute(&pool)
     .await
@@ -1032,7 +1127,7 @@ fn notification_with_kind<'a>(items: &'a [Value], kind: &str) -> &'a Value {
     }
 }
 
-async fn notification_seen(token: &RawAccessToken, notification_id: Uuid) -> bool {
+async fn notification_seen(token: &RawAccessToken, notification_id: NotificationId) -> bool {
     let notification = listed_notifications(token)
         .await
         .into_iter()

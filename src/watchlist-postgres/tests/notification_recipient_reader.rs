@@ -124,7 +124,7 @@ async fn seed_user(pool: &sqlx::PgPool, label: &str) -> UserId {
     sqlx::query(
         "INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, 'ULTIMATE', 'USER')",
     )
-    .bind(uuid::Uuid::from(user_id))
+    .bind(user_id.into_uuid())
     .bind(format!(
         "watchlist-recipient-{label}-{user_id}@example.test"
     ))
@@ -136,14 +136,14 @@ async fn seed_user(pool: &sqlx::PgPool, label: &str) -> UserId {
 
 async fn seed_product(pool: &sqlx::PgPool) -> ProductListingId {
     let product_listing_id = ProductListingId::new();
-    let product_uuid = uuid::Uuid::from(product_listing_id);
+    let product_uuid = product_listing_id.into_uuid();
     let title_slug_id = ProductListingSlugId::from_title_and_suffix(
         "recipient product",
         &product_uuid.simple().to_string()[..6],
     )
     .unwrap_or_else(|error| panic!("valid fixture title slug: {error}"));
-    let event_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let event_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
     let mut tx = pool
         .begin()
         .await
@@ -201,8 +201,8 @@ async fn seed_watchlist(
 ) {
     let (active_since, email_since, updated) = timestamps;
     sqlx::query("INSERT INTO product_listing_watchlist (user_id, product_listing_id, notifications, state, active_since, notifications_enabled_since, created, updated) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)")
-        .bind(uuid::Uuid::from(user_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(user_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(notifications)
         .bind(state)
         .bind(active_since)

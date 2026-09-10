@@ -1,4 +1,5 @@
 use super::{SqlxListingSourceReaders, invalid_read, read_error};
+use domain_primitives::object_id::ObjectIdError;
 use listing_source_core::{Domain, ListingSourceId};
 use listing_source_service::ports::{ListingSourceReadError, ShopifySource, ShopifySourceReader};
 use localization::Language;
@@ -10,6 +11,25 @@ struct ShopifyRow {
     domain: String,
     currency: Option<String>,
     language: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid ListingSource ID persisted")]
+struct InvalidShopifySourceId(#[source] ObjectIdError);
+
+impl TryFrom<ShopifyRow> for ShopifySource {
+    type Error = ListingSourceReadError;
+
+    fn try_from(row: ShopifyRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            listing_source_id: ListingSourceId::try_from(row.listing_source_id)
+                .map_err(InvalidShopifySourceId)
+                .map_err(invalid_read)?,
+            domain: Domain::try_from(row.domain).map_err(invalid_read)?,
+            currency: parse_optional_currency(row.currency.as_deref())?,
+            language: parse_optional_language(row.language.as_deref())?,
+        })
+    }
 }
 
 fn parse_optional_currency(
@@ -65,14 +85,31 @@ impl ShopifySourceReader for SqlxListingSourceReaders {
         .fetch_optional(&self.pool)
         .await
         .map_err(read_error)?
-        .map(|row| {
-            Ok(ShopifySource {
-                listing_source_id: ListingSourceId::from(row.listing_source_id),
-                domain: Domain::try_from(row.domain).map_err(invalid_read)?,
-                currency: parse_optional_currency(row.currency.as_deref())?,
-                language: parse_optional_language(row.language.as_deref())?,
-            })
-        })
+        .map(ShopifySource::try_from)
         .transpose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(listing_source_id: uuid::Uuid) -> ShopifyRow {
+        ShopifyRow {
+            listing_source_id,
+            domain: "shop.example.test".to_owned(),
+            currency: Some("EUR".to_owned()),
+            language: Some("en".to_owned()),
+        }
+    }
+
+    #[test]
+    fn should_map_valid_uuidv7_listing_source_id() {
+        assert!(ShopifySource::try_from(row(uuid::Uuid::now_v7())).is_ok());
+    }
+
+    #[test]
+    fn should_reject_wrong_version_listing_source_id() {
+        assert!(ShopifySource::try_from(row(uuid::Uuid::new_v4())).is_err());
     }
 }

@@ -111,11 +111,11 @@ async fn should_persist_one_assessment_when_duplicate_completions_overlap() {
             tokio::time::timeout(Duration::from_secs(10), duplicate).await??);
         let stored: Vec<(uuid::Uuid, String)> = sqlx::query_as(
             "SELECT source_event_id, decision FROM product_listing_content_assessments WHERE product_listing_id = $1"
-        ).bind(uuid::Uuid::from(product_id)).fetch_all(&pool).await?;
-        assert_eq!(vec![(uuid::Uuid::from(source), "ALLOWED".to_owned())], stored);
+        ).bind(product_id.into_uuid()).fetch_all(&pool).await?;
+        assert_eq!(vec![(source.into_uuid(), "ALLOWED".to_owned())], stored);
         let state: (i64, i64, i64) = sqlx::query_as(
             "SELECT version, projection_version, (SELECT count(*) FROM product_listing_events WHERE product_listing_id = $1) FROM product_listings WHERE product_listing_id = $1"
-        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        ).bind(product_id.into_uuid()).fetch_one(&pool).await?;
         assert_eq!((1, 1, 1), state);
         Ok(())
     }.await;
@@ -134,7 +134,8 @@ async fn should_preserve_new_assessment_when_old_apply_and_clear_arrive_concurre
             advance_content_source_event(&pool, product_id).await?;
             let new_source: uuid::Uuid = sqlx::query_scalar(
             "SELECT content_source_event_id FROM product_listings WHERE product_listing_id = $1"
-        ).bind(uuid::Uuid::from(product_id)).fetch_one(&pool).await?;
+        ).bind(product_id.into_uuid()).fetch_one(&pool).await?;
+            let new_source = EventId::try_from(new_source)?;
             let mut newer = SqlxUnitOfWork::new(pool.clone()).begin().await?;
             let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
                 .fetch_one(newer.connection())
@@ -143,7 +144,7 @@ async fn should_preserve_new_assessment_when_old_apply_and_clear_arrive_concurre
                 .in_transaction(&mut newer)
                 .apply(&ProductListingContentAssessmentWrite {
                     product_listing_id: product_id,
-                    source_event_id: new_source.into(),
+                    source_event_id: new_source,
                     decision: Some(ContentPolicyDecision::Allowed),
                 })
                 .await?;
@@ -174,7 +175,7 @@ async fn should_preserve_new_assessment_when_old_apply_and_clear_arrive_concurre
                 .find_current_assessments(&[product_id])
                 .await?;
             assert_eq!(
-                Some(EventId::from(new_source)),
+                Some(new_source),
                 stored.get(&product_id).map(|value| value.source_event_id)
             );
             Ok(())
@@ -206,8 +207,8 @@ async fn insert_product_with_created_event(
 ) -> Result<(ProductListingId, EventId), sqlx::Error> {
     let product_listing_id = ProductListingId::new();
     let content_source_event_id = EventId::new();
-    let party_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let party_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, 'Content assessment party')")
         .bind(party_id)
@@ -221,12 +222,12 @@ async fn insert_product_with_created_event(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO product_listings (product_listing_id, product_listing_title_slug_id, current_event_id, content_source_event_id, embedding_source_event_id, listing_source_id, source_listing_id, title_text, title_language, description_text, description_language, availability, lifecycle, url, product_images) VALUES ($1, $2, $3, $3, $3, $4, $5, 'Assessment chair', 'en', 'Assessment description', 'en', 'AVAILABLE', 'ACTIVE', 'https://example.test/product', '[]')")
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(product_listing_id.into_uuid())
         .bind(format!(
-                    "content-assessment-{}",
-                    &product_listing_id.to_string()[..6]
-                ))
-        .bind(uuid::Uuid::from(content_source_event_id))
+            "content-assessment-{}",
+            &product_listing_id.as_uuid().simple().to_string()[26..]
+        ))
+        .bind(content_source_event_id.into_uuid())
         .bind(listing_source_id)
         .bind(product_listing_id.to_string())
         .execute(&mut *tx)
@@ -274,8 +275,8 @@ async fn advance_content_source_event(
     sqlx::query(
         "UPDATE product_listings SET current_event_id = $1, content_source_event_id = $1, availability = 'SOLD_OUT', version = version + 1, projection_version = projection_version + 1, updated = now() WHERE product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(event_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(event_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .execute(&mut *tx)
     .await?;
     tx.commit().await
@@ -297,7 +298,7 @@ async fn advance_current_event(
         event_group,
         match event_type {
             "ENRICHMENT_EMBEDDED" => serde_json::json!({
-                "sourceEventId": event_id.to_string()
+                "sourceEventId": event_id.as_uuid().to_string()
             }),
             "PRODUCT_LISTING_CHANGED" => serde_json::json!({
                 "images": {"previousCount": 0, "currentCount": 0}
@@ -309,8 +310,8 @@ async fn advance_current_event(
     sqlx::query(
         "UPDATE product_listings SET current_event_id = $1, version = version + 1, projection_version = projection_version + 1, updated = now() WHERE product_listing_id = $2",
     )
-    .bind(uuid::Uuid::from(event_id))
-    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(event_id.into_uuid())
+    .bind(product_listing_id.into_uuid())
     .execute(&mut *tx)
     .await?;
     tx.commit().await
@@ -325,8 +326,8 @@ async fn insert_event(
     payload: serde_json::Value,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, $3, $4, 1, $5, now())")
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
+        .bind(event_id.into_uuid())
+        .bind(product_listing_id.into_uuid())
         .bind(event_type)
         .bind(event_group)
         .bind(payload)

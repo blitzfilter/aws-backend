@@ -38,16 +38,18 @@ async fn should_deliver_product_event_change_to_worker_queues() {
 }
 
 async fn insert_product_event_under_test(pool: &sqlx::PgPool) {
-    let product_listing_id = uuid::Uuid::new_v4();
-    let event_id = uuid::Uuid::new_v4();
-    let listing_source_id = uuid::Uuid::new_v4();
+    let product_listing_id = uuid::Uuid::now_v7();
+    let event_id = uuid::Uuid::now_v7();
+    let listing_source_id = uuid::Uuid::now_v7();
+    let operator_party_id = uuid::Uuid::now_v7();
     let mut transaction = pool.begin().await.unwrap_or_else(|error| {
         panic!("failed to begin product-event fixture transaction: {error}")
     });
 
-    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $1, $2, 'Sequin test source', party_id FROM operator")
-        .bind(listing_source_id)
+    sqlx::query("WITH operator AS (INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, concat($2, '-operator'), 'Fixture operator') RETURNING party_id) INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT $3, $2, 'Sequin test source', party_id FROM operator")
+        .bind(operator_party_id)
         .bind(format!("sequin-test-source-{listing_source_id}"))
+        .bind(listing_source_id)
         .execute(&mut *transaction)
         .await
         .unwrap_or_else(|error| panic!("failed to insert Sequin test source: {error}"));

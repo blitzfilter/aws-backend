@@ -5,6 +5,9 @@ use crate::{
     serve_with_runtime,
 };
 use std::time::Duration;
+
+const NOTIFICATION_DELIVERY_UUID: &str = "01900000-0000-7000-8000-000000000001";
+const NOTIFICATION_DELIVERY_TYPE_ID: &str = "nd_01j0000000e008000000000001";
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -29,7 +32,21 @@ async fn server(
 }
 fn body(padding: usize) -> String {
     serde_json::json!({"changes":[{"schema":"public","table":"notification_deliveries","operation":"insert",
-        "record":{"notification_delivery_id":"10000000-0000-0000-0000-000000000001"}, "future_metadata":"x".repeat(padding)}]}).to_string()
+        "record":{"notification_delivery_id":NOTIFICATION_DELIVERY_UUID}, "future_metadata":"x".repeat(padding)}]}).to_string()
+}
+
+fn assert_notification_delivery_type_id(payload: &DomainJobPayload) {
+    let DomainJobPayload::NotificationDeliveryCreated(job) = payload else {
+        panic!("expected notification delivery job");
+    };
+    assert_eq!(
+        NOTIFICATION_DELIVERY_UUID,
+        job.notification_delivery_id.as_uuid().to_string()
+    );
+    assert_eq!(
+        NOTIFICATION_DELIVERY_TYPE_ID,
+        job.notification_delivery_id.to_string()
+    );
 }
 async fn response(stream: &mut TcpStream) -> String {
     let mut response = String::new();
@@ -150,11 +167,7 @@ async fn should_accept_request_when_headers_and_body_are_fragmented_across_tcp_w
         .unwrap()
         .unwrap();
     assert_eq!(WorkerQueue::NotificationDelivery, job.target_queue);
-    assert!(matches!(
-        job.payload,
-        DomainJobPayload::NotificationDeliveryCreated(ref job)
-            if job.notification_delivery_id == "10000000-0000-0000-0000-000000000001"
-    ));
+    assert_notification_delivery_type_id(&job.payload);
     assert!(
         receivers
             .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))
@@ -199,11 +212,7 @@ async fn should_accept_valid_cdc_body_at_configured_size_limit() {
         .unwrap()
         .unwrap();
     assert_eq!(WorkerQueue::NotificationDelivery, job.target_queue);
-    assert!(matches!(
-        job.payload,
-        DomainJobPayload::NotificationDeliveryCreated(ref job)
-            if job.notification_delivery_id == "10000000-0000-0000-0000-000000000001"
-    ));
+    assert_notification_delivery_type_id(&job.payload);
     assert!(
         receivers
             .recv_timeout(WorkerQueue::NotificationDelivery, Duration::from_millis(20))

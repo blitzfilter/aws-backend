@@ -142,35 +142,6 @@ mod currency {
     }
 }
 
-mod listing_source_ids {
-    use super::*;
-
-    pub(crate) fn serialize<S>(
-        values: &HashSet<ListingSourceId>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.collect_seq(values.iter().map(ToString::to_string))
-    }
-
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<HashSet<ListingSourceId>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Vec::<String>::deserialize(deserializer)?
-            .into_iter()
-            .map(|value| {
-                value
-                    .parse::<uuid::Uuid>()
-                    .map(ListingSourceId::from)
-                    .map_err(serde::de::Error::custom)
-            })
-            .collect()
-    }
-}
-
 mod listing_availability {
     use super::*;
 
@@ -306,9 +277,9 @@ struct ProductListingSearchDocument {
     enhanced_search_description: Option<String>,
     #[serde(rename = "excludeProductId")]
     exclude_product_listing_id_query: HashSet<ProductListingId>,
-    #[serde(rename = "listingSourceId", with = "listing_source_ids")]
+    #[serde(rename = "listingSourceId")]
     listing_source_id_query: HashSet<ListingSourceId>,
-    #[serde(rename = "excludeListingSourceId", with = "listing_source_ids")]
+    #[serde(rename = "excludeListingSourceId")]
     exclude_listing_source_id_query: HashSet<ListingSourceId>,
     #[serde(rename = "price")]
     price_query: Option<RangeQuery<u64>>,
@@ -557,10 +528,14 @@ mod tests {
     #[test]
     fn should_round_trip_search_filter_without_a_price_range()
     -> Result<(), Box<dyn std::error::Error>> {
+        let excluded_product_listing_id = ProductListingId::new();
         let listing_source_id = ListingSourceId::new();
         let excluded_listing_source_id = ListingSourceId::new();
         let expected = projection(
             ProductListingSearch::new(Language::En, Currency::Usd)
+                .with_exclude_product_listing_id_query(
+                    std::collections::HashSet::from([excluded_product_listing_id]).into(),
+                )
                 .with_listing_source_id_query(
                     std::collections::HashSet::from([listing_source_id]).into(),
                 )
@@ -589,6 +564,20 @@ mod tests {
             value.pointer("/search/currency")
         );
         assert_eq!(
+            Some(&serde_json::json!(
+                expected.view.search_filter_id.to_string()
+            )),
+            value.get("userSearchFilterId")
+        );
+        assert_eq!(
+            Some(&serde_json::json!(expected.view.user_id.to_string())),
+            value.get("userId")
+        );
+        assert_eq!(
+            Some(&serde_json::json!(excluded_product_listing_id.to_string())),
+            value.pointer("/search/excludeProductId/0")
+        );
+        assert_eq!(
             Some(&serde_json::json!(listing_source_id.to_string())),
             value.pointer("/search/listingSourceId/0")
         );
@@ -607,8 +596,12 @@ mod tests {
             value.pointer("/query/bool/filter/0/terms/listingSourceId/0")
         );
         assert_eq!(
+            Some(&serde_json::json!(excluded_product_listing_id.to_string())),
+            value.pointer("/query/bool/must_not/0/terms/productListingId/0")
+        );
+        assert_eq!(
             Some(&serde_json::json!(excluded_listing_source_id.to_string())),
-            value.pointer("/query/bool/must_not/0/terms/listingSourceId/0")
+            value.pointer("/query/bool/must_not/1/terms/listingSourceId/0")
         );
         assert_eq!(
             Some(&serde_json::json!("IN_STOCK")),
@@ -624,6 +617,118 @@ mod tests {
         );
         assert_eq!(expected.view, SearchFilterView::try_from(document)?);
         Ok(())
+    }
+
+    #[test]
+    fn should_reject_wrong_prefixes_for_typed_document_ids_and_sets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let value = typed_id_document_value()?;
+        let cases = [
+            ("/userSearchFilterId", UserId::new().to_string()),
+            ("/userId", UserSearchFilterId::new().to_string()),
+            (
+                "/search/excludeProductId/0",
+                ListingSourceId::new().to_string(),
+            ),
+            (
+                "/search/listingSourceId/0",
+                ProductListingId::new().to_string(),
+            ),
+            (
+                "/search/excludeListingSourceId/0",
+                ProductListingId::new().to_string(),
+            ),
+        ];
+
+        for (pointer, wrong_id) in cases {
+            let mut malformed = value.clone();
+            *malformed
+                .pointer_mut(pointer)
+                .ok_or_else(|| format!("missing test field `{pointer}`"))? =
+                serde_json::json!(wrong_id);
+            assert_search_filter_document_rejected(malformed);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_bare_uuids_for_typed_document_ids_and_sets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let projection = typed_id_projection();
+        let value = serde_json::to_value(SearchFilterDocument::try_from(&projection)?)?;
+        let search = &projection.view.search;
+        let product_listing_id = search
+            .exclude_product_listing_id_query
+            .iter()
+            .next()
+            .ok_or("excluded ProductListing ID missing")?;
+        let listing_source_id = search
+            .listing_source_id_query
+            .iter()
+            .next()
+            .ok_or("ListingSource ID missing")?;
+        let excluded_listing_source_id = search
+            .exclude_listing_source_id_query
+            .iter()
+            .next()
+            .ok_or("excluded ListingSource ID missing")?;
+        let cases = [
+            (
+                "/userSearchFilterId",
+                projection.view.search_filter_id.as_uuid().to_string(),
+            ),
+            ("/userId", projection.view.user_id.as_uuid().to_string()),
+            (
+                "/search/excludeProductId/0",
+                product_listing_id.as_uuid().to_string(),
+            ),
+            (
+                "/search/listingSourceId/0",
+                listing_source_id.as_uuid().to_string(),
+            ),
+            (
+                "/search/excludeListingSourceId/0",
+                excluded_listing_source_id.as_uuid().to_string(),
+            ),
+        ];
+
+        for (pointer, bare_id) in cases {
+            let mut malformed = value.clone();
+            *malformed
+                .pointer_mut(pointer)
+                .ok_or_else(|| format!("missing test field `{pointer}`"))? =
+                serde_json::json!(bare_id);
+            assert_search_filter_document_rejected(malformed);
+        }
+        Ok(())
+    }
+
+    fn typed_id_projection() -> SearchFilterProjection {
+        projection(
+            ProductListingSearch::new(Language::En, Currency::Eur)
+                .with_exclude_product_listing_id_query(
+                    std::collections::HashSet::from([ProductListingId::new()]).into(),
+                )
+                .with_listing_source_id_query(
+                    std::collections::HashSet::from([ListingSourceId::new()]).into(),
+                )
+                .with_exclude_listing_source_id_query(
+                    std::collections::HashSet::from([ListingSourceId::new()]).into(),
+                ),
+        )
+    }
+
+    fn typed_id_document_value() -> Result<serde_json::Value, serde_json::Error> {
+        SearchFilterDocument::try_from(&typed_id_projection()).and_then(serde_json::to_value)
+    }
+
+    fn assert_search_filter_document_rejected(value: serde_json::Value) {
+        let result = serde_json::from_value::<SearchFilterDocument>(value)
+            .map_err(|error| error.to_string())
+            .and_then(|document| {
+                SearchFilterView::try_from(document).map_err(|error| error.to_string())
+            });
+        assert!(result.is_err(), "malformed typed ID document was accepted");
     }
 
     #[test]

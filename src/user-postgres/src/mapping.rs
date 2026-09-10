@@ -46,7 +46,7 @@ impl TryFrom<UserRow> for VersionedUser {
     fn try_from(row: UserRow) -> Result<Self, Self::Error> {
         let version = UserStorageVersion::try_from(row.version)?;
         let value = User::rehydrate(RehydratedUserState {
-            id: UserId::from(row.user_id),
+            id: UserId::try_from(row.user_id).map_err(UserRowMappingError::InvalidUserId)?,
             email: parse_email(&row.email)?,
             profile: profile_from_row(&row)?,
             preferences: preferences_from_row(&row)?,
@@ -63,7 +63,7 @@ impl TryFrom<UserRow> for UserDetailsView {
 
     fn try_from(row: UserRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            user_id: UserId::from(row.user_id),
+            user_id: UserId::try_from(row.user_id).map_err(UserRowMappingError::InvalidUserId)?,
             email: parse_email(&row.email)?,
             first_name: row.first_name.clone().map(FirstName::from),
             last_name: row.last_name.clone().map(LastName::from),
@@ -83,7 +83,7 @@ impl TryFrom<UserRow> for UserStripeLookupView {
 
     fn try_from(row: UserRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            user_id: UserId::from(row.user_id),
+            user_id: UserId::try_from(row.user_id).map_err(UserRowMappingError::InvalidUserId)?,
             email: parse_email(&row.email)?,
             tier: parse_tier(&row.tier)?,
             role: parse_role(&row.role)?,
@@ -100,7 +100,7 @@ impl TryFrom<UserRow> for UserSummary {
 
     fn try_from(row: UserRow) -> Result<Self, Self::Error> {
         Ok(Self {
-            user_id: UserId::from(row.user_id),
+            user_id: UserId::try_from(row.user_id).map_err(UserRowMappingError::InvalidUserId)?,
             email: parse_email(&row.email)?,
             first_name: row.first_name.clone().map(FirstName::from),
             last_name: row.last_name.clone().map(LastName::from),
@@ -113,6 +113,8 @@ impl TryFrom<UserRow> for UserSummary {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum UserRowMappingError {
+    #[error("invalid persisted user identifier")]
+    InvalidUserId(#[source] domain_primitives::object_id::ObjectIdError),
     #[error("invalid user email")]
     InvalidEmail,
     #[error("invalid user language")]
@@ -387,6 +389,13 @@ mod tests {
     fn should_report_mapping_errors_for_invalid_scalar_values() {
         assert!(matches!(
             UserDetailsView::try_from(UserRow {
+                user_id: uuid::Uuid::new_v4(),
+                ..user_row()
+            }),
+            Err(UserRowMappingError::InvalidUserId(_))
+        ));
+        assert!(matches!(
+            UserDetailsView::try_from(UserRow {
                 email: "not-an-email".to_owned(),
                 ..user_row()
             }),
@@ -451,7 +460,8 @@ mod tests {
 
     fn user_row() -> UserRow {
         UserRow {
-            user_id: uuid::Uuid::nil(),
+            user_id: uuid::Uuid::parse_str("01890a5d-ac96-774b-bf1d-d5586c639f75")
+                .unwrap_or_else(|error| panic!("invalid UUIDv7 fixture: {error}")),
             email: "ada@example.com".to_owned(),
             first_name: Some("Ada".to_owned()),
             last_name: Some("Lovelace".to_owned()),

@@ -13,6 +13,8 @@ use crate::{
     },
     wire,
 };
+use notification_core::notification_delivery_id::NotificationDeliveryId;
+use product_listing_service::ports::{ProductListingRawRevisionId, ProductListingRawStreamId};
 use product_service::use_cases::{
     NormalizeProductListingRawRevisionCommand, NormalizeProductListingRawRevisionError,
     NormalizeProductListingRawRevisionMode, NormalizeProductListingRawRevisionResult,
@@ -170,14 +172,40 @@ impl Transport for FakeTransport {
         }
     }
 }
+const UUID_V7_BASE: u128 = 0x0190_0000_0000_7000_8000_0000_0000_0000;
+const NOTIFICATION_DELIVERY_UUID_1: &str = "01900000-0000-7000-8000-000000000001";
+const NOTIFICATION_DELIVERY_UUID_2: &str = "01900000-0000-7000-8000-000000000002";
+const NOTIFICATION_DELIVERY_TYPE_ID_1: &str = "nd_01j0000000e008000000000001";
+
+fn uuid_v7(low_bits: u64) -> uuid::Uuid {
+    uuid::Uuid::from_u128(UUID_V7_BASE | u128::from(low_bits))
+}
+
+fn notification_delivery_id(low_bits: u64) -> NotificationDeliveryId {
+    NotificationDeliveryId::try_from(uuid_v7(low_bits))
+        .unwrap_or_else(|error| panic!("valid notification delivery UUIDv7 fixture: {error}"))
+}
+
+fn raw_stream_id(low_bits: u64) -> ProductListingRawStreamId {
+    ProductListingRawStreamId::try_from(uuid_v7(low_bits))
+        .unwrap_or_else(|error| panic!("valid raw stream UUIDv7 fixture: {error}"))
+}
+
+fn raw_revision_id(low_bits: u64) -> ProductListingRawRevisionId {
+    ProductListingRawRevisionId::try_from(uuid_v7(low_bits))
+        .unwrap_or_else(|error| panic!("valid raw revision UUIDv7 fixture: {error}"))
+}
+
 fn job() -> DomainJob {
-    let id = "10000000-0000-0000-0000-000000000001";
+    let notification_delivery_id = notification_delivery_id(1);
     DomainJob {
         target_queue: WorkerQueue::NotificationDelivery,
-        idempotency_key: IdempotencyKey::new(format!("notification-delivery:{id}")),
-        ordering_key: OrderingKey::new(format!("notification-delivery:{id}")),
+        idempotency_key: IdempotencyKey::new(format!(
+            "notification-delivery:{notification_delivery_id}"
+        )),
+        ordering_key: OrderingKey::new(format!("notification-delivery:{notification_delivery_id}")),
         payload: DomainJobPayload::NotificationDeliveryCreated(NotificationDeliveryCreatedJob {
-            notification_delivery_id: id.into(),
+            notification_delivery_id,
         }),
     }
 }
@@ -189,6 +217,31 @@ fn message() -> Message {
         sent_timestamp_ms: 0,
         first_received_timestamp_ms: 0,
     }
+}
+
+#[test]
+fn should_encode_schema_v2_notification_typeid_fixture() {
+    let job = job();
+    let encoded = wire::encode(&job).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+
+    assert_eq!(serde_json::json!(2), value["schema_version"]);
+    assert_eq!(
+        serde_json::json!(NOTIFICATION_DELIVERY_TYPE_ID_1),
+        value["payload"]["notification_delivery_id"]
+    );
+    assert_eq!(
+        serde_json::json!(format!(
+            "notification-delivery:{NOTIFICATION_DELIVERY_TYPE_ID_1}"
+        )),
+        value["idempotency_key"]
+    );
+    assert_eq!(
+        Some(26),
+        NOTIFICATION_DELIVERY_TYPE_ID_1
+            .strip_prefix("nd_")
+            .map(str::len)
+    );
 }
 fn queue(fake: Arc<FakeTransport>) -> SqsQueue {
     scoped_queue(fake, WorkerScope::NotificationDelivery)
@@ -263,17 +316,19 @@ fn gated_normalization() -> (
     )
 }
 fn raw_job() -> DomainJob {
-    let stream = uuid::Uuid::from_u128(1);
-    let revision = uuid::Uuid::from_u128(2);
+    let product_listing_raw_stream_id = raw_stream_id(1);
+    let product_listing_raw_revision_id = raw_revision_id(2);
     DomainJob {
         target_queue: WorkerQueue::ProductListingRawNormalization,
-        idempotency_key: IdempotencyKey::new(format!("product-listing-raw-revision:{revision}")),
-        ordering_key: OrderingKey::new(format!("product-listing-raw-stream:{stream}")),
+        idempotency_key: IdempotencyKey::new(format!(
+            "product-listing-raw-revision:{product_listing_raw_revision_id}"
+        )),
+        ordering_key: OrderingKey::new(format!(
+            "product-listing-raw-stream:{product_listing_raw_stream_id}"
+        )),
         payload: DomainJobPayload::ProductListingRawRevision(ProductListingRawRevisionJob {
-            product_listing_raw_stream_id:
-                product_listing_service::ports::ProductListingRawStreamId::from_uuid(stream),
-            product_listing_raw_revision_id:
-                product_listing_service::ports::ProductListingRawRevisionId::from_uuid(revision),
+            product_listing_raw_stream_id,
+            product_listing_raw_revision_id,
             revision: 1,
         }),
     }
@@ -722,14 +777,22 @@ async fn should_bound_delete_retries_without_rerunning_handler() {
 async fn should_not_dispatch_or_delete_poison_unknown_schema_wrong_scope_or_invalid_keys() {
     let good = serde_json::from_str::<serde_json::Value>(&wire::encode(&job()).unwrap()).unwrap();
     for (field, bad) in [
-        ("schema_version", serde_json::json!(2)),
+        ("schema_version", serde_json::json!(1)),
         ("scope", serde_json::json!("product-translation")),
         ("idempotency_key", serde_json::json!("forged")),
         ("job_type", serde_json::json!("UNKNOWN")),
+        (
+            "notification_delivery_id",
+            serde_json::json!("usr_01j0000000e008000000000001"),
+        ),
     ] {
         let fake = Arc::new(FakeTransport::default());
         let mut value = good.clone();
-        value[field] = bad;
+        if field == "notification_delivery_id" {
+            value["payload"][field] = bad;
+        } else {
+            value[field] = bad;
+        }
         fake.push(&value.to_string());
         let mut receiver =
             WorkerQueueReceiver::sqs(queue(fake.clone()), RuntimeControl::new(false));
@@ -1285,10 +1348,7 @@ async fn should_retain_ambiguous_send_and_republish_entire_batch_with_same_keys(
         WorkerScope::NotificationDelivery,
         crate::cdc::WorkerQueueRegistry::new().with_sqs_queue(queue(fake.clone())),
     );
-    let batch = batch(&[
-        "10000000-0000-0000-0000-000000000001",
-        "20000000-0000-0000-0000-000000000002",
-    ]);
+    let batch = batch(&[NOTIFICATION_DELIVERY_UUID_1, NOTIFICATION_DELIVERY_UUID_2]);
     assert!(fanout.ingest_batch(&batch).await.is_err());
     assert_eq!(2, fake.bodies.lock().unwrap().len());
     assert_eq!(2, fanout.ingest_batch(&batch).await.unwrap());
@@ -1316,9 +1376,14 @@ async fn should_drain_active_http_publication_before_joining_connections_on_shut
         std::future::pending::<()>(),
     ));
     let request = tokio::spawn(async move {
-        reqwest::Client::new().post(format!("http://{address}/cdc/sequin"))
-            .body(r#"{"changes":[{"schema":"public","table":"notification_deliveries","operation":"insert","record":{"notification_delivery_id":"10000000-0000-0000-0000-000000000001"}}]}"#)
-            .send().await.unwrap()
+        reqwest::Client::new()
+            .post(format!("http://{address}/cdc/sequin"))
+            .body(
+                serde_json::json!({"changes":[{"schema":"public","table":"notification_deliveries","operation":"insert","record":{"notification_delivery_id":NOTIFICATION_DELIVERY_UUID_1}}]}).to_string(),
+            )
+            .send()
+            .await
+            .unwrap()
     });
     tokio::time::timeout(Duration::from_secs(2), async {
         while fake.count(Call::Send) == 0 {
@@ -1509,12 +1574,12 @@ async fn should_prevalidate_entire_batch_before_any_sqs_publication() {
     );
     assert!(
         fanout
-            .ingest_batch(&batch(&["10000000-0000-0000-0000-000000000001", "bad-id"]))
+            .ingest_batch(&batch(&[NOTIFICATION_DELIVERY_UUID_1, "bad-id"]))
             .await
             .is_err()
     );
     assert_eq!(0, fake.count(Call::Send));
-    let too_many = batch(&vec!["10000000-0000-0000-0000-000000000001"; 101]);
+    let too_many = batch(&vec![NOTIFICATION_DELIVERY_UUID_1; 101]);
     assert!(fanout.ingest_batch(&too_many).await.is_err());
     assert_eq!(0, fake.count(Call::Send));
 }
@@ -1526,10 +1591,7 @@ async fn should_retry_entire_batch_after_partial_sqs_publication_with_stable_key
         WorkerScope::NotificationDelivery,
         crate::cdc::WorkerQueueRegistry::new().with_sqs_queue(queue(fake.clone())),
     );
-    let batch = batch(&[
-        "10000000-0000-0000-0000-000000000001",
-        "20000000-0000-0000-0000-000000000002",
-    ]);
+    let batch = batch(&[NOTIFICATION_DELIVERY_UUID_1, NOTIFICATION_DELIVERY_UUID_2]);
     assert!(fanout.ingest_batch(&batch).await.is_err());
     assert_eq!(1, fake.bodies.lock().unwrap().len());
     assert_eq!(2, fanout.ingest_batch(&batch).await.unwrap());
@@ -1548,7 +1610,7 @@ async fn should_bound_publication_when_sqs_hangs_and_never_ack() {
     let started = Instant::now();
     assert!(
         fanout
-            .ingest_batch(&batch(&["10000000-0000-0000-0000-000000000001"]))
+            .ingest_batch(&batch(&[NOTIFICATION_DELIVERY_UUID_1]))
             .await
             .is_err()
     );

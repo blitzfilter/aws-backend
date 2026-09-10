@@ -422,7 +422,6 @@ fn personalization_user_id(principal: &Principal) -> Option<UserId> {
 pub fn redact_hidden_product(
     details: &mut ProductListingDetailsView,
 ) -> Result<(), GetProductListingError> {
-    let nil = uuid::Uuid::nil();
     let language = details
         .title
         .as_ref()
@@ -432,16 +431,17 @@ pub fn redact_hidden_product(
         .map_err(|_| GetProductListingError::ProductListingDetailsReadModelInvalid)?;
 
     details.product_listing_title_slug_id = None;
-    details.event_id = EventId::from(nil);
+    details.event_id = EventId::new();
     details.source = ListingSourceSummary {
-        listing_source_id: listing_source_core::ListingSourceId::from(nil),
+        listing_source_id: listing_source_core::ListingSourceId::new(),
         name: listing_source_core::ListingSourceName::try_from("Hidden")
             .map_err(|_| GetProductListingError::ProductListingDetailsReadModelInvalid)?,
         slug_id: ListingSourceSlugId::raw("hidden")
             .map_err(|_| GetProductListingError::ProductListingDetailsReadModelInvalid)?,
     };
-    details.source_listing_id = SourceListingId::try_from(nil.to_string())
-        .map_err(|_| GetProductListingError::ProductListingDetailsReadModelInvalid)?;
+    details.source_listing_id =
+        SourceListingId::try_from("00000000-0000-0000-0000-000000000000")
+            .map_err(|_| GetProductListingError::ProductListingDetailsReadModelInvalid)?;
     details.product_title = None;
     details.product_description = None;
     details.title = Some(Localized::new(language, hidden_title(language)));
@@ -454,7 +454,7 @@ pub fn redact_hidden_product(
             price_estimate_max: None,
         },
         valuation: ProductListingPricingValuation::Current {
-            fx_rate_id: FxRateId::from(nil),
+            fx_rate_id: FxRateId::new(),
             captured_at: OffsetDateTime::UNIX_EPOCH,
         },
     };

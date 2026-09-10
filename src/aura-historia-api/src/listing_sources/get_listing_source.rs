@@ -1,7 +1,8 @@
 use crate::auth::protected_context;
-use crate::error::{ApiError, INVALID_UUID};
+use crate::error::ApiError;
 use crate::listing_sources::types::ListingSourceData;
 use crate::state::ListingSourcesState;
+use crate::wire::parse_path_object_id;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
@@ -13,15 +14,11 @@ pub async fn get_listing_source(
     headers: HeaderMap,
     Path(raw_listing_source_id): Path<String>,
 ) -> Response {
-    let listing_source_id = match ListingSourceId::try_from(raw_listing_source_id.as_str()) {
-        Ok(value) => value,
-        Err(_) => {
-            return ApiError::bad_request(INVALID_UUID)
-                .with_path_field("listingSourceId")
-                .with_detail("Path parameter 'listingSourceId' must be a UUID.")
-                .into_response();
-        }
-    };
+    let listing_source_id: ListingSourceId =
+        match parse_path_object_id(&raw_listing_source_id, "listingSourceId", "ListingSource") {
+            Ok(value) => value,
+            Err(error) => return error.into_response(),
+        };
     let (context, _) = match protected_context(state.authenticator.as_ref(), &headers).await {
         Ok(value) => value,
         Err(response) => return *response,

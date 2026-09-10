@@ -5,7 +5,7 @@ use domain_primitives::sort::{Sort, SortOrder};
 use platform_postgres::SqlxTransaction;
 use sqlx::{Postgres, QueryBuilder};
 use user_core::sort_user_field::SortUserField;
-use user_core::user_id::UserId;
+
 use user_service::ports::{UserSearchReadError, UserSearchReader, UserSearchReaderFactory};
 use user_service::use_cases::queries::search_users::{
     SearchUsersRequest, SearchUsersResult, UserSummary,
@@ -60,7 +60,7 @@ impl UserSearchReader for SqlxUserSearchReader<'_> {
         builder.push(user_columns()).push(" FROM ranked WHERE TRUE");
         if let Some(search_after) = cursor.search_after {
             builder.push(" AND rn > (SELECT rn FROM ranked WHERE user_id = ");
-            builder.push_bind(uuid::Uuid::from(search_after));
+            builder.push_bind(search_after.into_uuid());
             builder.push(")");
         }
         builder.push(" ORDER BY rn LIMIT ").push_bind(limit);
@@ -77,12 +77,6 @@ impl UserSearchReader for SqlxUserSearchReader<'_> {
         if has_more {
             rows.truncate(size_usize);
         }
-        let search_after = if has_more {
-            rows.last().map(|row| UserId::from(row.user_id))
-        } else {
-            None
-        };
-
         let items = rows
             .into_iter()
             .map(UserSummary::try_from)
@@ -90,6 +84,11 @@ impl UserSearchReader for SqlxUserSearchReader<'_> {
             .map_err(|source| UserSearchReadError::InvalidReadModel {
                 source: box_error(source),
             })?;
+        let search_after = if has_more {
+            items.last().map(|item| item.user_id)
+        } else {
+            None
+        };
 
         Ok(SearchUsersResult {
             items,

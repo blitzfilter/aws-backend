@@ -1,7 +1,53 @@
+use crate::error::{ApiError, INVALID_OBJECT_ID};
 use crate::patch_value::PatchValue;
 use serde::{Deserialize, Deserializer, Serializer};
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::str::FromStr;
+
+pub(crate) fn parse_path_object_id<T>(
+    value: &str,
+    field: &'static str,
+    semantic_type: &'static str,
+) -> Result<T, ApiError>
+where
+    T: FromStr,
+{
+    value
+        .parse()
+        .map_err(|_| invalid_object_id(semantic_type).with_path_field(field))
+}
+
+pub(crate) fn parse_query_object_id<T>(
+    value: &str,
+    field: &'static str,
+    semantic_type: &'static str,
+) -> Result<T, ApiError>
+where
+    T: FromStr,
+{
+    value
+        .parse()
+        .map_err(|_| invalid_object_id(semantic_type).with_query_field(field))
+}
+
+pub(crate) fn parse_body_object_id<T>(
+    value: &str,
+    field: &'static str,
+    semantic_type: &'static str,
+) -> Result<T, ApiError>
+where
+    T: FromStr,
+{
+    value
+        .parse()
+        .map_err(|_| invalid_object_id(semantic_type).with_body_field(field))
+}
+
+fn invalid_object_id(semantic_type: &'static str) -> ApiError {
+    ApiError::bad_request(INVALID_OBJECT_ID)
+        .with_detail(format!("must be a valid {semantic_type} ID"))
+}
 
 fn serialize_code<T, S>(
     value: &T,
@@ -605,5 +651,93 @@ pub(crate) mod billing_cycle {
         D: Deserializer<'de>,
     {
         deserialize_code(deserializer, parse, Some(EXPECTED))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse;
+    use serde_json::{Value, json};
+    use user_core::user_id::UserId;
+
+    async fn problem(error: ApiError) -> Result<Value, Box<dyn std::error::Error>> {
+        let response = error.into_response();
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        Ok(serde_json::from_slice(&body)?)
+    }
+
+    #[test]
+    fn should_parse_object_id_with_domain_from_str() {
+        let user_id = UserId::new();
+
+        assert!(matches!(
+            parse_path_object_id::<UserId>(&user_id.to_string(), "userId", "User"),
+            Ok(parsed) if parsed == user_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_map_invalid_path_object_id_without_codec_detail()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let Err(error) = parse_path_object_id::<UserId>("not-an-object-id", "userId", "User")
+        else {
+            return Err("invalid object ID was accepted".into());
+        };
+
+        assert_eq!(
+            json!({
+                "status": 400,
+                "title": "Bad Request",
+                "error": "INVALID_OBJECT_ID",
+                "source": {"field": "userId", "type": "PATH"},
+                "detail": "must be a valid User ID"
+            }),
+            problem(error).await?
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_invalid_query_object_id_with_query_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let Err(error) = parse_query_object_id::<UserId>("not-an-object-id", "userId", "User")
+        else {
+            return Err("invalid object ID was accepted".into());
+        };
+
+        assert_eq!(
+            json!({
+                "status": 400,
+                "title": "Bad Request",
+                "error": "INVALID_OBJECT_ID",
+                "source": {"field": "userId", "type": "QUERY"},
+                "detail": "must be a valid User ID"
+            }),
+            problem(error).await?
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_map_invalid_body_object_id_with_body_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let Err(error) = parse_body_object_id::<UserId>("not-an-object-id", "userId", "User")
+        else {
+            return Err("invalid object ID was accepted".into());
+        };
+
+        assert_eq!(
+            json!({
+                "status": 400,
+                "title": "Bad Request",
+                "error": "INVALID_OBJECT_ID",
+                "source": {"field": "userId", "type": "BODY"},
+                "detail": "must be a valid User ID"
+            }),
+            problem(error).await?
+        );
+        Ok(())
     }
 }

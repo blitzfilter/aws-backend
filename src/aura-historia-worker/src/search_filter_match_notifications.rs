@@ -64,32 +64,75 @@ fn command_from_job(
         return Err(crate::jobs::InvalidJob);
     };
     Ok(GenerateSearchFilterMatchNotificationCommand {
-        user_id: change
-            .user_id
-            .as_str()
-            .try_into()
-            .map_err(|_| crate::jobs::InvalidJob)?,
-        search_filter_id: change
-            .user_search_filter_id
-            .as_str()
-            .try_into()
-            .map_err(|_| crate::jobs::InvalidJob)?,
-        product_listing_id: change
-            .product_listing_id
-            .as_str()
-            .try_into()
-            .map_err(|_| crate::jobs::InvalidJob)?,
-        origin_event_id: change
-            .origin_event_id
-            .as_str()
-            .try_into()
-            .map_err(|_| crate::jobs::InvalidJob)?,
+        user_id: change.user_id,
+        search_filter_id: change.user_search_filter_id,
+        product_listing_id: change.product_listing_id,
+        origin_event_id: change.origin_event_id,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cdc::{IdempotencyKey, OrderingKey, SearchFilterMatchCreatedJob, WorkerQueue};
+    use domain_primitives::event_id::EventId;
+    use product_listing_core::product_listing_id::ProductListingId;
+    use search_filter_core::user_search_filter_id::UserSearchFilterId;
+    use user_core::user_id::UserId;
+    use uuid::Uuid;
+
+    #[test]
+    fn should_map_typed_match_job_to_notification_command() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let user_id = UserId::try_from(Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0001))?;
+        let search_filter_id = UserSearchFilterId::try_from(Uuid::from_u128(
+            0x0190_0000_0000_7000_8000_0000_0000_0006,
+        ))?;
+        let product_listing_id =
+            ProductListingId::try_from(Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0003))?;
+        let origin_event_id =
+            EventId::try_from(Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0004))?;
+
+        assert_eq!("usr_01j0000000e008000000000001", user_id.to_string());
+        assert_eq!(
+            "sf_01j0000000e008000000000006",
+            search_filter_id.to_string()
+        );
+        assert_eq!(
+            "pl_01j0000000e008000000000003",
+            product_listing_id.to_string()
+        );
+        assert_eq!(
+            "evt_01j0000000e008000000000004",
+            origin_event_id.to_string()
+        );
+
+        let command = command_from_job(DomainJob {
+            target_queue: WorkerQueue::SearchFilterMatchNotification,
+            idempotency_key: IdempotencyKey::new(format!(
+                "search-filter-match:{user_id}:{search_filter_id}:{product_listing_id}:{origin_event_id}"
+            )),
+            ordering_key: OrderingKey::new(format!("user:{user_id}")),
+            payload: DomainJobPayload::SearchFilterMatchCreated(SearchFilterMatchCreatedJob {
+                user_id,
+                user_search_filter_id: search_filter_id,
+                product_listing_id,
+                origin_event_id,
+            }),
+        });
+
+        assert_eq!(
+            Ok(GenerateSearchFilterMatchNotificationCommand {
+                user_id,
+                search_filter_id,
+                product_listing_id,
+                origin_event_id,
+            }),
+            command
+        );
+        Ok(())
+    }
+
     #[test]
     fn should_retain_missing_historical_facts_and_complete_semantic_suppression() {
         use GenerateSearchFilterMatchNotificationResult as R;

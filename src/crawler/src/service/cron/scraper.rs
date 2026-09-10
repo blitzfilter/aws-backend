@@ -2127,7 +2127,7 @@ mod tests {
                 Box::pin(async move {
                     Err(ScraperError::PendingSchemaReview {
                         url,
-                        review_id: uuid::Uuid::new_v4(),
+                        review_id: crate::CrawlerReviewId::new(),
                     })
                 })
             });

@@ -1,3 +1,4 @@
+use crate::CrawlerReviewId;
 use crate::review::model::SchemaMatrix;
 use crate::review::model::{STATUS_APPROVED, SchemaReviewPageInput};
 use crate::review::repository::SchemaReviewWithStatusInput;
@@ -18,7 +19,7 @@ use tracing::info;
 
 pub(crate) enum GeneratedSchemaReviewOutcome {
     Persisted(ListingSourceProductSchema),
-    PendingReview(uuid::Uuid),
+    PendingReview(CrawlerReviewId),
 }
 
 impl ScraperServiceImpl {
@@ -118,7 +119,7 @@ fn with_schema_matrix_summary(
                 if selector_missing || field.error.is_some() {
                     failed_fields.push(json!({
                         "schema_index": candidate.schema_index,
-                        "page_id": page.page_id,
+                        "page_reference": page.page_reference,
                         "url": page.url,
                         "role": page.role,
                         "field": field.field,
@@ -189,19 +190,19 @@ fn review_error_to_schema_service_error(
 mod tests {
     use super::*;
     use crate::review::model::{
-        SchemaCandidateEvaluation, SchemaPageEvaluation, SelectorFieldEvaluation,
+        SchemaCandidateEvaluation, SchemaPageEvaluation, SchemaPageReference,
+        SelectorFieldEvaluation,
     };
     use serde_json::json;
 
     #[test]
     fn should_record_present_but_missing_rule_failures_in_validation_summary() {
-        let page_id = uuid::Uuid::new_v4();
         let matrix = SchemaMatrix {
-            review_id: uuid::Uuid::nil(),
+            review_id: None,
             candidates: vec![SchemaCandidateEvaluation {
                 schema_index: 0,
                 pages: vec![SchemaPageEvaluation {
-                    page_id,
+                    page_reference: SchemaPageReference::Input { page_index: 0 },
                     url: "https://example.com/product".to_string(),
                     role: "PRIMARY".to_string(),
                     apply_ok: false,
@@ -236,13 +237,12 @@ mod tests {
 
     #[test]
     fn should_not_record_missing_images_as_present_but_missing_rule_failure() {
-        let page_id = uuid::Uuid::new_v4();
         let matrix = SchemaMatrix {
-            review_id: uuid::Uuid::nil(),
+            review_id: None,
             candidates: vec![SchemaCandidateEvaluation {
                 schema_index: 0,
                 pages: vec![SchemaPageEvaluation {
-                    page_id,
+                    page_reference: SchemaPageReference::Input { page_index: 0 },
                     url: "https://example.com/product".to_string(),
                     role: "PRIMARY".to_string(),
                     apply_ok: true,

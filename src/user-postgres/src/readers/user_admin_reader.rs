@@ -63,7 +63,7 @@ impl UserAdminReader for SqlxUserAdminReader<'_> {
         let row = sqlx::query_as::<_, UserAdminActorRow>(
             "SELECT user_id, role FROM users WHERE user_id = $1 AND suspended = false",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(|source| UserAdminReadError::TemporarilyUnavailable {
@@ -91,7 +91,7 @@ impl UserAdminMutationGuard for SqlxUserAdminReader<'_> {
         let target = sqlx::query_as::<_, UserAdminTargetRow>(
             "SELECT role, suspended FROM users WHERE user_id = $1 FOR UPDATE",
         )
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_optional(&mut *self.connection)
         .await
         .map_err(|source| UserAdminReadError::TemporarilyUnavailable {
@@ -139,13 +139,20 @@ impl TryFrom<UserAdminActorRow> for UserAdminActorView {
                 source: box_error(InvalidAdminRole),
             })?;
 
-        Ok(Self {
-            user_id: UserId::from(row.user_id),
-            role,
-        })
+        let user_id = UserId::try_from(row.user_id).map_err(|source| {
+            UserAdminReadError::InvalidReadModel {
+                source: box_error(InvalidAdminUserId(source)),
+            }
+        })?;
+
+        Ok(Self { user_id, role })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid persisted admin role")]
 struct InvalidAdminRole;
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid persisted admin user identifier")]
+struct InvalidAdminUserId(#[source] domain_primitives::object_id::ObjectIdError);

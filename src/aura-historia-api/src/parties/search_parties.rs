@@ -2,6 +2,7 @@ use super::types::PartyCollectionData;
 use crate::auth::protected_context;
 use crate::error::{ApiError, BAD_ORDER_VALUE, BAD_QUERY_PARAMETER_VALUE, BAD_SORT_VALUE};
 use crate::state::PartiesState;
+use crate::wire::parse_query_object_id;
 use application::pagination::Cursor;
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -156,30 +157,7 @@ fn parse_cursor(
 }
 
 fn parse_search_after(value: &str) -> Result<PartyId, ApiError> {
-    let candidate = match serde_json::from_str::<serde_json::Value>(value) {
-        Ok(serde_json::Value::String(value)) => value,
-        Ok(serde_json::Value::Array(values)) => values
-            .last()
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| bad_query("searchAfter", "searchAfter must contain a party UUID."))?,
-        Ok(_) => {
-            return Err(bad_query(
-                "searchAfter",
-                "searchAfter must contain a party UUID.",
-            ));
-        }
-        Err(_) => value.to_owned(),
-    };
-
-    uuid::Uuid::parse_str(candidate.as_str())
-        .map(PartyId::from)
-        .map_err(|error| {
-            bad_query(
-                "searchAfter",
-                format!("searchAfter must contain a party UUID: {error}"),
-            )
-        })
+    parse_query_object_id(value, "searchAfter", "Party")
 }
 
 fn bad_query(field: &'static str, detail: impl std::fmt::Display) -> ApiError {
@@ -203,9 +181,10 @@ mod tests {
 
     #[test]
     fn should_map_party_search_query_to_service_request() -> Result<(), ApiError> {
-        let request = parse_search_parties_query(Some(
-            "query=operator&name=Antik&phone=%2B49&email=example.com&created%5Bmin%5D=2026-01-01T00%3A00%3A00Z&created%5Bmax%5D=2026-12-31T23%3A59%3A59Z&updated%5Bmin%5D=2026-02-01T00%3A00%3A00Z&sort=email&order=desc&size=200&searchAfter=550e8400-e29b-41d4-a716-446655440000",
-        ))?;
+        let party_id = PartyId::new();
+        let request = parse_search_parties_query(Some(&format!(
+            "query=operator&name=Antik&phone=%2B49&email=example.com&created%5Bmin%5D=2026-01-01T00%3A00%3A00Z&created%5Bmax%5D=2026-12-31T23%3A59%3A59Z&updated%5Bmin%5D=2026-02-01T00%3A00%3A00Z&sort=email&order=desc&size=200&searchAfter={party_id}",
+        )))?;
 
         assert_eq!(Some("operator"), request.search.query.as_deref());
         assert_eq!(Some("Antik"), request.search.name_query.as_deref());
@@ -235,9 +214,7 @@ mod tests {
         assert_eq!(
             Some(Cursor {
                 size: 100,
-                search_after: Some(PartyId::from(uuid::Uuid::from_u128(
-                    0x550e8400e29b41d4a716446655440000,
-                ))),
+                search_after: Some(party_id),
             }),
             request.cursor
         );
@@ -245,18 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn should_accept_legacy_json_array_party_cursor() -> Result<(), ApiError> {
-        let request = parse_search_parties_query(Some(
-            "searchAfter=%5B%22name%22%2C%22550e8400-e29b-41d4-a716-446655440000%22%5D",
-        ))?;
+    fn should_reject_legacy_json_array_party_cursor() {
+        let query = format!("searchAfter=%5B%22name%22%2C%22{}%22%5D", PartyId::new());
 
-        assert_eq!(21, request.cursor.as_ref().map_or(0, |cursor| cursor.size));
-        assert!(
-            request
-                .cursor
-                .is_some_and(|cursor| cursor.search_after.is_some())
-        );
-        Ok(())
+        let error = parse_search_parties_query(Some(&query))
+            .expect_err("legacy JSON-array cursor must be rejected");
+
+        assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
     }
 
     #[test]
@@ -274,7 +246,7 @@ mod tests {
         assert!(parse_search_parties_query(Some("sort=invalid&order=asc")).is_err());
         assert!(parse_search_parties_query(Some("sort=email&order=sideways")).is_err());
         assert!(parse_search_parties_query(Some("size=not-a-number")).is_err());
-        assert!(parse_search_parties_query(Some("searchAfter=not-a-uuid")).is_err());
+        assert!(parse_search_parties_query(Some("searchAfter=not-an-object-id")).is_err());
         assert!(parse_search_parties_query(Some("created[min]=not-a-timestamp")).is_err());
     }
 }

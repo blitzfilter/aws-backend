@@ -7,7 +7,7 @@
 
 ## Core Design
 
-- Domain-only. Quotes are `units_per_eur` scaled by `FX_RATE_SCALE`.
+- Domain-only. `FxRateId` is a strict UUIDv7-backed `fx_` object ID. Quotes are `units_per_eur` scaled by `FX_RATE_SCALE`.
 - Snapshots contain every supported currency, including EUR at the exact scale.
 - Conversion uses `money` values, checked integer arithmetic, and source/target minor-unit exponents.
 

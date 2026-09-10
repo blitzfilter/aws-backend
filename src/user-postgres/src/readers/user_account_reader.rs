@@ -47,7 +47,7 @@ pub(crate) async fn find_user_details_by_id(
 ) -> Result<Option<UserDetailsView>, UserAccountReadError> {
     let sql = format!("SELECT {} FROM users WHERE user_id = $1", user_columns());
     let row = sqlx::query_as::<_, UserRow>(AssertSqlSafe(sql))
-        .bind(uuid::Uuid::from(user_id))
+        .bind(user_id.into_uuid())
         .fetch_optional(connection)
         .await
         .map_err(|source| UserAccountReadError::TemporarilyUnavailable {
