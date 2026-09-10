@@ -8,7 +8,7 @@
 
 - Capture uses canonical `money::Currency` quotes before a short PostgreSQL transaction.
 - Write port inserts one immutable snapshot idempotently by source event ID.
-- Repository rehydrates immutable snapshots and inserts them; its factory binds all aggregate lookups and writes to a caller transaction.
+- Repository rehydrates immutable snapshots and inserts them; its factory binds aggregate lookup/write work to a caller transaction. `FxRateSnapshotReader` is a separate ordinary read capability for presentation reads; it returns immutable semantic snapshots only.
 
 ## Ownership
 

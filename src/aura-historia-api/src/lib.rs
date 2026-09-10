@@ -44,7 +44,7 @@ use billing_service::use_cases::{
 };
 use billing_stripe::{StripeBillingClient, StripeBillingConfig};
 use embedding::{EmbeddingGenerator, VertexAiEmbeddingConfig, VertexAiEmbeddingGenerator};
-use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
+use fxrate_postgres::{SqlxFxRateSnapshotReader, SqlxFxRateSnapshotRepositoryFactory};
 use google_cloud_auth::credentials::Builder as GoogleCredentialsBuilder;
 use notification_postgres::{
     SqlxNotificationDeleter, SqlxNotificationDeliveryIntentRepositoryFactory,
@@ -969,9 +969,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxProductListingContentAssessmentReader::new(pool.clone()),
     );
     let search_products = SearchProductListingsHandler::new(
-        unit_of_work.clone(),
         OpenSearchProductListingSearchReader::new(opensearch_client.clone()),
-        SqlxFxRateSnapshotRepositoryFactory,
+        SqlxFxRateSnapshotReader::new(pool.clone()),
         Arc::clone(&embeddings),
         SqlxListingSourceSummaryReader::new(pool.clone()),
         product_user_states,
