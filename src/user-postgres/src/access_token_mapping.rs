@@ -198,3 +198,123 @@ fn parse_origin(
         _ => Err(AccessTokenRowMappingError::InvalidOrigin(origin)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[derive(Clone, Copy, Debug)]
+    enum PersistedObjectIdCase {
+        AccessToken,
+        User,
+        OAuthClient,
+    }
+
+    const PERSISTED_OBJECT_ID_CASES: [PersistedObjectIdCase; 3] = [
+        PersistedObjectIdCase::AccessToken,
+        PersistedObjectIdCase::User,
+        PersistedObjectIdCase::OAuthClient,
+    ];
+
+    fn uuid_v7_fixture() -> Uuid {
+        Uuid::from_u128(0x01890a5dac96774bbf1dd5586c639f75)
+    }
+
+    fn uuid_v4_fixture() -> Uuid {
+        Uuid::from_u128(0x550e8400e29b41d4a716446655440000)
+    }
+
+    fn persisted_ids(case: PersistedObjectIdCase) -> (Uuid, Uuid, Uuid) {
+        let valid = uuid_v7_fixture();
+        let invalid = uuid_v4_fixture();
+
+        match case {
+            PersistedObjectIdCase::AccessToken => (invalid, valid, valid),
+            PersistedObjectIdCase::User => (valid, invalid, valid),
+            PersistedObjectIdCase::OAuthClient => (valid, valid, invalid),
+        }
+    }
+
+    fn expected_error(error: &AccessTokenRowMappingError, case: PersistedObjectIdCase) -> bool {
+        match case {
+            PersistedObjectIdCase::AccessToken => {
+                matches!(error, AccessTokenRowMappingError::InvalidAccessTokenId(_))
+            }
+            PersistedObjectIdCase::User => {
+                matches!(error, AccessTokenRowMappingError::InvalidUserId(_))
+            }
+            PersistedObjectIdCase::OAuthClient => {
+                matches!(error, AccessTokenRowMappingError::InvalidOAuthClientId(_))
+            }
+        }
+    }
+
+    #[test]
+    fn should_reject_uuid_v4_object_ids_when_mapping_access_token_rows() {
+        for case in PERSISTED_OBJECT_ID_CASES {
+            let (access_token_id, user_id, oauth_client_id) = persisted_ids(case);
+            let row = AccessTokenRow {
+                access_token_id,
+                user_id,
+                token_short: "short".to_owned(),
+                token_hash: "hash".to_owned(),
+                name: "Token".to_owned(),
+                scopes: vec![],
+                origin: "OAUTH".to_owned(),
+                oauth_client_id: Some(oauth_client_id),
+                expires_at: None,
+                version: 1,
+            };
+
+            let result = VersionedAccessToken::try_from(row);
+            assert!(
+                matches!(result, Err(ref error) if expected_error(error, case)),
+                "access-token row accepted UUIDv4 for {case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_reject_uuid_v4_object_ids_when_mapping_access_token_details_rows() {
+        for case in PERSISTED_OBJECT_ID_CASES {
+            let (access_token_id, user_id, oauth_client_id) = persisted_ids(case);
+            let row = AccessTokenDetailsRow {
+                access_token_id,
+                user_id,
+                name: "Token".to_owned(),
+                scopes: vec![],
+                origin: "OAUTH".to_owned(),
+                oauth_client_id: Some(oauth_client_id),
+                expires_at: None,
+            };
+
+            let result = AccessTokenDetails::try_from(row);
+            assert!(
+                matches!(result, Err(ref error) if expected_error(error, case)),
+                "access-token details row accepted UUIDv4 for {case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_reject_uuid_v4_object_ids_when_mapping_access_token_authentication_rows() {
+        for case in PERSISTED_OBJECT_ID_CASES {
+            let (access_token_id, user_id, oauth_client_id) = persisted_ids(case);
+            let row = AccessTokenAuthenticationRow {
+                access_token_id,
+                user_id,
+                scopes: vec![],
+                origin: "OAUTH".to_owned(),
+                oauth_client_id: Some(oauth_client_id),
+                expires_at: None,
+            };
+
+            let result = AccessTokenAuthentication::try_from(row);
+            assert!(
+                matches!(result, Err(ref error) if expected_error(error, case)),
+                "access-token authentication row accepted UUIDv4 for {case:?}"
+            );
+        }
+    }
+}

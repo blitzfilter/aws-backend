@@ -836,6 +836,8 @@ mod tests {
     struct CappedContinuationReader(Arc<Mutex<CappedContinuationState>>);
     struct CappedContinuationState {
         product_listing_raw_stream_id: ProductListingRawStreamId,
+        product_listing_raw_revision_id: ProductListingRawRevisionId,
+        listing_source_id: ListingSourceId,
         next_revision: u64,
         last_revision: u64,
         input: ProductListingNormalizationInput,
@@ -947,7 +949,7 @@ mod tests {
             Ok(crate::ports::ProductListingRawNormalizationWork {
                 head: ProductListingRawNormalizationHead {
                     product_listing_raw_stream_id,
-                    listing_source_id: ListingSourceId::from(uuid::Uuid::nil()),
+                    listing_source_id: state.listing_source_id,
                     last_processed_revision: state.next_revision.saturating_sub(1),
                     product_listing_id: None,
                     source_listing_id: None,
@@ -973,6 +975,7 @@ mod tests {
                 .next_revision
                 .checked_add(1)
                 .ok_or_else(|| capped_continuation_port_error("test revision overflow"))?;
+            state.product_listing_raw_revision_id = ProductListingRawRevisionId::new();
             state.completions.push(completion);
             Ok(())
         }
@@ -1224,9 +1227,7 @@ mod tests {
     ) -> Option<crate::ports::ProductListingRawRevision> {
         (state.next_revision <= state.last_revision).then(|| {
             crate::ports::ProductListingRawRevision {
-                product_listing_raw_revision_id: ProductListingRawRevisionId::from_uuid(
-                    uuid::Uuid::from_u128(u128::from(state.next_revision)),
-                ),
+                product_listing_raw_revision_id: state.product_listing_raw_revision_id,
                 product_listing_raw_stream_id: state.product_listing_raw_stream_id,
                 revision: state.next_revision,
                 input: state.input.clone(),
@@ -1285,8 +1286,8 @@ mod tests {
     #[tokio::test]
     async fn should_reject_invalid_v2_raw_values_from_the_revision_reader_and_advance_stream_head()
     {
-        let stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
-        let revision_id = ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4());
+        let stream_id = ProductListingRawStreamId::new();
+        let revision_id = ProductListingRawRevisionId::new();
         let input = ProductListingNormalizationInput::new(
             RawProductListingOperation::Upsert,
             RawProductListingPayloadFormat::ShopifyProduct,
@@ -1304,7 +1305,7 @@ mod tests {
             work: Some(crate::ports::ProductListingRawNormalizationWork {
                 head: ProductListingRawNormalizationHead {
                     product_listing_raw_stream_id: stream_id,
-                    listing_source_id: ListingSourceId::from(uuid::Uuid::new_v4()),
+                    listing_source_id: ListingSourceId::new(),
                     last_processed_revision: 0,
                     product_listing_id: None,
                     source_listing_id: None,
@@ -1366,9 +1367,9 @@ mod tests {
     #[tokio::test]
     async fn should_report_stream_failures_without_fifo_continuations_when_reconciliation_continues()
     -> Result<(), Box<dyn std::error::Error>> {
-        let blocked_stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
-        let healthy_stream_id = ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
-        let healthy_revision_id = ProductListingRawRevisionId::from_uuid(uuid::Uuid::new_v4());
+        let blocked_stream_id = ProductListingRawStreamId::new();
+        let healthy_stream_id = ProductListingRawStreamId::new();
+        let healthy_revision_id = ProductListingRawRevisionId::new();
         let input = ProductListingNormalizationInput::new(
             RawProductListingOperation::Upsert,
             RawProductListingPayloadFormat::ShopifyProduct,
@@ -1382,7 +1383,7 @@ mod tests {
             work: Some(crate::ports::ProductListingRawNormalizationWork {
                 head: ProductListingRawNormalizationHead {
                     product_listing_raw_stream_id: healthy_stream_id,
-                    listing_source_id: ListingSourceId::from(uuid::Uuid::new_v4()),
+                    listing_source_id: ListingSourceId::new(),
                     last_processed_revision: 0,
                     product_listing_id: None,
                     source_listing_id: None,
@@ -1461,10 +1462,11 @@ mod tests {
     #[tokio::test]
     async fn should_return_capped_reconciliation_stream_as_worker_continuation()
     -> Result<(), Box<dyn std::error::Error>> {
-        let product_listing_raw_stream_id =
-            ProductListingRawStreamId::from_uuid(uuid::Uuid::new_v4());
+        let product_listing_raw_stream_id = ProductListingRawStreamId::new();
         let state = Arc::new(Mutex::new(CappedContinuationState {
             product_listing_raw_stream_id,
+            product_listing_raw_revision_id: ProductListingRawRevisionId::new(),
+            listing_source_id: ListingSourceId::new(),
             next_revision: 1,
             last_revision: 3,
             input: input_with_schema_versions(1, 1)?,

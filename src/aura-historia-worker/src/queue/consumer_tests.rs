@@ -781,10 +781,18 @@ async fn should_not_dispatch_or_delete_poison_unknown_schema_wrong_scope_or_inva
         ("scope", serde_json::json!("product-translation")),
         ("idempotency_key", serde_json::json!("forged")),
         ("job_type", serde_json::json!("UNKNOWN")),
+        (
+            "notification_delivery_id",
+            serde_json::json!("usr_01j0000000e008000000000001"),
+        ),
     ] {
         let fake = Arc::new(FakeTransport::default());
         let mut value = good.clone();
-        value[field] = bad;
+        if field == "notification_delivery_id" {
+            value["payload"][field] = bad;
+        } else {
+            value[field] = bad;
+        }
         fake.push(&value.to_string());
         let mut receiver =
             WorkerQueueReceiver::sqs(queue(fake.clone()), RuntimeControl::new(false));

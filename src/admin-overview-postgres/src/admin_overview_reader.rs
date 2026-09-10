@@ -318,7 +318,7 @@ mod tests {
     }
 
     async fn seed_user(pool: &sqlx::PgPool, tier: &str, role: &str) -> Uuid {
-        let user_id = Uuid::new_v4();
+        let user_id = Uuid::now_v7();
         let result =
             sqlx::query("INSERT INTO users (user_id, email, tier, role) VALUES ($1, $2, $3, $4)")
                 .bind(user_id)
@@ -334,7 +334,7 @@ mod tests {
     }
 
     async fn seed_party(pool: &sqlx::PgPool) -> Uuid {
-        let party_id = Uuid::new_v4();
+        let party_id = Uuid::now_v7();
         let result =
             sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
                 .bind(party_id)
@@ -349,7 +349,7 @@ mod tests {
     }
 
     async fn seed_listing_source(pool: &sqlx::PgPool, party_id: Uuid) -> Uuid {
-        let listing_source_id = Uuid::new_v4();
+        let listing_source_id = Uuid::now_v7();
         let result = sqlx::query(
             "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
         )
@@ -379,7 +379,7 @@ mod tests {
     }
 
     async fn seed_partnership(pool: &sqlx::PgPool, party_id: Uuid) -> Uuid {
-        let partnership_id = Uuid::new_v4();
+        let partnership_id = Uuid::now_v7();
         let result =
             sqlx::query("INSERT INTO partnerships (partnership_id, party_id) VALUES ($1, $2)")
                 .bind(partnership_id)
@@ -402,7 +402,7 @@ mod tests {
         let result = sqlx::query(
             "INSERT INTO partnership_applications (partnership_application_id, applicant_user_id, business_state, proposal, approved_partnership_id, approved_listing_source_id) VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(Uuid::new_v4())
+        .bind(Uuid::now_v7())
         .bind(applicant_user_id)
         .bind(state)
         .bind(json!({ "type": "EXISTING_LISTING_SOURCE", "listing_source_id": listing_source_id.to_string() }))
@@ -421,8 +421,8 @@ mod tests {
         lifecycle: &str,
         availability: Option<&str>,
     ) {
-        let product_listing_id = Uuid::new_v4();
-        let event_id = Uuid::new_v4();
+        let product_listing_id = Uuid::now_v7();
+        let event_id = Uuid::now_v7();
         let slug_suffix = Uuid::new_v4().simple().to_string();
         let product_listing_slug_id = format!("listing-{}", &slug_suffix[..6]);
         let mut transaction = match pool.begin().await {

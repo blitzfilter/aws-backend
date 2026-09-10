@@ -217,6 +217,102 @@ mod tests {
             .unwrap_or_else(|error| panic!("invalid UUIDv7 fixture: {error}"))
     }
 
+    fn uuid_v4_fixture() -> Uuid {
+        Uuid::from_u128(0x550e8400e29b41d4a716446655440000)
+    }
+
+    fn oauth_client_view_row(client_id: Uuid) -> OAuthClientViewRow {
+        OAuthClientViewRow {
+            client_id,
+            name: "Client".to_owned(),
+            redirect_uris: vec!["https://client.example/callback".to_owned()],
+            tos_uri: "https://client.example/tos".to_owned(),
+            policy_uri: "https://client.example/policy".to_owned(),
+            client_uri: "https://client.example".to_owned(),
+            logo_uri: "https://client.example/logo.png".to_owned(),
+            scopes: vec![],
+            created: time::OffsetDateTime::UNIX_EPOCH,
+            updated: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    fn authorization_code_row(client_id: Uuid, user_id: Uuid) -> AuthorizationCodeRow {
+        AuthorizationCodeRow {
+            code: uuid_v7_fixture().to_string(),
+            client_id,
+            user_id,
+            redirect_uri: "https://client.example/callback".to_owned(),
+            scopes: vec![],
+            code_challenge: "challenge".to_owned(),
+            code_challenge_method: "S256".to_owned(),
+            expires: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    fn third_party_exchange_code_row(access_token_id: Uuid) -> ThirdPartyExchangeCodeRow {
+        ThirdPartyExchangeCodeRow {
+            code: uuid_v7_fixture().to_string(),
+            access_token_id,
+            access_token: RawAccessToken::new().into(),
+            access_token_expires: None,
+            scopes: vec![],
+            expires: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum PersistedObjectIdCase {
+        OAuthClientView,
+        AuthorizationCodeClient,
+        AuthorizationCodeUser,
+        ExchangeCodeAccessToken,
+    }
+
+    #[test]
+    fn should_reject_uuid_v4_object_ids_in_uncovered_oauth_mappings() {
+        let valid = uuid_v7_fixture();
+        let invalid = uuid_v4_fixture();
+        let cases = [
+            PersistedObjectIdCase::OAuthClientView,
+            PersistedObjectIdCase::AuthorizationCodeClient,
+            PersistedObjectIdCase::AuthorizationCodeUser,
+            PersistedObjectIdCase::ExchangeCodeAccessToken,
+        ];
+
+        for case in cases {
+            let result = match case {
+                PersistedObjectIdCase::OAuthClientView => {
+                    oauth_service::ports::OAuthClientView::try_from(oauth_client_view_row(invalid))
+                        .map(|_| ())
+                }
+                PersistedObjectIdCase::AuthorizationCodeClient => {
+                    AuthorizationCode::try_from(authorization_code_row(invalid, valid)).map(|_| ())
+                }
+                PersistedObjectIdCase::AuthorizationCodeUser => {
+                    AuthorizationCode::try_from(authorization_code_row(valid, invalid)).map(|_| ())
+                }
+                PersistedObjectIdCase::ExchangeCodeAccessToken => {
+                    ThirdPartyExchangeCodeGrant::try_from(third_party_exchange_code_row(invalid))
+                        .map(|_| ())
+                }
+            };
+            let rejected = match case {
+                PersistedObjectIdCase::OAuthClientView
+                | PersistedObjectIdCase::AuthorizationCodeClient => {
+                    matches!(result, Err(OAuthRowMappingError::InvalidOAuthClientId(_)))
+                }
+                PersistedObjectIdCase::AuthorizationCodeUser => {
+                    matches!(result, Err(OAuthRowMappingError::InvalidUserId(_)))
+                }
+                PersistedObjectIdCase::ExchangeCodeAccessToken => {
+                    matches!(result, Err(OAuthRowMappingError::InvalidAccessTokenId(_)))
+                }
+            };
+
+            assert!(rejected, "OAuth mapping accepted UUIDv4 for {case:?}");
+        }
+    }
+
     #[test]
     fn should_reject_non_v7_persisted_oauth_client_id() {
         let row = OAuthClientRow {
