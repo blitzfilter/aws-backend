@@ -137,8 +137,9 @@ use product_listing_postgres::{
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
-    GetSimilarProductListingsHandler, SearchProductListingsHandler, UpdateProductListingHandler,
-    UpsertProductListingHandler, WithdrawProductListingHandler,
+    GetSimilarProductListingsHandler, ProductListingSearchReadExecutionPolicy,
+    SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
+    WithdrawProductListingHandler,
 };
 use search_filter_postgres::{
     SqlxSearchFilterMatchRepositoryFactory, SqlxSearchFilterQuotaReaderFactory,
@@ -215,6 +216,8 @@ pub const ZOHO_CLIENT_SECRET_ENV: &str = "ZOHO_CLIENT_SECRET";
 pub const ZOHO_REFRESH_TOKEN_ENV: &str = "ZOHO_REFRESH_TOKEN";
 pub const ZOHO_ACCOUNTS_URL_ENV: &str = "ZOHO_ACCOUNTS_URL";
 pub const ZOHO_CAMPAIGNS_URL_ENV: &str = "ZOHO_CAMPAIGNS_URL";
+pub const PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED";
 const POSTGRES_HOST_ENV: &str = "POSTGRES_HOST";
 const POSTGRES_PORT_ENV: &str = "POSTGRES_PORT";
 const POSTGRES_DATABASE_ENV: &str = "POSTGRES_DATABASE";
@@ -239,6 +242,7 @@ pub struct ApiConfig {
     stripe_billing: StripeBillingConfig,
     billing_prices: BillingPriceIds,
     zoho: ZohoConfig,
+    product_listing_search_parallel_enrichment_enabled: bool,
 }
 
 impl ApiConfig {
@@ -290,6 +294,11 @@ impl ApiConfig {
             ultimate_yearly: required_config(&mut get, STRIPE_ULTIMATE_YEARLY_PRICE_ID_ENV)?,
         };
 
+        let product_listing_search_parallel_enrichment_enabled = optional_bool_config(
+            &mut get,
+            PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
+            false,
+        )?;
         let zoho = ZohoConfig {
             list_key: required_config(&mut get, ZOHO_LIST_KEY_ENV)?,
             client_id: required_config(&mut get, ZOHO_CLIENT_ID_ENV)?,
@@ -307,6 +316,7 @@ impl ApiConfig {
             stripe_billing,
             billing_prices,
             zoho,
+            product_listing_search_parallel_enrichment_enabled,
         })
     }
 
@@ -337,6 +347,16 @@ impl ApiConfig {
     fn zoho(&self) -> &ZohoConfig {
         &self.zoho
     }
+
+    fn product_listing_search_read_execution_policy(
+        &self,
+    ) -> ProductListingSearchReadExecutionPolicy {
+        if self.product_listing_search_parallel_enrichment_enabled {
+            ProductListingSearchReadExecutionPolicy::Concurrent
+        } else {
+            ProductListingSearchReadExecutionPolicy::Sequential
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -366,6 +386,22 @@ where
     url::Url::parse(&value).map_err(|source| ApiConfigError::InvalidUrlConfig { name, source })
 }
 
+fn optional_bool_config<F>(
+    get: &mut F,
+    name: &'static str,
+    default: bool,
+) -> Result<bool, ApiConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    match get(name) {
+        Some(value) => value
+            .parse()
+            .map_err(|_| ApiConfigError::InvalidBooleanConfig { name, value }),
+        None => Ok(default),
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ApiConfigError {
     #[error("invalid {env_name}: {value}", env_name = API_BIND_ADDR_ENV)]
@@ -383,6 +419,8 @@ pub enum ApiConfigError {
     },
     #[error("{COGNITO_APP_CLIENT_IDS_ENV} must contain at least one client id")]
     EmptyCognitoAppClientIds,
+    #[error("invalid boolean configuration {name}: {value}")]
+    InvalidBooleanConfig { name: &'static str, value: String },
 }
 
 pub fn app(state: AppState) -> Router {
@@ -938,7 +976,8 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxListingSourceSummaryReader::new(pool.clone()),
         product_user_states,
         SqlxProductListingContentAssessmentReader::new(pool.clone()),
-    );
+    )
+    .with_read_execution_policy(config.product_listing_search_read_execution_policy());
     let get_product = GetProductListingHandler::new(
         unit_of_work.clone(),
         SqlxProductListingDetailsReaderFactory::new(),
@@ -1454,6 +1493,44 @@ where
         .with_graceful_shutdown(shutdown)
         .await
         .map_err(ApiRunError::Serve)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_default_parallel_product_listing_enrichment_to_disabled() {
+        let mut get = |_| None;
+
+        let enabled = optional_bool_config(
+            &mut get,
+            PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
+            false,
+        );
+
+        assert!(matches!(enabled, Ok(false)));
+    }
+
+    #[test]
+    fn should_reject_non_boolean_parallel_product_listing_enrichment_configuration() {
+        let mut get = |name| {
+            (name == PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV)
+                .then(|| "enabled".to_owned())
+        };
+
+        let result = optional_bool_config(
+            &mut get,
+            PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
+            false,
+        );
+
+        assert!(matches!(
+            result,
+            Err(ApiConfigError::InvalidBooleanConfig { name, value })
+                if name == PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV && value == "enabled"
+        ));
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

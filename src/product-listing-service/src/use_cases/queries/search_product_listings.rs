@@ -5,8 +5,8 @@ use crate::ports::{
     ProductListingSearchReader, ProductListingUserStateReader,
 };
 use crate::use_cases::queries::product_listing_summary_personalization::{
-    ProductListingSummaryPersonalizationError, hydrate_listing_source_summaries,
-    hydrate_product_search_items,
+    ProductListingSummaryPersonalizationError, apply_product_user_states, attach_listing_sources,
+    listing_source_ids, product_listing_ids, product_listing_user_state_lookup,
 };
 use application::error::{BoxError, box_error};
 use application::operation_context::{OperationContext, Principal};
@@ -44,6 +44,9 @@ use product_listing_core::product_listing_search::ProductListingSearch;
 use product_listing_core::sort_product_listing_field::SortProductListingField;
 use product_listing_core::title::Title;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::future::Future;
+use std::time::Instant;
 use time::OffsetDateTime;
 use url::Url;
 
@@ -130,6 +133,17 @@ pub(crate) type PersonalizedProductListingSearchItem =
 pub type ProductListingSearchReadResult = CursoredResult<ProductListingSearchItem, Value>;
 pub type SearchProductListingsResult =
     CursoredResult<PersonalizedProductListingSummary, ProductListingSearchCursor>;
+
+/// Controls only how independent post-search presentation reads are scheduled.
+///
+/// Both modes use the same readers and pure assembly. Runtime composition selects the mode;
+/// callers cannot alter it per request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProductListingSearchReadExecutionPolicy {
+    #[default]
+    Sequential,
+    Concurrent,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SearchProductListingsError {
@@ -218,6 +232,7 @@ pub struct SearchProductListingsHandler<UoW, R, F, E, L, U, A> {
     listing_sources: L,
     user_states: U,
     assessments: A,
+    read_execution_policy: ProductListingSearchReadExecutionPolicy,
 }
 
 impl<UoW, R, F, E, L, U, A> SearchProductListingsHandler<UoW, R, F, E, L, U, A> {
@@ -238,7 +253,16 @@ impl<UoW, R, F, E, L, U, A> SearchProductListingsHandler<UoW, R, F, E, L, U, A> 
             listing_sources,
             user_states,
             assessments,
+            read_execution_policy: ProductListingSearchReadExecutionPolicy::Sequential,
         }
+    }
+
+    pub fn with_read_execution_policy(
+        mut self,
+        read_execution_policy: ProductListingSearchReadExecutionPolicy,
+    ) -> Self {
+        self.read_execution_policy = read_execution_policy;
+        self
     }
 }
 
@@ -268,6 +292,7 @@ where
         context: &OperationContext,
         request: SearchProductListingsRequest,
     ) -> Result<SearchProductListingsResult, SearchProductListingsError> {
+        let total_started = Instant::now();
         let valuation_at = OffsetDateTime::now_utc();
         let pinned_fx_rate_id = request.cursor.as_ref().and_then(|cursor| {
             cursor
@@ -275,11 +300,14 @@ where
                 .as_ref()
                 .map(|search_after| search_after.fx_rate_id)
         });
-        let snapshot = load_fx_rate_snapshot(
-            &self.unit_of_work,
-            &self.fx_rates,
-            pinned_fx_rate_id,
-            valuation_at,
+        let snapshot = measure_search_stage(
+            "fx_resolution",
+            load_fx_rate_snapshot(
+                &self.unit_of_work,
+                &self.fx_rates,
+                pinned_fx_rate_id,
+                valuation_at,
+            ),
         )
         .await?;
         let price_filter = compile_price_filter(snapshot, &request)?;
@@ -297,15 +325,40 @@ where
             }),
         };
         let result = match embedding_query {
-            Some(query) => match self.embeddings.embed_search_query(&query).await {
-                Ok(embedding) => {
-                    self.reader
-                        .search_hybrid(&read_request, embedding.values())
+            Some(query) => {
+                let embedding_started = Instant::now();
+                match self.embeddings.embed_search_query(&query).await {
+                    Ok(embedding) => {
+                        record_search_stage("query_embedding", embedding_started, "success");
+                        measure_search_stage(
+                            "opensearch_query_hybrid",
+                            self.reader.search_hybrid(&read_request, embedding.values()),
+                        )
                         .await?
+                    }
+                    Err(_) => {
+                        record_search_stage("query_embedding", embedding_started, "fallback");
+                        measure_search_stage(
+                            "opensearch_query_embedding_fallback",
+                            self.reader.search(&read_request),
+                        )
+                        .await?
+                    }
                 }
-                Err(_) => self.reader.search(&read_request).await?,
-            },
-            None => self.reader.search(&read_request).await?,
+            }
+            None => {
+                tracing::info!(
+                    metric = "product_listing_search_stage",
+                    stage = "query_embedding",
+                    duration_ms = 0_u64,
+                    outcome = "skipped",
+                );
+                measure_search_stage(
+                    "opensearch_query_lexical",
+                    self.reader.search(&read_request),
+                )
+                .await?
+            }
         };
         let cursor = Cursor {
             size: result.cursor.size,
@@ -316,18 +369,96 @@ where
                 }
             }),
         };
-        let mut items = hydrate_listing_source_summaries(result.items, &self.listing_sources)
-            .await?
-            .into_iter()
-            .map(|item| Personalized {
-                item,
-                user_state: None,
-            })
-            .collect::<Vec<_>>();
-        if let Some(user_id) = personalization_user_id(&context.principal) {
-            hydrate_product_search_items(&mut items, user_id, &self.user_states).await?;
-        }
-        let items = present_product_summaries(items, &self.assessments).await?;
+        let result_count = result.items.len();
+        let distinct_source_count = listing_source_ids(&result.items).len();
+        let items = if result.items.is_empty() {
+            Vec::new()
+        } else {
+            let source_ids = listing_source_ids(&result.items);
+            let listing_ids = product_listing_ids(&result.items);
+            let user_state_lookup = personalization_user_id(&context.principal)
+                .map(|user_id| product_listing_user_state_lookup(user_id, &listing_ids));
+
+            let (sources, user_states, assessments) = match self.read_execution_policy {
+                ProductListingSearchReadExecutionPolicy::Sequential => {
+                    let sources = measure_search_stage(
+                        "source_resolution",
+                        self.listing_sources.find_summaries(&source_ids),
+                    )
+                    .await
+                    .map_err(ProductListingSummaryPersonalizationError::from)?;
+                    let user_states = match user_state_lookup.as_ref() {
+                        Some(lookup) => Some(
+                            measure_search_stage(
+                                "user_state_resolution",
+                                self.user_states.find_for_user(lookup),
+                            )
+                            .await
+                            .map_err(ProductListingSummaryPersonalizationError::from)?,
+                        ),
+                        None => None,
+                    };
+                    let assessments = measure_search_stage(
+                        "assessment_resolution",
+                        self.assessments.find_current_assessments(&listing_ids),
+                    )
+                    .await?;
+                    (sources, user_states, assessments)
+                }
+                ProductListingSearchReadExecutionPolicy::Concurrent => {
+                    let (source_result, user_state_result, assessment_result) = tokio::join!(
+                        measure_search_stage(
+                            "source_resolution",
+                            self.listing_sources.find_summaries(&source_ids),
+                        ),
+                        async {
+                            match user_state_lookup.as_ref() {
+                                Some(lookup) => measure_search_stage(
+                                    "user_state_resolution",
+                                    self.user_states.find_for_user(lookup),
+                                )
+                                .await
+                                .map(Some)
+                                .map_err(ProductListingSummaryPersonalizationError::from),
+                                None => Ok(None),
+                            }
+                        },
+                        measure_search_stage(
+                            "assessment_resolution",
+                            self.assessments.find_current_assessments(&listing_ids),
+                        ),
+                    );
+                    (
+                        source_result.map_err(ProductListingSummaryPersonalizationError::from)?,
+                        user_state_result?,
+                        assessment_result?,
+                    )
+                }
+            };
+
+            let presentation_started = Instant::now();
+            let items = attach_listing_sources(result.items, &sources)?
+                .into_iter()
+                .map(|item| Personalized {
+                    item,
+                    user_state: None,
+                })
+                .collect::<Vec<_>>();
+            let mut items = items;
+            if let Some(user_states) = user_states.as_ref() {
+                apply_product_user_states(&mut items, user_states)?;
+            }
+            let summaries = present_product_summaries_from_assessments(items, &assessments);
+            record_search_stage("final_presentation", presentation_started, "success");
+            summaries
+        };
+        tracing::info!(
+            metric = "product_listing_search_result",
+            result_count,
+            distinct_source_count,
+            enrichment_execution = ?self.read_execution_policy,
+            total_duration_ms = total_started.elapsed().as_millis() as u64,
+        );
         Ok(CursoredResult {
             cursor,
             items,
@@ -349,10 +480,19 @@ where
         .collect::<Vec<_>>();
     let current = assessments.find_current_assessments(&ids).await?;
 
-    Ok(products
+    Ok(present_product_summaries_from_assessments(
+        products, &current,
+    ))
+}
+
+pub(crate) fn present_product_summaries_from_assessments(
+    products: Vec<PersonalizedProductListingSearchItem>,
+    assessments: &HashMap<ProductListingId, crate::ports::ProductListingContentAssessment>,
+) -> Vec<PersonalizedProductListingSummary> {
+    products
         .into_iter()
         .map(|product| {
-            let decision = current
+            let decision = assessments
                 .get(&product.item.item.product_listing_id)
                 .map(|assessment| assessment.decision);
             let show_all = product.user_state.as_ref().is_some_and(|state| {
@@ -396,7 +536,30 @@ where
                 user_state: product.user_state,
             }
         })
-        .collect())
+        .collect()
+}
+
+async fn measure_search_stage<T, E, F>(stage: &'static str, future: F) -> Result<T, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    let started = Instant::now();
+    let result = future.await;
+    record_search_stage(
+        stage,
+        started,
+        if result.is_ok() { "success" } else { "error" },
+    );
+    result
+}
+
+fn record_search_stage(stage: &'static str, started: Instant, outcome: &'static str) {
+    tracing::info!(
+        metric = "product_listing_search_stage",
+        stage,
+        duration_ms = started.elapsed().as_millis() as u64,
+        outcome,
+    );
 }
 
 async fn load_fx_rate_snapshot<UoW, F>(
@@ -578,8 +741,10 @@ mod tests {
     use user_core::user_id::UserId;
 
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard};
     use strum::IntoEnumIterator;
+    use tokio::sync::{Barrier, oneshot};
 
     #[derive(Debug, Default)]
     struct FakeState {
@@ -650,6 +815,38 @@ mod tests {
     }
 
     struct FailingAssessmentReader;
+
+    #[derive(Clone)]
+    struct BarrierListingSourceSummaryReader {
+        barrier: Arc<Barrier>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct BarrierUserStatesReader {
+        barrier: Arc<Barrier>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct BarrierAssessmentReader {
+        barrier: Arc<Barrier>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct CancellableListingSourceSummaryReader {
+        started: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+        dropped: Arc<AtomicUsize>,
+    }
+
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     fn state() -> SharedState {
         Arc::new(Mutex::new(FakeState::default()))
@@ -853,6 +1050,104 @@ mod tests {
                     )
                 })
                 .collect())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ListingSourceSummaryReader for BarrierListingSourceSummaryReader {
+        async fn find_summaries(
+            &self,
+            listing_source_ids: &[ListingSourceId],
+        ) -> Result<
+            HashMap<ListingSourceId, crate::ports::ListingSourceSummaryWithReferral>,
+            crate::ports::ListingSourceSummaryReadError,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.barrier.wait().await;
+            Ok(listing_source_ids
+                .iter()
+                .copied()
+                .map(|listing_source_id| {
+                    (
+                        listing_source_id,
+                        crate::ports::ListingSourceSummaryWithReferral {
+                            summary: ListingSourceSummary {
+                                listing_source_id,
+                                name: listing_source_core::ListingSourceName::try_from("Source")
+                                    .unwrap_or_else(|error| {
+                                        panic!("invalid test listing source name: {error}")
+                                    }),
+                                slug_id: listing_source_core::ListingSourceSlugId::raw("source")
+                                    .unwrap_or_else(|error| {
+                                        panic!("valid test listing source slug: {error}")
+                                    }),
+                            },
+                            referral_configuration: None,
+                        },
+                    )
+                })
+                .collect())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ListingSourceSummaryReader for CancellableListingSourceSummaryReader {
+        async fn find_summaries(
+            &self,
+            _listing_source_ids: &[ListingSourceId],
+        ) -> Result<
+            HashMap<ListingSourceId, crate::ports::ListingSourceSummaryWithReferral>,
+            crate::ports::ListingSourceSummaryReadError,
+        > {
+            let _drop_counter = DropCounter(Arc::clone(&self.dropped));
+            if let Some(started) = lock_state_sender(&self.started).take() {
+                let _ = started.send(());
+            }
+            std::future::pending().await
+        }
+    }
+
+    fn lock_state_sender(
+        sender: &Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    ) -> MutexGuard<'_, Option<oneshot::Sender<()>>> {
+        match sender.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingUserStateReader for BarrierUserStatesReader {
+        async fn find_for_user(
+            &self,
+            lookup: &ProductListingUserStateLookup,
+        ) -> Result<
+            HashMap<ProductListingId, ProductListingUserState>,
+            ProductListingUserStateReadError,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.barrier.wait().await;
+            Ok(lookup
+                .product_listing_ids
+                .iter()
+                .copied()
+                .map(|product_listing_id| (product_listing_id, ProductListingUserState::default()))
+                .collect())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingContentAssessmentReader for BarrierAssessmentReader {
+        async fn find_current_assessments(
+            &self,
+            _product_listing_ids: &[ProductListingId],
+        ) -> Result<
+            HashMap<ProductListingId, crate::ports::ProductListingContentAssessment>,
+            ProductListingContentAssessmentReadError,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.barrier.wait().await;
+            Ok(HashMap::new())
         }
     }
 
@@ -1142,6 +1437,190 @@ mod tests {
             result,
             Err(ProductListingContentAssessmentReadError::QueryFailed { .. })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_start_anonymous_independent_enrichment_reads_before_any_completes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let state = state();
+        lock_state(&state).search_result = Some(Ok(search_result()?));
+        let barrier = Arc::new(Barrier::new(2));
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let assessment_calls = Arc::new(AtomicUsize::new(0));
+        let handler = SearchProductListingsHandler::new(
+            FakeUnitOfWork {
+                state: Arc::clone(&state),
+            },
+            search_reader(&state),
+            FakeFxRateSnapshotRepositoryFactory {
+                state: Arc::clone(&state),
+            },
+            FakeEmbeddingGenerator {
+                state: Arc::clone(&state),
+            },
+            BarrierListingSourceSummaryReader {
+                barrier: Arc::clone(&barrier),
+                calls: Arc::clone(&source_calls),
+            },
+            FakeUserStatesReader {
+                state: Arc::clone(&state),
+            },
+            BarrierAssessmentReader {
+                barrier,
+                calls: Arc::clone(&assessment_calls),
+            },
+        )
+        .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
+
+        handler.execute(&context(), request()).await?;
+
+        assert_eq!(1, source_calls.load(Ordering::SeqCst));
+        assert_eq!(1, assessment_calls.load(Ordering::SeqCst));
+        assert!(lock_state(&state).user_state_lookups.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_start_authenticated_independent_enrichment_reads_before_any_completes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let state = state();
+        let user_id = UserId::new();
+        lock_state(&state).search_result = Some(Ok(search_result()?));
+        let barrier = Arc::new(Barrier::new(3));
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let user_state_calls = Arc::new(AtomicUsize::new(0));
+        let assessment_calls = Arc::new(AtomicUsize::new(0));
+        let handler = SearchProductListingsHandler::new(
+            FakeUnitOfWork {
+                state: Arc::clone(&state),
+            },
+            search_reader(&state),
+            FakeFxRateSnapshotRepositoryFactory {
+                state: Arc::clone(&state),
+            },
+            FakeEmbeddingGenerator {
+                state: Arc::clone(&state),
+            },
+            BarrierListingSourceSummaryReader {
+                barrier: Arc::clone(&barrier),
+                calls: Arc::clone(&source_calls),
+            },
+            BarrierUserStatesReader {
+                barrier: Arc::clone(&barrier),
+                calls: Arc::clone(&user_state_calls),
+            },
+            BarrierAssessmentReader {
+                barrier,
+                calls: Arc::clone(&assessment_calls),
+            },
+        )
+        .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
+
+        handler.execute(&user_context(user_id), request()).await?;
+
+        assert_eq!(1, source_calls.load(Ordering::SeqCst));
+        assert_eq!(1, user_state_calls.load(Ordering::SeqCst));
+        assert_eq!(1, assessment_calls.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_drop_blocked_enrichment_when_search_request_is_cancelled()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let state = state();
+        lock_state(&state).search_result = Some(Ok(search_result()?));
+        let (started_sender, started_receiver) = oneshot::channel();
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let handler = SearchProductListingsHandler::new(
+            FakeUnitOfWork {
+                state: Arc::clone(&state),
+            },
+            search_reader(&state),
+            FakeFxRateSnapshotRepositoryFactory {
+                state: Arc::clone(&state),
+            },
+            FakeEmbeddingGenerator {
+                state: Arc::clone(&state),
+            },
+            CancellableListingSourceSummaryReader {
+                started: Arc::new(Mutex::new(Some(started_sender))),
+                dropped: Arc::clone(&dropped),
+            },
+            FakeUserStatesReader {
+                state: Arc::clone(&state),
+            },
+            EmptyAssessmentReader,
+        )
+        .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
+        let task = tokio::spawn(async move { handler.execute(&context(), request()).await });
+
+        started_receiver.await?;
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        assert_eq!(1, dropped.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_equal_items_for_sequential_and_concurrent_enrichment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let sequential_state = state();
+        let concurrent_state = state();
+        let expected = search_result()?;
+        lock_state(&sequential_state).search_result = Some(Ok(expected.clone()));
+        lock_state(&concurrent_state).search_result = Some(Ok(expected));
+
+        let sequential = handler(&sequential_state)
+            .execute(&context(), request())
+            .await?;
+        let concurrent = handler(&concurrent_state)
+            .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent)
+            .execute(&context(), request())
+            .await?;
+
+        assert_eq!(sequential.items, concurrent.items);
+        assert_eq!(sequential.total, concurrent.total);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_skip_post_search_enrichment_for_an_empty_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let state = state();
+        lock_state(&state).search_result = Some(Ok(ProductListingSearchReadResult::default()));
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let assessment_calls = Arc::new(AtomicUsize::new(0));
+        let handler = SearchProductListingsHandler::new(
+            FakeUnitOfWork {
+                state: Arc::clone(&state),
+            },
+            search_reader(&state),
+            FakeFxRateSnapshotRepositoryFactory {
+                state: Arc::clone(&state),
+            },
+            FakeEmbeddingGenerator {
+                state: Arc::clone(&state),
+            },
+            BarrierListingSourceSummaryReader {
+                barrier: Arc::new(Barrier::new(1)),
+                calls: Arc::clone(&source_calls),
+            },
+            FakeUserStatesReader {
+                state: Arc::clone(&state),
+            },
+            BarrierAssessmentReader {
+                barrier: Arc::new(Barrier::new(1)),
+                calls: Arc::clone(&assessment_calls),
+            },
+        )
+        .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
+
+        handler.execute(&context(), request()).await?;
+
+        assert_eq!(0, source_calls.load(Ordering::SeqCst));
+        assert_eq!(0, assessment_calls.load(Ordering::SeqCst));
+        assert!(lock_state(&state).user_state_lookups.is_empty());
         Ok(())
     }
 
