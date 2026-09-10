@@ -44,7 +44,8 @@ use billing_service::use_cases::{
 };
 use billing_stripe::{StripeBillingClient, StripeBillingConfig};
 use embedding::{EmbeddingGenerator, VertexAiEmbeddingConfig, VertexAiEmbeddingGenerator};
-use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
+use fxrate_postgres::{SqlxFxRateSnapshotReader, SqlxFxRateSnapshotRepositoryFactory};
+use fxrate_service::readers::{CachedFxRateSnapshotReader, FxSearchCacheConfig};
 use google_cloud_auth::credentials::Builder as GoogleCredentialsBuilder;
 use notification_postgres::{
     SqlxNotificationDeleter, SqlxNotificationDeliveryIntentRepositoryFactory,
@@ -134,11 +135,13 @@ use product_listing_postgres::{
     SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
     SqlxProductListingWatchlistDetailsReaderFactory,
 };
+use product_listing_service::readers::{CachedListingSourceSummaryReader, SourceSearchCacheConfig};
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
-    GetSimilarProductListingsHandler, SearchProductListingsHandler, UpdateProductListingHandler,
-    UpsertProductListingHandler, WithdrawProductListingHandler,
+    GetSimilarProductListingsHandler, ProductListingSearchReadExecutionPolicy,
+    SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
+    WithdrawProductListingHandler,
 };
 use search_filter_postgres::{
     SqlxSearchFilterMatchRepositoryFactory, SqlxSearchFilterQuotaReaderFactory,
@@ -215,6 +218,27 @@ pub const ZOHO_CLIENT_SECRET_ENV: &str = "ZOHO_CLIENT_SECRET";
 pub const ZOHO_REFRESH_TOKEN_ENV: &str = "ZOHO_REFRESH_TOKEN";
 pub const ZOHO_ACCOUNTS_URL_ENV: &str = "ZOHO_ACCOUNTS_URL";
 pub const ZOHO_CAMPAIGNS_URL_ENV: &str = "ZOHO_CAMPAIGNS_URL";
+pub const PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED";
+pub const PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED";
+pub const PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES";
+pub const PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS";
+pub const PRODUCT_LISTING_SEARCH_SOURCE_CACHE_ENABLED_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_SOURCE_CACHE_ENABLED";
+pub const PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES";
+pub const PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES";
+pub const PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS";
+const DEFAULT_PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES: u64 = 512;
+const DEFAULT_PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS: u64 = 30;
+const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES: u64 = 4_096;
+const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS: u64 = 60;
 const POSTGRES_HOST_ENV: &str = "POSTGRES_HOST";
 const POSTGRES_PORT_ENV: &str = "POSTGRES_PORT";
 const POSTGRES_DATABASE_ENV: &str = "POSTGRES_DATABASE";
@@ -239,6 +263,9 @@ pub struct ApiConfig {
     stripe_billing: StripeBillingConfig,
     billing_prices: BillingPriceIds,
     zoho: ZohoConfig,
+    product_listing_search_parallel_enrichment_enabled: bool,
+    product_listing_search_fx_cache: FxSearchCacheConfig,
+    product_listing_search_source_cache: SourceSearchCacheConfig,
 }
 
 impl ApiConfig {
@@ -290,6 +317,15 @@ impl ApiConfig {
             ultimate_yearly: required_config(&mut get, STRIPE_ULTIMATE_YEARLY_PRICE_ID_ENV)?,
         };
 
+        let product_listing_search_parallel_enrichment_enabled = optional_bool_config(
+            &mut get,
+            PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
+            false,
+        )?;
+        let product_listing_search_fx_cache =
+            parse_product_listing_search_fx_cache_config(&mut get)?;
+        let product_listing_search_source_cache =
+            parse_product_listing_search_source_cache_config(&mut get)?;
         let zoho = ZohoConfig {
             list_key: required_config(&mut get, ZOHO_LIST_KEY_ENV)?,
             client_id: required_config(&mut get, ZOHO_CLIENT_ID_ENV)?,
@@ -307,6 +343,9 @@ impl ApiConfig {
             stripe_billing,
             billing_prices,
             zoho,
+            product_listing_search_parallel_enrichment_enabled,
+            product_listing_search_fx_cache,
+            product_listing_search_source_cache,
         })
     }
 
@@ -337,6 +376,24 @@ impl ApiConfig {
     fn zoho(&self) -> &ZohoConfig {
         &self.zoho
     }
+
+    fn product_listing_search_fx_cache_config(&self) -> FxSearchCacheConfig {
+        self.product_listing_search_fx_cache.clone()
+    }
+
+    fn product_listing_search_source_cache_config(&self) -> SourceSearchCacheConfig {
+        self.product_listing_search_source_cache.clone()
+    }
+
+    fn product_listing_search_read_execution_policy(
+        &self,
+    ) -> ProductListingSearchReadExecutionPolicy {
+        if self.product_listing_search_parallel_enrichment_enabled {
+            ProductListingSearchReadExecutionPolicy::Concurrent
+        } else {
+            ProductListingSearchReadExecutionPolicy::Sequential
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -366,6 +423,139 @@ where
     url::Url::parse(&value).map_err(|source| ApiConfigError::InvalidUrlConfig { name, source })
 }
 
+fn optional_bool_config<F>(
+    get: &mut F,
+    name: &'static str,
+    default: bool,
+) -> Result<bool, ApiConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    match get(name) {
+        Some(value) => value
+            .parse()
+            .map_err(|_| ApiConfigError::InvalidBooleanConfig { name, value }),
+        None => Ok(default),
+    }
+}
+
+fn optional_bounded_u64_config<F>(
+    get: &mut F,
+    name: &'static str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<u64, ApiConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    let Some(value) = get(name) else {
+        return Ok(default);
+    };
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| ApiConfigError::InvalidIntegerConfig {
+            name,
+            value: value.clone(),
+        })?;
+    if !(min..=max).contains(&parsed) {
+        return Err(ApiConfigError::OutOfRangeIntegerConfig {
+            name,
+            value,
+            min,
+            max,
+        });
+    }
+    Ok(parsed)
+}
+
+fn optional_bounded_usize_config<F>(
+    get: &mut F,
+    name: &'static str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<usize, ApiConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    let value = optional_bounded_u64_config(get, name, default, min, max)?;
+    usize::try_from(value).map_err(|_| ApiConfigError::OutOfRangeIntegerConfig {
+        name,
+        value: value.to_string(),
+        min,
+        max,
+    })
+}
+
+fn parse_product_listing_search_fx_cache_config<F>(
+    get: &mut F,
+) -> Result<FxSearchCacheConfig, ApiConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    let enabled = optional_bool_config(get, PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV, true)?;
+    let max_entries = optional_bounded_usize_config(
+        get,
+        PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES_ENV,
+        DEFAULT_PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES,
+        1,
+        8_192,
+    )?;
+    let latest_ttl_seconds = optional_bounded_u64_config(
+        get,
+        PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS_ENV,
+        DEFAULT_PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS,
+        0,
+        300,
+    )?;
+
+    FxSearchCacheConfig::new(
+        enabled,
+        max_entries,
+        Duration::from_secs(latest_ttl_seconds),
+    )
+    .map_err(ApiConfigError::FxSearchCacheConfig)
+}
+
+fn parse_product_listing_search_source_cache_config<F>(
+    get: &mut F,
+) -> Result<SourceSearchCacheConfig, ApiConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    let enabled = optional_bool_config(get, PRODUCT_LISTING_SEARCH_SOURCE_CACHE_ENABLED_ENV, true)?;
+    let max_entries = optional_bounded_usize_config(
+        get,
+        PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES_ENV,
+        DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES,
+        1,
+        65_536,
+    )?;
+    let max_accounted_bytes = optional_bounded_usize_config(
+        get,
+        PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES_ENV,
+        DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES,
+        1,
+        536_870_912,
+    )?;
+    let ttl_seconds = optional_bounded_u64_config(
+        get,
+        PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS_ENV,
+        DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS,
+        1,
+        300,
+    )?;
+
+    SourceSearchCacheConfig::new(
+        enabled,
+        max_entries,
+        max_accounted_bytes,
+        Duration::from_secs(ttl_seconds),
+    )
+    .map_err(ApiConfigError::SourceSearchCacheConfig)
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ApiConfigError {
     #[error("invalid {env_name}: {value}", env_name = API_BIND_ADDR_ENV)]
@@ -383,6 +573,23 @@ pub enum ApiConfigError {
     },
     #[error("{COGNITO_APP_CLIENT_IDS_ENV} must contain at least one client id")]
     EmptyCognitoAppClientIds,
+    #[error("invalid boolean configuration {name}: {value}")]
+    InvalidBooleanConfig { name: &'static str, value: String },
+    #[error("invalid integer configuration {name}: {value}")]
+    InvalidIntegerConfig { name: &'static str, value: String },
+    #[error("integer configuration {name} must be between {min} and {max}: {value}")]
+    OutOfRangeIntegerConfig {
+        name: &'static str,
+        value: String,
+        min: u64,
+        max: u64,
+    },
+    #[error("invalid product listing search FX cache configuration")]
+    FxSearchCacheConfig(#[source] fxrate_service::readers::FxSearchCacheConfigError),
+    #[error("invalid product listing search source cache configuration")]
+    SourceSearchCacheConfig(
+        #[source] product_listing_service::readers::SourceSearchCacheConfigError,
+    ),
 }
 
 pub fn app(state: AppState) -> Router {
@@ -931,14 +1138,20 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxProductListingContentAssessmentReader::new(pool.clone()),
     );
     let search_products = SearchProductListingsHandler::new(
-        unit_of_work.clone(),
         OpenSearchProductListingSearchReader::new(opensearch_client.clone()),
-        SqlxFxRateSnapshotRepositoryFactory,
+        CachedFxRateSnapshotReader::new(
+            SqlxFxRateSnapshotReader::new(pool.clone()),
+            config.product_listing_search_fx_cache_config(),
+        ),
         Arc::clone(&embeddings),
-        SqlxListingSourceSummaryReader::new(pool.clone()),
+        CachedListingSourceSummaryReader::new(
+            SqlxListingSourceSummaryReader::new(pool.clone()),
+            config.product_listing_search_source_cache_config(),
+        ),
         product_user_states,
         SqlxProductListingContentAssessmentReader::new(pool.clone()),
-    );
+    )
+    .with_read_execution_policy(config.product_listing_search_read_execution_policy());
     let get_product = GetProductListingHandler::new(
         unit_of_work.clone(),
         SqlxProductListingDetailsReaderFactory::new(),
@@ -1431,10 +1644,27 @@ pub enum ApiStateError {
     JwksClient(reqwest::Error),
 }
 
+fn log_product_listing_search_cache_config(config: &ApiConfig) {
+    let fx = config.product_listing_search_fx_cache_config();
+    let source = config.product_listing_search_source_cache_config();
+    info!(
+        fx_cache_enabled = fx.enabled(),
+        fx_cache_max_entries = fx.max_entries(),
+        fx_latest_ttl_seconds = fx.latest_selection_ttl().as_secs(),
+        source_cache_enabled = source.enabled(),
+        source_cache_max_entries = source.max_entries(),
+        source_cache_max_accounted_bytes = source.max_accounted_bytes(),
+        source_cache_ttl_seconds = source.ttl().as_secs(),
+        parallel_enrichment_enabled = config.product_listing_search_parallel_enrichment_enabled,
+        "configured public product-listing search cache policy"
+    );
+}
+
 pub async fn run_until_shutdown<S>(config: ApiConfig, shutdown: S) -> Result<(), ApiRunError>
 where
     S: Future<Output = ()> + Send + 'static,
 {
+    log_product_listing_search_cache_config(&config);
     let state = app_state_from_config(&config)
         .await
         .map_err(ApiRunError::State)?;
@@ -1454,6 +1684,148 @@ where
         .with_graceful_shutdown(shutdown)
         .await
         .map_err(ApiRunError::Serve)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_default_parallel_product_listing_enrichment_to_disabled() {
+        let mut get = |_| None;
+
+        let enabled = optional_bool_config(
+            &mut get,
+            PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
+            false,
+        );
+
+        assert!(matches!(enabled, Ok(false)));
+    }
+
+    #[test]
+    fn should_default_product_listing_search_cache_policies_to_enabled() {
+        let mut get = |_| None;
+
+        let fx = parse_product_listing_search_fx_cache_config(&mut get);
+        let source = parse_product_listing_search_source_cache_config(&mut get);
+
+        assert!(matches!(
+            fx,
+            Ok(ref config)
+                if config.enabled()
+                    && config.max_entries() == 512
+                    && config.latest_selection_ttl() == Duration::from_secs(30)
+        ));
+        assert!(matches!(
+            source,
+            Ok(ref config)
+                if config.enabled()
+                    && config.max_entries() == 4_096
+                    && config.max_accounted_bytes() == 8 * 1024 * 1024
+                    && config.ttl() == Duration::from_secs(60)
+        ));
+    }
+
+    #[test]
+    fn should_apply_explicit_product_listing_search_cache_policy() {
+        let mut get = |name| match name {
+            PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV => Some("false".to_owned()),
+            PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES_ENV => Some("128".to_owned()),
+            PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS_ENV => Some("0".to_owned()),
+            PRODUCT_LISTING_SEARCH_SOURCE_CACHE_ENABLED_ENV => Some("false".to_owned()),
+            PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES_ENV => Some("256".to_owned()),
+            PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES_ENV => Some("65536".to_owned()),
+            PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS_ENV => Some("5".to_owned()),
+            _ => None,
+        };
+
+        let fx = parse_product_listing_search_fx_cache_config(&mut get);
+        let source = parse_product_listing_search_source_cache_config(&mut get);
+
+        assert!(matches!(
+            fx,
+            Ok(ref config)
+                if !config.enabled()
+                    && config.max_entries() == 128
+                    && config.latest_selection_ttl().is_zero()
+        ));
+        assert!(matches!(
+            source,
+            Ok(ref config)
+                if !config.enabled()
+                    && config.max_entries() == 256
+                    && config.max_accounted_bytes() == 65_536
+                    && config.ttl() == Duration::from_secs(5)
+        ));
+    }
+
+    #[test]
+    fn should_reject_out_of_range_product_listing_search_cache_configuration() {
+        let mut get = |name| {
+            (name == PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES_ENV)
+                .then(|| "536870913".to_owned())
+        };
+
+        let result = parse_product_listing_search_source_cache_config(&mut get);
+
+        assert!(matches!(
+            result,
+            Err(ApiConfigError::OutOfRangeIntegerConfig { name, value, min: 1, max: 536_870_912 })
+                if name == PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES_ENV && value == "536870913"
+        ));
+    }
+
+    #[test]
+    fn should_reject_non_integer_product_listing_search_cache_configuration() {
+        let mut get = |name| {
+            (name == PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES_ENV).then(|| "many".to_owned())
+        };
+
+        let result = parse_product_listing_search_fx_cache_config(&mut get);
+
+        assert!(matches!(
+            result,
+            Err(ApiConfigError::InvalidIntegerConfig { name, value })
+                if name == PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES_ENV && value == "many"
+        ));
+    }
+
+    #[test]
+    fn should_reject_non_boolean_product_listing_search_fx_cache_configuration() {
+        let mut get = |name| {
+            (name == PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV).then(|| "enabled".to_owned())
+        };
+
+        let result =
+            optional_bool_config(&mut get, PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV, false);
+
+        assert!(matches!(
+            result,
+            Err(ApiConfigError::InvalidBooleanConfig { name, value })
+                if name == PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV && value == "enabled"
+        ));
+    }
+
+    #[test]
+    fn should_reject_non_boolean_parallel_product_listing_enrichment_configuration() {
+        let mut get = |name| {
+            (name == PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV)
+                .then(|| "enabled".to_owned())
+        };
+
+        let result = optional_bool_config(
+            &mut get,
+            PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
+            false,
+        );
+
+        assert!(matches!(
+            result,
+            Err(ApiConfigError::InvalidBooleanConfig { name, value })
+                if name == PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV && value == "enabled"
+        ));
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

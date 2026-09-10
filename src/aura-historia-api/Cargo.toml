@@ -19,6 +19,7 @@ domain-primitives = { workspace = true }
 embedding = { workspace = true }
 fxrate-core = { workspace = true }
 fxrate-postgres = { workspace = true }
+fxrate-service = { workspace = true }
 
 google-cloud-auth = { workspace = true }
 http = { workspace = true }
@@ -61,7 +62,7 @@ search-filter-postgres = { workspace = true }
 search-filter-service = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true, features = ["formatting"] }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true, features = ["serde"] }

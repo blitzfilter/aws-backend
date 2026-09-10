@@ -1,6 +1,6 @@
 use crate::ports::{
-    ListingSourceSummaryReadError, ListingSourceSummaryReader, ProductListingUserStateLookup,
-    ProductListingUserStateReadError, ProductListingUserStateReader,
+    ListingSourceSummaryReadError, ListingSourceSummaryReader, ListingSourceSummaryWithReferral,
+    ProductListingUserStateLookup, ProductListingUserStateReadError, ProductListingUserStateReader,
 };
 use crate::use_cases::queries::search_product_listings::{
     PersonalizedProductListingSearchItem, ProductListingSearchItem,
@@ -22,7 +22,7 @@ use user_core::user_id::UserId;
 use product_listing_core::title::Title;
 
 use indexmap::IndexSet;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use time::OffsetDateTime;
 use url::Url;
 
@@ -67,6 +67,34 @@ pub(crate) enum ProductListingSummaryPersonalizationError {
     },
 }
 
+pub(crate) fn listing_source_ids(products: &[ProductListingSearchItem]) -> Vec<ListingSourceId> {
+    products
+        .iter()
+        .map(|product| product.listing_source_id)
+        .collect::<IndexSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(crate) fn product_listing_ids(products: &[ProductListingSearchItem]) -> Vec<ProductListingId> {
+    products
+        .iter()
+        .map(|product| product.product_listing_id)
+        .collect::<IndexSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(crate) fn product_listing_user_state_lookup(
+    user_id: UserId,
+    product_listing_ids: &[ProductListingId],
+) -> ProductListingUserStateLookup {
+    ProductListingUserStateLookup {
+        user_id,
+        product_listing_ids: product_listing_ids.to_vec(),
+    }
+}
+
 pub(crate) async fn hydrate_listing_source_summaries<L>(
     products: Vec<ProductListingSearchItem>,
     listing_sources: &L,
@@ -78,16 +106,19 @@ where
         return Ok(Vec::new());
     }
 
-    let listing_source_ids = products
-        .iter()
-        .map(|product| product.listing_source_id)
-        .collect::<IndexSet<_>>();
-    let listing_source_ids = listing_source_ids.into_iter().collect::<Vec<_>>();
+    let listing_source_ids = listing_source_ids(&products);
     let summaries = listing_sources
         .find_summaries(&listing_source_ids)
         .await
         .map_err(ProductListingSummaryPersonalizationError::from)?;
 
+    attach_listing_sources(products, &summaries)
+}
+
+pub(crate) fn attach_listing_sources(
+    products: Vec<ProductListingSearchItem>,
+    summaries: &HashMap<ListingSourceId, ListingSourceSummaryWithReferral>,
+) -> Result<Vec<ProductListingSearchItemWithSource>, ProductListingSummaryPersonalizationError> {
     products
         .into_iter()
         .map(|item| {
@@ -124,20 +155,25 @@ where
         return Ok(());
     }
 
-    let lookup = ProductListingUserStateLookup {
-        user_id,
-        product_listing_ids: products
-            .iter()
-            .map(|product| product.item.item.product_listing_id)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect(),
-    };
+    let product_listing_ids = products
+        .iter()
+        .map(|product| product.item.item.product_listing_id)
+        .collect::<IndexSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let lookup = product_listing_user_state_lookup(user_id, &product_listing_ids);
     let user_states = user_states
         .find_for_user(&lookup)
         .await
         .map_err(ProductListingSummaryPersonalizationError::from)?;
 
+    apply_product_user_states(products, &user_states)
+}
+
+pub(crate) fn apply_product_user_states(
+    products: &mut [PersonalizedProductListingSearchItem],
+    user_states: &HashMap<ProductListingId, crate::user_state::ProductListingUserState>,
+) -> Result<(), ProductListingSummaryPersonalizationError> {
     for product in products {
         let user_state = user_states
             .get(&product.item.item.product_listing_id)

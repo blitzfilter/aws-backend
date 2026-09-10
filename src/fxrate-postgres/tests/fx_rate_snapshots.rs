@@ -1,9 +1,9 @@
 use application::transaction::{Transaction, UnitOfWork};
 use fxrate_core::{FX_RATE_SCALE, FxRateId, FxRateQuote, FxRateSource, NewFxRateSnapshot};
-use fxrate_postgres::SqlxFxRateSnapshotRepositoryFactory;
+use fxrate_postgres::{SqlxFxRateSnapshotReader, SqlxFxRateSnapshotRepositoryFactory};
 use fxrate_service::ports::{
-    FxRateSnapshotInsertOutcome, FxRateSnapshotRepository, FxRateSnapshotRepositoryError,
-    FxRateSnapshotRepositoryFactory,
+    FxRateSnapshotInsertOutcome, FxRateSnapshotReader, FxRateSnapshotRepository,
+    FxRateSnapshotRepositoryError, FxRateSnapshotRepositoryFactory,
 };
 use money::Currency;
 use platform_postgres::SqlxUnitOfWork;
@@ -73,7 +73,7 @@ async fn should_insert_idempotently_and_rehydrate_persisted_snapshots() {
             FxRateSnapshotInsertOutcome::Duplicate
         ));
 
-        let mut transaction = SqlxUnitOfWork::new(pool).begin().await?;
+        let mut transaction = SqlxUnitOfWork::new(pool.clone()).begin().await?;
         let repository_factory = SqlxFxRateSnapshotRepositoryFactory::new();
         let latest = repository_factory
             .in_transaction(&mut transaction)
@@ -111,6 +111,35 @@ async fn should_insert_idempotently_and_rehydrate_persisted_snapshots() {
                 .collect::<Vec<_>>()
         );
         transaction.commit().await?;
+
+        let reader = SqlxFxRateSnapshotReader::new(pool);
+        assert_eq!(
+            Some(latest),
+            reader
+                .find_latest_at_or_before(OffsetDateTime::now_utc())
+                .await?
+        );
+        assert_eq!(
+            Some(earlier.id()),
+            reader
+                .find_latest_at_or_before(OffsetDateTime::UNIX_EPOCH)
+                .await?
+                .map(|snapshot| snapshot.id())
+        );
+        assert_eq!(
+            Some(later.id()),
+            reader
+                .find_by_id(later.id())
+                .await?
+                .map(|snapshot| snapshot.id())
+        );
+        assert_eq!(
+            None,
+            reader
+                .find_latest_at_or_before(OffsetDateTime::UNIX_EPOCH - Duration::seconds(1))
+                .await?
+        );
+        assert_eq!(None, reader.find_by_id(FxRateId::new()).await?);
         Ok(())
     }
     .await;

@@ -1358,9 +1358,7 @@ impl From<SearchProductListingsError> for ApiError {
         match error {
             SearchProductListingsError::ProductListingSearchQueryFailed
             | SearchProductListingsError::FxRateSnapshotMissing
-            | SearchProductListingsError::BeginFxRateSnapshotTransactionFailed { .. }
             | SearchProductListingsError::FxRateSnapshotReadFailed { .. }
-            | SearchProductListingsError::CommitFxRateSnapshotTransactionFailed { .. }
             | SearchProductListingsError::ListingSourceSummaryQueryFailed { .. }
             | SearchProductListingsError::ProductListingUserStateQueryFailed { .. }
             | SearchProductListingsError::ContentAssessmentQueryFailed { .. } => {

@@ -23,16 +23,16 @@ struct SqlxFxRateSnapshotRepository<'tx> {
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct SnapshotRow {
     pub(crate) fx_rate_id: uuid::Uuid,
-    generation: i64,
-    captured_at: OffsetDateTime,
-    source: String,
+    pub(crate) generation: i64,
+    pub(crate) captured_at: OffsetDateTime,
+    pub(crate) source: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct QuoteRow {
-    fx_rate_id: uuid::Uuid,
-    currency: String,
-    units_per_eur: i64,
+    pub(crate) fx_rate_id: uuid::Uuid,
+    pub(crate) currency: String,
+    pub(crate) units_per_eur: i64,
 }
 
 #[derive(Debug, thiserror::Error)]

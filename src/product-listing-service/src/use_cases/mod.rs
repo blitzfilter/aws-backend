@@ -78,7 +78,7 @@ pub use queries::get_similar_product_listings::{
 };
 pub use queries::search_product_listings::{
     PersonalizedProductListingSummary, ProductListingSearchCursor, ProductListingSearchItem,
-    ProductListingSearchReadResult, ProductListingSummary, ProductListingSummaryPriceValuation,
-    SearchProductListingsError, SearchProductListingsHandler, SearchProductListingsRequest,
-    SearchProductListingsResult, SearchProductListingsUseCase,
+    ProductListingSearchReadExecutionPolicy, ProductListingSearchReadResult, ProductListingSummary,
+    ProductListingSummaryPriceValuation, SearchProductListingsError, SearchProductListingsHandler,
+    SearchProductListingsRequest, SearchProductListingsResult, SearchProductListingsUseCase,
 };

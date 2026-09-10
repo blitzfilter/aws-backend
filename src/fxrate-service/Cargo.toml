@@ -7,12 +7,14 @@ edition = "2024"
 application = { workspace = true }
 async-trait = { workspace = true }
 fxrate-core = { workspace = true }
+indexmap = { workspace = true }
 user-core = { workspace = true }
 money = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 strum = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
