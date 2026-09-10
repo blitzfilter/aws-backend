@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
+use tracing::info;
 
 const DEFAULT_MAX_ENTRIES: usize = 4_096;
 const DEFAULT_MAX_ACCOUNTED_BYTES: usize = 8 * 1024 * 1024;
@@ -65,6 +66,18 @@ impl SourceSearchCacheConfig {
     pub const fn enabled(&self) -> bool {
         self.enabled
     }
+
+    pub const fn max_entries(&self) -> usize {
+        self.max_entries
+    }
+
+    pub const fn max_accounted_bytes(&self) -> usize {
+        self.max_accounted_bytes
+    }
+
+    pub const fn ttl(&self) -> Duration {
+        self.ttl
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +101,26 @@ struct CachedSource {
 struct SourceCacheState {
     entries: IndexMap<ListingSourceId, CachedSource>,
     accounted_bytes: usize,
+}
+
+enum SourceAdmission {
+    Expired,
+    Entries {
+        admitted_count: usize,
+        skipped_oversize_count: usize,
+    },
+}
+
+struct SourceCacheAdmissionCounts {
+    admitted_count: usize,
+    skipped_oversize_count: usize,
+}
+
+impl SourceCacheAdmissionCounts {
+    const NONE: Self = Self {
+        admitted_count: 0,
+        skipped_oversize_count: 0,
+    };
 }
 
 impl SourceCacheState {
@@ -167,23 +200,34 @@ impl<R> CachedListingSourceSummaryReader<R> {
         &self,
         values: &HashMap<ListingSourceId, ListingSourceSummaryWithReferral>,
         loaded_at: Instant,
-    ) {
+    ) -> SourceAdmission {
         let fresh_until = loaded_at + self.config.ttl;
         let mut state = self.state.lock().await;
         remove_expired_entries(&mut state, Instant::now());
         if Instant::now() >= fresh_until {
-            return;
+            return SourceAdmission::Expired;
         }
 
+        let mut admitted_count = 0;
+        let mut skipped_oversize_count = 0;
         for (id, value) in values {
-            admit_entry(
+            if admit_entry(
                 &mut state,
                 *id,
                 value.clone(),
                 fresh_until,
                 self.config.max_entries,
                 self.config.max_accounted_bytes,
-            );
+            ) {
+                admitted_count += 1;
+            } else {
+                skipped_oversize_count += 1;
+            }
+        }
+
+        SourceAdmission::Entries {
+            admitted_count,
+            skipped_oversize_count,
         }
     }
 }
@@ -211,35 +255,148 @@ where
         }
 
         if !self.config.enabled {
-            return self.inner.find_summaries(&ids).await;
+            let backend_started = Instant::now();
+            let result = self.inner.find_summaries(&ids).await;
+            emit_source_cache_metric(
+                "bypassed",
+                ids.len(),
+                0,
+                ids.len(),
+                Duration::ZERO,
+                backend_started.elapsed(),
+                SourceCacheAdmissionCounts::NONE,
+            );
+            return result;
         }
 
         let hits = self.live_entries(&ids, Instant::now()).await;
         let misses = missing_ids(&ids, &hits);
         if misses.is_empty() {
+            emit_source_cache_metric(
+                "hit",
+                ids.len(),
+                hits.len(),
+                0,
+                Duration::ZERO,
+                Duration::ZERO,
+                SourceCacheAdmissionCounts::NONE,
+            );
             return Ok(hits);
         }
 
+        let gate_started = Instant::now();
         let _fill_guard = self.fill_gate.lock().await;
+        let fill_gate_wait = gate_started.elapsed();
         let hits = self.live_entries(&ids, Instant::now()).await;
         let misses = missing_ids(&ids, &hits);
         if misses.is_empty() {
+            emit_source_cache_metric(
+                "coalesced_hit",
+                ids.len(),
+                hits.len(),
+                0,
+                fill_gate_wait,
+                Duration::ZERO,
+                SourceCacheAdmissionCounts::NONE,
+            );
             return Ok(hits);
         }
 
         let load_started = Instant::now();
-        let fetched = self.inner.find_summaries(&misses).await?;
-        validate_returned_summaries(&fetched)?;
+        let result = self.inner.find_summaries(&misses).await;
+        let backend_duration = load_started.elapsed();
+        let fetched = match result {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                emit_source_cache_metric(
+                    "load_error",
+                    ids.len(),
+                    hits.len(),
+                    misses.len(),
+                    fill_gate_wait,
+                    backend_duration,
+                    SourceCacheAdmissionCounts::NONE,
+                );
+                return Err(error);
+            }
+        };
+        if let Err(error) = validate_returned_summaries(&fetched) {
+            emit_source_cache_metric(
+                "load_error",
+                ids.len(),
+                hits.len(),
+                misses.len(),
+                fill_gate_wait,
+                backend_duration,
+                SourceCacheAdmissionCounts::NONE,
+            );
+            return Err(error);
+        }
         let fetched_requested = fetched
             .into_iter()
             .filter(|(id, _)| misses.contains(id))
             .collect::<HashMap<_, _>>();
+        let fetched_count = fetched_requested.len();
+        let hit_count = hits.len();
 
         let mut resolved = hits;
         resolved.extend(fetched_requested.clone());
-        self.admit_all(&fetched_requested, load_started).await;
+        let admission = self.admit_all(&fetched_requested, load_started).await;
+        let (outcome, admitted_count, skipped_oversize_count) = match admission {
+            SourceAdmission::Expired => ("expired", 0, 0),
+            SourceAdmission::Entries {
+                admitted_count,
+                skipped_oversize_count,
+            } if fetched_count == 0 => ("missing", admitted_count, skipped_oversize_count),
+            SourceAdmission::Entries {
+                admitted_count,
+                skipped_oversize_count,
+            } if admitted_count == 0 => {
+                ("skipped_oversize", admitted_count, skipped_oversize_count)
+            }
+            SourceAdmission::Entries {
+                admitted_count,
+                skipped_oversize_count,
+            } => ("filled", admitted_count, skipped_oversize_count),
+        };
+        emit_source_cache_metric(
+            outcome,
+            ids.len(),
+            hit_count,
+            misses.len(),
+            fill_gate_wait,
+            backend_duration,
+            SourceCacheAdmissionCounts {
+                admitted_count,
+                skipped_oversize_count,
+            },
+        );
         Ok(resolved)
     }
+}
+
+fn emit_source_cache_metric(
+    outcome: &'static str,
+    requested_unique_count: usize,
+    hit_count: usize,
+    miss_count: usize,
+    fill_gate_wait: Duration,
+    backend_duration: Duration,
+    admission: SourceCacheAdmissionCounts,
+) {
+    info!(
+        metric = "product_listing_search_cache",
+        component = "source_summary",
+        outcome,
+        requested_unique_count,
+        hit_count,
+        miss_count,
+        fill_gate_wait_ms = fill_gate_wait.as_millis(),
+        backend_duration_ms = backend_duration.as_millis(),
+        admitted_count = admission.admitted_count,
+        skipped_oversize_count = admission.skipped_oversize_count,
+        "product listing search cache operation"
+    );
 }
 
 fn missing_ids(
@@ -288,10 +445,10 @@ fn admit_entry(
     fresh_until: Instant,
     max_entries: usize,
     max_accounted_bytes: usize,
-) {
+) -> bool {
     let accounted_bytes = accounted_bytes(&value);
     if accounted_bytes > MAX_ENTRY_ACCOUNTED_BYTES || accounted_bytes > max_accounted_bytes {
-        return;
+        return false;
     }
 
     remove_entry(state, id);
@@ -315,6 +472,7 @@ fn admit_entry(
             accounted_bytes,
         },
     );
+    true
 }
 
 fn accounted_bytes(value: &ListingSourceSummaryWithReferral) -> usize {

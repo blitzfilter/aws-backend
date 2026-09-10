@@ -1,8 +1,9 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
-    assert_problem, aura_api_app_with_failed_search_embedding, json_response,
-    seed_access_token_for, seed_current_fx_snapshot, seed_product, seed_user,
+    assert_problem, aura_api_app_with_failed_search_embedding,
+    aura_api_app_with_product_listing_search_caches, json_response, seed_access_token_for,
+    seed_current_fx_snapshot, seed_product, seed_user,
 };
 use application::transaction::{Transaction, UnitOfWork};
 
@@ -46,6 +47,8 @@ use url::Url;
 const PRODUCTS_INDEX: &str = "product-listings";
 static AURA_API_WITH_FAILED_EMBEDDING: AuraHistoriaApi =
     AuraHistoriaApi::new(aura_api_app_with_failed_search_embedding);
+static AURA_API_WITH_SEARCH_CACHES: AuraHistoriaApi =
+    AuraHistoriaApi::new(aura_api_app_with_product_listing_search_caches);
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_get_product_details_by_id() {
@@ -97,6 +100,112 @@ async fn should_get_product_details_by_id() {
         Some("public, max-age=180, s-maxage=900".to_owned()),
         cache_control
     );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API_WITH_SEARCH_CACHES])]
+async fn should_keep_admin_source_reads_fresh_while_public_search_source_cache_expires() {
+    let product_listing_id = seed_product().await;
+    let pool = get_postgres_client().await;
+    let listing_source_id: uuid::Uuid = sqlx::query_scalar(
+        "SELECT listing_source_id FROM product_listings WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to load product listing source: {error}"));
+    let listing_source_id = ListingSourceId::try_from(listing_source_id)
+        .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"));
+    let raw_url = "https://cached-source.example/product";
+    let (_, mut candidate) = search_document(
+        "Cached source freshness candidate",
+        125,
+        "AVAILABLE",
+        "Cached source",
+        "2025-01-01T00:00:00Z",
+    );
+    candidate["listingSourceId"] = json!(listing_source_id);
+    candidate["url"] = json!(raw_url);
+    index_existing_listing_source_document(candidate).await;
+
+    let path = "/api/v1/product-listings?language=en&currency=USD&productQuery[0]=Cached%20source%20freshness%20candidate";
+    let (initial_response, _) = get_json_from(AURA_API_WITH_SEARCH_CACHES.base_url(), path).await;
+    let (initial_status, initial_body) = json_response(initial_response).await;
+    assert_eq!(
+        reqwest::StatusCode::OK,
+        initial_status,
+        "response body: {initial_body}"
+    );
+    let initial_view_url = initial_body["items"][0]["item"]["viewUrl"]
+        .as_str()
+        .unwrap_or_else(|| panic!("initial search result has no view URL"))
+        .to_owned();
+
+    let admin_id = seed_user("ADMIN").await;
+    let token = String::from(seed_access_token_for(admin_id, HashSet::new()).await);
+    let client = reqwest::Client::new();
+    let update = client
+        .patch(format!(
+            "{}/api/v1/admin/listing-sources/{listing_source_id}",
+            AURA_API_WITH_SEARCH_CACHES.base_url()
+        ))
+        .bearer_auth(&token)
+        .json(&json!({
+            "referralConfiguration": { "type": "PARTNERIZE", "camref": "campaign123" }
+        }))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to update cached ListingSource: {error}"));
+    let (update_status, update_body) = json_response(update).await;
+    assert_eq!(
+        reqwest::StatusCode::OK,
+        update_status,
+        "response body: {update_body}"
+    );
+
+    let admin_read = client
+        .get(format!(
+            "{}/api/v1/admin/listing-sources?listingSourceId={listing_source_id}",
+            AURA_API_WITH_SEARCH_CACHES.base_url()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to read updated ListingSource: {error}"));
+    let (admin_status, admin_body) = json_response(admin_read).await;
+    assert_eq!(
+        reqwest::StatusCode::OK,
+        admin_status,
+        "response body: {admin_body}"
+    );
+    assert_eq!(
+        json!({ "type": "PARTNERIZE", "camref": "campaign123" }),
+        admin_body["items"][0]["referralConfiguration"]
+    );
+
+    let (warm_response, _) = get_json_from(AURA_API_WITH_SEARCH_CACHES.base_url(), path).await;
+    let (warm_status, warm_body) = json_response(warm_response).await;
+    assert_eq!(
+        reqwest::StatusCode::OK,
+        warm_status,
+        "response body: {warm_body}"
+    );
+    assert_eq!(
+        Some(initial_view_url.as_str()),
+        warm_body["items"][0]["item"]["viewUrl"].as_str()
+    );
+
+    let updated_view_url = "https://prf.hn/click/camref:campaign123/pubref:aurahistoria/destination:https%3A%2F%2Fcached-source.example%2Fproduct";
+    for _ in 0..16 {
+        let (response, _) = get_json_from(AURA_API_WITH_SEARCH_CACHES.base_url(), path).await;
+        let (status, body) = json_response(response).await;
+        assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+        if body["items"][0]["item"]["viewUrl"].as_str() == Some(updated_view_url) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    panic!("public source cache did not refresh after its configured TTL");
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]

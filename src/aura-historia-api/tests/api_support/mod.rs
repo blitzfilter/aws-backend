@@ -317,12 +317,37 @@ impl UserSessionRevoker for SuccessfulUserSessionRevoker {
 }
 
 pub fn aura_api_app() -> Pin<Box<dyn Future<Output = axum::Router> + Send>> {
-    Box::pin(async { app(test_state(TestEmbeddingGenerator::Success).await) })
+    Box::pin(async {
+        app(test_state(
+            TestEmbeddingGenerator::Success,
+            ProductListingSearchCacheTestPolicy::Disabled,
+        )
+        .await)
+    })
 }
 
 pub fn aura_api_app_with_failed_search_embedding()
 -> Pin<Box<dyn Future<Output = axum::Router> + Send>> {
-    Box::pin(async { app(test_state(TestEmbeddingGenerator::Failure).await) })
+    Box::pin(async {
+        app(test_state(
+            TestEmbeddingGenerator::Failure,
+            ProductListingSearchCacheTestPolicy::Disabled,
+        )
+        .await)
+    })
+}
+
+pub fn aura_api_app_with_product_listing_search_caches()
+-> Pin<Box<dyn Future<Output = axum::Router> + Send>> {
+    Box::pin(async {
+        app(test_state(
+            TestEmbeddingGenerator::Success,
+            ProductListingSearchCacheTestPolicy::Enabled {
+                source_ttl: std::time::Duration::from_secs(1),
+            },
+        )
+        .await)
+    })
 }
 
 pub async fn json_response(
@@ -1010,7 +1035,41 @@ fn url(value: &str) -> Url {
     }
 }
 
-async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
+enum ProductListingSearchCacheTestPolicy {
+    Disabled,
+    Enabled { source_ttl: std::time::Duration },
+}
+
+impl ProductListingSearchCacheTestPolicy {
+    fn fx_cache_config(&self) -> FxSearchCacheConfig {
+        let enabled = matches!(self, Self::Enabled { .. });
+        match FxSearchCacheConfig::new(enabled, 512, std::time::Duration::from_secs(30)) {
+            Ok(config) => config,
+            Err(error) => panic!("invalid test FX cache policy: {error}"),
+        }
+    }
+
+    fn source_cache_config(&self) -> product_listing_service::readers::SourceSearchCacheConfig {
+        let (enabled, ttl) = match self {
+            Self::Disabled => (false, std::time::Duration::from_secs(60)),
+            Self::Enabled { source_ttl } => (true, *source_ttl),
+        };
+        match product_listing_service::readers::SourceSearchCacheConfig::new(
+            enabled,
+            4_096,
+            8 * 1024 * 1024,
+            ttl,
+        ) {
+            Ok(config) => config,
+            Err(error) => panic!("invalid test source cache policy: {error}"),
+        }
+    }
+}
+
+async fn test_state(
+    search_embeddings: TestEmbeddingGenerator,
+    search_cache_policy: ProductListingSearchCacheTestPolicy,
+) -> AppState {
     let pool = get_postgres_client().await;
     seed_current_fx_snapshot(&pool).await;
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
@@ -1224,14 +1283,12 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
             OpenSearchProductListingSearchReader::new(opensearch_client.clone()),
             CachedFxRateSnapshotReader::new(
                 SqlxFxRateSnapshotReader::new(pool.clone()),
-                FxSearchCacheConfig::public_search_defaults(false),
+                search_cache_policy.fx_cache_config(),
             ),
             search_embeddings,
             product_listing_service::readers::CachedListingSourceSummaryReader::new(
                 SqlxListingSourceSummaryReader::new(pool.clone()),
-                product_listing_service::readers::SourceSearchCacheConfig::public_search_defaults(
-                    false,
-                ),
+                search_cache_policy.source_cache_config(),
             ),
             SqlxProductListingUserStateReader::new(pool.clone()),
             SqlxProductListingContentAssessmentReader::new(pool.clone()),

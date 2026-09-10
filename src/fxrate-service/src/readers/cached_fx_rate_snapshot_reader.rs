@@ -7,6 +7,7 @@ use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
+use tracing::info;
 
 const DEFAULT_MAX_ENTRIES: usize = 512;
 const DEFAULT_LATEST_SELECTION_TTL: Duration = Duration::from_secs(30);
@@ -49,6 +50,14 @@ impl FxSearchCacheConfig {
 
     pub const fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub const fn max_entries(&self) -> usize {
+        self.max_entries
+    }
+
+    pub const fn latest_selection_ttl(&self) -> Duration {
+        self.latest_selection_ttl
     }
 }
 
@@ -176,24 +185,50 @@ where
         id: FxRateId,
     ) -> Result<Option<FxRateSnapshot>, FxRateSnapshotReadError> {
         if !self.config.enabled {
-            return self.inner.find_by_id(id).await;
+            let backend_started = Instant::now();
+            let result = self.inner.find_by_id(id).await;
+            emit_fx_cache_metric(
+                "fx_by_id",
+                "bypassed",
+                Duration::ZERO,
+                backend_started.elapsed(),
+            );
+            return result;
         }
 
         if let Some(snapshot) = self.cached_by_id(id).await {
+            emit_fx_cache_metric("fx_by_id", "hit", Duration::ZERO, Duration::ZERO);
             return Ok(Some(snapshot));
         }
 
+        let gate_started = Instant::now();
         let _fill_guard = self.fill_gate.lock().await;
+        let fill_gate_wait = gate_started.elapsed();
         if let Some(snapshot) = self.cached_by_id(id).await {
+            emit_fx_cache_metric("fx_by_id", "coalesced_hit", fill_gate_wait, Duration::ZERO);
             return Ok(Some(snapshot));
         }
 
-        let snapshot = self.inner.find_by_id(id).await?;
-        let Some(snapshot) = snapshot else {
-            return Ok(None);
+        let backend_started = Instant::now();
+        let result = self.inner.find_by_id(id).await;
+        let backend_duration = backend_started.elapsed();
+        let snapshot = match result {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => {
+                emit_fx_cache_metric("fx_by_id", "missing", fill_gate_wait, backend_duration);
+                return Ok(None);
+            }
+            Err(error) => {
+                emit_fx_cache_metric("fx_by_id", "load_error", fill_gate_wait, backend_duration);
+                return Err(error);
+            }
         };
-        validate_exact_snapshot(&snapshot, id)?;
+        if let Err(error) = validate_exact_snapshot(&snapshot, id) {
+            emit_fx_cache_metric("fx_by_id", "load_error", fill_gate_wait, backend_duration);
+            return Err(error);
+        }
         self.admit_by_id(snapshot.clone()).await;
+        emit_fx_cache_metric("fx_by_id", "filled", fill_gate_wait, backend_duration);
         Ok(Some(snapshot))
     }
 
@@ -202,31 +237,65 @@ where
         at: OffsetDateTime,
     ) -> Result<Option<FxRateSnapshot>, FxRateSnapshotReadError> {
         if !self.config.enabled {
-            return self.inner.find_latest_at_or_before(at).await;
+            let backend_started = Instant::now();
+            let result = self.inner.find_latest_at_or_before(at).await;
+            emit_fx_cache_metric(
+                "fx_latest",
+                "bypassed",
+                Duration::ZERO,
+                backend_started.elapsed(),
+            );
+            return result;
         }
 
         if self.config.latest_selection_ttl.is_zero() {
-            return self.load_latest_without_selection(at).await;
+            let backend_started = Instant::now();
+            let result = self.load_latest_without_selection(at).await;
+            emit_fx_cache_metric(
+                "fx_latest",
+                "bypassed",
+                Duration::ZERO,
+                backend_started.elapsed(),
+            );
+            return result;
         }
 
         let lookup_started = Instant::now();
         if let Some(snapshot) = self.cached_latest_at_or_before(at).await {
+            emit_fx_cache_metric("fx_latest", "hit", Duration::ZERO, Duration::ZERO);
             return Ok(Some(snapshot));
         }
 
+        let gate_started = Instant::now();
         let _fill_guard = self.fill_gate.lock().await;
+        let fill_gate_wait = gate_started.elapsed();
         if let Some(snapshot) = self.cached_latest_at_or_before(at).await {
+            emit_fx_cache_metric("fx_latest", "coalesced_hit", fill_gate_wait, Duration::ZERO);
             return Ok(Some(snapshot));
         }
 
-        let snapshot = self.inner.find_latest_at_or_before(at).await?;
-        let Some(snapshot) = snapshot else {
-            return Ok(None);
+        let backend_started = Instant::now();
+        let result = self.inner.find_latest_at_or_before(at).await;
+        let backend_duration = backend_started.elapsed();
+        let snapshot = match result {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => {
+                emit_fx_cache_metric("fx_latest", "missing", fill_gate_wait, backend_duration);
+                return Ok(None);
+            }
+            Err(error) => {
+                emit_fx_cache_metric("fx_latest", "load_error", fill_gate_wait, backend_duration);
+                return Err(error);
+            }
         };
-        validate_latest_snapshot(&snapshot, at)?;
+        if let Err(error) = validate_latest_snapshot(&snapshot, at) {
+            emit_fx_cache_metric("fx_latest", "load_error", fill_gate_wait, backend_duration);
+            return Err(error);
+        }
 
         let fresh_until = lookup_started + self.config.latest_selection_ttl;
         self.admit_latest(snapshot.clone(), at, fresh_until).await;
+        emit_fx_cache_metric("fx_latest", "filled", fill_gate_wait, backend_duration);
         Ok(Some(snapshot))
     }
 }
@@ -247,6 +316,22 @@ where
         self.seed_by_id(snapshot.clone()).await;
         Ok(Some(snapshot))
     }
+}
+
+fn emit_fx_cache_metric(
+    component: &'static str,
+    outcome: &'static str,
+    fill_gate_wait: Duration,
+    backend_duration: Duration,
+) {
+    info!(
+        metric = "product_listing_search_cache",
+        component,
+        outcome,
+        fill_gate_wait_ms = fill_gate_wait.as_millis(),
+        backend_duration_ms = backend_duration.as_millis(),
+        "product listing search cache operation"
+    );
 }
 
 fn admit_snapshot(
