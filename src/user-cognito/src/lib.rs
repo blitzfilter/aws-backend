@@ -1,28 +1,75 @@
 use application::error::{box_error, static_error};
 use aws_sdk_cognitoidentityprovider::Client;
-use user_service::ports::{CognitoSubject, UserSessionRevocationError, UserSessionRevoker};
+use user_service::ports::{
+    CognitoIdentity, CognitoSubject, UserSessionRevocationError, UserSessionRevoker,
+};
 
 pub struct CognitoUserSessionRevoker {
-    client: Client,
+    provider: Box<dyn CognitoProvider>,
     user_pool_id: String,
+    issuer: Option<String>,
 }
 
 impl CognitoUserSessionRevoker {
     pub fn new(client: Client, user_pool_id: impl Into<String>) -> Self {
+        let user_pool_id = user_pool_id.into();
+        let issuer = client.config().region().map(|region| {
+            format!(
+                "https://cognito-idp.{}.amazonaws.com/{user_pool_id}",
+                region.as_ref()
+            )
+        });
         Self {
-            client,
-            user_pool_id: user_pool_id.into(),
+            provider: Box::new(AwsCognitoProvider { client }),
+            user_pool_id,
+            issuer,
         }
     }
 
+    #[cfg(test)]
+    fn with_provider(
+        provider: impl CognitoProvider + 'static,
+        user_pool_id: impl Into<String>,
+        issuer: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider: Box::new(provider),
+            user_pool_id: user_pool_id.into(),
+            issuer: Some(issuer.into()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+trait CognitoProvider: Send + Sync {
     async fn username_for(
         &self,
+        user_pool_id: &str,
+        subject: &CognitoSubject,
+    ) -> Result<String, UserSessionRevocationError>;
+
+    async fn revoke_sessions(
+        &self,
+        user_pool_id: &str,
+        username: &str,
+    ) -> Result<(), UserSessionRevocationError>;
+}
+
+struct AwsCognitoProvider {
+    client: Client,
+}
+
+#[async_trait::async_trait]
+impl CognitoProvider for AwsCognitoProvider {
+    async fn username_for(
+        &self,
+        user_pool_id: &str,
         subject: &CognitoSubject,
     ) -> Result<String, UserSessionRevocationError> {
         let response = self
             .client
             .list_users()
-            .user_pool_id(&self.user_pool_id)
+            .user_pool_id(user_pool_id)
             .filter(subject_filter(subject))
             .limit(2)
             .send()
@@ -44,18 +91,15 @@ impl CognitoUserSessionRevoker {
 
         unique_username(response.users())
     }
-}
 
-#[async_trait::async_trait]
-impl UserSessionRevoker for CognitoUserSessionRevoker {
     async fn revoke_sessions(
         &self,
-        subject: &CognitoSubject,
+        user_pool_id: &str,
+        username: &str,
     ) -> Result<(), UserSessionRevocationError> {
-        let username = self.username_for(subject).await?;
         self.client
             .admin_user_global_sign_out()
-            .user_pool_id(&self.user_pool_id)
+            .user_pool_id(user_pool_id)
             .username(username)
             .send()
             .await
@@ -80,6 +124,30 @@ impl UserSessionRevoker for CognitoUserSessionRevoker {
                 }
             })?;
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl UserSessionRevoker for CognitoUserSessionRevoker {
+    async fn revoke_sessions(
+        &self,
+        identity: &CognitoIdentity,
+    ) -> Result<(), UserSessionRevocationError> {
+        if self.issuer.as_deref() != Some(identity.issuer.as_str()) {
+            return Err(UserSessionRevocationError::Internal {
+                source: static_error(
+                    "persisted Cognito issuer does not match configured user pool",
+                ),
+            });
+        }
+
+        let username = self
+            .provider
+            .username_for(&self.user_pool_id, &identity.subject)
+            .await?;
+        self.provider
+            .revoke_sessions(&self.user_pool_id, &username)
+            .await
     }
 }
 
@@ -117,10 +185,107 @@ fn subject_filter(subject: &CognitoSubject) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::task::{Context, Poll, Waker};
+    use user_service::ports::CognitoIssuer;
+
+    const USER_POOL_ID: &str = "eu-central-1_test-pool";
+    const ISSUER: &str = "https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_test-pool";
 
     fn subject(value: &str) -> CognitoSubject {
         CognitoSubject::try_from(value)
             .unwrap_or_else(|error| panic!("invalid test subject: {error}"))
+    }
+
+    fn identity(issuer: &str, subject: &str) -> CognitoIdentity {
+        CognitoIdentity {
+            issuer: CognitoIssuer::try_from(issuer)
+                .unwrap_or_else(|error| panic!("invalid test issuer: {error}")),
+            subject: self::subject(subject),
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut future = Box::pin(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeProvider {
+        lookups: Arc<AtomicUsize>,
+        revocations: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CognitoProvider for FakeProvider {
+        async fn username_for(
+            &self,
+            _: &str,
+            _: &CognitoSubject,
+        ) -> Result<String, UserSessionRevocationError> {
+            self.lookups.fetch_add(1, Ordering::Relaxed);
+            Ok("provider-username".to_owned())
+        }
+
+        async fn revoke_sessions(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<(), UserSessionRevocationError> {
+            self.revocations.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn should_reject_same_subject_from_wrong_issuer_before_provider_call() {
+        let provider = FakeProvider::default();
+        let revoker =
+            CognitoUserSessionRevoker::with_provider(provider.clone(), USER_POOL_ID, ISSUER);
+        let matching_identity = identity(ISSUER, "provider|shared-subject");
+        let wrong_issuer_identity = identity(
+            "https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_other-pool",
+            "provider|shared-subject",
+        );
+        assert_eq!(matching_identity.subject, wrong_issuer_identity.subject);
+
+        let result = block_on(UserSessionRevoker::revoke_sessions(
+            &revoker,
+            &wrong_issuer_identity,
+        ));
+
+        assert!(matches!(
+            result,
+            Err(UserSessionRevocationError::Internal { .. })
+        ));
+        assert_eq!(0, provider.lookups.load(Ordering::Relaxed));
+        assert_eq!(0, provider.revocations.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn should_lookup_and_revoke_when_issuer_matches() {
+        let provider = FakeProvider::default();
+        let revoker =
+            CognitoUserSessionRevoker::with_provider(provider.clone(), USER_POOL_ID, ISSUER);
+
+        let result = block_on(UserSessionRevoker::revoke_sessions(
+            &revoker,
+            &identity(ISSUER, "provider|opaque-subject"),
+        ));
+
+        assert!(result.is_ok());
+        assert_eq!(1, provider.lookups.load(Ordering::Relaxed));
+        assert_eq!(1, provider.revocations.load(Ordering::Relaxed));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 ## Core Design
 
-- Receive the persisted opaque Cognito subject from `user-service`; use it to find the Cognito username for global sign-out. Never derive provider identity from Aura `UserId`.
+- Receive the complete persisted Cognito `(issuer, subject)` identity from `user-service`; reject issuer mismatch against the configured pool before using the subject to find the Cognito username for global sign-out. Never derive provider identity from Aura `UserId`.
 - Keep AWS SDK types and errors private.
 - Never log tokens or raw provider payloads.
 

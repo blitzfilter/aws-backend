@@ -299,12 +299,12 @@ struct SuccessfulUserSessionRevoker;
 impl UserSessionRevoker for SuccessfulUserSessionRevoker {
     async fn revoke_sessions(
         &self,
-        subject: &CognitoSubject,
+        identity: &CognitoIdentity,
     ) -> Result<(), UserSessionRevocationError> {
         let failures = SESSION_REVOCATION_FAILURES.get_or_init(|| Mutex::new(HashSet::new()));
         let should_fail = match failures.lock() {
-            Ok(mut failures) => failures.remove(subject),
-            Err(poisoned) => poisoned.into_inner().remove(subject),
+            Ok(mut failures) => failures.remove(&identity.subject),
+            Err(poisoned) => poisoned.into_inner().remove(&identity.subject),
         };
         if should_fail {
             return Err(UserSessionRevocationError::TemporarilyUnavailable {

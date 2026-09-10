@@ -131,9 +131,7 @@ where
                 .await
                 .map_err(|_| RevokeUserSessionsError::CommitTransactionFailed)?;
 
-            self.session_revoker
-                .revoke_sessions(&identity.subject)
-                .await?;
+            self.session_revoker.revoke_sessions(&identity).await?;
             Ok(RevokeUserSessionsResult {
                 user_id: command.user_id,
             })
@@ -255,7 +253,7 @@ mod tests {
     struct State {
         begins: usize,
         commits: usize,
-        revoked_subjects: Vec<String>,
+        revoked_identities: Vec<(String, String)>,
         operations: Vec<&'static str>,
     }
     #[derive(Clone, Default)]
@@ -369,10 +367,13 @@ mod tests {
     impl UserSessionRevoker for Revoker {
         async fn revoke_sessions(
             &self,
-            subject: &CognitoSubject,
+            identity: &CognitoIdentity,
         ) -> Result<(), UserSessionRevocationError> {
             let mut state = lock(&self.fakes.0);
-            state.revoked_subjects.push(subject.as_str().to_owned());
+            state.revoked_identities.push((
+                identity.issuer.as_str().to_owned(),
+                identity.subject.as_str().to_owned(),
+            ));
             state.operations.push("revoke");
             drop(state);
             match self.error {
@@ -419,7 +420,13 @@ mod tests {
         let state = lock(&fakes.0);
         assert_eq!(1, state.begins);
         assert_eq!(1, state.commits);
-        assert_eq!(vec!["provider|opaque-subject"], state.revoked_subjects);
+        assert_eq!(
+            vec![(
+                "https://issuer.example".to_owned(),
+                "provider|opaque-subject".to_owned(),
+            )],
+            state.revoked_identities
+        );
         assert_eq!(vec!["begin", "commit", "revoke"], state.operations);
     }
 
@@ -448,7 +455,7 @@ mod tests {
             .await;
         assert!(matches!(non_admin, Err(RevokeUserSessionsError::Forbidden)));
         let state = lock(&fakes.0);
-        assert!(state.revoked_subjects.is_empty());
+        assert!(state.revoked_identities.is_empty());
         assert_eq!(2, state.begins);
         assert_eq!(0, state.commits);
     }

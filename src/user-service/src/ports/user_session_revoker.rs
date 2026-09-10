@@ -1,4 +1,4 @@
-use crate::ports::CognitoSubject;
+use crate::ports::CognitoIdentity;
 use application::error::BoxError;
 
 #[derive(Debug, thiserror::Error)]
@@ -21,6 +21,6 @@ pub enum UserSessionRevocationError {
 pub trait UserSessionRevoker: Send + Sync {
     async fn revoke_sessions(
         &self,
-        subject: &CognitoSubject,
+        identity: &CognitoIdentity,
     ) -> Result<(), UserSessionRevocationError>;
 }
