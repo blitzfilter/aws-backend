@@ -344,6 +344,7 @@ pub fn aura_api_app_with_product_listing_search_caches()
             TestEmbeddingGenerator::Success,
             ProductListingSearchCacheTestPolicy::Enabled {
                 source_ttl: std::time::Duration::from_secs(30),
+                fx_latest_ttl: std::time::Duration::from_secs(30),
             },
         )
         .await)
@@ -357,6 +358,21 @@ pub fn aura_api_app_with_short_ttl_product_listing_search_caches()
             TestEmbeddingGenerator::Success,
             ProductListingSearchCacheTestPolicy::Enabled {
                 source_ttl: std::time::Duration::from_secs(1),
+                fx_latest_ttl: std::time::Duration::from_secs(30),
+            },
+        )
+        .await)
+    })
+}
+
+pub fn aura_api_app_with_fx_rollover_product_listing_search_caches()
+-> Pin<Box<dyn Future<Output = axum::Router> + Send>> {
+    Box::pin(async {
+        app(test_state(
+            TestEmbeddingGenerator::Success,
+            ProductListingSearchCacheTestPolicy::Enabled {
+                source_ttl: std::time::Duration::from_secs(30),
+                fx_latest_ttl: std::time::Duration::from_secs(1),
             },
         )
         .await)
@@ -1050,13 +1066,19 @@ fn url(value: &str) -> Url {
 
 enum ProductListingSearchCacheTestPolicy {
     Disabled,
-    Enabled { source_ttl: std::time::Duration },
+    Enabled {
+        source_ttl: std::time::Duration,
+        fx_latest_ttl: std::time::Duration,
+    },
 }
 
 impl ProductListingSearchCacheTestPolicy {
     fn fx_cache_config(&self) -> FxSearchCacheConfig {
-        let enabled = matches!(self, Self::Enabled { .. });
-        match FxSearchCacheConfig::new(enabled, 512, std::time::Duration::from_secs(30)) {
+        let (enabled, latest_ttl) = match self {
+            Self::Disabled => (false, std::time::Duration::from_secs(30)),
+            Self::Enabled { fx_latest_ttl, .. } => (true, *fx_latest_ttl),
+        };
+        match FxSearchCacheConfig::new(enabled, 512, latest_ttl) {
             Ok(config) => config,
             Err(error) => panic!("invalid test FX cache policy: {error}"),
         }
@@ -1065,7 +1087,7 @@ impl ProductListingSearchCacheTestPolicy {
     fn source_cache_config(&self) -> product_listing_service::readers::SourceSearchCacheConfig {
         let (enabled, ttl) = match self {
             Self::Disabled => (false, std::time::Duration::from_secs(60)),
-            Self::Enabled { source_ttl } => (true, *source_ttl),
+            Self::Enabled { source_ttl, .. } => (true, *source_ttl),
         };
         match product_listing_service::readers::SourceSearchCacheConfig::new(
             enabled,

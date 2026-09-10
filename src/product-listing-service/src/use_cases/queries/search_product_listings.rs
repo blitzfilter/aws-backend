@@ -357,7 +357,7 @@ where
             let user_state_lookup = personalization_user_id(&context.principal)
                 .map(|user_id| product_listing_user_state_lookup(user_id, &listing_ids));
 
-            let presentation_started = Instant::now();
+            let enrichment_started = Instant::now();
             let summaries = match self.read_execution_policy {
                 ProductListingSearchReadExecutionPolicy::Sequential => {
                     let sources = measure_search_stage(
@@ -434,7 +434,7 @@ where
                     present_product_summaries_from_assessments(items, &assessments)
                 }
             };
-            record_search_stage("final_presentation", presentation_started, "success");
+            record_search_stage("enrichment_and_presentation", enrichment_started, "success");
             summaries
         };
         tracing::info!(
@@ -691,7 +691,10 @@ mod tests {
     use fxrate_core::{
         FX_RATE_SCALE, FxRateId, FxRateQuote, FxRateSnapshot, FxRateSource, NewFxRateSnapshot,
     };
-    use fxrate_service::ports::{FxRateSnapshotReadError, FxRateSnapshotReader};
+    use fxrate_service::{
+        ports::{FxRateSnapshotReadError, FxRateSnapshotReader},
+        readers::{CachedFxRateSnapshotReader, FxSearchCacheConfig},
+    };
     use localization::Language;
     use money::{Currency, MonetaryAmount, Price};
     use product_listing_core::{
@@ -801,6 +804,63 @@ mod tests {
 
     struct DropCounter(Arc<AtomicUsize>);
 
+    #[derive(Clone)]
+    struct RepeatableSearchReader {
+        result: ProductListingSearchReadResult,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingFxRateSnapshotReader {
+        snapshot: FxRateSnapshot,
+        latest_calls: Arc<AtomicUsize>,
+        by_id_calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingListingSourceSummaryReader {
+        summaries: HashMap<ListingSourceId, crate::ports::ListingSourceSummaryWithReferral>,
+        requests: Arc<Mutex<Vec<Vec<ListingSourceId>>>>,
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingUserStatesReader {
+        state: Arc<Mutex<RecordingUserStatesState>>,
+    }
+
+    #[derive(Default)]
+    struct RecordingUserStatesState {
+        values: HashMap<UserId, HashMap<ProductListingId, ProductListingUserState>>,
+        fail: bool,
+        requests: Vec<ProductListingUserStateLookup>,
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingAssessmentReader {
+        state: Arc<Mutex<RecordingAssessmentState>>,
+    }
+
+    #[derive(Default)]
+    struct RecordingAssessmentState {
+        values: HashMap<ProductListingId, crate::ports::ProductListingContentAssessment>,
+        fail: bool,
+        requests: Vec<Vec<ProductListingId>>,
+    }
+
+    type CachedComposedHandler = SearchProductListingsHandler<
+        RepeatableSearchReader,
+        CachedFxRateSnapshotReader<RecordingFxRateSnapshotReader>,
+        FakeEmbeddingGenerator,
+        crate::readers::CachedListingSourceSummaryReader<RecordingListingSourceSummaryReader>,
+        RecordingUserStatesReader,
+        RecordingAssessmentReader,
+    >;
+    type CachedComposition = (
+        CachedComposedHandler,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Vec<Vec<ListingSourceId>>>>,
+    );
+
     impl Drop for DropCounter {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -811,7 +871,7 @@ mod tests {
         Arc::new(Mutex::new(FakeState::default()))
     }
 
-    fn lock_state(state: &SharedState) -> MutexGuard<'_, FakeState> {
+    fn lock_state<T>(state: &Mutex<T>) -> MutexGuard<'_, T> {
         match state.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -910,6 +970,118 @@ mod tests {
                 Some(result) => result,
                 None => EmbeddingVector::try_new(vec![1.0; embedding::EMBEDDING_DIMENSIONS]),
             }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingSearchReader for RepeatableSearchReader {
+        async fn search(
+            &self,
+            _request: &ProductListingSearchReadRequest,
+        ) -> Result<ProductListingSearchReadResult, ProductListingSearchReadError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.result.clone())
+        }
+
+        async fn search_hybrid(
+            &self,
+            _request: &ProductListingSearchReadRequest,
+            _embedding: &[f32],
+        ) -> Result<ProductListingSearchReadResult, ProductListingSearchReadError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.result.clone())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FxRateSnapshotReader for RecordingFxRateSnapshotReader {
+        async fn find_latest_at_or_before(
+            &self,
+            _timestamp: OffsetDateTime,
+        ) -> Result<Option<FxRateSnapshot>, FxRateSnapshotReadError> {
+            self.latest_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(self.snapshot.clone()))
+        }
+
+        async fn find_by_id(
+            &self,
+            id: FxRateId,
+        ) -> Result<Option<FxRateSnapshot>, FxRateSnapshotReadError> {
+            self.by_id_calls.fetch_add(1, Ordering::SeqCst);
+            Ok((id == self.snapshot.id()).then(|| self.snapshot.clone()))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ListingSourceSummaryReader for RecordingListingSourceSummaryReader {
+        async fn find_summaries(
+            &self,
+            listing_source_ids: &[ListingSourceId],
+        ) -> Result<
+            HashMap<ListingSourceId, crate::ports::ListingSourceSummaryWithReferral>,
+            crate::ports::ListingSourceSummaryReadError,
+        > {
+            match self.requests.lock() {
+                Ok(mut requests) => requests.push(listing_source_ids.to_vec()),
+                Err(poisoned) => poisoned.into_inner().push(listing_source_ids.to_vec()),
+            }
+            Ok(listing_source_ids
+                .iter()
+                .filter_map(|id| self.summaries.get(id).cloned().map(|value| (*id, value)))
+                .collect())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingUserStateReader for RecordingUserStatesReader {
+        async fn find_for_user(
+            &self,
+            lookup: &ProductListingUserStateLookup,
+        ) -> Result<
+            HashMap<ProductListingId, ProductListingUserState>,
+            ProductListingUserStateReadError,
+        > {
+            let mut state = match self.state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.requests.push(lookup.clone());
+            if state.fail {
+                return Err(ProductListingUserStateReadError::QueryFailed {
+                    source: box_error(std::io::Error::other("user state unavailable")),
+                });
+            }
+            Ok(state
+                .values
+                .get(&lookup.user_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingContentAssessmentReader for RecordingAssessmentReader {
+        async fn find_current_assessments(
+            &self,
+            product_listing_ids: &[ProductListingId],
+        ) -> Result<
+            HashMap<ProductListingId, crate::ports::ProductListingContentAssessment>,
+            ProductListingContentAssessmentReadError,
+        > {
+            let mut state = match self.state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.requests.push(product_listing_ids.to_vec());
+            if state.fail {
+                return Err(ProductListingContentAssessmentReadError::QueryFailed {
+                    source: box_error(std::io::Error::other("assessment unavailable")),
+                });
+            }
+            Ok(product_listing_ids
+                .iter()
+                .filter_map(|id| state.values.get(id).copied().map(|value| (*id, value)))
+                .collect())
         }
     }
 
@@ -1276,6 +1448,297 @@ mod tests {
             sort: None,
             cursor: None,
         })
+    }
+
+    fn cached_composed_handler(
+        result: ProductListingSearchReadResult,
+        snapshot: FxRateSnapshot,
+        source: crate::ports::ListingSourceSummaryWithReferral,
+        user_states: RecordingUserStatesReader,
+        assessments: RecordingAssessmentReader,
+        policy: ProductListingSearchReadExecutionPolicy,
+    ) -> CachedComposition {
+        let search_calls = Arc::new(AtomicUsize::new(0));
+        let fx_calls = Arc::new(AtomicUsize::new(0));
+        let source_requests = Arc::new(Mutex::new(Vec::new()));
+        let source_id = source.summary.listing_source_id;
+        let fx = CachedFxRateSnapshotReader::new(
+            RecordingFxRateSnapshotReader {
+                snapshot,
+                latest_calls: Arc::clone(&fx_calls),
+                by_id_calls: Arc::new(AtomicUsize::new(0)),
+            },
+            FxSearchCacheConfig::new(true, 8, std::time::Duration::from_secs(60))
+                .unwrap_or_else(|error| panic!("valid test FX cache configuration: {error}")),
+        );
+        let sources = crate::readers::CachedListingSourceSummaryReader::new(
+            RecordingListingSourceSummaryReader {
+                summaries: HashMap::from([(source_id, source)]),
+                requests: Arc::clone(&source_requests),
+            },
+            crate::readers::SourceSearchCacheConfig::new(
+                true,
+                8,
+                16 * 1024,
+                std::time::Duration::from_secs(60),
+            )
+            .unwrap_or_else(|error| panic!("valid test source cache configuration: {error}")),
+        );
+        (
+            SearchProductListingsHandler::new(
+                RepeatableSearchReader {
+                    result,
+                    calls: search_calls,
+                },
+                fx,
+                FakeEmbeddingGenerator { state: state() },
+                sources,
+                user_states,
+                assessments,
+            )
+            .with_read_execution_policy(policy),
+            fx_calls,
+            source_requests,
+        )
+    }
+
+    fn cached_composition_source(
+        source_id: ListingSourceId,
+    ) -> Result<crate::ports::ListingSourceSummaryWithReferral, Box<dyn std::error::Error>> {
+        Ok(crate::ports::ListingSourceSummaryWithReferral {
+            summary: ListingSourceSummary {
+                listing_source_id: source_id,
+                name: listing_source_core::ListingSourceName::try_from("Cached Source")?,
+                slug_id: listing_source_core::ListingSourceSlugId::raw("cached-source")?,
+            },
+            referral_configuration: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn should_keep_user_state_fresh_while_public_search_input_caches_are_warm()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for policy in [
+            ProductListingSearchReadExecutionPolicy::Sequential,
+            ProductListingSearchReadExecutionPolicy::Concurrent,
+        ] {
+            let mut result = search_result()?;
+            let item = &mut result.items[0];
+            let listing_id = item.product_listing_id;
+            let source_id = item.listing_source_id;
+            let event_id = item.event_id;
+            let image_url = Url::parse("https://example.test/cached-sensitive-image.jpg")?;
+            item.images = IndexSet::from([ProductListingImage::new(image_url.clone())]);
+
+            let user_a = UserId::new();
+            let user_b = UserId::new();
+            let hidden_user = UserId::new();
+            let users = RecordingUserStatesReader::default();
+            {
+                let mut state = lock_state(&users.state);
+                state.values.insert(
+                    user_a,
+                    HashMap::from([(
+                        listing_id,
+                        ProductListingUserState {
+                            watchlist: crate::user_state::WatchlistUserState {
+                                watching: true,
+                                notifications: true,
+                            },
+                            content_visibility: crate::user_state::ContentVisibilityUserState {
+                                show_unassessed_or_sensitive_content: true,
+                            },
+                            ..Default::default()
+                        },
+                    )]),
+                );
+                state.values.insert(
+                    user_b,
+                    HashMap::from([(listing_id, ProductListingUserState::default())]),
+                );
+                state.values.insert(
+                    hidden_user,
+                    HashMap::from([(
+                        listing_id,
+                        ProductListingUserState {
+                            search_filter: crate::user_state::SearchFilterUserState {
+                                hidden: true,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )]),
+                );
+            }
+            let assessments = RecordingAssessmentReader::default();
+            lock_state(&assessments.state).values.insert(
+                listing_id,
+                crate::ports::ProductListingContentAssessment {
+                    product_listing_id: listing_id,
+                    source_event_id: event_id,
+                    decision: ContentPolicyDecision::RequiresConsent(
+                        SensitiveContentCategory::NaziGermany,
+                    ),
+                },
+            );
+            let (handler, fx_calls, source_requests) = cached_composed_handler(
+                result,
+                snapshot()?,
+                cached_composition_source(source_id)?,
+                users.clone(),
+                assessments.clone(),
+                policy,
+            );
+
+            let anonymous = handler.execute(&context(), request()).await?;
+            assert_eq!(listing_id, anonymous.items[0].item.product_listing_id);
+            assert!(anonymous.items[0].item.images[0].url.is_none());
+            assert!(lock_state(&users.state).requests.is_empty());
+            assert_eq!(1, fx_calls.load(Ordering::SeqCst));
+            assert_eq!(vec![vec![source_id]], *lock_state(&source_requests));
+
+            let as_a = handler.execute(&user_context(user_a), request()).await?;
+            assert_eq!(
+                Some(image_url.clone()),
+                as_a.items[0].item.images[0].url.clone()
+            );
+            assert!(
+                as_a.items[0]
+                    .user_state
+                    .as_ref()
+                    .is_some_and(|state| state.watchlist.watching)
+            );
+
+            let as_b = handler.execute(&user_context(user_b), request()).await?;
+            assert!(as_b.items[0].item.images[0].url.is_none());
+            assert!(
+                as_b.items[0]
+                    .user_state
+                    .as_ref()
+                    .is_some_and(|state| !state.watchlist.watching)
+            );
+            lock_state(&users.state).values.insert(
+                user_b,
+                HashMap::from([(
+                    listing_id,
+                    ProductListingUserState {
+                        watchlist: crate::user_state::WatchlistUserState {
+                            watching: true,
+                            notifications: false,
+                        },
+                        content_visibility: crate::user_state::ContentVisibilityUserState {
+                            show_unassessed_or_sensitive_content: true,
+                        },
+                        ..Default::default()
+                    },
+                )]),
+            );
+            let updated_b = handler.execute(&user_context(user_b), request()).await?;
+            assert_eq!(
+                Some(image_url.clone()),
+                updated_b.items[0].item.images[0].url.clone()
+            );
+            assert!(
+                updated_b.items[0]
+                    .user_state
+                    .as_ref()
+                    .is_some_and(|state| state.watchlist.watching)
+            );
+
+            let hidden = handler
+                .execute(&user_context(hidden_user), request())
+                .await?;
+            assert!(hidden.items[0].item.product_listing_title_slug_id.is_none());
+            assert!(hidden.items[0].item.images.is_empty());
+            assert_eq!("Hidden", hidden.items[0].item.source.name.as_ref());
+
+            lock_state(&users.state).values.remove(&user_b);
+            assert!(matches!(
+                handler.execute(&user_context(user_b), request()).await,
+                Err(SearchProductListingsError::ProductListingUserStateMissing)
+            ));
+            assert_eq!(1, fx_calls.load(Ordering::SeqCst));
+            assert_eq!(vec![vec![source_id]], *lock_state(&source_requests));
+            assert_eq!(5, lock_state(&users.state).requests.len());
+            let expected_assessment_calls = match policy {
+                ProductListingSearchReadExecutionPolicy::Sequential => 5,
+                ProductListingSearchReadExecutionPolicy::Concurrent => 6,
+            };
+            assert_eq!(
+                expected_assessment_calls,
+                lock_state(&assessments.state).requests.len()
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_reapply_current_content_policy_on_each_search_with_warm_shared_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for policy in [
+            ProductListingSearchReadExecutionPolicy::Sequential,
+            ProductListingSearchReadExecutionPolicy::Concurrent,
+        ] {
+            let mut result = search_result()?;
+            let item = &mut result.items[0];
+            let listing_id = item.product_listing_id;
+            let source_id = item.listing_source_id;
+            let event_id = item.event_id;
+            let image_url = Url::parse("https://example.test/cached-assessment-image.jpg")?;
+            item.images = IndexSet::from([ProductListingImage::new(image_url.clone())]);
+            let users = RecordingUserStatesReader::default();
+            let assessments = RecordingAssessmentReader::default();
+            let (handler, fx_calls, source_requests) = cached_composed_handler(
+                result,
+                snapshot()?,
+                cached_composition_source(source_id)?,
+                users.clone(),
+                assessments.clone(),
+                policy,
+            );
+
+            lock_state(&assessments.state).values.insert(
+                listing_id,
+                crate::ports::ProductListingContentAssessment {
+                    product_listing_id: listing_id,
+                    source_event_id: event_id,
+                    decision: ContentPolicyDecision::Allowed,
+                },
+            );
+            let allowed = handler.execute(&context(), request()).await?;
+            assert_eq!(
+                Some(image_url.clone()),
+                allowed.items[0].item.images[0].url.clone()
+            );
+
+            lock_state(&assessments.state).values.insert(
+                listing_id,
+                crate::ports::ProductListingContentAssessment {
+                    product_listing_id: listing_id,
+                    source_event_id: event_id,
+                    decision: ContentPolicyDecision::RequiresConsent(
+                        SensitiveContentCategory::NaziGermany,
+                    ),
+                },
+            );
+            let consent_required = handler.execute(&context(), request()).await?;
+            assert!(consent_required.items[0].item.images[0].url.is_none());
+
+            lock_state(&assessments.state).values.remove(&listing_id);
+            let unassessed = handler.execute(&context(), request()).await?;
+            assert!(unassessed.items[0].item.images[0].url.is_none());
+
+            lock_state(&assessments.state).fail = true;
+            assert!(matches!(
+                handler.execute(&context(), request()).await,
+                Err(SearchProductListingsError::ContentAssessmentQueryFailed { .. })
+            ));
+            assert_eq!(1, fx_calls.load(Ordering::SeqCst));
+            assert_eq!(vec![vec![source_id]], *lock_state(&source_requests));
+            assert!(lock_state(&users.state).requests.is_empty());
+            assert_eq!(4, lock_state(&assessments.state).requests.len());
+        }
+        Ok(())
     }
 
     #[tokio::test]

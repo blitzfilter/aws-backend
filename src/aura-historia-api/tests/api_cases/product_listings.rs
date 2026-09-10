@@ -2,6 +2,7 @@ use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
     assert_problem, aura_api_app_with_failed_search_embedding,
+    aura_api_app_with_fx_rollover_product_listing_search_caches,
     aura_api_app_with_product_listing_search_caches,
     aura_api_app_with_short_ttl_product_listing_search_caches, json_response,
     seed_access_token_for, seed_current_fx_snapshot, seed_product, seed_user,
@@ -52,6 +53,10 @@ static AURA_API_WITH_SEARCH_CACHES: AuraHistoriaApi =
     AuraHistoriaApi::new(aura_api_app_with_product_listing_search_caches);
 static AURA_API_WITH_SHORT_TTL_SEARCH_CACHES: AuraHistoriaApi =
     AuraHistoriaApi::new(aura_api_app_with_short_ttl_product_listing_search_caches);
+static AURA_API_WITH_FX_ROLLOVER_SEARCH_CACHES: AuraHistoriaApi =
+    AuraHistoriaApi::new(aura_api_app_with_fx_rollover_product_listing_search_caches);
+static AURA_API_WITH_ASSESSMENT_SEARCH_CACHES: AuraHistoriaApi =
+    AuraHistoriaApi::new(aura_api_app_with_product_listing_search_caches);
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_get_product_details_by_id() {
@@ -229,6 +234,98 @@ async fn should_keep_admin_source_reads_fresh_while_public_search_uses_a_warm_ca
     }
 
     panic!("public source cache did not refresh after its configured TTL");
+}
+
+#[aura_integration_test(services = [
+    BUSINESS_SCHEMA,
+    OPENSEARCH,
+    &AURA_API_WITH_ASSESSMENT_SEARCH_CACHES
+])]
+async fn should_apply_same_content_source_assessment_corrections_with_warm_search_inputs() {
+    let product_listing_id = seed_product().await;
+    let pool = get_postgres_client().await;
+    let (listing_source_id, content_source_event_id, current_event_id):
+        (uuid::Uuid, uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT listing_source_id, content_source_event_id, current_event_id FROM product_listings WHERE product_listing_id = $1",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to load assessment search fixture: {error}"));
+    let image_url = "https://assessment-cache.example/image.jpg";
+    let (_, mut document) = search_document(
+        "Cached assessment correction cabinet",
+        125,
+        "AVAILABLE",
+        "Cached Assessment Source",
+        "2025-01-01T00:00:00Z",
+    );
+    document["productListingId"] = json!(product_listing_id);
+    document["listingSourceId"] = json!(
+        ListingSourceId::try_from(listing_source_id)
+            .unwrap_or_else(|error| panic!("invalid ListingSource fixture ID: {error}"))
+    );
+    document["eventId"] = json!(
+        EventId::try_from(current_event_id)
+            .unwrap_or_else(|error| panic!("invalid ProductListing event fixture ID: {error}"))
+    );
+    document["images"] = json!([{ "url": image_url }]);
+    index_existing_listing_source_document(document).await;
+    sqlx::query(
+        "INSERT INTO product_listing_content_assessments (product_listing_id, source_event_id, decision, category) VALUES ($1, $2, 'ALLOWED', NULL)",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(content_source_event_id)
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to seed allowed assessment: {error}"));
+
+    let path = "/api/v1/product-listings?language=en&currency=USD&productQuery[0]=Cached%20assessment%20correction%20cabinet";
+    let (response, _) =
+        get_json_from(AURA_API_WITH_ASSESSMENT_SEARCH_CACHES.base_url(), path).await;
+    let (status, body) = json_response(response).await;
+    assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+    assert_eq!(
+        json!(image_url),
+        body["items"][0]["item"]["images"][0]["url"]
+    );
+    assert_eq!(
+        json!({ "decision": "ALLOWED" }),
+        body["items"][0]["item"]["contentPolicy"]
+    );
+
+    sqlx::query(
+        "UPDATE product_listing_content_assessments SET decision = 'REQUIRES_CONSENT', category = 'NAZI_GERMANY' WHERE product_listing_id = $1 AND source_event_id = $2",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(content_source_event_id)
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to correct assessment: {error}"));
+    let (response, _) =
+        get_json_from(AURA_API_WITH_ASSESSMENT_SEARCH_CACHES.base_url(), path).await;
+    let (status, body) = json_response(response).await;
+    assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+    assert!(body["items"][0]["item"]["images"][0]["url"].is_null());
+    assert_eq!(
+        json!({ "decision": "REQUIRES_CONSENT", "category": "NAZI_GERMANY" }),
+        body["items"][0]["item"]["contentPolicy"]
+    );
+
+    sqlx::query(
+        "DELETE FROM product_listing_content_assessments WHERE product_listing_id = $1 AND source_event_id = $2",
+    )
+    .bind(uuid::Uuid::from(product_listing_id))
+    .bind(content_source_event_id)
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("failed to clear assessment: {error}"));
+    let (response, _) =
+        get_json_from(AURA_API_WITH_ASSESSMENT_SEARCH_CACHES.base_url(), path).await;
+    let (status, body) = json_response(response).await;
+    assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+    assert!(body["items"][0]["item"]["images"][0]["url"].is_null());
+    assert!(body["items"][0]["item"]["contentPolicy"].is_null());
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -982,6 +1079,102 @@ async fn should_keep_product_search_fx_snapshot_pinned_across_pages_when_newer_s
 
     assert_eq!(reqwest::StatusCode::OK, fresh_status);
     assert!(product_listing_ids(&fresh_body).is_empty());
+}
+
+#[aura_integration_test(services = [
+    BUSINESS_SCHEMA,
+    OPENSEARCH,
+    &AURA_API_WITH_FX_ROLLOVER_SEARCH_CACHES
+])]
+async fn should_keep_search_cursor_fx_pinned_after_cached_latest_selection_refreshes() {
+    let products = [
+        search_document(
+            "Cached FX rollover cabinet",
+            100,
+            "AVAILABLE",
+            "Cached FX Listing Source",
+            "2025-01-01T00:00:00Z",
+        ),
+        search_document(
+            "Cached FX rollover cabinet",
+            100,
+            "AVAILABLE",
+            "Cached FX Listing Source",
+            "2025-01-02T00:00:00Z",
+        ),
+    ];
+    index_search_documents(products.iter().map(|(_, document)| document.clone())).await;
+    let first_page_path = "/api/v1/product-listings?language=en&currency=EUR&productQuery[0]=Cached%20FX%20rollover%20cabinet&sort=created&order=asc&size=1";
+    let snapshot_a = capture_fx_snapshot(OffsetDateTime::now_utc(), 2_000_000).await;
+
+    let mut first_page = None;
+    for _ in 0..16 {
+        let (response, _) = get_json_from(
+            AURA_API_WITH_FX_ROLLOVER_SEARCH_CACHES.base_url(),
+            first_page_path,
+        )
+        .await;
+        let (status, body) = json_response(response).await;
+        assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+        if body["searchAfter"]["fxRateId"] == json!(snapshot_a.to_string()) {
+            first_page = Some(body);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let first_page =
+        first_page.unwrap_or_else(|| panic!("cache-enabled first page did not select snapshot A"));
+    assert_eq!(
+        json!({ "type": "MONETARY", "amount": 50, "currency": "EUR" }),
+        first_page["items"][0]["item"]["displayPrice"]
+    );
+    let saved_cursor = serde_json::to_string(&first_page["searchAfter"])
+        .unwrap_or_else(|error| panic!("failed to encode search cursor: {error}"));
+
+    let snapshot_b = capture_fx_snapshot(OffsetDateTime::now_utc(), 1_000_000).await;
+    assert_ne!(snapshot_a, snapshot_b);
+    let mut refreshed_first_page = None;
+    for _ in 0..16 {
+        let (response, _) = get_json_from(
+            AURA_API_WITH_FX_ROLLOVER_SEARCH_CACHES.base_url(),
+            first_page_path,
+        )
+        .await;
+        let (status, body) = json_response(response).await;
+        assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+        if body["searchAfter"]["fxRateId"] == json!(snapshot_b.to_string()) {
+            refreshed_first_page = Some(body);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let refreshed_first_page = refreshed_first_page
+        .unwrap_or_else(|| panic!("cache-enabled first page did not refresh to snapshot B"));
+    assert_eq!(
+        json!({ "type": "MONETARY", "amount": 100, "currency": "EUR" }),
+        refreshed_first_page["items"][0]["item"]["displayPrice"]
+    );
+
+    let continuation_path = format!(
+        "{first_page_path}&searchAfter={}",
+        url_encode(&saved_cursor)
+    );
+    let (continuation, _) = get_json_from(
+        AURA_API_WITH_FX_ROLLOVER_SEARCH_CACHES.base_url(),
+        &continuation_path,
+    )
+    .await;
+    let (status, body) = json_response(continuation).await;
+    assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
+    assert_eq!(vec![products[1].0.clone()], product_listing_ids(&body));
+    assert_eq!(
+        json!(snapshot_a.to_string()),
+        body["searchAfter"]["fxRateId"]
+    );
+    assert_eq!(
+        json!({ "type": "MONETARY", "amount": 50, "currency": "EUR" }),
+        body["items"][0]["item"]["displayPrice"]
+    );
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
