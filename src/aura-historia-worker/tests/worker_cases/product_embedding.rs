@@ -1,3 +1,4 @@
+use crate::{BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope, product_embedding::consume_product_embedding_queue,
     serve_with_runtime,
@@ -18,17 +19,11 @@ use product_listing_service::use_cases::{
     EmbedProductListingEventHandler, EmbedProductListingEventUseCase,
 };
 use std::{sync::Arc, time::Duration};
-use test_api::{
-    IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-    get_sequin_worker_webhook_bind_addr,
-};
+use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
 use tokio::{sync::oneshot, task::JoinHandle};
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::ProductListingEmbedding;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
@@ -56,7 +51,7 @@ impl EmbeddingGenerator for FixedEmbeddingGenerator {
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_embed_committed_created_product_event_and_persist_canonical_target_shape() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -85,7 +80,7 @@ async fn should_embed_committed_created_product_event_and_persist_canonical_targ
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_ignore_non_created_product_event_without_embedding_side_effect() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -100,7 +95,7 @@ async fn should_ignore_non_created_product_event_without_embedding_side_effect()
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_embed_rolled_back_created_product_event() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -114,7 +109,7 @@ async fn should_not_embed_rolled_back_created_product_event() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_stale_created_event_after_product_revision_advances() {
     let pool = get_postgres_client().await;
     let (product_listing_id, source_event_id) =
@@ -126,14 +121,7 @@ async fn should_skip_stale_created_event_after_product_revision_advances() {
         .unwrap_or_else(|error| panic!("advance ProductListing: {error}"));
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
-        worker
-            .redeliver(
-                product_listing_id,
-                source_event_id,
-                "PRODUCT_LISTING_DISCOVERED",
-                "DOMAIN",
-            )
-            .await?;
+        worker.redeliver(source_event_id).await?;
         assert_no_embedding(&worker.pool, product_listing_id, NO_SIDE_EFFECT_OBSERVATION).await
     }
     .await;
@@ -143,7 +131,7 @@ async fn should_skip_stale_created_event_after_product_revision_advances() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_reembed_when_committed_image_change_advances_source_marker() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -184,21 +172,14 @@ async fn should_reembed_when_committed_image_change_advances_source_marker() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_append_another_embedded_event_when_source_is_redelivered() {
     let worker = EmbeddingWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let (product_listing_id, event_id) =
             insert_product_with_event(&worker.pool, "PRODUCT_LISTING_DISCOVERED", "DOMAIN").await?;
         let _ = wait_for_embedding(&worker.pool, product_listing_id).await?;
-        worker
-            .redeliver(
-                product_listing_id,
-                event_id,
-                "PRODUCT_LISTING_DISCOVERED",
-                "DOMAIN",
-            )
-            .await?;
+        worker.redeliver(event_id).await?;
         assert_embedding_event_count_for_duration(
             &worker.pool,
             product_listing_id,
@@ -216,6 +197,7 @@ async fn should_not_append_another_embedded_event_when_source_is_redelivered() {
 
 struct EmbeddingWorker {
     pool: sqlx::PgPool,
+    _route_lease: support::sequin_router::RouteLease,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
     consumer: JoinHandle<()>,
@@ -240,42 +222,30 @@ impl EmbeddingWorker {
         })
         .await
         .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .unwrap_or_else(|error| panic!("worker webhook bind address is available: {error}"));
+        let worker_addr = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("worker webhook has a local address: {error}"));
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, worker_addr)
+            .await
+            .unwrap_or_else(|error| panic!("activate worker Sequin route: {error}"));
         Self {
             pool,
+            _route_lease: route_lease,
             shutdown_tx,
             server,
             consumer,
         }
     }
 
-    async fn redeliver(
-        &self,
-        product_listing_id: ProductListingId,
-        event_id: EventId,
-        event_type: &str,
-        event_group: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload: serde_json::Value = sqlx::query_scalar(
-            "SELECT payload FROM product_listing_events WHERE event_id = $1 AND product_listing_id = $2",
-        )
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
-        .fetch_one(&self.pool)
-        .await?;
-        let response = reqwest::Client::new().post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
-            .json(&serde_json::json!({"record":{"event_id":event_id.as_uuid().to_string(),"product_listing_id":product_listing_id.as_uuid().to_string(),"event_type":event_type,"event_group":event_group,"event_type_schema_version":1,"payload":payload},"action":"insert","metadata":{"table_schema":"public","table_name":"product_listing_events"}}))
-            .send().await?;
-        if response.status() != reqwest::StatusCode::ACCEPTED {
-            return Err(std::io::Error::other("worker did not accept redelivery").into());
-        }
-        Ok(())
+    async fn redeliver(&self, event_id: EventId) -> Result<(), Box<dyn std::error::Error>> {
+        support::redeliver_product_event(&self.pool, uuid::Uuid::from(event_id)).await
     }
 
     async fn finish(

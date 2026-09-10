@@ -1,3 +1,4 @@
+use crate::{BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope, product_translation::consume_product_translation_queue,
     serve_with_runtime,
@@ -18,17 +19,11 @@ use product_listing_service::use_cases::{
 };
 use product_listing_translation_llm::LargeLanguageModelProductListingTitleTranslator;
 use std::{sync::Arc, time::Duration};
-use test_api::{
-    IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-    get_sequin_worker_webhook_bind_addr,
-};
+use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
 use tokio::{sync::oneshot, task::JoinHandle};
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::ProductListingTranslation;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
@@ -53,7 +48,7 @@ impl LargeLanguageModel for FixedTranslationLlm {
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_translate_committed_discovered_product_event_and_persist_canonical_target_shape() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -101,7 +96,7 @@ async fn should_translate_committed_discovered_product_event_and_persist_canonic
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_ignore_non_discovered_product_event_without_translation_side_effect() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -117,7 +112,7 @@ async fn should_ignore_non_discovered_product_event_without_translation_side_eff
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_translate_rolled_back_discovered_product_event() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -132,7 +127,7 @@ async fn should_not_translate_rolled_back_discovered_product_event() {
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_stale_discovered_event_after_content_source_revision_advances() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -140,14 +135,7 @@ async fn should_skip_stale_discovered_event_after_content_source_revision_advanc
             insert_product_with_event(&worker.pool, "PRODUCT_LISTING_DISCOVERED", "DOMAIN").await?;
         let _newer_event_id = advance_product_revision(&worker.pool, product_listing_id).await?;
 
-        worker
-            .redeliver(
-                product_listing_id,
-                source_event_id,
-                "PRODUCT_LISTING_DISCOVERED",
-                "DOMAIN",
-            )
-            .await?;
+        worker.redeliver(source_event_id).await?;
         assert_no_translations(&worker.pool, product_listing_id, NO_SIDE_EFFECT_OBSERVATION).await
     }
     .await;
@@ -157,7 +145,7 @@ async fn should_skip_stale_discovered_event_after_content_source_revision_advanc
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_append_another_translation_event_when_source_is_redelivered() {
     let worker = TranslationWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -165,14 +153,7 @@ async fn should_not_append_another_translation_event_when_source_is_redelivered(
             insert_product_with_event(&worker.pool, "PRODUCT_LISTING_DISCOVERED", "DOMAIN").await?;
         let _rows = wait_for_translations(&worker.pool, product_listing_id, 4).await?;
 
-        worker
-            .redeliver(
-                product_listing_id,
-                event_id,
-                "PRODUCT_LISTING_DISCOVERED",
-                "DOMAIN",
-            )
-            .await?;
+        worker.redeliver(event_id).await?;
         assert_translation_count_for_duration(
             &worker.pool,
             product_listing_id,
@@ -193,7 +174,7 @@ async fn should_not_append_another_translation_event_when_source_is_redelivered(
         .expect("worker cleanup or test failed");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_translation_rows_and_events_after_reversed_duplicate_sqs_deliveries() {
     let worker = TranslationWorker::start().await;
     let result: support::TestResult = async {
@@ -223,6 +204,7 @@ async fn should_preserve_translation_rows_and_events_after_reversed_duplicate_sq
 
 struct TranslationWorker {
     pool: sqlx::PgPool,
+    _route_lease: support::sequin_router::RouteLease,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
     consumer: JoinHandle<()>,
@@ -247,61 +229,30 @@ impl TranslationWorker {
         })
         .await
         .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("worker webhook bind address is available");
+        let worker_addr = listener
+            .local_addr()
+            .expect("worker webhook has a local address");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, worker_addr)
+            .await
+            .unwrap_or_else(|error| panic!("activate worker Sequin route: {error}"));
         Self {
             pool,
+            _route_lease: route_lease,
             shutdown_tx,
             server,
             consumer,
         }
     }
 
-    async fn redeliver(
-        &self,
-        product_listing_id: ProductListingId,
-        event_id: EventId,
-        event_type: &str,
-        event_group: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload: serde_json::Value = sqlx::query_scalar(
-            "SELECT payload FROM product_listing_events WHERE event_id = $1 AND product_listing_id = $2",
-        )
-        .bind(uuid::Uuid::from(event_id))
-        .bind(uuid::Uuid::from(product_listing_id))
-        .fetch_one(&self.pool)
-        .await?;
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://127.0.0.1:{}/cdc/sequin",
-                get_sequin_worker_webhook_bind_addr().port()
-            ))
-            .json(&serde_json::json!({
-                "record": {
-                    "event_id": event_id.as_uuid().to_string(),
-                    "product_listing_id": product_listing_id.as_uuid().to_string(),
-                    "event_type": event_type,
-                    "event_group": event_group,
-                    "event_type_schema_version": 1,
-                    "payload": payload,
-                },
-                "action": "insert",
-                "metadata": {
-                    "table_schema": "public",
-                    "table_name": "product_listing_events",
-                }
-            }))
-            .send()
-            .await?;
-        if response.status() != reqwest::StatusCode::ACCEPTED {
-            return Err(std::io::Error::other("worker did not accept redelivery").into());
-        }
-        Ok(())
+    async fn redeliver(&self, event_id: EventId) -> Result<(), Box<dyn std::error::Error>> {
+        support::redeliver_product_event(&self.pool, uuid::Uuid::from(event_id)).await
     }
 
     async fn finish(

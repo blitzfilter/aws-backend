@@ -7,6 +7,7 @@ use aws_sdk_s3::{
 };
 use aws_sdk_sesv2::Client as SesClient;
 
+use crate::{BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use application::error::box_error;
 use domain_primitives::event_id::EventId;
 use listing_source_core::ListingSourceId;
@@ -36,25 +37,20 @@ use std::sync::{
 };
 use std::time::Duration;
 use test_api::{
-    IntegrationTestService, Postgres, S3, Sequin, Ses, aura_integration_test, get_postgres_client,
-    get_sent_emails, get_sequin_worker_webhook_bind_addr,
+    IntegrationTestService, S3, Ses, aura_integration_test, get_postgres_client, get_sent_emails,
 };
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use user_core::user_id::UserId;
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::NotificationDelivery;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin =
-    Sequin::worker_webhook_for_tables(&["public.notification_deliveries"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
 const UNSAFE_IMAGE_URL: &str = "https://unsafe.shop.example/image.jpg";
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_deliver_committed_notification_delivery_and_persist_result() {
     let result = deliver_committed_notification_delivery().await;
 
@@ -64,7 +60,7 @@ async fn should_deliver_committed_notification_delivery_and_persist_result() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_retry_successful_delivery_finalization_without_sending_again() {
     let result = retry_successful_delivery_finalization().await;
 
@@ -74,7 +70,7 @@ async fn should_retry_successful_delivery_finalization_without_sending_again() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_deliver_rolled_back_or_unsupported_cdc_changes() {
     let result = reject_rolled_back_or_unsupported_changes().await;
 
@@ -84,7 +80,7 @@ async fn should_not_deliver_rolled_back_or_unsupported_cdc_changes() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_send_again_when_notification_delivery_is_redelivered() {
     let result = deduplicate_redelivered_notification_delivery().await;
 
@@ -94,7 +90,7 @@ async fn should_not_send_again_when_notification_delivery_is_redelivered() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_deliver_after_expired_lease_is_redelivered() {
     let result = redeliver_after_expired_lease().await;
 
@@ -104,7 +100,7 @@ async fn should_deliver_after_expired_lease_is_redelivered() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_persist_permanent_failure_when_template_is_invalid() {
     let result = persist_permanent_template_failure().await;
 
@@ -114,7 +110,7 @@ async fn should_persist_permanent_failure_when_template_is_invalid() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_clear_retry_failure_state_when_a_retry_succeeds() {
     let result = clear_retry_failure_state_after_successful_delivery().await;
 
@@ -231,8 +227,9 @@ async fn reject_rolled_back_or_unsupported_changes() -> Result<(), Box<dyn std::
             "notifications",
             "insert",
         )
-        .await?;
-        assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, wrong_table);
+        .await
+        .expect_err("unrouted notification CDC must be rejected by the active worker");
+        assert!(wrong_table.to_string().contains("503"));
 
         let wrong_operation = post_cdc_change(
             rolled_back.delivery_id,
@@ -240,8 +237,9 @@ async fn reject_rolled_back_or_unsupported_changes() -> Result<(), Box<dyn std::
             "notification_deliveries",
             "update",
         )
-        .await?;
-        assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, wrong_operation);
+        .await
+        .expect_err("unsupported notification CDC must be rejected by the active worker");
+        assert!(wrong_operation.to_string().contains("503"));
         assert_no_email_to(&rolled_back.recipient_email).await
     }
     .await;
@@ -260,14 +258,13 @@ async fn deduplicate_redelivered_notification_delivery() -> Result<(), Box<dyn s
             .ok_or_else(|| std::io::Error::other("delivered row has no provider message id"))?;
         let _ = wait_for_email_to(&delivery.recipient_email).await?;
 
-        let response = post_cdc_change(
+        post_cdc_change(
             delivery.delivery_id,
             delivery.notification_id,
             "notification_deliveries",
             "insert",
         )
         .await?;
-        assert_eq!(reqwest::StatusCode::ACCEPTED, response);
 
         tokio::time::sleep(NO_SIDE_EFFECT_OBSERVATION).await;
         let persisted = delivery_row(&worker.pool, delivery.delivery_id)
@@ -305,8 +302,13 @@ async fn redeliver_after_expired_lease() -> Result<(), Box<dyn std::error::Error
         .execute(&worker.pool)
         .await?;
 
-        let response = post_cdc_change(delivery.delivery_id, delivery.notification_id, "notification_deliveries", "insert").await?;
-        assert_eq!(reqwest::StatusCode::ACCEPTED, response);
+        post_cdc_change(
+            delivery.delivery_id,
+            delivery.notification_id,
+            "notification_deliveries",
+            "insert",
+        )
+        .await?;
 
         let persisted = wait_for_delivery(&worker.pool, delivery.delivery_id, "DELIVERED").await?;
         assert_eq!(5, persisted.attempt_count);
@@ -476,7 +478,7 @@ impl NotificationDeliveryRepository for FailOnceFinalizationRepository {
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_provider_receipts_after_reversed_duplicate_sqs_deliveries() {
     let result: support::TestResult = async {
         let worker = NotificationDeliveryWorker::start(Template::Valid).await?;
@@ -486,7 +488,13 @@ async fn should_preserve_provider_receipts_after_reversed_duplicate_sqs_deliveri
             let first_receipt = wait_for_delivery(&worker.pool, first.delivery_id, "DELIVERED").await?.provider_message_id;
             let second_receipt = wait_for_delivery(&worker.pool, second.delivery_id, "DELIVERED").await?.provider_message_id;
             for delivery in [&second, &first, &second, &first] {
-                assert_eq!(reqwest::StatusCode::ACCEPTED, post_cdc_change(delivery.delivery_id, delivery.notification_id, "notification_deliveries", "insert").await?);
+                post_cdc_change(
+                    delivery.delivery_id,
+                    delivery.notification_id,
+                    "notification_deliveries",
+                    "insert",
+                )
+                .await?;
             }
             support::wait_until_empty(SCOPE).await?;
             for (delivery, receipt) in [(&first, first_receipt), (&second, second_receipt)] {
@@ -507,7 +515,7 @@ async fn should_preserve_provider_receipts_after_reversed_duplicate_sqs_deliveri
     result.expect("reversed SQS delivery acceptance and cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, S3(), Ses(), WORKER_SQS, WORKER_SEQUIN])]
 async fn should_retain_sqs_work_while_database_lease_is_active_then_deliver_without_republication()
 {
     use aws_sdk_sqs::types::QueueAttributeName as A;
@@ -551,6 +559,7 @@ struct NotificationDeliveryWorker {
     consumer: JoinHandle<()>,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
+    _route_lease: support::sequin_router::RouteLease,
 }
 
 impl NotificationDeliveryWorker {
@@ -603,17 +612,22 @@ impl NotificationDeliveryWorker {
             consume_notification_delivery_queue(receiver, handler.clone())
         })
         .await?;
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let local_addr = listener.local_addr()?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, local_addr)
+            .await
+            .map_err(std::io::Error::other)?;
 
         Ok(Self {
             pool,
             consumer,
             shutdown_tx,
             server,
+            _route_lease: route_lease,
         })
     }
 
@@ -876,25 +890,18 @@ async fn post_cdc_change(
     notification_id: NotificationId,
     table_name: &str,
     action: &str,
-) -> Result<reqwest::StatusCode, reqwest::Error> {
-    Ok(reqwest::Client::new()
-        .post(format!(
-            "http://{}/cdc/sequin",
-            get_sequin_worker_webhook_bind_addr()
-        ))
-        .json(&json!({
-            "record": {
-                "notification_delivery_id": delivery_id.as_uuid().to_string(),
-                "notification_id": notification_id.as_uuid().to_string(),
-                "channel": "EMAIL",
-                "status": "PENDING"
-            },
-            "action": action,
-            "metadata": {"table_schema": "public", "table_name": table_name}
-        }))
-        .send()
-        .await?
-        .status())
+) -> support::TestResult {
+    support::post_change(json!({
+        "record": {
+            "notification_delivery_id": delivery_id.as_uuid().to_string(),
+            "notification_id": notification_id.as_uuid().to_string(),
+            "channel": "EMAIL",
+            "status": "PENDING"
+        },
+        "action": action,
+        "metadata": {"table_schema": "public", "table_name": table_name}
+    }))
+    .await
 }
 
 async fn wait_for_email_to(

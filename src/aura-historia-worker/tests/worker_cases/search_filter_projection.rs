@@ -34,26 +34,25 @@ use search_filter_service::use_cases::{
     ProjectSearchFilterChangeHandler, ProjectSearchFilterChangeUseCase,
 };
 
+use crate::{BUSINESS_SCHEMA, OPENSEARCH, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use test_api::{
-    IntegrationTestService, OpenSearch, Postgres, Sequin, aura_integration_test,
-    get_opensearch_client, get_postgres_client, get_sequin_worker_webhook_bind_addr, refresh_index,
+    IntegrationTestService, aura_integration_test, get_opensearch_client, get_postgres_client,
+    refresh_index,
 };
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use user_core::user_id::UserId;
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::SearchFilterProjection;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.search_filters"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const POLL_ATTEMPTS: usize = 120;
 const ROLLBACK_OBSERVATION_DURATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_search_filter_insert_from_sequin() {
     let result = project_search_filter_insert_from_sequin().await;
 
@@ -63,7 +62,7 @@ async fn should_project_search_filter_insert_from_sequin() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_replace_search_filter_projection_after_sequin_update() {
     let result = project_search_filter_update_from_sequin().await;
 
@@ -73,7 +72,7 @@ async fn should_replace_search_filter_projection_after_sequin_update() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_project_rolled_back_search_filter_insert_from_sequin() {
     let result = reject_rolled_back_search_filter_insert_from_sequin().await;
 
@@ -83,7 +82,7 @@ async fn should_not_project_rolled_back_search_filter_insert_from_sequin() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_remove_search_filter_projection_after_sequin_delete() {
     let result = project_search_filter_delete_from_sequin().await;
 
@@ -221,7 +220,7 @@ async fn project_search_filter_delete_from_sequin() -> Result<(), Box<dyn std::e
     worker.finish(result).await
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_inactive_filter_but_hide_it_from_active_queries_and_reject_unrouted_cdc() {
     let result: support::TestResult = async {
         let worker = ProjectionWorker::start().await?;
@@ -246,7 +245,7 @@ async fn should_project_inactive_filter_but_hide_it_from_active_queries_and_reje
             assert_eq!(serde_json::json!("INACTIVE_BY_USER"), document["_source"]["state"]);
             assert_eq!(1, worker.index.query(&search_filter_service::ports::SearchFilterIndexQuery::default()).await?.items.len());
             let response = reqwest::Client::new()
-                .post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
+                .post(format!("http://{}/cdc/sequin", worker.worker_addr))
                 .json(&serde_json::json!({"changes": [{"table": "users", "operation": "update", "record": {"user_id": user.as_uuid().to_string()}}]}))
                 .send().await?;
             assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
@@ -308,6 +307,8 @@ async fn assert_filter_tombstone(
 struct ProjectionWorker {
     pool: sqlx::PgPool,
     index: OpenSearchSearchFilterIndex,
+    worker_addr: SocketAddr,
+    _route_lease: support::sequin_router::RouteLease,
     projection_task: JoinHandle<()>,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
@@ -327,14 +328,18 @@ impl ProjectionWorker {
             consume_search_filter_projection_queue(receiver, handler.clone())
         })
         .await?;
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let worker_addr = listener.local_addr()?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, worker_addr).await?;
         Ok(Self {
             pool,
             index,
+            worker_addr,
+            _route_lease: route_lease,
             projection_task,
             shutdown_tx,
             server,

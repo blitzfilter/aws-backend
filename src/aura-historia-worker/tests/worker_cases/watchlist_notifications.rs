@@ -22,30 +22,25 @@ use product_listing_service::ports::{
     ProductListingWatchlistNotificationSourceReaderFactory,
 };
 
+use crate::{BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use product_listing_service::use_cases::{
     GenerateWatchlistNotificationsHandler, GenerateWatchlistNotificationsUseCase,
 };
 use serde_json::json;
-use test_api::{
-    IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-    get_sequin_worker_webhook_bind_addr,
-};
+use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
 use time::OffsetDateTime;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use user_core::user_id::UserId;
 use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::WatchlistNotification;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_NOTIFICATION_OBSERVATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_lock_product_listing_through_watchlist_source_read() {
     let worker = WatchlistWorker::start().await.expect("start SQS worker");
     let pool = get_postgres_client().await;
@@ -136,7 +131,7 @@ async fn should_lock_product_listing_through_watchlist_source_read() {
     worker.finish(Ok(())).await.expect("worker cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_suppress_watchlist_notification_when_withdrawal_commits_first() {
     let worker = WatchlistWorker::start().await.expect("start SQS worker");
     let pool = get_postgres_client().await;
@@ -216,7 +211,7 @@ async fn should_suppress_watchlist_notification_when_withdrawal_commits_first() 
     worker.finish(Ok(())).await.expect("worker cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_notify_historical_change_after_later_active_product_event() {
     let result = notify_historical_change_after_later_active_product_event().await;
 
@@ -271,26 +266,19 @@ async fn notify_historical_change_after_later_active_product_event()
         .await?;
         transaction.commit().await?;
 
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://{}/cdc/sequin",
-                get_sequin_worker_webhook_bind_addr()
-            ))
-            .json(&json!({
-                "record": {
-                    "event_id": historical_event_id.as_uuid().to_string(),
-                    "product_listing_id": product_listing_id.as_uuid().to_string(),
-                    "event_type": "PRODUCT_LISTING_CHANGED",
-                    "event_group": "DOMAIN",
-                    "event_type_schema_version": 1,
-                    "payload": {"availability": {"previous": "AVAILABLE", "current": "SOLD_OUT"}}
-                },
-                "action": "insert",
-                "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
-            }))
-            .send()
-            .await?;
-        assert_eq!(reqwest::StatusCode::ACCEPTED, response.status());
+        support::post_change(json!({
+            "record": {
+                "event_id": historical_event_id.as_uuid().to_string(),
+                "product_listing_id": product_listing_id.as_uuid().to_string(),
+                "event_type": "PRODUCT_LISTING_CHANGED",
+                "event_group": "DOMAIN",
+                "event_type_schema_version": 1,
+                "payload": {"availability": {"previous": "AVAILABLE", "current": "SOLD_OUT"}}
+            },
+            "action": "insert",
+            "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
+        }))
+        .await?;
 
         let notifications = wait_for_notifications(&worker.pool, user_id, 1).await?;
         assert_eq!(
@@ -305,7 +293,7 @@ async fn notify_historical_change_after_later_active_product_event()
     worker.finish(result).await
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_create_availability_notification_from_committed_product_event() {
     let result = create_availability_notification_from_committed_product_event().await;
 
@@ -315,7 +303,7 @@ async fn should_create_availability_notification_from_committed_product_event() 
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_create_price_notifications_only_for_active_watchers() {
     let result = create_price_notifications_only_for_active_watchers().await;
 
@@ -325,7 +313,7 @@ async fn should_create_price_notifications_only_for_active_watchers() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_notify_watcher_created_after_product_event() {
     let result = no_notification_for_watcher_created_after_product_event().await;
 
@@ -335,7 +323,7 @@ async fn should_not_notify_watcher_created_after_product_event() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_one_notification_when_product_event_delivery_is_retried() {
     let result = preserve_one_notification_when_product_event_delivery_is_retried().await;
 
@@ -345,7 +333,7 @@ async fn should_preserve_one_notification_when_product_event_delivery_is_retried
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_notify_for_rolled_back_or_unrouted_product_listing_events() {
     let result = not_notify_for_rolled_back_or_unrouted_product_listing_events().await;
 
@@ -525,26 +513,19 @@ async fn no_notification_for_watcher_created_after_product_event()
             event_time + time::Duration::seconds(1),
         )
         .await?;
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://{}/cdc/sequin",
-                get_sequin_worker_webhook_bind_addr()
-            ))
-            .json(&json!({
-                "record": {
-                    "event_id": event_id.as_uuid().to_string(),
-                    "product_listing_id": product_listing_id.as_uuid().to_string(),
-                    "event_type": "PRODUCT_LISTING_CHANGED",
-                    "event_group": "DOMAIN",
-                    "event_type_schema_version": 1,
-                    "payload": {"availability": {"previous": null, "current": "AVAILABLE"}}
-                },
-                "action": "insert",
-                "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
-            }))
-            .send()
-            .await?;
-        assert_eq!(reqwest::StatusCode::ACCEPTED, response.status());
+        support::post_change(json!({
+            "record": {
+                "event_id": event_id.as_uuid().to_string(),
+                "product_listing_id": product_listing_id.as_uuid().to_string(),
+                "event_type": "PRODUCT_LISTING_CHANGED",
+                "event_group": "DOMAIN",
+                "event_type_schema_version": 1,
+                "payload": {"availability": {"previous": null, "current": "AVAILABLE"}}
+            },
+            "action": "insert",
+            "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
+        }))
+        .await?;
         assert_no_notifications_for(&worker.pool, user_id, NO_NOTIFICATION_OBSERVATION).await
     }
     .await;
@@ -579,26 +560,19 @@ async fn preserve_one_notification_when_product_event_delivery_is_retried()
         transaction.commit().await?;
         let _ = wait_for_notifications(&worker.pool, user_id, 1).await?;
 
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://{}/cdc/sequin",
-                get_sequin_worker_webhook_bind_addr()
-            ))
-            .json(&json!({
-                "record": {
-                    "event_id": event_id.as_uuid().to_string(),
-                    "product_listing_id": product_listing_id.as_uuid().to_string(),
-                    "event_type": "PRODUCT_LISTING_CHANGED",
-                    "event_group": "DOMAIN",
-                    "event_type_schema_version": 1,
-                    "payload": {"availability": {"previous": null, "current": "AVAILABLE"}}
-                },
-                "action": "insert",
-                "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
-            }))
-            .send()
-            .await?;
-        assert_eq!(reqwest::StatusCode::ACCEPTED, response.status());
+        support::post_change(json!({
+            "record": {
+                "event_id": event_id.as_uuid().to_string(),
+                "product_listing_id": product_listing_id.as_uuid().to_string(),
+                "event_type": "PRODUCT_LISTING_CHANGED",
+                "event_group": "DOMAIN",
+                "event_type_schema_version": 1,
+                "payload": {"availability": {"previous": null, "current": "AVAILABLE"}}
+            },
+            "action": "insert",
+            "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
+        }))
+        .await?;
         assert_no_more_than_notifications(&worker.pool, user_id, 1, NO_NOTIFICATION_OBSERVATION)
             .await
     }
@@ -663,7 +637,7 @@ async fn not_notify_for_rolled_back_or_unrouted_product_listing_events()
     worker.finish(result).await
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_each_historical_notification_and_intent_after_reversed_duplicate_sqs_events()
  {
     let result: support::TestResult = async {
@@ -704,6 +678,7 @@ async fn should_preserve_each_historical_notification_and_intent_after_reversed_
 
 struct WatchlistWorker {
     pool: sqlx::PgPool,
+    _route_lease: support::sequin_router::RouteLease,
     consumer: JoinHandle<()>,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
@@ -728,14 +703,17 @@ impl WatchlistWorker {
             consume_watchlist_notification_queue(receiver, handler.clone())
         })
         .await?;
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let worker_addr = listener.local_addr()?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, worker_addr).await?;
 
         Ok(Self {
             pool,
+            _route_lease: route_lease,
             consumer,
             shutdown_tx,
             server,

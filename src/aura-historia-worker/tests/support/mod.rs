@@ -1,3 +1,5 @@
+pub mod sequin_router;
+
 use aura_historia_worker::{
     WorkerRuntimeComposition, WorkerScope,
     queue::{SqsQueueConfig, WorkerQueueReceiver},
@@ -6,6 +8,34 @@ use std::{future::Future, time::Duration};
 use test_api::{WorkerSqs, get_sqs_client};
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// Starts process-lived worker acceptance infrastructure without sharing worker state.
+#[derive(Debug, Clone, Copy)]
+pub struct WorkerAcceptanceHarness;
+
+impl WorkerAcceptanceHarness {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl test_api::IntegrationTestService for WorkerAcceptanceHarness {
+    fn service_names(&self) -> &'static [&'static str] {
+        &["opensearch", "s3", "sesv2", "sqs"]
+    }
+
+    async fn set_up(&self) {
+        sequin_router::ensure_started()
+            .await
+            .unwrap_or_else(|error| panic!("start worker Sequin test router: {error}"));
+    }
+
+    async fn tear_down(&self) {
+        sequin_router::assert_idle()
+            .unwrap_or_else(|error| panic!("worker Sequin test router cleanup: {error}"));
+    }
+}
 
 pub const fn queues(scope: WorkerScope) -> WorkerSqs {
     let visibility = match scope {
@@ -103,11 +133,9 @@ pub async fn wait_until_empty(scope: WorkerScope) -> TestResult {
 
 #[allow(dead_code)]
 pub async fn post_change(change: serde_json::Value) -> TestResult {
-    post_change_to(
-        test_api::get_sequin_worker_webhook_bind_addr().port(),
-        change,
-    )
-    .await
+    sequin_router::post_direct_to_primary(change)
+        .await
+        .map_err(Into::into)
 }
 
 #[allow(dead_code)]

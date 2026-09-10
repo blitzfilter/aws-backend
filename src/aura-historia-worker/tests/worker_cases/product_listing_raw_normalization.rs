@@ -1,3 +1,4 @@
+use crate::{BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use application::transaction::{Transaction, UnitOfWork};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope,
@@ -28,26 +29,21 @@ use product_service::use_cases::{
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 use test_api::{
-    IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-    get_sequin_worker_webhook_bind_addr, get_sqs_client,
+    IntegrationTestService, aura_integration_test, get_postgres_client, get_sqs_client,
 };
 use tokio::{
     sync::{oneshot, watch},
     task::JoinHandle,
 };
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::ProductListingRawNormalization;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin =
-    Sequin::worker_webhook_for_tables(&["public.product_listing_raw_revisions"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const DIRECT_CDC_POLL_ATTEMPTS: usize = 20;
 const DIRECT_CDC_TIMEOUT: Duration = Duration::from_secs(4);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_idempotently() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pool = get_postgres_client().await;
@@ -110,7 +106,7 @@ async fn should_reconcile_preexisting_revisions_and_process_sequin_redelivery_id
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pool = get_postgres_client().await;
@@ -183,7 +179,7 @@ async fn should_normalize_direct_cdc_wakeup_without_waiting_for_reconciliation()
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_normalize_committed_sequin_revisions_in_order_despite_reversed_duplicate_sqs_wakeups()
  {
     let result: support::TestResult = async {
@@ -244,7 +240,7 @@ async fn should_normalize_committed_sequin_revisions_in_order_despite_reversed_d
     result.expect("ordered Sequin/SQS raw normalization and cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_normalize_rollback_or_accept_unrouted_raw_changes() {
     let result: support::TestResult = async {
         let pool = get_postgres_client().await;
@@ -259,26 +255,20 @@ async fn should_not_normalize_rollback_or_accept_unrouted_raw_changes() {
                 .await?;
             let (stream, revision, number) = changed_parts(outcome)?;
             drop(tx);
-            let client = reqwest::Client::new();
             for (table, operation) in [
                 ("product_listing_raw_revisions", "update"),
                 ("product_listing_raw_streams", "insert"),
             ] {
-                let response = client
-                    .post(format!(
-                        "http://127.0.0.1:{}/cdc/sequin",
-                        get_sequin_worker_webhook_bind_addr().port()
-                    ))
-                    .json(
-                        &json!({"changes": [{"table": table, "operation": operation, "record": {
-                            "product_listing_raw_stream_id": stream.as_uuid().to_string(),
-                            "product_listing_raw_revision_id": revision.as_uuid().to_string(),
-                            "revision": number,
-                        }}]}),
-                    )
-                    .send()
-                    .await?;
-                assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
+                let error = support::post_change(
+                    json!({"changes": [{"table": table, "operation": operation, "record": {
+                        "product_listing_raw_stream_id": stream.as_uuid().to_string(),
+                        "product_listing_raw_revision_id": revision.as_uuid().to_string(),
+                        "revision": number,
+                    }}]}),
+                )
+                .await
+                .expect_err("unrouted raw CDC must be rejected by the active worker");
+                assert!(error.to_string().contains("503"));
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
             support::wait_until_empty(SCOPE).await?;
@@ -307,6 +297,7 @@ struct RawNormalizationWorker {
     consumer_shutdown: watch::Sender<bool>,
     server: JoinHandle<Result<(), WorkerRunError>>,
     consumer: JoinHandle<()>,
+    _route_lease: support::sequin_router::RouteLease,
 }
 
 impl RawNormalizationWorker {
@@ -330,16 +321,21 @@ impl RawNormalizationWorker {
             )
         })
         .await?;
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr()).await?;
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let local_addr = listener.local_addr()?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, local_addr)
+            .await
+            .map_err(std::io::Error::other)?;
         Ok(Self {
             shutdown_tx,
             consumer_shutdown,
             server,
             consumer,
+            _route_lease: route_lease,
         })
     }
 
@@ -372,13 +368,7 @@ async fn redeliver_raw_revision(
             }
         }]
     });
-    let url = format!(
-        "http://127.0.0.1:{}/cdc/sequin",
-        get_sequin_worker_webhook_bind_addr().port()
-    );
-    let response = reqwest::Client::new().post(url).json(&body).send().await?;
-    assert_eq!(reqwest::StatusCode::ACCEPTED, response.status());
-    Ok(())
+    support::post_change(body).await
 }
 
 async fn redeliver_raw_revision_sqs(

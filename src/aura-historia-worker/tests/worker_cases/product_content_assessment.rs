@@ -1,3 +1,4 @@
+use crate::{BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope,
     product_content_assessment::consume_product_content_assessment_queue, serve_with_runtime,
@@ -15,22 +16,16 @@ use product_listing_service::use_cases::{
     AssessProductListingContentEventHandler, AssessProductListingContentEventUseCase,
 };
 use std::{sync::Arc, time::Duration};
-use test_api::{
-    IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-    get_sequin_worker_webhook_bind_addr,
-};
+use test_api::{IntegrationTestService, aura_integration_test, get_postgres_client};
 use tokio::{sync::oneshot, task::JoinHandle};
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::ProductListingContentAssessment;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_assess_committed_created_product_event_as_allowed() {
     let worker = ContentAssessmentWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -57,7 +52,7 @@ async fn should_assess_committed_created_product_event_as_allowed() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_assess_committed_created_product_event_as_requires_consent() {
     let worker = ContentAssessmentWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -84,7 +79,7 @@ async fn should_assess_committed_created_product_event_as_requires_consent() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_assess_committed_price_event() {
     let worker = ContentAssessmentWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -106,7 +101,7 @@ async fn should_not_assess_committed_price_event() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_assess_rolled_back_discovery() {
     let worker = ContentAssessmentWorker::start().await;
     let result: support::TestResult = async {
@@ -137,7 +132,7 @@ async fn should_not_assess_rolled_back_discovery() {
         .expect("rollback acceptance and cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_exact_assessments_after_reversed_duplicate_sqs_deliveries() {
     let worker = ContentAssessmentWorker::start().await;
     let result: support::TestResult = async {
@@ -197,7 +192,7 @@ async fn should_preserve_exact_assessments_after_reversed_duplicate_sqs_deliveri
         .expect("duplicate acceptance and cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_discovery_after_content_source_advances() {
     let pool = get_postgres_client().await;
     let (id, event) = insert_product_with_event(
@@ -232,6 +227,7 @@ async fn should_skip_discovery_after_content_source_advances() {
 
 struct ContentAssessmentWorker {
     pool: sqlx::PgPool,
+    _route_lease: support::sequin_router::RouteLease,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
     consumer: JoinHandle<()>,
@@ -256,15 +252,22 @@ impl ContentAssessmentWorker {
         })
         .await
         .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .unwrap_or_else(|error| panic!("worker webhook bind address is available: {error}"));
+        let worker_addr = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("worker webhook has a local address: {error}"));
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, worker_addr)
+            .await
+            .unwrap_or_else(|error| panic!("activate worker Sequin route: {error}"));
         Self {
             pool,
+            _route_lease: route_lease,
             shutdown_tx,
             server,
             consumer,

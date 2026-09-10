@@ -37,6 +37,7 @@ use search_filter_core::{
 };
 use user_core::user_id::UserId;
 
+use crate::{BUSINESS_SCHEMA, OPENSEARCH, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use product_listing_service::ports::{
     ProductListingSearchFilterMatchSourceReader, ProductListingSearchFilterMatchSourceReaderFactory,
 };
@@ -60,28 +61,22 @@ use std::{
     time::{Duration, Instant},
 };
 use test_api::{
-    IntegrationTestService, OpenSearch, Postgres, Sequin, aura_integration_test,
-    get_opensearch_client, get_postgres_client, get_sequin_worker_webhook_bind_addr, refresh_index,
+    IntegrationTestService, aura_integration_test, get_opensearch_client, get_postgres_client,
+    refresh_index,
 };
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use user_postgres::SqlxUserTierEntitlementsFactory;
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::SearchFilterPercolator;
 const NOTIFICATION_SCOPE: WorkerScope = WorkerScope::SearchFilterMatchNotification;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
 const NOTIFICATION_SQS: test_api::WorkerSqs = support::queues(NOTIFICATION_SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhooks(
-    &["public.product_listing_events"],
-    &["public.search_filter_matches"],
-);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_SIDE_EFFECT_OBSERVATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_suppress_search_filter_match_notification_when_withdrawal_commits_first() {
     let pool = get_postgres_client().await;
     let user_id = seed_user(&pool, "ULTIMATE")
@@ -157,7 +152,7 @@ async fn should_suppress_search_filter_match_notification_when_withdrawal_commit
     worker.finish(Ok(())).await.expect("worker cleanup");
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_lock_product_listing_through_search_filter_notification_source_read() {
     let worker = FullFlowWorker::start().await.expect("start SQS worker");
     let pool = get_postgres_client().await;
@@ -242,7 +237,7 @@ impl LargeLanguageModel for NonMatchingLargeLanguageModel {
     }
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_create_notifications_for_committed_product_create_and_update_events() {
     let result = committed_product_create_and_update_flow().await;
 
@@ -252,7 +247,7 @@ async fn should_create_notifications_for_committed_product_create_and_update_eve
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_match_only_active_filter_when_other_filters_are_inactive_or_do_not_match() {
     let result = active_inactive_and_no_match_flow().await;
 
@@ -262,7 +257,7 @@ async fn should_match_only_active_filter_when_other_filters_are_inactive_or_do_n
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_percolate_and_persist_all_active_filters_across_pages() {
     let result = complete_percolation_flow().await;
 
@@ -272,7 +267,7 @@ async fn should_percolate_and_persist_all_active_filters_across_pages() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_suppress_notification_after_free_tier_monthly_quota() {
     let result = quota_flow().await;
 
@@ -282,7 +277,7 @@ async fn should_suppress_notification_after_free_tier_monthly_quota() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_percolate_current_lifecycle_changed_product_listing_event() {
     let result = lifecycle_changed_product_listing_event_flow().await;
 
@@ -292,7 +287,7 @@ async fn should_percolate_current_lifecycle_changed_product_listing_event() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_not_process_rolled_back_product_event() {
     let result = rolled_back_product_event_flow().await;
 
@@ -302,7 +297,7 @@ async fn should_not_process_rolled_back_product_event() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_not_create_matches_for_committed_current_withdrawn_product_listing_event() {
     let result = withdrawn_product_listing_event_flow().await;
 
@@ -312,7 +307,7 @@ async fn should_not_create_matches_for_committed_current_withdrawn_product_listi
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_keep_one_notification_per_matching_filter_on_product_and_match_redelivery() {
     let result = redelivery_and_deterministic_selection_flow().await;
 
@@ -322,7 +317,7 @@ async fn should_keep_one_notification_per_matching_filter_on_product_and_match_r
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_keep_current_enrichment_match_for_each_product_event_delivery_order() {
     let result = stale_event_ordering_flow().await;
 
@@ -332,7 +327,7 @@ async fn should_keep_current_enrichment_match_for_each_product_event_delivery_or
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, NOTIFICATION_SQS, WORKER_SEQUIN])]
 async fn should_percolate_cross_currency_saved_filters_with_event_and_sale_fx_provenance() {
     let result = cross_currency_saved_filter_percolation_flow().await;
 
@@ -718,7 +713,6 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
 
         redeliver_product_event(
             &worker.pool,
-            &worker.server,
             product_listing_id,
             event_a,
             "PRODUCT_LISTING_DISCOVERED",
@@ -727,7 +721,6 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
         redeliver_product_event(
             &worker.pool,
-            &worker.server,
             product_listing_id,
             event_b,
             "ENRICHMENT_EMBEDDED",
@@ -739,7 +732,6 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
 
         redeliver_product_event(
             &worker.pool,
-            &worker.server,
             product_listing_id,
             event_b,
             "ENRICHMENT_EMBEDDED",
@@ -748,7 +740,6 @@ async fn stale_event_ordering_flow() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
         redeliver_product_event(
             &worker.pool,
-            &worker.server,
             product_listing_id,
             event_a,
             "PRODUCT_LISTING_DISCOVERED",
@@ -877,7 +868,6 @@ async fn cross_currency_saved_filter_percolation_flow() -> Result<(), Box<dyn st
 
         redeliver_product_event(
             &worker.pool,
-            &worker.server,
             event_one.product_listing_id,
             event_one.event_id,
             "PRODUCT_LISTING_DISCOVERED",
@@ -1062,7 +1052,6 @@ async fn redelivery_and_deterministic_selection_flow() -> Result<(), Box<dyn std
 
         redeliver_product_event(
             &worker.pool,
-            &worker.server,
             product_listing_id,
             event_id,
             "PRODUCT_LISTING_DISCOVERED",
@@ -1094,6 +1083,7 @@ struct FullFlowWorker {
     notification_server: ScopedWorkerServer,
     percolator_consumer: JoinHandle<()>,
     notification_consumer: JoinHandle<()>,
+    _route_lease: support::sequin_router::RouteLease,
 }
 
 impl FullFlowWorker {
@@ -1145,13 +1135,23 @@ impl FullFlowWorker {
             },
         )
         .await?;
-        let server =
-            ScopedWorkerServer::start(runtime, get_sequin_worker_webhook_bind_addr()).await?;
-        let notification_server = ScopedWorkerServer::start(
-            notification_runtime,
-            test_api::get_sequin_secondary_worker_webhook_bind_addr(),
+        let server = ScopedWorkerServer::start(runtime).await?;
+        let notification_server = ScopedWorkerServer::start(notification_runtime).await?;
+        let route_lease = support::sequin_router::activate(
+            server.local_addr(),
+            [
+                support::sequin_router::RouteTarget {
+                    table: "public.product_listing_events",
+                    worker: server.local_addr(),
+                },
+                support::sequin_router::RouteTarget {
+                    table: "public.search_filter_matches",
+                    worker: notification_server.local_addr(),
+                },
+            ],
         )
-        .await?;
+        .await
+        .map_err(std::io::Error::other)?;
 
         Ok(Self {
             pool,
@@ -1160,6 +1160,7 @@ impl FullFlowWorker {
             notification_server,
             percolator_consumer,
             notification_consumer,
+            _route_lease: route_lease,
         })
     }
 
@@ -1216,6 +1217,7 @@ impl FullFlowWorker {
             notification_server,
             percolator_consumer,
             notification_consumer,
+            _route_lease,
             ..
         } = self;
         let server_shutdown_result = server.shutdown().await;
@@ -1232,31 +1234,33 @@ impl FullFlowWorker {
 type PercolatorWorker = FullFlowWorker;
 
 struct ScopedWorkerServer {
-    bind_addr: std::net::SocketAddr,
+    local_addr: std::net::SocketAddr,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
 }
 
 impl ScopedWorkerServer {
-    async fn start(
-        runtime: WorkerRuntime,
-        bind_addr: std::net::SocketAddr,
-    ) -> Result<Self, std::io::Error> {
-        let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    async fn start(runtime: WorkerRuntime) -> Result<Self, std::io::Error> {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+        let local_addr = listener.local_addr()?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
 
         Ok(Self {
-            bind_addr,
+            local_addr,
             shutdown_tx,
             server,
         })
     }
 
+    const fn local_addr(&self) -> std::net::SocketAddr {
+        self.local_addr
+    }
+
     fn local_webhook_url(&self) -> String {
-        format!("http://127.0.0.1:{}/cdc/sequin", self.bind_addr.port())
+        format!("http://{}/cdc/sequin", self.local_addr)
     }
 
     async fn shutdown(self) -> Result<(), Box<dyn std::error::Error>> {
@@ -2180,7 +2184,6 @@ async fn assert_price_filter_document(
 
 async fn redeliver_product_event(
     pool: &sqlx::PgPool,
-    server: &ScopedWorkerServer,
     product_listing_id: ProductListingId,
     event_id: EventId,
     event_type: &str,
@@ -2216,21 +2219,18 @@ async fn redeliver_product_event(
         }),
         _ => json!({}),
     };
-    post_sequin_change(
-        server.local_webhook_url(),
-        json!({
-            "record": {
-                "event_id": event_id.as_uuid().to_string(),
-                "product_listing_id": product_listing_id.as_uuid().to_string(),
-                "event_type": event_type,
-                "event_group": event_group,
-                "event_type_schema_version": 1,
-                "payload": payload
-            },
-            "action": "insert",
-            "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
-        }),
-    )
+    support::post_change(json!({
+        "record": {
+            "event_id": event_id.as_uuid().to_string(),
+            "product_listing_id": product_listing_id.as_uuid().to_string(),
+            "event_type": event_type,
+            "event_group": event_group,
+            "event_type_schema_version": 1,
+            "payload": payload
+        },
+        "action": "insert",
+        "metadata": {"table_schema": "public", "table_name": "product_listing_events"}
+    }))
     .await
 }
 

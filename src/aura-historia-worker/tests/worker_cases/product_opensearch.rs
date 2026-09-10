@@ -1,3 +1,4 @@
+use crate::{BUSINESS_SCHEMA, OPENSEARCH, WORKER_ACCEPTANCE, WORKER_SEQUIN, support};
 use application::operation_context::{CorrelationId, OperationContext, Principal, RequestId};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope,
@@ -21,27 +22,24 @@ use product_listing_service::use_cases::{
     ProjectProductListingHandler, ProjectProductListingUseCase,
 };
 use serde_json::{Value, json};
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use test_api::{
-    IntegrationTestService, OpenSearch, Postgres, Sequin, aura_integration_test,
-    get_opensearch_client, get_postgres_client, get_sequin_worker_webhook_bind_addr, refresh_index,
+    IntegrationTestService, aura_integration_test, get_opensearch_client, get_postgres_client,
+    refresh_index,
 };
 use tokio::{sync::oneshot, task::JoinHandle};
 use user_service::use_cases::queries::check_user_admin::{
     CheckUserAdminError, CheckUserAdminRequest, CheckUserAdminResult, CheckUserAdminUseCase,
 };
 
-const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
-mod support;
 const SCOPE: WorkerScope = WorkerScope::ProductListingOpenSearch;
 const WORKER_SQS: test_api::WorkerSqs = support::queues(SCOPE);
-const WORKER_SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 const PRODUCT_LISTINGS_INDEX: &str = "product-listings";
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const POLL_ATTEMPTS: usize = 80;
 const NO_PROJECTION_OBSERVATION: Duration = Duration::from_secs(2);
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_committed_active_product_with_native_source_price_and_no_estimates() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -97,7 +95,7 @@ async fn should_project_committed_active_product_with_native_source_price_and_no
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_not_project_rolled_back_product_event() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -113,7 +111,7 @@ async fn should_not_project_rolled_back_product_event() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_keep_product_projection_unchanged_when_event_is_redelivered() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -143,7 +141,7 @@ async fn should_keep_product_projection_unchanged_when_event_is_redelivered() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_skip_stale_product_event_trigger() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -180,7 +178,7 @@ async fn should_skip_stale_product_event_trigger() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_preserve_live_product_projection_and_withdrawn_tombstone_when_source_delete_is_blocked()
  {
     let worker = ProductListingOpenSearchWorker::start().await;
@@ -238,7 +236,7 @@ async fn should_preserve_live_product_projection_and_withdrawn_tombstone_when_so
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_delete_withdrawn_listing_then_reproject_restored_listing_without_stale_removal() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -317,7 +315,7 @@ async fn should_delete_withdrawn_listing_then_reproject_restored_listing_without
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_sold_product_with_all_sale_price_currencies() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -373,7 +371,7 @@ async fn should_project_sold_product_with_all_sale_price_currencies() {
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_project_sold_product_without_main_price_then_add_sale_prices_when_corrected() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -436,14 +434,14 @@ async fn should_project_sold_product_without_main_price_then_add_sale_prices_whe
         .unwrap_or_else(|error| panic!("worker cleanup or test failed: {error}"));
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OpenSearch(), WORKER_SQS, WORKER_SEQUIN])]
+#[aura_integration_test(services = [BUSINESS_SCHEMA, WORKER_ACCEPTANCE, OPENSEARCH, WORKER_SQS, WORKER_SEQUIN])]
 async fn should_reject_unrouted_product_cdc_without_creating_a_projection() {
     let worker = ProductListingOpenSearchWorker::start().await;
     let result: support::TestResult = async {
         let id = ProductListingId::new();
         for (table, operation) in [("product_listing_events", "update"), ("product_listings", "insert")] {
             let response = reqwest::Client::new()
-                .post(format!("http://127.0.0.1:{}/cdc/sequin", get_sequin_worker_webhook_bind_addr().port()))
+                .post(format!("http://{}/cdc/sequin", worker.worker_addr))
                 .json(&json!({"changes": [{"table": table, "operation": operation, "record": {"product_listing_id": id.as_uuid()}}]}))
                 .send().await?;
             assert_eq!(reqwest::StatusCode::SERVICE_UNAVAILABLE, response.status());
@@ -498,6 +496,8 @@ async fn delete_listing_source_as_system(
 
 struct ProductListingOpenSearchWorker {
     pool: sqlx::PgPool,
+    worker_addr: SocketAddr,
+    _route_lease: support::sequin_router::RouteLease,
     shutdown_tx: oneshot::Sender<()>,
     server: JoinHandle<Result<(), WorkerRunError>>,
     consumer: JoinHandle<()>,
@@ -524,16 +524,24 @@ impl ProductListingOpenSearchWorker {
         })
         .await
         .unwrap_or_else(|error| panic!("start competing consumers: {error}"));
-        let listener = tokio::net::TcpListener::bind(get_sequin_worker_webhook_bind_addr())
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .unwrap_or_else(|error| panic!("worker webhook bind address is available: {error}"));
+        let worker_addr = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("read worker webhook address: {error}"));
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server = tokio::spawn(serve_with_runtime(listener, runtime, async move {
             let _ = shutdown_rx.await;
         }));
+        let route_lease = support::sequin_router::activate_scope(SCOPE, worker_addr)
+            .await
+            .unwrap_or_else(|error| panic!("activate worker Sequin route: {error}"));
 
         Self {
             pool,
+            worker_addr,
+            _route_lease: route_lease,
             shutdown_tx,
             server,
             consumer,
@@ -554,35 +562,22 @@ impl ProductListingOpenSearchWorker {
         .bind(uuid::Uuid::from(product_listing_id))
         .fetch_one(&self.pool)
         .await?;
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://127.0.0.1:{}/cdc/sequin",
-                get_sequin_worker_webhook_bind_addr().port()
-            ))
-            .json(&json!({
-                "record": {
-                    "event_id": event_id.as_uuid(),
-                    "product_listing_id": product_listing_id.as_uuid(),
-                    "event_type": event_type,
-                    "event_group": event_group,
-                    "event_type_schema_version": 1,
-                    "payload": payload,
-                },
-                "action": "insert",
-                "metadata": {
-                    "table_schema": "public",
-                    "table_name": "product_listing_events",
-                }
-            }))
-            .send()
-            .await?;
-        if response.status() != reqwest::StatusCode::ACCEPTED {
-            return Err(std::io::Error::other(
-                "worker did not accept ProductListing event redelivery",
-            )
-            .into());
-        }
-        Ok(())
+        support::post_change(json!({
+            "record": {
+                "event_id": event_id.as_uuid(),
+                "product_listing_id": product_listing_id.as_uuid(),
+                "event_type": event_type,
+                "event_group": event_group,
+                "event_type_schema_version": 1,
+                "payload": payload,
+            },
+            "action": "insert",
+            "metadata": {
+                "table_schema": "public",
+                "table_name": "product_listing_events",
+            }
+        }))
+        .await
     }
 
     async fn finish(
