@@ -135,6 +135,7 @@ use product_listing_postgres::{
     SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
     SqlxProductListingWatchlistDetailsReaderFactory,
 };
+use product_listing_service::readers::{CachedListingSourceSummaryReader, SourceSearchCacheConfig};
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
@@ -986,7 +987,10 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             config.product_listing_search_fx_cache_config(),
         ),
         Arc::clone(&embeddings),
-        SqlxListingSourceSummaryReader::new(pool.clone()),
+        CachedListingSourceSummaryReader::new(
+            SqlxListingSourceSummaryReader::new(pool.clone()),
+            SourceSearchCacheConfig::public_search_defaults(false),
+        ),
         product_user_states,
         SqlxProductListingContentAssessmentReader::new(pool.clone()),
     )

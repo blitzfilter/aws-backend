@@ -1227,7 +1227,12 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
                 FxSearchCacheConfig::public_search_defaults(false),
             ),
             search_embeddings,
-            SqlxListingSourceSummaryReader::new(pool.clone()),
+            product_listing_service::readers::CachedListingSourceSummaryReader::new(
+                SqlxListingSourceSummaryReader::new(pool.clone()),
+                product_listing_service::readers::SourceSearchCacheConfig::public_search_defaults(
+                    false,
+                ),
+            ),
             SqlxProductListingUserStateReader::new(pool.clone()),
             SqlxProductListingContentAssessmentReader::new(pool.clone()),
         )),
