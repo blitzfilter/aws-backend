@@ -45,6 +45,7 @@ use billing_service::use_cases::{
 use billing_stripe::{StripeBillingClient, StripeBillingConfig};
 use embedding::{EmbeddingGenerator, VertexAiEmbeddingConfig, VertexAiEmbeddingGenerator};
 use fxrate_postgres::{SqlxFxRateSnapshotReader, SqlxFxRateSnapshotRepositoryFactory};
+use fxrate_service::readers::{CachedFxRateSnapshotReader, FxSearchCacheConfig};
 use google_cloud_auth::credentials::Builder as GoogleCredentialsBuilder;
 use notification_postgres::{
     SqlxNotificationDeleter, SqlxNotificationDeliveryIntentRepositoryFactory,
@@ -218,6 +219,8 @@ pub const ZOHO_ACCOUNTS_URL_ENV: &str = "ZOHO_ACCOUNTS_URL";
 pub const ZOHO_CAMPAIGNS_URL_ENV: &str = "ZOHO_CAMPAIGNS_URL";
 pub const PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV: &str =
     "PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED";
+pub const PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV: &str =
+    "PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED";
 const POSTGRES_HOST_ENV: &str = "POSTGRES_HOST";
 const POSTGRES_PORT_ENV: &str = "POSTGRES_PORT";
 const POSTGRES_DATABASE_ENV: &str = "POSTGRES_DATABASE";
@@ -243,6 +246,7 @@ pub struct ApiConfig {
     billing_prices: BillingPriceIds,
     zoho: ZohoConfig,
     product_listing_search_parallel_enrichment_enabled: bool,
+    product_listing_search_fx_cache_enabled: bool,
 }
 
 impl ApiConfig {
@@ -299,6 +303,8 @@ impl ApiConfig {
             PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV,
             false,
         )?;
+        let product_listing_search_fx_cache_enabled =
+            optional_bool_config(&mut get, PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV, false)?;
         let zoho = ZohoConfig {
             list_key: required_config(&mut get, ZOHO_LIST_KEY_ENV)?,
             client_id: required_config(&mut get, ZOHO_CLIENT_ID_ENV)?,
@@ -317,6 +323,7 @@ impl ApiConfig {
             billing_prices,
             zoho,
             product_listing_search_parallel_enrichment_enabled,
+            product_listing_search_fx_cache_enabled,
         })
     }
 
@@ -346,6 +353,10 @@ impl ApiConfig {
 
     fn zoho(&self) -> &ZohoConfig {
         &self.zoho
+    }
+
+    fn product_listing_search_fx_cache_config(&self) -> FxSearchCacheConfig {
+        FxSearchCacheConfig::public_search_defaults(self.product_listing_search_fx_cache_enabled)
     }
 
     fn product_listing_search_read_execution_policy(
@@ -970,7 +981,10 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     );
     let search_products = SearchProductListingsHandler::new(
         OpenSearchProductListingSearchReader::new(opensearch_client.clone()),
-        SqlxFxRateSnapshotReader::new(pool.clone()),
+        CachedFxRateSnapshotReader::new(
+            SqlxFxRateSnapshotReader::new(pool.clone()),
+            config.product_listing_search_fx_cache_config(),
+        ),
         Arc::clone(&embeddings),
         SqlxListingSourceSummaryReader::new(pool.clone()),
         product_user_states,
@@ -1509,6 +1523,32 @@ mod tests {
         );
 
         assert!(matches!(enabled, Ok(false)));
+    }
+
+    #[test]
+    fn should_default_product_listing_search_fx_cache_to_disabled() {
+        let mut get = |_| None;
+
+        let enabled =
+            optional_bool_config(&mut get, PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV, false);
+
+        assert!(matches!(enabled, Ok(false)));
+    }
+
+    #[test]
+    fn should_reject_non_boolean_product_listing_search_fx_cache_configuration() {
+        let mut get = |name| {
+            (name == PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV).then(|| "enabled".to_owned())
+        };
+
+        let result =
+            optional_bool_config(&mut get, PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV, false);
+
+        assert!(matches!(
+            result,
+            Err(ApiConfigError::InvalidBooleanConfig { name, value })
+                if name == PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV && value == "enabled"
+        ));
     }
 
     #[test]

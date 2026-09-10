@@ -29,6 +29,7 @@ use embedding::{
 };
 use fxrate_core::FxRateId;
 use fxrate_postgres::{SqlxFxRateSnapshotReader, SqlxFxRateSnapshotRepositoryFactory};
+use fxrate_service::readers::{CachedFxRateSnapshotReader, FxSearchCacheConfig};
 use listing_source_core::ListingSourceId;
 use listing_source_postgres::{
     SqlxListingSourceReaders, SqlxListingSourceRepositoryFactory,
@@ -1221,7 +1222,10 @@ async fn test_state(search_embeddings: TestEmbeddingGenerator) -> AppState {
         )),
         Arc::new(SearchProductListingsHandler::new(
             OpenSearchProductListingSearchReader::new(opensearch_client.clone()),
-            SqlxFxRateSnapshotReader::new(pool.clone()),
+            CachedFxRateSnapshotReader::new(
+                SqlxFxRateSnapshotReader::new(pool.clone()),
+                FxSearchCacheConfig::public_search_defaults(false),
+            ),
             search_embeddings,
             SqlxListingSourceSummaryReader::new(pool.clone()),
             SqlxProductListingUserStateReader::new(pool.clone()),

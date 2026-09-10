@@ -8,7 +8,7 @@
 
 - Capture uses canonical `money::Currency` quotes before a short PostgreSQL transaction.
 - Write port inserts one immutable snapshot idempotently by source event ID.
-- Repository rehydrates immutable snapshots and inserts them; its factory binds aggregate lookup/write work to a caller transaction. `FxRateSnapshotReader` is a separate ordinary read capability for presentation reads; it returns immutable semantic snapshots only.
+- Repository rehydrates immutable snapshots and inserts them; its factory binds aggregate lookup/write work to a caller transaction. `FxRateSnapshotReader` is a separate ordinary read capability for presentation reads; it returns immutable semantic snapshots only. `CachedFxRateSnapshotReader` is a service-owned public-search-only decorator: exact IDs use a bounded immutable FIFO payload map, while latest selection has a fixed monotonic 30-second reuse bound and cutoff checks. It caches no missing/error result and never serves stale-on-error; all non-search consumers use direct fresh readers or transaction-scoped repositories.
 
 ## Ownership
 
