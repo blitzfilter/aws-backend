@@ -185,7 +185,7 @@ async fn should_list_search_filter_matches() {
 
     let response = client
         .get(format!(
-            "{}/api/v1/me/search-filters/{filter_id}/matches?size=200",
+            "{}/api/v1/me/search-filters/{filter_id}/matches",
             AURA_API.base_url()
         ))
         .bearer_auth(String::from(token))
@@ -201,7 +201,10 @@ async fn should_list_search_filter_matches() {
 
     assert_eq!(reqwest::StatusCode::OK, status);
     assert_eq!(Some("no-store"), cache_control.as_deref());
-    assert_eq!(serde_json::json!(100), body["size"]);
+    assert!(body["items"].is_array());
+    assert_eq!(serde_json::json!(21), body["size"]);
+    assert!(body.get("total").is_none_or(serde_json::Value::is_u64));
+    assert!(body.get("searchAfter").is_none());
     assert_eq!(
         serde_json::json!(product_listing_id.to_string()),
         body["items"][0]["item"]["productListingId"]
@@ -224,6 +227,14 @@ async fn should_list_search_filter_matches() {
         body["items"][0]["item"]["pricing"]["valuation"]["fxRateId"]
             .as_str()
             .is_some_and(|value| value.starts_with("fx_"))
+    );
+    assert_eq!(
+        serde_json::json!(filter_id),
+        body["items"][0]["userState"]["searchFilter"]["userSearchFilterId"]
+    );
+    assert_eq!(
+        serde_json::json!("Desk alerts"),
+        body["items"][0]["userState"]["searchFilter"]["userSearchFilterName"]
     );
     assert_eq!(
         serde_json::json!(false),
@@ -261,6 +272,194 @@ async fn should_accept_json_string_search_after_for_search_filter_matches() {
         serde_json::json!(product_listing_id.to_string()),
         body["items"][0]["item"]["productListingId"]
     );
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_next_match_cursor_for_non_terminal_page() {
+    let user_id = seed_user("USER").await;
+    let token = search_filters_token(user_id).await;
+    let client = reqwest::Client::new();
+    let filter_id = create_search_filter(&client, &token).await;
+    seed_search_filter_match(user_id, &filter_id).await;
+    seed_search_filter_match(user_id, &filter_id).await;
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/me/search-filters/{filter_id}/matches",
+            AURA_API.base_url()
+        ))
+        .query(&[("size", "1")])
+        .bearer_auth(String::from(token.clone()))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to list persisted search filter matches: {error}"));
+    let (status, body) = json_response(response).await;
+    let search_after = body["searchAfter"].clone();
+    let search_after_items = search_after
+        .as_array()
+        .unwrap_or_else(|| panic!("non-terminal match page is missing searchAfter: {body}"));
+
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(2, search_after_items.len());
+    let search_after = serde_json::to_string(&search_after)
+        .unwrap_or_else(|error| panic!("failed to serialize match cursor: {error}"));
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/me/search-filters/{filter_id}/matches",
+            AURA_API.base_url()
+        ))
+        .query(&[("searchAfter", search_after)])
+        .bearer_auth(String::from(token))
+        .send()
+        .await
+        .unwrap_or_else(|error| {
+            panic!("failed to continue persisted search filter matches: {error}")
+        });
+    let (status, body) = json_response(response).await;
+
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(Some(1), body["items"].as_array().map(Vec::len));
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_clamp_search_filter_match_page_size() {
+    let user_id = seed_user("USER").await;
+    let token = search_filters_token(user_id).await;
+    let client = reqwest::Client::new();
+    let filter_id = create_search_filter(&client, &token).await;
+    seed_search_filter_match(user_id, &filter_id).await;
+
+    for (size, expected) in [("0", 1), ("1", 1), ("21", 21), ("100", 100), ("101", 100)] {
+        let response = client
+            .get(format!(
+                "{}/api/v1/me/search-filters/{filter_id}/matches",
+                AURA_API.base_url()
+            ))
+            .query(&[("size", size)])
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to list search filter matches: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_eq!(reqwest::StatusCode::OK, status);
+        assert_eq!(serde_json::json!(expected), body["size"]);
+    }
+
+    for size in ["not-an-integer", "-1"] {
+        let response = client
+            .get(format!(
+                "{}/api/v1/me/search-filters/{filter_id}/matches",
+                AURA_API.base_url()
+            ))
+            .query(&[("size", size)])
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to list search filter matches: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "BAD_QUERY_PARAMETER_VALUE",
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_invalid_search_filter_match_cursors() {
+    let user_id = seed_user("USER").await;
+    let token = search_filters_token(user_id).await;
+    let client = reqwest::Client::new();
+    let filter_id = create_search_filter(&client, &token).await;
+    let product_listing_id = ProductListingId::new();
+
+    for cursor in [
+        "not-json".to_owned(),
+        "{}".to_owned(),
+        "[]".to_owned(),
+        serde_json::json!(["only-one-value"]).to_string(),
+        serde_json::json!(["bad-date", product_listing_id]).to_string(),
+    ] {
+        let response = client
+            .get(format!(
+                "{}/api/v1/me/search-filters/{filter_id}/matches",
+                AURA_API.base_url()
+            ))
+            .query(&[("searchAfter", cursor)])
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to list search filter matches: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "BAD_QUERY_PARAMETER_VALUE",
+        );
+    }
+
+    for invalid_id in [
+        ListingSourceId::new().to_string(),
+        product_listing_id.as_uuid().to_string(),
+    ] {
+        let response = client
+            .get(format!(
+                "{}/api/v1/me/search-filters/{filter_id}/matches",
+                AURA_API.base_url()
+            ))
+            .query(&[(
+                "searchAfter",
+                serde_json::json!(["2026-08-05T12:30:00Z", invalid_id]).to_string(),
+            )])
+            .bearer_auth(String::from(token.clone()))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("failed to list search filter matches: {error}"));
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "INVALID_OBJECT_ID",
+        );
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_expose_persisted_matches_only_at_matches_route() {
+    let user_id = seed_user("USER").await;
+    let token = search_filters_token(user_id).await;
+    let client = reqwest::Client::new();
+    let filter_id = create_search_filter(&client, &token).await;
+
+    let matches = client
+        .get(format!(
+            "{}/api/v1/me/search-filters/{filter_id}/matches",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(token.clone()))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to list persisted search filter matches: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, matches.status());
+
+    let obsolete = client
+        .get(format!(
+            "{}/api/v1/me/search-filters/{filter_id}/product-listings",
+            AURA_API.base_url()
+        ))
+        .bearer_auth(String::from(token))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to call obsolete search filter route: {error}"));
+    assert_eq!(reqwest::StatusCode::NOT_FOUND, obsolete.status());
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
@@ -455,10 +654,26 @@ async fn should_reject_search_filter_routes_without_required_scope() {
 
     let response = reqwest::Client::new()
         .get(format!("{}/api/v1/me/search-filters", AURA_API.base_url()))
-        .bearer_auth(String::from(token))
+        .bearer_auth(String::from(token.clone()))
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to list search filters without scope: {error}"));
+    let (status, body) = json_response(response).await;
+
+    assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/v1/me/search-filters/{}/matches",
+            AURA_API.base_url(),
+            UserSearchFilterId::new()
+        ))
+        .bearer_auth(String::from(token))
+        .send()
+        .await
+        .unwrap_or_else(|error| {
+            panic!("failed to list search filter matches without scope: {error}")
+        });
     let (status, body) = json_response(response).await;
 
     assert_problem(status, &body, reqwest::StatusCode::FORBIDDEN, "FORBIDDEN");
