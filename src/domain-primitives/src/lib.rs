@@ -148,81 +148,6 @@ pub mod versioned {
 }
 
 #[macro_export]
-macro_rules! uuid_v4_newtype {
-    ($name:ident) => {
-        #[cfg_attr(feature = "test-data", derive(::fake::Dummy))]
-        #[derive(
-            Debug,
-            Clone,
-            Copy,
-            PartialEq,
-            PartialOrd,
-            Eq,
-            Ord,
-            Hash,
-            ::serde::Serialize,
-            ::serde::Deserialize,
-        )]
-        #[serde(into = "String", try_from = "String")]
-        pub struct $name(::uuid::Uuid);
-
-        impl Default for $name {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl $name {
-            pub fn new() -> Self {
-                Self(::uuid::Uuid::new_v4())
-            }
-        }
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-
-        impl From<::uuid::Uuid> for $name {
-            fn from(uuid: ::uuid::Uuid) -> Self {
-                Self(uuid)
-            }
-        }
-
-        impl TryFrom<String> for $name {
-            type Error = ::uuid::Error;
-
-            fn try_from(value: String) -> Result<Self, Self::Error> {
-                ::uuid::Uuid::parse_str(&value).map(Self)
-            }
-        }
-
-        impl From<$name> for String {
-            fn from(id: $name) -> Self {
-                id.0.to_string()
-            }
-        }
-
-        impl TryFrom<&str> for $name {
-            type Error = ::uuid::Error;
-
-            fn try_from(value: &str) -> Result<Self, Self::Error> {
-                ::uuid::Uuid::parse_str(value).map(Self)
-            }
-        }
-
-        impl TryFrom<&String> for $name {
-            type Error = ::uuid::Error;
-
-            fn try_from(value: &String) -> Result<Self, Self::Error> {
-                ::uuid::Uuid::parse_str(value).map(Self)
-            }
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! uuid_v7_newtype {
     ($name:ident) => {
         #[derive(
@@ -536,7 +461,7 @@ mod tests {
     use crate::versioned::Versioned;
 
     crate::version_newtype!(TestVersion);
-    crate::uuid_v4_newtype!(TestId);
+
     crate::uuid_v7_newtype!(TestEventId);
     crate::string_newtype!(BoundedText, max_length(10));
 
@@ -551,7 +476,7 @@ mod tests {
     #[test]
     fn should_map_event_payload_without_changing_metadata() {
         let event = Event {
-            aggregate_id: TestId::new(),
+            aggregate_id: TestEventId::new(),
             event_id: EventId::new(),
             timestamp: time::OffsetDateTime::now_utc(),
             payload: "old",
@@ -587,7 +512,10 @@ mod tests {
     }
 
     #[test]
-    fn should_create_uuid_newtypes() {
-        assert_ne!(TestId::new().to_string(), TestEventId::new().to_string());
+    fn should_create_uuid_v7_newtype() -> Result<(), uuid::Error> {
+        let uuid = uuid::Uuid::parse_str(&TestEventId::new().to_string())?;
+
+        assert_eq!(7, uuid.get_version_num());
+        Ok(())
     }
 }

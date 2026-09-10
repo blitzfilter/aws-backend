@@ -37,7 +37,8 @@ fn should_expose_complete_public_value_api() -> Result<(), Box<dyn Error>> {
     assert_eq!(uuid, id.into_uuid());
     assert_eq!(uuid, Uuid::from(id));
     assert_eq!(TYPE_ID_TEXT, id.to_string());
-    assert!(format!("{id:?}").contains(UUID_TEXT));
+    assert!(format!("{id:?}").contains(TYPE_ID_TEXT));
+    assert!(!format!("{id:?}").contains(UUID_TEXT));
 
     let mut ids = HashSet::new();
     ids.insert(id);

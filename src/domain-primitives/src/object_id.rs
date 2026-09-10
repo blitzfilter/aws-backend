@@ -153,7 +153,7 @@ macro_rules! object_id_newtype {
     ($name:ident, $prefix:literal) => {
         const _: &str = $crate::__private::object_id_prefix!($prefix);
 
-        #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+        #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
         pub struct $name($crate::__private::Uuid);
 
         impl $name {
@@ -181,6 +181,15 @@ macro_rules! object_id_newtype {
         impl ::core::fmt::Display for $name {
             fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 formatter.write_str(&$crate::object_id::format_uuid(Self::PREFIX, &self.0))
+            }
+        }
+
+        impl ::core::fmt::Debug for $name {
+            fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                formatter
+                    .debug_tuple(::core::stringify!($name))
+                    .field(&self.to_string())
+                    .finish()
             }
         }
 
