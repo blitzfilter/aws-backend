@@ -182,6 +182,28 @@ mod tests {
     }
 
     #[test]
+    fn should_clamp_match_page_size_after_defaulting() -> Result<(), Box<dyn std::error::Error>> {
+        for (size, expected) in [
+            (None, 21),
+            (Some(SearchFilterMatchPageSize(0)), 1),
+            (Some(SearchFilterMatchPageSize(1)), 1),
+            (Some(SearchFilterMatchPageSize(21)), 21),
+            (Some(SearchFilterMatchPageSize(100)), 100),
+            (Some(SearchFilterMatchPageSize(101)), 100),
+        ] {
+            assert_eq!(expected, matches_cursor(size, None)?.size);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_malformed_or_negative_match_page_size_query() {
+        for raw_query in ["size=not-an-integer", "size=-1"] {
+            assert!(serde_qs::from_str::<ListSearchFilterMatchesQuery>(raw_query).is_err());
+        }
+    }
+
+    #[test]
     fn should_parse_tie_safe_match_cursor() -> Result<(), Box<dyn std::error::Error>> {
         let product_listing_id = ProductListingId::new();
         let raw_cursor =
@@ -197,6 +219,18 @@ mod tests {
             matches_cursor_value(cursor)?,
             json!(["2026-08-05T12:30:00Z", product_listing_id])
         );
+        for raw in [
+            "not-json".to_owned(),
+            "{}".to_owned(),
+            "[]".to_owned(),
+            json!(["only-one-value"]).to_string(),
+            json!(["bad-date", product_listing_id]).to_string(),
+        ] {
+            let Err(error) = parse_matches_cursor(&raw) else {
+                return Err("malformed match cursor was accepted".into());
+            };
+            assert_eq!(BAD_QUERY_PARAMETER_VALUE, error.code());
+        }
         for invalid_id in [
             ListingSourceId::new().to_string(),
             product_listing_id.as_uuid().to_string(),
@@ -209,5 +243,17 @@ mod tests {
             assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
         }
         Ok(())
+    }
+
+    #[test]
+    fn should_document_only_persisted_match_route() {
+        let swagger = include_str!("../../../../docs/swagger.yaml");
+
+        assert!(swagger.contains("/api/v1/me/search-filters/{userSearchFilterId}/matches:"));
+        assert!(swagger.contains("operationId: listSearchFilterMatches"));
+        assert!(
+            !swagger.contains("/api/v1/me/search-filters/{userSearchFilterId}/product-listings:")
+        );
+        assert!(!swagger.contains("getSearchFilterPreviewProductListings"));
     }
 }

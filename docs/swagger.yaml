@@ -2571,232 +2571,24 @@ paths:
                 status: 500
                 title: Internal Server Error
                 error: INTERNAL_SERVER_ERROR
-  /api/v1/me/search-filters/{userSearchFilterId}/product-listings:
-    get:
-      summary: Preview product matches for a saved search filter
-      description:
-        "Previews product-listings that would match the authenticated user's saved search filter using the same
-
-        percolator-style query semantics used by search-filter product-match processing. The request only
-
-        controls response localization (`language`, `currency`).
-
-
-        Client-driven pagination is not supported. The endpoint always returns a fixed preview of up to
-
-        10 product-listings and rejects `size` or `searchAfter` query parameters with `BAD_QUERY_PARAMETER_VALUE`.
-
-
-        When the saved search filter contains `search.enhancedSearchDescription` and enhanced matching is available,
-
-        the backend re-evaluates each candidate product for this specific filter. ProductListings rejected by enhanced
-
-        matching are omitted from the preview; accepted product-listings expose the live result in
-
-        `userState.searchFilter`:
-
-        - `matched` (`true`)
-
-        - `hidden` (always `false` in this flow)
-
-        - optional `matchReason`
-
-
-        In that enhanced flow, `userSearchFilterId`, `userSearchFilterName`, and `matchFeedback` are omitted
-
-        from `userState.searchFilter`.
-
-
-        Requires valid Cognito JWT authentication.
-
-        "
-      operationId: getSearchFilterPreviewProductListings
-      tags:
-        - Search Filters
-      parameters:
-        - name: userSearchFilterId
-          in: path
-          required: true
-          description: Unique identifier of the search filter
-          schema:
-            type: string
-          example: sf_4hyqf0gyxveazss7nby5hve5x2
-        - name: currency
-          in: query
-          required: false
-          description: Currency used to select indexed search prices; no request-time currency conversion occurs
-          schema:
-            $ref: "#/components/schemas/CurrencyData"
-          example: EUR
-        - name: language
-          in: query
-          required: false
-          description: "Preferred language for localized content.
-
-            Defaults to `en` when omitted.
-
-            "
-          schema:
-            $ref: "#/components/schemas/LanguageData"
-          example: de
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Product match preview retrieved successfully
-          headers:
-            Cache-Control:
-              description: Cache control directive — always set to `no-store`
-              schema:
-                type: string
-              example: no-store
-            Access-Control-Allow-Origin:
-              description: CORS header
-              schema:
-                type: string
-              example: "*"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SearchFilterMatchProductCollectionData"
-              example:
-                items:
-                  - item:
-                      productListingId: pl_5xdb465tg1enarx2knf04mxbxj
-                      productListingTitleSlugId: golden-cufflinks-a1b2c3
-                      eventId: evt_69wh1chr82fen9vvyk6n3mh80m
-                      source:
-                        listingSourceId: ls_6rd827eqfefsva9teecmwa3ate
-                        name: Curated Antiques
-                        slugId: curated-antiques
-                      sourceListingId: 6ba7b810
-                      title:
-                        text: Pair of Golden Cufflinks
-                        language: en
-                      price:
-                        currency: EUR
-                        amount: 2999
-                      availability: IN_STOCK
-                      url: https://curated-antiques.example/product-listings/golden-cufflinks
-                      viewUrl: https://curated-antiques.example/product-listings/golden-cufflinks?utm_source=aura_historia&utm_medium=referral
-                      images:
-                        - url: https://curated-antiques.example/images/golden-cufflinks-1.jpg
-                      contentPolicy:
-                        decision: ALLOWED
-                      created: "2024-01-01T10:00:00Z"
-                      updated: "2024-01-01T12:00:00Z"
-                    userState:
-                      watchlist:
-                        watching: false
-                        notifications: false
-                      contentVisibility:
-                        showUnassessedOrSensitiveContent: false
-                      notification:
-                        unseenNotificationIds: []
-                      searchFilter:
-                        matched: true
-                        hidden: false
-                        matchReason: The cufflinks match the saved enhanced description for vintage golden accessories.
-                size: 1
-                total: 1
-                searchAfter: null
-        "400":
-          description: Bad request - invalid parameters
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              examples:
-                search_after_not_supported:
-                  summary: Client pagination cursor is not supported
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_QUERY_PARAMETER_VALUE
-                    source:
-                      field: searchAfter
-                      type: QUERY
-                    detail: Remove pagination parameters; this endpoint always returns a fixed-size preview.
-                size_not_supported:
-                  summary: Client pagination size is not supported
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_QUERY_PARAMETER_VALUE
-                    source:
-                      field: size
-                      type: QUERY
-                    detail: Remove pagination parameters; this endpoint always returns a fixed-size preview.
-                missing_search_filter_id:
-                  summary: Missing search filter ID
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: BAD_PATH_PARAMETER_VALUE
-                    source:
-                      field: userSearchFilterId
-                      type: PATH
-                invalid_object_id:
-                  summary: Invalid search filter ID format
-                  value:
-                    status: 400
-                    title: Bad Request
-                    error: INVALID_OBJECT_ID
-                    source:
-                      field: userSearchFilterId
-                      type: PATH
-                    detail: must be a valid UserSearchFilter ID
-        "401":
-          description: Unauthorized - invalid or missing JWT token
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 401
-                title: Unauthorized
-                error: UNAUTHORIZED
-        "404":
-          description: Search filter not found
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 404
-                title: Not Found
-                error: SEARCH_FILTER_NOT_FOUND
-        "500":
-          description: Internal server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-              example:
-                status: 500
-                title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
   /api/v1/me/search-filters/{userSearchFilterId}/matches:
     get:
-      summary: List hydrated persisted matches for a search filter
-      description:
-        "Retrieves full localized personalized Product details for persisted matches of the given saved search
-        filter and authenticated user.
-
-        Results use fixed ascending match-creation order and are paginated with the tie-safe RFC3339 match-creation timestamp
-        plus ProductListing ID `searchAfter` cursor.
+      summary: List persisted matches for a saved search filter
+      description: >-
+        Returns persisted product-listing matches associated with the authenticated user’s saved
+        search filter. Results are read from stored match state and returned with cursor-based
+        pagination in ascending persisted match-creation order. This endpoint does not execute a
+        live search or preview the filter against current product listings.
 
         Requires a Cognito JWT or an Aura access token with `search-filters:write`.
-
-        "
-      operationId: getSearchFilterMatches
+      operationId: listSearchFilterMatches
       tags:
         - Search Filters
       parameters:
         - name: userSearchFilterId
           in: path
           required: true
-          description: Unique identifier of the search filter
+          description: Canonical Aura Historia UserSearchFilter ID.
           schema:
             type: string
           example: sf_4hyqf0gyxveazss7nby5hve5x2
@@ -2810,32 +2602,38 @@ paths:
         - name: currency
           in: query
           required: false
-          description: Display currency. Defaults to `EUR`.
+          description: Currency used for the returned product-listing representation. Defaults to `EUR`.
           schema:
             $ref: "#/components/schemas/CurrencyData"
-        - name: searchAfter
-          in: query
-          required: false
-          description: JSON-encoded `[RFC3339 match creation timestamp, ProductListing ID]` cursor from the preceding page.
-          schema:
-            type: string
-          example: '["2024-01-01T10:00:00Z","pl_6zydvb8xqqfcntt760grgm41t4"]'
+          example: EUR
         - name: size
           in: query
           required: false
-          description: Number of matched product-listings to return per page
+          description: >-
+            Requested page size. The runtime defaults to 21 and clamps successfully parsed unsigned
+            values to the inclusive range 1..100: `0` becomes 1 and values above 100 become 100.
+            Negative, malformed, and non-integer values are rejected with `BAD_QUERY_PARAMETER_VALUE`.
           schema:
             type: integer
-            minimum: 1
-            maximum: 100
+            format: int64
             default: 21
           example: 21
+        - name: searchAfter
+          in: query
+          required: false
+          description: >-
+            Cursor returned by the preceding page. It is a JSON string containing `[RFC3339 persisted
+            match creation timestamp, canonical ProductListing ID]`; send the returned tuple as this
+            query parameter to continue. The timestamp and ProductListing ID make the ascending cursor tie-safe.
+          schema:
+            type: string
+          example: '["2026-08-05T12:30:00Z","pl_6zydvb8xqqfcntt760grgm41t4"]'
       security:
         - BearerAuth: []
         - AccessTokenAuth: []
       responses:
         "200":
-          description: Hydrated search-filter matched product-listings retrieved successfully
+          description: Persisted search-filter matches retrieved successfully
           headers:
             Cache-Control:
               description: Cache control directive — always set to `no-store`
@@ -2851,63 +2649,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchFilterMatchProductCollectionData"
-              example:
-                items:
-                  - item:
-                      productListingId: pl_6zydvb8xqqfcntt760grgm41t4
-                      productListingTitleSlugId: golden-accessory-a1b2c3
-                      eventId: evt_08nrsmex2je2dvsyh01v2kh78a
-                      source:
-                        listingSourceId: ls_47thsmbtzte7mb4jn2baczc2z2
-                        name: Golden Listings
-                        slugId: golden-listings
-                      sourceListingId: accessory-1
-                      pricing:
-                        source:
-                          price:
-                            amount: 12500
-                            currency: GBP
-                        display:
-                          price:
-                            amount: 14780
-                            currency: EUR
-                        valuation:
-                          type: CURRENT
-                          fxRateId: fx_19d49874hpfeq8fsfpxpmrc9fp
-                          capturedAt: "2026-08-15T10:00:00Z"
-                      availability: IN_STOCK
-                      lifecycle: ACTIVE
-                      url: https://example.test/accessory-1
-                      viewUrl: https://example.test/accessory-1
-                      images: []
-                      auction: {}
-                      created: "2024-01-01T10:00:00Z"
-                      updated: "2024-01-01T12:00:00Z"
-                    userState:
-                      watchlist:
-                        watching: false
-                        notifications: false
-                      contentVisibility:
-                        showUnassessedOrSensitiveContent: false
-                      notification:
-                        unseenNotificationIds: []
-                      searchFilter:
-                        matched: true
-                        hidden: false
-                size: 1
-                total: null
-                searchAfter:
-                  - "2024-01-01T10:00:00Z"
-                  - pl_6zydvb8xqqfcntt760grgm41t4
         "400":
-          description: Bad request - invalid parameters
+          description: Bad request - invalid path or query parameter
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ApiError"
               examples:
-                invalid_search_after_timestamp:
-                  summary: Invalid searchAfter timestamp
+                invalid_search_after:
+                  summary: Malformed searchAfter cursor
                   value:
                     status: 400
                     title: Bad Request
@@ -2915,17 +2665,27 @@ paths:
                     source:
                       field: searchAfter
                       type: QUERY
-                    detail: Invalid RFC3339 timestamp format
-                missing_search_filter_id:
-                  summary: Missing search filter ID
+                    detail: searchAfter must contain an RFC3339 timestamp and ProductListing ID.
+                invalid_size:
+                  summary: Malformed page size
                   value:
                     status: 400
                     title: Bad Request
-                    error: BAD_PATH_PARAMETER_VALUE
+                    error: BAD_QUERY_PARAMETER_VALUE
                     source:
-                      field: userSearchFilterId
-                      type: PATH
-                invalid_object_id:
+                      field: size
+                      type: QUERY
+                invalid_search_after_product_listing_id:
+                  summary: Noncanonical ProductListing ID in searchAfter
+                  value:
+                    status: 400
+                    title: Bad Request
+                    error: INVALID_OBJECT_ID
+                    source:
+                      field: searchAfter
+                      type: QUERY
+                    detail: must be a valid ProductListing ID
+                invalid_search_filter_id:
                   summary: Invalid search filter ID format
                   value:
                     status: 400
@@ -2974,9 +2734,9 @@ paths:
               example:
                 status: 500
                 title: Internal Server Error
-                error: INTERNAL_SERVER_ERROR
+                error: SEARCH_FILTER_INTERNAL_ERROR
         "503":
-          description: Product details, persisted FX snapshots, or notification state are temporarily unavailable
+          description: Persisted-match details or pricing data are temporarily unavailable
           content:
             application/problem+json:
               schema:
@@ -14363,7 +14123,7 @@ components:
       example: email
     SearchFilterMatchProductCollectionData:
       type: object
-      description: Cursor-paginated full personalized Product details for persisted search-filter matches.
+      description: Cursor-paginated personalized ProductListing details for persisted search-filter matches.
       required:
         - items
         - size
@@ -14372,11 +14132,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PersonalizedProductListingDetailsData"
-          description: Matched product-listings in persisted-match order.
+          description: Persisted matches in ascending match-creation order.
         size:
           type: integer
-          minimum: 0
-          description: Number of matched product-listings in the current page.
+          minimum: 1
+          maximum: 100
+          description: Effective page size after runtime defaulting and clamping.
           example: 21
         searchAfter:
           type: array
@@ -14384,16 +14145,17 @@ components:
           maxItems: 2
           items:
             type: string
-          description: "[RFC3339 match creation timestamp, ProductListing ID] cursor for the next page, when present."
-          nullable: true
+          description: >-
+            Next-page cursor, present only when another page is available. It contains `[RFC3339 persisted
+            match creation timestamp, canonical ProductListing ID]`; serialize the returned array as the
+            `searchAfter` query parameter for the next request.
           example:
-            - "2024-01-15T08:00:00Z"
+            - "2026-08-05T12:30:00Z"
             - pl_6zydvb8xqqfcntt760grgm41t4
         total:
           type: integer
           minimum: 0
           description: Total number of persisted matches, when available.
-          nullable: true
           example: 127
     UserCollectionData:
       type: object
@@ -16211,7 +15973,7 @@ tags:
   - name: ListingSources
     description: ListingSource retrieval, authenticated creation and update, and caller-administered listing sources.
   - name: Search Filters
-    description: Saved search creation, maintenance, live previews, stored matches, and match-feedback workflows.
+    description: Saved search creation, maintenance, persisted matches, and match-feedback workflows.
   - name: Watchlist
     description: Watchlist membership, notification preferences, and watchlist-specific product state for authenticated users.
   - name: Notifications
