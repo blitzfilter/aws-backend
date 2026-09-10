@@ -372,7 +372,7 @@ mod tests {
         assert!(matches!(
             result,
             Ok(PartyDetailsView { ref party_slug_id, party_id, .. })
-                if party_slug_id.as_ref() == format!("antik-und-stil-{party_id}")
+                if party_slug_id.as_ref() == format!("antik-und-stil-{}", party_id.as_uuid())
         ));
         let state = match state.lock() {
             Ok(state) => state,
