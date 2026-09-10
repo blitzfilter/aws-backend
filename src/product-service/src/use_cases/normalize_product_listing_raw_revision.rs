@@ -567,7 +567,7 @@ where
                         normalization_revisions = 0_u64,
                         normalization_failures = 1_u64,
                         normalization_batch_latency_ms = started.elapsed().as_millis() as u64,
-                        product_listing_raw_stream_id = %failure.product_listing_raw_stream_id.as_uuid(),
+                        product_listing_raw_stream_id = %failure.product_listing_raw_stream_id,
                         outcome = "stream_failure",
                         error_code = failure.error_code,
                         "raw product listing reconciliation stream failed"
@@ -579,7 +579,7 @@ where
                         normalization_revisions = 1_u64,
                         normalization_failures = 0_u64,
                         normalization_batch_latency_ms = started.elapsed().as_millis() as u64,
-                        product_listing_raw_stream_id = %revision.product_listing_raw_stream_id.as_uuid(),
+                        product_listing_raw_stream_id = %revision.product_listing_raw_stream_id,
                         revision = revision.revision,
                         outcome = revision.outcome.as_str(),
                         "raw product listing normalization metric"
