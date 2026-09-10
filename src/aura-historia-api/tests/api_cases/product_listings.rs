@@ -2,8 +2,9 @@ use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
 
 use api_support::{
     assert_problem, aura_api_app_with_failed_search_embedding,
-    aura_api_app_with_product_listing_search_caches, json_response, seed_access_token_for,
-    seed_current_fx_snapshot, seed_product, seed_user,
+    aura_api_app_with_product_listing_search_caches,
+    aura_api_app_with_short_ttl_product_listing_search_caches, json_response,
+    seed_access_token_for, seed_current_fx_snapshot, seed_product, seed_user,
 };
 use application::transaction::{Transaction, UnitOfWork};
 
@@ -49,6 +50,8 @@ static AURA_API_WITH_FAILED_EMBEDDING: AuraHistoriaApi =
     AuraHistoriaApi::new(aura_api_app_with_failed_search_embedding);
 static AURA_API_WITH_SEARCH_CACHES: AuraHistoriaApi =
     AuraHistoriaApi::new(aura_api_app_with_product_listing_search_caches);
+static AURA_API_WITH_SHORT_TTL_SEARCH_CACHES: AuraHistoriaApi =
+    AuraHistoriaApi::new(aura_api_app_with_short_ttl_product_listing_search_caches);
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_get_product_details_by_id() {
@@ -102,8 +105,13 @@ async fn should_get_product_details_by_id() {
     );
 }
 
-#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API_WITH_SEARCH_CACHES])]
-async fn should_keep_admin_source_reads_fresh_while_public_search_source_cache_expires() {
+#[aura_integration_test(services = [
+    BUSINESS_SCHEMA,
+    OPENSEARCH,
+    &AURA_API_WITH_SEARCH_CACHES,
+    &AURA_API_WITH_SHORT_TTL_SEARCH_CACHES
+])]
+async fn should_keep_admin_source_reads_fresh_while_public_search_uses_a_warm_cache() {
     let product_listing_id = seed_product().await;
     let pool = get_postgres_client().await;
     let listing_source_id: uuid::Uuid = sqlx::query_scalar(
@@ -128,6 +136,8 @@ async fn should_keep_admin_source_reads_fresh_while_public_search_source_cache_e
     index_existing_listing_source_document(candidate).await;
 
     let path = "/api/v1/product-listings?language=en&currency=USD&productQuery[0]=Cached%20source%20freshness%20candidate";
+    let admin_id = seed_user("ADMIN").await;
+    let token = String::from(seed_access_token_for(admin_id, HashSet::new()).await);
     let (initial_response, _) = get_json_from(AURA_API_WITH_SEARCH_CACHES.base_url(), path).await;
     let (initial_status, initial_body) = json_response(initial_response).await;
     assert_eq!(
@@ -140,8 +150,20 @@ async fn should_keep_admin_source_reads_fresh_while_public_search_source_cache_e
         .unwrap_or_else(|| panic!("initial search result has no view URL"))
         .to_owned();
 
-    let admin_id = seed_user("ADMIN").await;
-    let token = String::from(seed_access_token_for(admin_id, HashSet::new()).await);
+    let (short_ttl_initial_response, _) =
+        get_json_from(AURA_API_WITH_SHORT_TTL_SEARCH_CACHES.base_url(), path).await;
+    let (short_ttl_initial_status, short_ttl_initial_body) =
+        json_response(short_ttl_initial_response).await;
+    assert_eq!(
+        reqwest::StatusCode::OK,
+        short_ttl_initial_status,
+        "response body: {short_ttl_initial_body}"
+    );
+    assert_eq!(
+        Some(initial_view_url.as_str()),
+        short_ttl_initial_body["items"][0]["item"]["viewUrl"].as_str()
+    );
+
     let client = reqwest::Client::new();
     let update = client
         .patch(format!(
@@ -196,7 +218,8 @@ async fn should_keep_admin_source_reads_fresh_while_public_search_source_cache_e
 
     let updated_view_url = "https://prf.hn/click/camref:campaign123/pubref:aurahistoria/destination:https%3A%2F%2Fcached-source.example%2Fproduct";
     for _ in 0..16 {
-        let (response, _) = get_json_from(AURA_API_WITH_SEARCH_CACHES.base_url(), path).await;
+        let (response, _) =
+            get_json_from(AURA_API_WITH_SHORT_TTL_SEARCH_CACHES.base_url(), path).await;
         let (status, body) = json_response(response).await;
         assert_eq!(reqwest::StatusCode::OK, status, "response body: {body}");
         if body["items"][0]["item"]["viewUrl"].as_str() == Some(updated_view_url) {

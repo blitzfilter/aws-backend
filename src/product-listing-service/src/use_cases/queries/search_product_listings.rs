@@ -357,7 +357,8 @@ where
             let user_state_lookup = personalization_user_id(&context.principal)
                 .map(|user_id| product_listing_user_state_lookup(user_id, &listing_ids));
 
-            let (sources, user_states, assessments) = match self.read_execution_policy {
+            let presentation_started = Instant::now();
+            let summaries = match self.read_execution_policy {
                 ProductListingSearchReadExecutionPolicy::Sequential => {
                     let sources = measure_search_stage(
                         "source_resolution",
@@ -365,23 +366,30 @@ where
                     )
                     .await
                     .map_err(ProductListingSummaryPersonalizationError::from)?;
-                    let user_states = match user_state_lookup.as_ref() {
-                        Some(lookup) => Some(
-                            measure_search_stage(
-                                "user_state_resolution",
-                                self.user_states.find_for_user(lookup),
-                            )
-                            .await
-                            .map_err(ProductListingSummaryPersonalizationError::from)?,
-                        ),
-                        None => None,
-                    };
+                    let mut items = attach_listing_sources(result.items, &sources)?
+                        .into_iter()
+                        .map(|item| Personalized {
+                            item,
+                            user_state: None,
+                        })
+                        .collect::<Vec<_>>();
+
+                    if let Some(lookup) = user_state_lookup.as_ref() {
+                        let user_states = measure_search_stage(
+                            "user_state_resolution",
+                            self.user_states.find_for_user(lookup),
+                        )
+                        .await
+                        .map_err(ProductListingSummaryPersonalizationError::from)?;
+                        apply_product_user_states(&mut items, &user_states)?;
+                    }
+
                     let assessments = measure_search_stage(
                         "assessment_resolution",
                         self.assessments.find_current_assessments(&listing_ids),
                     )
                     .await?;
-                    (sources, user_states, assessments)
+                    present_product_summaries_from_assessments(items, &assessments)
                 }
                 ProductListingSearchReadExecutionPolicy::Concurrent => {
                     let (source_result, user_state_result, assessment_result) = tokio::join!(
@@ -396,8 +404,7 @@ where
                                     self.user_states.find_for_user(lookup),
                                 )
                                 .await
-                                .map(Some)
-                                .map_err(ProductListingSummaryPersonalizationError::from),
+                                .map(Some),
                                 None => Ok(None),
                             }
                         },
@@ -406,27 +413,27 @@ where
                             self.assessments.find_current_assessments(&listing_ids),
                         ),
                     );
-                    (
-                        source_result.map_err(ProductListingSummaryPersonalizationError::from)?,
-                        user_state_result?,
-                        assessment_result?,
-                    )
+                    let sources =
+                        source_result.map_err(ProductListingSummaryPersonalizationError::from)?;
+                    let mut items = attach_listing_sources(result.items, &sources)?
+                        .into_iter()
+                        .map(|item| Personalized {
+                            item,
+                            user_state: None,
+                        })
+                        .collect::<Vec<_>>();
+
+                    if let Some(user_states) = user_state_result
+                        .map_err(ProductListingSummaryPersonalizationError::from)?
+                        .as_ref()
+                    {
+                        apply_product_user_states(&mut items, user_states)?;
+                    }
+
+                    let assessments = assessment_result?;
+                    present_product_summaries_from_assessments(items, &assessments)
                 }
             };
-
-            let presentation_started = Instant::now();
-            let items = attach_listing_sources(result.items, &sources)?
-                .into_iter()
-                .map(|item| Personalized {
-                    item,
-                    user_state: None,
-                })
-                .collect::<Vec<_>>();
-            let mut items = items;
-            if let Some(user_states) = user_states.as_ref() {
-                apply_product_user_states(&mut items, user_states)?;
-            }
-            let summaries = present_product_summaries_from_assessments(items, &assessments);
             record_search_stage("final_presentation", presentation_started, "success");
             summaries
         };
@@ -754,6 +761,21 @@ mod tests {
     struct FailingAssessmentReader;
 
     #[derive(Clone)]
+    struct EmptyListingSourceSummaryReader {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct FailingUserStatesReader {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct CountingFailingAssessmentReader {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
     struct BarrierListingSourceSummaryReader {
         barrier: Arc<Barrier>,
         calls: Arc<AtomicUsize>,
@@ -927,6 +949,20 @@ mod tests {
     }
 
     #[async_trait::async_trait]
+    impl ListingSourceSummaryReader for EmptyListingSourceSummaryReader {
+        async fn find_summaries(
+            &self,
+            _listing_source_ids: &[ListingSourceId],
+        ) -> Result<
+            HashMap<ListingSourceId, crate::ports::ListingSourceSummaryWithReferral>,
+            crate::ports::ListingSourceSummaryReadError,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(HashMap::new())
+        }
+    }
+
+    #[async_trait::async_trait]
     impl ListingSourceSummaryReader for BarrierListingSourceSummaryReader {
         async fn find_summaries(
             &self,
@@ -1055,6 +1091,22 @@ mod tests {
     }
 
     #[async_trait::async_trait]
+    impl ProductListingContentAssessmentReader for CountingFailingAssessmentReader {
+        async fn find_current_assessments(
+            &self,
+            _product_listing_ids: &[ProductListingId],
+        ) -> Result<
+            HashMap<ProductListingId, crate::ports::ProductListingContentAssessment>,
+            ProductListingContentAssessmentReadError,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(ProductListingContentAssessmentReadError::QueryFailed {
+                source: box_error(std::io::Error::other("assessment database unavailable")),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
     impl ProductListingContentAssessmentReader for FailingAssessmentReader {
         async fn find_current_assessments(
             &self,
@@ -1065,6 +1117,22 @@ mod tests {
         > {
             Err(ProductListingContentAssessmentReadError::QueryFailed {
                 source: box_error(std::io::Error::other("assessment database unavailable")),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingUserStateReader for FailingUserStatesReader {
+        async fn find_for_user(
+            &self,
+            _lookup: &ProductListingUserStateLookup,
+        ) -> Result<
+            HashMap<ProductListingId, ProductListingUserState>,
+            ProductListingUserStateReadError,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(ProductListingUserStateReadError::QueryFailed {
+                source: box_error(std::io::Error::other("user state database unavailable")),
             })
         }
     }
@@ -1306,6 +1374,101 @@ mod tests {
             result,
             Err(ProductListingContentAssessmentReadError::QueryFailed { .. })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_prioritize_missing_source_over_later_read_failures_for_each_execution_policy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for policy in [
+            ProductListingSearchReadExecutionPolicy::Sequential,
+            ProductListingSearchReadExecutionPolicy::Concurrent,
+        ] {
+            let state = state();
+            lock_state(&state).search_result = Some(Ok(search_result()?));
+            let source_calls = Arc::new(AtomicUsize::new(0));
+            let user_state_calls = Arc::new(AtomicUsize::new(0));
+            let assessment_calls = Arc::new(AtomicUsize::new(0));
+            let handler = SearchProductListingsHandler::new(
+                search_reader(&state),
+                FakeFxRateSnapshotReader {
+                    state: Arc::clone(&state),
+                },
+                FakeEmbeddingGenerator {
+                    state: Arc::clone(&state),
+                },
+                EmptyListingSourceSummaryReader {
+                    calls: Arc::clone(&source_calls),
+                },
+                FailingUserStatesReader {
+                    calls: Arc::clone(&user_state_calls),
+                },
+                CountingFailingAssessmentReader {
+                    calls: Arc::clone(&assessment_calls),
+                },
+            )
+            .with_read_execution_policy(policy);
+
+            assert!(matches!(
+                handler
+                    .execute(&user_context(UserId::new()), request())
+                    .await,
+                Err(SearchProductListingsError::ListingSourceSummaryMissing { .. })
+            ));
+            assert_eq!(1, source_calls.load(Ordering::SeqCst));
+            let later_calls = usize::from(matches!(
+                policy,
+                ProductListingSearchReadExecutionPolicy::Concurrent
+            ));
+            assert_eq!(later_calls, user_state_calls.load(Ordering::SeqCst));
+            assert_eq!(later_calls, assessment_calls.load(Ordering::SeqCst));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_prioritize_missing_user_state_over_assessment_failure_for_each_execution_policy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for policy in [
+            ProductListingSearchReadExecutionPolicy::Sequential,
+            ProductListingSearchReadExecutionPolicy::Concurrent,
+        ] {
+            let state = state();
+            lock_state(&state).search_result = Some(Ok(search_result()?));
+            let assessment_calls = Arc::new(AtomicUsize::new(0));
+            let handler = SearchProductListingsHandler::new(
+                search_reader(&state),
+                FakeFxRateSnapshotReader {
+                    state: Arc::clone(&state),
+                },
+                FakeEmbeddingGenerator {
+                    state: Arc::clone(&state),
+                },
+                StaticListingSourceSummaryReader,
+                FakeUserStatesReader {
+                    state: Arc::clone(&state),
+                },
+                CountingFailingAssessmentReader {
+                    calls: Arc::clone(&assessment_calls),
+                },
+            )
+            .with_read_execution_policy(policy);
+
+            assert!(matches!(
+                handler
+                    .execute(&user_context(UserId::new()), request())
+                    .await,
+                Err(SearchProductListingsError::ProductListingUserStateMissing)
+            ));
+            let assessment_call_count = usize::from(matches!(
+                policy,
+                ProductListingSearchReadExecutionPolicy::Concurrent
+            ));
+            assert_eq!(
+                assessment_call_count,
+                assessment_calls.load(Ordering::SeqCst)
+            );
+        }
         Ok(())
     }
 

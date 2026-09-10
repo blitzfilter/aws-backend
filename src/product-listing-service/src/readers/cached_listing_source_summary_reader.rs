@@ -169,9 +169,9 @@ impl<R> CachedListingSourceSummaryReader<R> {
     async fn live_entries(
         &self,
         ids: &[ListingSourceId],
-        now: Instant,
     ) -> HashMap<ListingSourceId, ListingSourceSummaryWithReferral> {
         let mut state = self.state.lock().await;
+        let now = Instant::now();
         let expired = ids
             .iter()
             .copied()
@@ -269,7 +269,7 @@ where
             return result;
         }
 
-        let hits = self.live_entries(&ids, Instant::now()).await;
+        let hits = self.live_entries(&ids).await;
         let misses = missing_ids(&ids, &hits);
         if misses.is_empty() {
             emit_source_cache_metric(
@@ -287,7 +287,7 @@ where
         let gate_started = Instant::now();
         let _fill_guard = self.fill_gate.lock().await;
         let fill_gate_wait = gate_started.elapsed();
-        let hits = self.live_entries(&ids, Instant::now()).await;
+        let hits = self.live_entries(&ids).await;
         let misses = missing_ids(&ids, &hits);
         if misses.is_empty() {
             emit_source_cache_metric(
@@ -496,7 +496,10 @@ mod tests {
         ListingSourceName, ListingSourceSlugId, PartnerizeCamref, ReferralConfiguration,
     };
     use std::collections::VecDeque;
+    use std::future::{Future, poll_fn};
+    use std::pin::Pin;
     use std::sync::{Mutex as StdMutex, MutexGuard};
+    use std::task::Poll;
     use tokio::sync::Notify;
 
     enum Reply {
@@ -568,6 +571,25 @@ mod tests {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         }
+    }
+
+    async fn assert_pending_once<F: Future + ?Sized>(mut future: Pin<&mut F>) {
+        poll_fn(|cx| {
+            assert!(
+                future.as_mut().poll(cx).is_pending(),
+                "future completed before the controlled dependency was released"
+            );
+            Poll::Ready(())
+        })
+        .await;
+    }
+
+    async fn poll_ready_once<F: Future + ?Sized>(mut future: Pin<&mut F>) -> F::Output {
+        poll_fn(|cx| match future.as_mut().poll(cx) {
+            Poll::Ready(result) => Poll::Ready(result),
+            Poll::Pending => panic!("future waited for an unrelated fill gate"),
+        })
+        .await
     }
 
     fn summary(
@@ -707,6 +729,72 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn should_recheck_source_expiry_after_waiting_for_the_state_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let id = ListingSourceId::new();
+        let old = summary(id, None)?;
+        let new = summary(
+            id,
+            Some(ReferralConfiguration::Partnerize {
+                camref: PartnerizeCamref::try_from("newCampaign")?,
+            }),
+        )?;
+        reader.push(Reply::Value(summaries([new.clone()])));
+        let cache = cache(reader.clone())?;
+        let mut state = cache.state.lock().await;
+        assert!(admit_entry(
+            &mut state,
+            id,
+            old,
+            Instant::now() + Duration::from_secs(1),
+            cache.config.max_entries,
+            cache.config.max_accounted_bytes,
+        ));
+
+        let ids = [id];
+        let mut request = Box::pin(cache.find_summaries(&ids));
+        assert_pending_once(request.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        drop(state);
+
+        assert_eq!(summaries([new]), request.await?);
+        assert_eq!(vec![vec![id]], reader.requests());
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_propagate_source_load_error_after_waiting_for_the_state_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let id = ListingSourceId::new();
+        reader.push(Reply::Error);
+        let cache = cache(reader.clone())?;
+        let mut state = cache.state.lock().await;
+        assert!(admit_entry(
+            &mut state,
+            id,
+            summary(id, None)?,
+            Instant::now() + Duration::from_secs(1),
+            cache.config.max_entries,
+            cache.config.max_accounted_bytes,
+        ));
+
+        let ids = [id];
+        let mut request = Box::pin(cache.find_summaries(&ids));
+        assert_pending_once(request.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        drop(state);
+
+        assert!(matches!(
+            request.await,
+            Err(ListingSourceSummaryReadError::QueryFailed { .. })
+        ));
+        assert_eq!(vec![vec![id]], reader.requests());
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn should_expire_at_the_fixed_deadline_without_extending_hot_hits()
     -> Result<(), Box<dyn std::error::Error>> {
         let reader = FakeReader::default();
@@ -746,20 +834,79 @@ mod tests {
         });
         let cache = cache(reader.clone())?;
 
-        let first = tokio::spawn({
-            let cache = cache.clone();
-            async move { cache.find_summaries(&[id]).await }
-        });
+        let ids = [id];
+        let mut first = Box::pin(cache.find_summaries(&ids));
+        assert_pending_once(first.as_mut()).await;
         entered.notified().await;
-        let second = tokio::spawn({
-            let cache = cache.clone();
-            async move { cache.find_summaries(&[id]).await }
-        });
+        let mut second = Box::pin(cache.find_summaries(&ids));
+        assert_pending_once(second.as_mut()).await;
+        assert_eq!(vec![vec![id]], reader.requests());
         release.notify_one();
 
-        assert_eq!(value, first.await??);
-        assert_eq!(value, second.await??);
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(value, first?);
+        assert_eq!(value, second?);
         assert_eq!(vec![vec![id]], reader.requests());
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_recheck_every_requested_key_after_waiting_for_the_fill_gate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let first = ListingSourceId::new();
+        let second = ListingSourceId::new();
+        let old = summary(first, None)?;
+        let new_first = summary(
+            first,
+            Some(ReferralConfiguration::Partnerize {
+                camref: PartnerizeCamref::try_from("newCampaign")?,
+            }),
+        )?;
+        let new_second = summary(second, None)?;
+        let values = summaries([new_first.clone(), new_second.clone()]);
+        reader.push(Reply::Value(values.clone()));
+        let cache = cache(reader.clone())?;
+        {
+            let mut state = cache.state.lock().await;
+            assert!(admit_entry(
+                &mut state,
+                first,
+                old,
+                Instant::now() + Duration::from_secs(1),
+                cache.config.max_entries,
+                cache.config.max_accounted_bytes,
+            ));
+        }
+        let fill_guard = cache.fill_gate.lock().await;
+        let ids = [first, second];
+        let mut request = Box::pin(cache.find_summaries(&ids));
+        assert_pending_once(request.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        drop(fill_guard);
+
+        assert_eq!(values, request.await?);
+        assert_eq!(vec![vec![first, second]], reader.requests());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_a_warm_hit_without_waiting_for_an_unrelated_fill()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let id = ListingSourceId::new();
+        let value = summary(id, None)?;
+        reader.push(Reply::Value(summaries([value.clone()])));
+        let cache = cache(reader)?;
+        assert_eq!(
+            summaries([value.clone()]),
+            cache.find_summaries(&[id]).await?
+        );
+        let _fill_guard = cache.fill_gate.lock().await;
+        let ids = [id];
+        let mut hit = Box::pin(cache.find_summaries(&ids));
+
+        assert_eq!(summaries([value]), poll_ready_once(hit.as_mut()).await?);
         Ok(())
     }
 
@@ -856,6 +1003,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_evict_by_entry_count_independently_of_accounted_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let first = ListingSourceId::new();
+        let second = ListingSourceId::new();
+        let first_value = summary(first, None)?;
+        let second_value = summary(second, None)?;
+        reader.push(Reply::Value(summaries([first_value.clone()])));
+        reader.push(Reply::Value(summaries([second_value.clone()])));
+        reader.push(Reply::Value(summaries([first_value])));
+        let cache = CachedListingSourceSummaryReader::new(
+            reader.clone(),
+            SourceSearchCacheConfig::new(true, 1, 100_000, Duration::from_secs(5))?,
+        );
+
+        let _ = cache.find_summaries(&[first]).await?;
+        let _ = cache.find_summaries(&[second]).await?;
+        let _ = cache.find_summaries(&[first]).await?;
+
+        assert_eq!(
+            vec![vec![first], vec![second], vec![first]],
+            reader.requests()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_evict_by_total_accounted_bytes_independently_of_entry_count()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let first = ListingSourceId::new();
+        let second = ListingSourceId::new();
+        let mut first_value = summary(first, None)?;
+        first_value.summary.slug_id = ListingSourceSlugId::raw("a".repeat(100))?;
+        let mut second_value = summary(second, None)?;
+        second_value.summary.slug_id = ListingSourceSlugId::raw("b".repeat(100))?;
+        reader.push(Reply::Value(summaries([first_value.clone()])));
+        reader.push(Reply::Value(summaries([second_value.clone()])));
+        reader.push(Reply::Value(summaries([first_value])));
+        let cache = CachedListingSourceSummaryReader::new(
+            reader.clone(),
+            SourceSearchCacheConfig::new(true, 10, 300, Duration::from_secs(5))?,
+        );
+
+        let _ = cache.find_summaries(&[first]).await?;
+        let _ = cache.find_summaries(&[second]).await?;
+        let _ = cache.find_summaries(&[first]).await?;
+
+        assert_eq!(
+            vec![vec![first], vec![second], vec![first]],
+            reader.requests()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_reject_per_entry_oversize_with_a_larger_total_budget()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let id = ListingSourceId::new();
+        let mut value = summary(id, None)?;
+        value.summary.slug_id = ListingSourceSlugId::raw("a".repeat(MAX_ENTRY_ACCOUNTED_BYTES))?;
+        let values = summaries([value]);
+        reader.push(Reply::Value(values.clone()));
+        reader.push(Reply::Value(values.clone()));
+        let cache = CachedListingSourceSummaryReader::new(
+            reader.clone(),
+            SourceSearchCacheConfig::new(
+                true,
+                10,
+                MAX_ENTRY_ACCOUNTED_BYTES * 2,
+                Duration::from_secs(5),
+            )?,
+        );
+
+        assert_eq!(values, cache.find_summaries(&[id]).await?);
+        assert_eq!(values, cache.find_summaries(&[id]).await?);
+        assert_eq!(vec![vec![id], vec![id]], reader.requests());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_a_value_that_exceeds_the_total_budget_without_retaining_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let id = ListingSourceId::new();
+        let mut value = summary(id, None)?;
+        value.summary.slug_id = ListingSourceSlugId::raw("a".repeat(100))?;
+        let values = summaries([value]);
+        reader.push(Reply::Value(values.clone()));
+        reader.push(Reply::Value(values.clone()));
+        let cache = CachedListingSourceSummaryReader::new(
+            reader.clone(),
+            SourceSearchCacheConfig::new(true, 10, 200, Duration::from_secs(5))?,
+        );
+
+        assert_eq!(values, cache.find_summaries(&[id]).await?);
+        assert_eq!(values, cache.find_summaries(&[id]).await?);
+        assert_eq!(vec![vec![id], vec![id]], reader.requests());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_return_every_value_in_a_page_that_exceeds_cache_capacity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let first = ListingSourceId::new();
+        let second = ListingSourceId::new();
+        let values = summaries([summary(first, None)?, summary(second, None)?]);
+        reader.push(Reply::Value(values.clone()));
+        let cache = CachedListingSourceSummaryReader::new(
+            reader,
+            SourceSearchCacheConfig::new(true, 1, 100_000, Duration::from_secs(5))?,
+        );
+
+        assert_eq!(values, cache.find_summaries(&[first, second]).await?);
+        assert_eq!(1, cache.state.lock().await.entries.len());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn should_return_an_oversized_source_without_retaining_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let reader = FakeReader::default();
@@ -886,7 +1154,11 @@ mod tests {
             SourceSearchCacheConfig::new(false, 2, 1_024, Duration::from_secs(5))?,
         );
 
+        let _state_guard = cache.state.lock().await;
+        let _fill_guard = cache.fill_gate.lock().await;
         assert_eq!(value, cache.find_summaries(&[id, id]).await?);
+        drop(_fill_guard);
+        drop(_state_guard);
         assert_eq!(value, cache.find_summaries(&[id]).await?);
         assert_eq!(vec![vec![id], vec![id]], reader.requests());
         Ok(())

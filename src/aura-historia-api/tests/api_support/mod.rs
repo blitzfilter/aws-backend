@@ -343,6 +343,19 @@ pub fn aura_api_app_with_product_listing_search_caches()
         app(test_state(
             TestEmbeddingGenerator::Success,
             ProductListingSearchCacheTestPolicy::Enabled {
+                source_ttl: std::time::Duration::from_secs(30),
+            },
+        )
+        .await)
+    })
+}
+
+pub fn aura_api_app_with_short_ttl_product_listing_search_caches()
+-> Pin<Box<dyn Future<Output = axum::Router> + Send>> {
+    Box::pin(async {
+        app(test_state(
+            TestEmbeddingGenerator::Success,
+            ProductListingSearchCacheTestPolicy::Enabled {
                 source_ttl: std::time::Duration::from_secs(1),
             },
         )

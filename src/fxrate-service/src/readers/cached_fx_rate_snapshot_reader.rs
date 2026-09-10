@@ -135,8 +135,9 @@ impl<R> CachedFxRateSnapshotReader<R> {
     }
 
     async fn cached_latest_at_or_before(&self, at: OffsetDateTime) -> Option<FxRateSnapshot> {
+        let state = self.state.lock().await;
         let now = Instant::now();
-        self.state.lock().await.latest.as_ref().and_then(|latest| {
+        state.latest.as_ref().and_then(|latest| {
             latest_is_usable(latest, at, now, self.config.latest_selection_ttl)
                 .then(|| latest.snapshot.as_ref().clone())
         })
@@ -405,7 +406,10 @@ mod tests {
     use fxrate_core::{FX_RATE_SCALE, FxRateGeneration, FxRateQuote, FxRateSource};
     use money::Currency;
     use std::collections::VecDeque;
+    use std::future::{Future, poll_fn};
+    use std::pin::Pin;
     use std::sync::{Mutex as StdMutex, MutexGuard};
+    use std::task::Poll;
     use strum::IntoEnumIterator;
     use tokio::sync::Notify;
 
@@ -501,6 +505,17 @@ mod tests {
         }
     }
 
+    async fn assert_pending_once<F: Future + ?Sized>(mut future: Pin<&mut F>) {
+        poll_fn(|cx| {
+            assert!(
+                future.as_mut().poll(cx).is_pending(),
+                "future completed before the controlled dependency was released"
+            );
+            Poll::Ready(())
+        })
+        .await;
+    }
+
     fn snapshot(
         id: FxRateId,
         captured_at: OffsetDateTime,
@@ -562,19 +577,17 @@ mod tests {
         });
         let cache = cache(reader.clone())?;
 
-        let first = tokio::spawn({
-            let cache = cache.clone();
-            async move { cache.find_by_id(id).await }
-        });
+        let mut first = Box::pin(cache.find_by_id(id));
+        assert_pending_once(first.as_mut()).await;
         entered.notified().await;
-        let second = tokio::spawn({
-            let cache = cache.clone();
-            async move { cache.find_by_id(id).await }
-        });
+        let mut second = Box::pin(cache.find_by_id(id));
+        assert_pending_once(second.as_mut()).await;
+        assert_eq!(vec![Lookup::ById(id)], reader.calls());
         release.notify_one();
 
-        assert_eq!(Some(value.clone()), first.await??);
-        assert_eq!(Some(value), second.await??);
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(Some(value.clone()), first?);
+        assert_eq!(Some(value), second?);
         assert_eq!(vec![Lookup::ById(id)], reader.calls());
         Ok(())
     }
@@ -594,19 +607,17 @@ mod tests {
         });
         let cache = cache(reader.clone())?;
 
-        let first = tokio::spawn({
-            let cache = cache.clone();
-            async move { cache.find_latest_at_or_before(at).await }
-        });
+        let mut first = Box::pin(cache.find_latest_at_or_before(at));
+        assert_pending_once(first.as_mut()).await;
         entered.notified().await;
-        let second = tokio::spawn({
-            let cache = cache.clone();
-            async move { cache.find_latest_at_or_before(at).await }
-        });
+        let mut second = Box::pin(cache.find_latest_at_or_before(at));
+        assert_pending_once(second.as_mut()).await;
+        assert_eq!(vec![Lookup::Latest(at)], reader.calls());
         release.notify_one();
 
-        assert_eq!(Some(value.clone()), first.await??);
-        assert_eq!(Some(value), second.await??);
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(Some(value.clone()), first?);
+        assert_eq!(Some(value), second?);
         assert_eq!(vec![Lookup::Latest(at)], reader.calls());
         Ok(())
     }
@@ -698,6 +709,60 @@ mod tests {
             vec![Lookup::Latest(initial_at), Lookup::Latest(third_at)],
             reader.calls()
         );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_recheck_latest_fx_expiry_after_waiting_for_the_state_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let at = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(100);
+        let old = snapshot(FxRateId::new(), at - time::Duration::seconds(1))?;
+        let new = snapshot(FxRateId::new(), at)?;
+        reader.push_latest(Reply::Value(Some(new.clone())));
+        let cache = cache(reader.clone())?;
+        let mut state = cache.state.lock().await;
+        state.latest = Some(LatestSelection {
+            snapshot: Arc::new(old),
+            selected_for: at,
+            fresh_until: Instant::now() + Duration::from_secs(1),
+        });
+
+        let mut request = Box::pin(cache.find_latest_at_or_before(at));
+        assert_pending_once(request.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        drop(state);
+
+        assert_eq!(Some(new), request.await?);
+        assert_eq!(vec![Lookup::Latest(at)], reader.calls());
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_propagate_latest_fx_load_error_after_waiting_for_the_state_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reader = FakeReader::default();
+        let at = OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(100);
+        let old = snapshot(FxRateId::new(), at - time::Duration::seconds(1))?;
+        reader.push_latest(Reply::ReadFailure);
+        let cache = cache(reader.clone())?;
+        let mut state = cache.state.lock().await;
+        state.latest = Some(LatestSelection {
+            snapshot: Arc::new(old),
+            selected_for: at,
+            fresh_until: Instant::now() + Duration::from_secs(1),
+        });
+
+        let mut request = Box::pin(cache.find_latest_at_or_before(at));
+        assert_pending_once(request.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        drop(state);
+
+        assert!(matches!(
+            request.await,
+            Err(FxRateSnapshotReadError::ReadFailed { .. })
+        ));
+        assert_eq!(vec![Lookup::Latest(at)], reader.calls());
         Ok(())
     }
 
@@ -909,12 +974,16 @@ mod tests {
             FxSearchCacheConfig::public_search_defaults(false),
         );
 
+        let _state_guard = cache.state.lock().await;
+        let _fill_guard = cache.fill_gate.lock().await;
         assert_eq!(Some(exact.clone()), cache.find_by_id(id).await?);
-        assert_eq!(Some(exact), cache.find_by_id(id).await?);
         assert_eq!(
             Some(latest.clone()),
             cache.find_latest_at_or_before(at).await?
         );
+        drop(_fill_guard);
+        drop(_state_guard);
+        assert_eq!(Some(exact), cache.find_by_id(id).await?);
         assert_eq!(Some(latest), cache.find_latest_at_or_before(at).await?);
         assert_eq!(4, reader.calls().len());
         Ok(())
