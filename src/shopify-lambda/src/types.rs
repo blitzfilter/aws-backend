@@ -1,9 +1,9 @@
 use listing_source_service::ports::ShopifySource;
 use product_listing_normalization::{
     NormalizationContext, NormalizationInputError, ProductListingNormalizationContextV1,
-    ProductListingNormalizationInput, ProductListingRawValuesPatch,
-    ProductListingRawValuesPriceFormat, ProductListingRawValuesV2, RawProductListingOperation,
-    RawProductListingPayloadFormat, RawProductListingValues, SourcePayload,
+    ProductListingNormalizationInput, ProductListingRawValues, ProductListingRawValuesPatch,
+    ProductListingRawValuesPriceFormat, RawProductListingOperation, RawProductListingPayloadFormat,
+    RawProductListingValues, SourcePayload,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -151,7 +151,7 @@ impl ShopifyProductEventKind {
             operation,
             RawProductListingPayloadFormat::ShopifyProduct,
             PAYLOAD_SCHEMA_VERSION,
-            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
             source_payload,
             raw_values,
             context,
@@ -199,7 +199,7 @@ fn active_raw_values(
     if source.currency.is_none() && matches!(&price, ProductListingRawValuesPatch::Set(_)) {
         return Err(ShopifyProductEventError::MissingListingSourceCurrency);
     }
-    let raw_values = ProductListingRawValuesV2 {
+    let raw_values = ProductListingRawValues {
         source_listing_id: product.id.to_string(),
         title: ProductListingRawValuesPatch::Set(title.to_owned()),
         description: match product.body_html.as_deref() {
@@ -323,7 +323,7 @@ mod tests {
             RawProductListingOperation::Upsert
         );
         assert_eq!(
-            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
             observation.input.raw_values_schema_version()
         );
         assert_eq!(
@@ -363,7 +363,7 @@ mod tests {
                 ShopifyListingAction::Capture(ShopifyRawObservation { input, .. })
                     if input.operation() == RawProductListingOperation::Delete
                         && input.raw_values_schema_version()
-                            == product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2
+                            == product_listing_normalization::PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION
             ));
         }
     }

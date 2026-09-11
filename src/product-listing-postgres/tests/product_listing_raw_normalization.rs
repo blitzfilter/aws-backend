@@ -1225,6 +1225,7 @@ async fn concurrent_normalization(max_revisions: u32) -> Result<(), Box<dyn std:
 fn upsert_values(price: &str) -> Value {
     json!({
         "sourceListingId": "source-123",
+        "priceFormat": "DISPLAY_TEXT",
         "title": {"action": "SET", "value": "An antique ceramic vase from an English collection"},
         "description": {"action": "SET", "value": ["This antique ceramic vase has documented provenance and careful restoration history."]},
         "price": {"action": "SET", "value": price},

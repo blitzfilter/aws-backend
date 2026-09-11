@@ -1,8 +1,8 @@
 # Auctions
 
-**Status:** iterations 01–03 implement the pure model, authoritative PostgreSQL state/journal/policy, and administrator HTTP create/detail/update. Public Auction reads, raw fields, listing membership, crawler extraction, and search behavior are not implemented. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
+**Status:** iterations 01–03 implement the pure model, authoritative PostgreSQL state/journal/policy, and administrator HTTP create/detail/update. Iteration 04 replaces ProductListing raw values with one current strict schema; it adds no auction fields or listing membership. Public Auction reads, auction raw fields, listing membership, crawler auction extraction, and search behavior are not implemented. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
 
-See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/03-auction-admin-api.md).
+See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/04-current-raw-contract.md).
 
 ## Scope
 

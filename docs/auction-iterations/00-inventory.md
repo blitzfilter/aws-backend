@@ -25,7 +25,7 @@ Read: root/src/docs instructions, architecture, object IDs, ProductListing, Part
 - Added the contract-owner and producer/consumer plan: [`docs/auction-implementation.md`](../auction-implementation.md).
 - Added this handoff record and registered the new documentation in `docs/AGENTS.md`.
 - Confirmed `auc` is absent from the current object-ID registry.
-- Recorded the separate existing protocol markers: raw-values schema version currently selects V1/V2, ProductListing journal schema is `1`, and worker SQS envelope schema is `2`. No successor is reserved or introduced.
+- Recorded the separate existing protocol markers at this iteration's baseline: raw-values schema version selected V1/V2, ProductListing journal schema was `1`, and worker SQS envelope schema was `2`. Iteration 04 supersedes only the raw-values contract with one current schema `1`; the journal and worker markers remain separate and unchanged.
 
 ## Actual inventory
 
@@ -49,7 +49,7 @@ The actual layout differs from a simple one-crate model: pure raw normalization 
 
 ## Current and planned contract distinction
 
-Current behavior is unchanged. Specifically, V1/V2 raw values and ambiguous listing timestamps remain active baseline contracts. Iteration 04 replaces raw versions directly; iteration 05 replaces timing; iteration 06 adds membership. No current doc claims future routes or model fields are already available.
+Historical baseline only: V1/V2 raw values and ambiguous listing timestamps were active when this inventory was written. Iteration 04 has replaced the raw-values contract directly; iteration 05 still owns timing and iteration 06 membership. No current doc claims future routes or model fields are already available.
 
 ## Reset finding
 

@@ -15199,7 +15199,7 @@ components:
           description:
             "Optional WooCommerce price string for a captured `status: publish` UPSERT.
 
-            Intake writes raw-values V2 `MACHINE_DECIMAL`. A nonblank value must be an untrimmed unsigned ASCII decimal
+            Intake writes current raw-values schema `1` with `MACHINE_DECIMAL`. A nonblank value must be an untrimmed unsigned ASCII decimal
 
             (`digits` or `digits.digits`): no whitespace, signs, grouping separators, or currency symbols. A nonblank
 

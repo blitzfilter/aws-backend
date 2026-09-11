@@ -4,15 +4,15 @@ use crate::scraper::css_selector::product_schema::RawExtractedProduct;
 use money::Currency;
 use product_listing_normalization::{
     NormalizationContext, NormalizationInputError, ProductListingNormalizationInput,
-    ProductListingRawValuesPatch, ProductListingRawValuesV1, RawProductListingOperation,
-    RawProductListingPayloadFormat, RawProductListingProvenance, RawProductListingValues,
-    SourcePayload,
+    ProductListingRawValues, ProductListingRawValuesPatch, ProductListingRawValuesPriceFormat,
+    RawProductListingOperation, RawProductListingPayloadFormat, RawProductListingProvenance,
+    RawProductListingValues, SourcePayload,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
 use url::Url;
 
-/// Builds the complete V1 input retained by the operational raw-revision stream.
+/// Builds the complete current raw input retained by the operational raw-revision stream.
 ///
 /// Source payload keeps the untouched extraction. Generic raw values use the
 /// crawler-validated image projection and omit price fields that deterministic
@@ -38,10 +38,11 @@ pub(crate) fn crawler_raw_input(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let raw_values = ProductListingRawValuesV1 {
+    let raw_values = ProductListingRawValues {
         source_listing_id: raw.source_listing_id.clone(),
         title: ProductListingRawValuesPatch::Set(raw.title.clone()),
         description: ProductListingRawValuesPatch::Set(raw.description.clone()),
+        price_format: ProductListingRawValuesPriceFormat::DisplayText,
         price: price_patch(raw.price.clone(), resolved_price_fields[0]),
         price_estimate_min: price_patch(raw.price_estimate_min.clone(), resolved_price_fields[1]),
         price_estimate_max: price_patch(raw.price_estimate_max.clone(), resolved_price_fields[2]),

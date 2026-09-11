@@ -1,21 +1,21 @@
 # Auction implementation plan
 
-**Status:** iterations 00–03 are complete; iteration 04 consolidates ProductListing raw values. This remains a change plan, not a declaration of public Auction reads or listing relationships. ProductListing contracts remain the current baseline until their owning iteration passes.
+**Status:** iterations 00–04 are complete. Iteration 04 consolidates ProductListing raw values to one strict current shape; it does not add auction raw fields or listing relationships. This remains a change plan, not a declaration of public Auction reads or listing relationships. ProductListing timing remains the current baseline until iteration 05 passes.
 
 - Target issue: #1465; reliable identifier path of #1464.
 - Baseline: `c10ea0f44e63f249d398c10a7211933a3c48868f`.
 - Development policy: direct replacement; no successor raw/API/event/index version, compatibility reader, aliases, dual writes, backfill, or transition migration.
-- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md). Later records are added only after their own passing gates.
+- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md). Later records are added only after their own passing gates.
 
 ## Observed baseline
 
 | Area | Current owner and observed state |
 | --- | --- |
 | ProductListing auction | `product-listing-core::ProductListingAuction` has only optional exact `start`/`end`; PostgreSQL, event, API, OpenSearch, and saved filters carry those ambiguous terms. |
-| Raw values | `product-listing-normalization` owns strict V1/V2 values. The envelope's `raw_values_schema_version` selects the branch. V1 is display text; V2 requires `priceFormat` and supports `DISPLAY_TEXT`/`MACHINE_DECIMAL`. |
+| Raw values | `product-listing-normalization` owns one strict current shape. `raw_values_schema_version` remains `1` and `priceFormat` is required; it supports `DISPLAY_TEXT` and `MACHINE_DECIMAL`. Other values are rejected without conversion. |
 | Raw path | `product-listing-service` captures immutable revisions; `product-service` normalizes ordered streams in one caller-owned PostgreSQL transaction through `canonical_product_listing_write`. |
 | Direct partner path | `aura-historia-api::partner_product_listings` maps typed input to direct canonical service writes. It does not capture raw revisions. |
-| Producers | Crawler emits V1. Shopify Lambda and WooCommerce emit V2 `MACHINE_DECIMAL`. All must be current-shape producers before an owning raw contract gate passes. |
+| Producers | Crawler emits schema `1` `DISPLAY_TEXT`. Shopify Lambda and WooCommerce emit schema `1` `MACHINE_DECIMAL`. All current producers match the same contract. |
 | Journal and CDC | `product_listing_events` uses domain schema `1`; the worker validates/routs listing events and raw revisions separately. Existing worker SQS envelope schema is `2`; it is a separate protocol marker. |
 | Search | ProductListing OpenSearch has `auctionStart`/`auctionEnd`; `search-filter-*` persists and percolates `ProductListingSearch`. No Auction index exists. |
 | Source deletion | `listing-source-service`/`listing-source-postgres` block source deletion for retained ProductListings, raw streams, and partnership-application references. Auction becomes an additional blocker in iteration 02. |
@@ -30,7 +30,7 @@ The original broad inventory scan requested `rg`, but this checkout does not hav
 | 01 | Pure Auction model and time values | **PASS.** `auction-core`, object-ID registry, workspace/dependency rules, pure core tests. No listing changes. |
 | 02 | Persisted standalone Auction and admin write use cases | **PASS.** `auction-service`, `auction-postgres`, initial business schema, source deletion blocker, PostgreSQL tests. No HTTP/public reads, listing membership, raw changes, crawler, or search. |
 | 03 | Admin Auction HTTP | **PASS.** `aura-historia-api`, service wiring/DTOs, OpenAPI, changelog, black-box API tests. |
-| 04 | One raw-values shape | `product-listing-normalization`, capture/hash/dispatch, crawler, Shopify, WooCommerce, raw fixtures/runbook. Replace V1/V2 directly while retaining both price formats. |
+| 04 | One raw-values shape | **PASS.** Full workspace library tests, check, dependency graph, clippy, format, and focused integration suites passed; details are in [the iteration 04 handoff](auction-iterations/04-current-raw-contract.md). `product-listing-normalization`, capture/hash/dispatch, crawler, Shopify, WooCommerce, and raw fixtures/runbook use one schema `1` shape requiring `priceFormat`; both price formats remain. |
 | 05 | Qualified listing auction context and lot timing | Listing core/service/PostgreSQL/OpenSearch, raw and partner inputs, events/history, crawler selectors, saved filters/percolation, API and affected listing consumers. |
 | 06 | Source-key membership and transactional resolution | `auction-*`, listing context persistence/events, canonical writer, `product-service`, raw diagnostics/evidence, direct partner path, projection membership mapping. |
 | 07 | Corrections, override barrier, and safe release | Listing-owned policy/audit/floors, canonical/raw/partner guards, admin context/correction/release endpoints and concurrency tests. |
@@ -49,7 +49,7 @@ Target dependency direction is `auction-core -> auction-service -> auction-postg
 | Object ID registry | no `auc` prefix | 01 — complete | `docs/object-ids.md`, strict codec tests, workspace graph. |
 | Auction state/event/schema | absent | 02 | initial DDL, repository/event codec, CAS/protection, source delete blocker. |
 | Admin Auction REST | absent | 03 | routes, mappings, OpenAPI, changelog, service authorization/API tests. |
-| Raw values | V1/V2 branches | 04 | all producers, capture/hash/dispatch, fixtures and reset note; discriminator remains only `1`. |
+| Raw values | one schema-`1` shape with required `priceFormat` | 04 — complete | all producers, capture/hash/dispatch, fixtures and reset note; no historical decoder remains. |
 | Ambiguous listing time | `auctionStart`/`auctionEnd` everywhere | 05 | core/DDL/events/raw/partner/API/OpenSearch/saved search/crawler/fixtures; remove accepted old Aura fields. |
 | Membership/reference and metadata | absent | 06 | current raw and typed input, transaction-bound resolver, listing/auction events, evidence/diagnostics, source FK, projector mapping. |
 | Manual correction policy | absent | 07 | policy/audit/floors, both ingestion guards, admin ETag flows, race tests. |

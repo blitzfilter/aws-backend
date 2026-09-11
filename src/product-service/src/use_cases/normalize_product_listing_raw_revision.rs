@@ -11,10 +11,10 @@ use domain_primitives::change_outcome::ChangeOutcome;
 use indexmap::IndexSet;
 use product_listing_normalization::error::NormalizationFailureScope;
 use product_listing_normalization::{
-    ListingAvailabilityQuickCheck, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
-    PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2, ProductListingRawValuesNormalizationError,
-    ProductListingRawValuesNormalizationOutcome, ProductListingRawValuesNormalizer,
-    ProductListingRawValuesPatch, ProductListingRawValuesResolved,
+    ListingAvailabilityQuickCheck, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
+    ProductListingRawValuesNormalizationError, ProductListingRawValuesNormalizationOutcome,
+    ProductListingRawValuesNormalizer, ProductListingRawValuesPatch,
+    ProductListingRawValuesResolved,
 };
 use product_listing_service::canonical_product_listing_write::{
     CanonicalProductListingUpsert, CanonicalProductListingWriteError, CanonicalProductListingWriter,
@@ -699,11 +699,7 @@ fn validate_stored_schema(
     input: &product_listing_normalization::ProductListingNormalizationInput,
 ) -> Result<(), NormalizeProductListingRawRevisionError> {
     if input.payload_schema_version() != 1
-        || !matches!(
-            input.raw_values_schema_version(),
-            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1
-                | PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2
-        )
+        || input.raw_values_schema_version() != PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION
     {
         return Err(NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion);
     }
@@ -751,8 +747,7 @@ fn require_terminal_normalization_outcome(
 
 fn normalization_error_code(error: &ProductListingRawValuesNormalizationError) -> &'static str {
     match error {
-        ProductListingRawValuesNormalizationError::InvalidRawValuesV1(_)
-        | ProductListingRawValuesNormalizationError::InvalidRawValuesV2(_) => "RAW_VALUES_INVALID",
+        ProductListingRawValuesNormalizationError::InvalidRawValues(_) => "RAW_VALUES_INVALID",
         ProductListingRawValuesNormalizationError::InvalidNormalizationContextV1(_) => {
             "NORMALIZATION_CONTEXT_INVALID"
         }
@@ -1284,15 +1279,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_reject_invalid_v2_raw_values_from_the_revision_reader_and_advance_stream_head()
-    {
+    async fn should_reject_removed_raw_values_schema_from_the_revision_reader_and_advance_stream_head()
+     {
         let stream_id = ProductListingRawStreamId::new();
         let revision_id = ProductListingRawRevisionId::new();
         let input = ProductListingNormalizationInput::new(
             RawProductListingOperation::Upsert,
             RawProductListingPayloadFormat::ShopifyProduct,
             1,
-            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
+            2,
             SourcePayload::new(serde_json::json!({}))
                 .unwrap_or_else(|error| panic!("input: {error}")),
             RawProductListingValues::new(serde_json::json!({"sourceListingId": "only-id"}))
@@ -1342,26 +1337,13 @@ mod tests {
 
         assert!(matches!(
             result,
-            Ok(NormalizeProductListingRawRevisionResult { ref revisions, .. })
-                if revisions.as_slice() == [NormalizedRawRevisionResult {
-                    product_listing_raw_stream_id: stream_id,
-                    revision: 1,
-                    outcome: ProductListingRawNormalizationOutcome::Rejected,
-                }]
+            Err(NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion)
         ));
-        assert!(matches!(committed.lock(), Ok(committed) if *committed));
+        assert!(matches!(committed.lock(), Ok(committed) if !*committed));
         let state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert!(matches!(
-            state.completions.as_slice(),
-            [ProductListingRawNormalizationCompletion {
-                normalizer_version: NORMALIZER_VERSION,
-                outcome: ProductListingRawNormalizationOutcome::Rejected,
-                error_code: Some("RAW_VALUES_INVALID"),
-                ..
-            }]
-        ));
+        assert!(state.completions.is_empty());
     }
 
     #[tokio::test]
@@ -1563,17 +1545,12 @@ mod tests {
     }
 
     #[test]
-    fn should_accept_v1_and_v2_stored_raw_values_schema_versions()
+    fn should_accept_only_the_current_stored_raw_values_schema_version()
     -> Result<(), product_listing_normalization::NormalizationInputError> {
-        for raw_values_schema_version in [
-            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V1,
-            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION_V2,
-        ] {
-            let input = input_with_schema_versions(1, raw_values_schema_version)?;
-            assert!(validate_stored_schema(&input).is_ok());
-        }
+        let input = input_with_schema_versions(1, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION)?;
+        assert!(validate_stored_schema(&input).is_ok());
 
-        for (payload_schema_version, raw_values_schema_version) in [(2, 1), (1, 3)] {
+        for (payload_schema_version, raw_values_schema_version) in [(2, 1), (1, 2), (1, 3)] {
             let input =
                 input_with_schema_versions(payload_schema_version, raw_values_schema_version)?;
             assert!(matches!(

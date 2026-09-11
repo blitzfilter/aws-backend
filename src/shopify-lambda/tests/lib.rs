@@ -48,7 +48,7 @@ async fn should_capture_shopify_raw_revision_without_direct_canonical_write() {
     let revision = raw_revision(source.id, 100, 1).await;
     assert_eq!("UPSERT", revision.operation);
     assert_eq!("SHOPIFY_PRODUCT", revision.payload_format);
-    assert_eq!(2, revision.raw_values_schema_version);
+    assert_eq!(1, revision.raw_values_schema_version);
     assert_eq!(
         serde_json::json!("MACHINE_DECIMAL"),
         revision.raw_values.0["priceFormat"]
@@ -523,7 +523,7 @@ async fn should_normalize_shopify_machine_decimal_prices_and_preserve_provider_s
 
         assert!(response.batch_item_failures.is_empty());
         let revision = raw_revision(source.id, product_id, 1).await;
-        assert_eq!(2, revision.raw_values_schema_version);
+        assert_eq!(1, revision.raw_values_schema_version);
         assert_eq!(
             serde_json::json!("MACHINE_DECIMAL"),
             revision.raw_values.0["priceFormat"]
@@ -619,7 +619,7 @@ async fn should_capture_delete_without_direct_withdrawal() {
     assert_eq!(2, raw_revision_count(source.id, 103).await);
     let delete_revision = raw_revision(source.id, 103, 2).await;
     assert_eq!("DELETE", delete_revision.operation);
-    assert_eq!(2, delete_revision.raw_values_schema_version);
+    assert_eq!(1, delete_revision.raw_values_schema_version);
     assert_eq!(0, listing_count(source.id).await);
     assert_eq!(0, product_listing_event_count().await);
 }

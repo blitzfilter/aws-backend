@@ -126,7 +126,7 @@ async fn should_capture_changed_woocommerce_product_with_valid_listing_source_id
         .fetch_one(&pool)
         .await?;
         assert_eq!("UPSERT", row.0);
-        assert_eq!(2, row.1);
+        assert_eq!(1, row.1);
         assert_eq!(json!(true), row.2["futureWooKey"]["nested"]);
         assert_eq!(json!("MACHINE_DECIMAL"), row.3["priceFormat"]);
         assert_eq!(
@@ -176,7 +176,7 @@ async fn should_normalize_woocommerce_machine_decimal_prices_and_preserve_provid
             assert_eq!(reqwest::StatusCode::NO_CONTENT, response.status());
             let (raw_values_schema_version, source_payload, raw_values) =
                 captured_raw_revision(listing_source_uuid, &source_record_key).await?;
-            assert_eq!(2, raw_values_schema_version);
+            assert_eq!(1, raw_values_schema_version);
             assert_eq!(json!(price), source_payload["price"]);
             assert_eq!(json!("MACHINE_DECIMAL"), raw_values["priceFormat"]);
             let expected_price_patch = if price.is_empty() {
