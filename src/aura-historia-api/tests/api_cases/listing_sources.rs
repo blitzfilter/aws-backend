@@ -105,6 +105,234 @@ async fn should_expose_public_collection_and_exact_slug_detail_anonymously() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_invalid_supplied_authentication_for_public_listing_source_collection() {
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/v1/listing-sources?query=mu",
+            AURA_API.base_url()
+        ))
+        .bearer_auth("invalid-token")
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("reject invalid public ListingSource search auth: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "INVALID_CREDENTIALS",
+    );
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_terminal_empty_public_collection_for_insufficient_query() {
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/v1/listing-sources?query=a",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("get insufficient public ListingSource query: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    assert_eq!(reqwest::StatusCode::OK, status);
+    assert_eq!(Some(0), body["items"].as_array().map(Vec::len));
+    assert_eq!(json!(21), body["size"]);
+    assert!(body.get("searchAfter").is_none());
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_malformed_public_listing_source_collection_queries() {
+    let client = reqwest::Client::new();
+
+    for query in ["unexpected=x", "query=a&query=b"] {
+        let response = client
+            .get(format!(
+                "{}/api/v1/listing-sources?{query}",
+                AURA_API.base_url()
+            ))
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("reject malformed public ListingSource query: {error}"));
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let (status, body) = json_response(response).await;
+
+        assert_problem(
+            status,
+            &body,
+            reqwest::StatusCode::BAD_REQUEST,
+            "BAD_QUERY_PARAMETER_VALUE",
+        );
+        assert_eq!(Some("no-store".to_owned()), cache_control);
+    }
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_page_all_public_listing_source_search_results_without_duplicates() {
+    let mut expected_ids = Vec::new();
+    for suffix in ["A", "B", "C", "D", "E"] {
+        let (listing_source_id, _, _) = seed_listing_source_for_search(
+            &format!("Mu Public Page {suffix}"),
+            "Public Page Operator",
+            "WEB_CRAWL",
+            None,
+        )
+        .await;
+        expected_ids.push(listing_source_id.to_string());
+    }
+    let client = reqwest::Client::new();
+    let mut received_ids = Vec::new();
+    let mut search_after: Option<String> = None;
+
+    loop {
+        let mut url = format!(
+            "{}/api/v1/listing-sources?query=mu&size=2",
+            AURA_API.base_url()
+        );
+        if let Some(cursor) = &search_after {
+            url.push_str("&searchAfter=");
+            url.push_str(cursor);
+        }
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("get public ListingSource page: {error}"));
+        assert_eq!(reqwest::StatusCode::OK, response.status());
+        assert_eq!(
+            Some("no-store"),
+            response
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok())
+        );
+        let (_, body) = json_response(response).await;
+        received_ids.extend(
+            body["items"]
+                .as_array()
+                .unwrap_or_else(|| panic!("public ListingSource response must contain items"))
+                .iter()
+                .map(|item| {
+                    item["listingSourceId"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("public ListingSource item must contain an ID"))
+                        .to_owned()
+                }),
+        );
+        search_after = body["searchAfter"].as_str().map(str::to_owned);
+        if search_after.is_none() {
+            break;
+        }
+    }
+
+    assert_eq!(expected_ids, received_ids);
+    let unique_ids = received_ids
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(received_ids.len(), unique_ids.len());
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_reject_invalid_supplied_authentication_for_public_listing_source_slug() {
+    let (_, _, slug_id) = seed_listing_source_for_search(
+        "Public Slug Authentication",
+        "Public Slug Operator",
+        "WEB_CRAWL",
+        None,
+    )
+    .await;
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/v1/listing-sources/by-slug/{slug_id}",
+            AURA_API.base_url()
+        ))
+        .bearer_auth("invalid-token")
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("reject invalid public ListingSource slug auth: {error}"));
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (status, body) = json_response(response).await;
+
+    assert_problem(
+        status,
+        &body,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "INVALID_CREDENTIALS",
+    );
+    assert_eq!(Some("no-store".to_owned()), cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_return_public_slug_route_errors_with_no_store() {
+    let client = reqwest::Client::new();
+    let missing = client
+        .get(format!(
+            "{}/api/v1/listing-sources/by-slug/missing-listing-source",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("get missing public ListingSource slug: {error}"));
+    let missing_cache_control = missing
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (missing_status, missing_body) = json_response(missing).await;
+    assert_problem(
+        missing_status,
+        &missing_body,
+        reqwest::StatusCode::NOT_FOUND,
+        "LISTING_SOURCE_NOT_FOUND",
+    );
+    assert_eq!(Some("no-store".to_owned()), missing_cache_control);
+
+    let unexpected_query = client
+        .get(format!(
+            "{}/api/v1/listing-sources/by-slug/missing-listing-source?anything=x",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("reject public ListingSource slug query: {error}"));
+    let unexpected_query_cache_control = unexpected_query
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (unexpected_query_status, unexpected_query_body) = json_response(unexpected_query).await;
+    assert_problem(
+        unexpected_query_status,
+        &unexpected_query_body,
+        reqwest::StatusCode::BAD_REQUEST,
+        "BAD_QUERY_PARAMETER_VALUE",
+    );
+    assert_eq!(Some("no-store".to_owned()), unexpected_query_cache_control);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     let listing_source_id = seed_listing_source().await;
     let unrelated_listing_source_id = seed_listing_source().await;
@@ -1422,12 +1650,12 @@ async fn should_remove_legacy_listing_source_update_route() {
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
-async fn should_remove_legacy_listing_source_create_route() {
+async fn should_reject_legacy_listing_source_create_method() {
     let response = reqwest::Client::new()
         .post(format!("{}/api/v1/listing-sources", AURA_API.base_url()))
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to call legacy listing-source route: {error}"));
 
-    assert_eq!(reqwest::StatusCode::NOT_FOUND, response.status());
+    assert_eq!(reqwest::StatusCode::METHOD_NOT_ALLOWED, response.status());
 }

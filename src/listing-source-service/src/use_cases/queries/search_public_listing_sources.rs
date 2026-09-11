@@ -21,7 +21,7 @@ pub const MAX_PUBLIC_LISTING_SOURCE_SEARCH_QUERY_UTF8_BYTES: usize = 1_024;
 pub const MAX_PUBLIC_LISTING_SOURCE_SEARCH_QUERY_SCALARS: usize = 256;
 pub const MAX_PUBLIC_LISTING_SOURCE_SEARCH_POSITION_NAME_UTF8_BYTES: usize = 2_048;
 
-const ENDPOINT_IDENTITY: &[u8] = b"GET /api/v1/listing-sources";
+const CURSOR_NAMESPACE: &[u8] = b"public-listing-source-search";
 const SORT_IDENTITY: &[u8] = b"match_tier:name_search:C:listing_source_id";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -448,7 +448,7 @@ const fn is_unicode_white_space(character: char) -> bool {
 
 fn query_binding(query: &PublicListingSourceSearchQuery, page_size: u8) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    write_binding_part(&mut hasher, ENDPOINT_IDENTITY);
+    write_binding_part(&mut hasher, CURSOR_NAMESPACE);
     write_binding_part(&mut hasher, query.mode_identity());
     write_binding_part(
         &mut hasher,
