@@ -317,14 +317,24 @@ fn invalid(
 
 #[cfg(test)]
 mod tests {
+    use super::super::public_listing_source_details_reader::DETAIL_BY_SLUG_SQL;
     use super::*;
+    use crate::SqlxPublicListingSourceDetailsReaderFactory;
     use application::operation_context::{CorrelationId, OperationContext, Principal, RequestId};
-    use listing_source_service::use_cases::queries::search_public_listing_sources::{
-        PublicListingSourceSearchQuery, SearchPublicListingSourcesHandler,
-        SearchPublicListingSourcesRequest, SearchPublicListingSourcesResult,
-        SearchPublicListingSourcesUseCase,
+    use listing_source_core::ListingSourceSlugId;
+    use listing_source_service::use_cases::queries::{
+        get_public_listing_source_by_slug::{
+            GetPublicListingSourceBySlugHandler, GetPublicListingSourceBySlugRequest,
+            GetPublicListingSourceBySlugUseCase,
+        },
+        search_public_listing_sources::{
+            PublicListingSourceSearchQuery, SearchPublicListingSourcesHandler,
+            SearchPublicListingSourcesRequest, SearchPublicListingSourcesResult,
+            SearchPublicListingSourcesUseCase,
+        },
     };
     use platform_postgres::SqlxUnitOfWork;
+    use std::time::{Duration, Instant};
     use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_postgres_client};
 
     const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
@@ -414,6 +424,466 @@ mod tests {
             result = search(&pool, request(Some("catalogue"), 50, Some(continuation))).await;
         }
         assert_eq!(1_001, seen.len());
+    }
+
+    const PERFORMANCE_SOURCE_COUNTS: [i64; 3] = [1_000, 10_000, 100_000];
+    const PERFORMANCE_SOURCES_PER_OPERATOR: i64 = 20;
+    const PERFORMANCE_WARMUP_SAMPLE_COUNT: usize = 3;
+    const PERFORMANCE_TIMING_SAMPLE_COUNT: usize = 25;
+    const PERFORMANCE_P95_TARGET: Duration = Duration::from_millis(150);
+
+    #[derive(Clone, Copy)]
+    struct PerformanceScenario {
+        source_count: i64,
+        operator_count: i64,
+    }
+
+    impl PerformanceScenario {
+        fn new(source_count: i64) -> Self {
+            Self {
+                source_count,
+                operator_count: (source_count / PERFORMANCE_SOURCES_PER_OPERATOR).max(1),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct PerformanceTiming {
+        p50: Duration,
+        p95: Duration,
+    }
+
+    #[derive(Clone, Copy)]
+    struct PerformanceTimingResult {
+        scenario: PerformanceScenario,
+        operation: &'static str,
+        timing: PerformanceTiming,
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct PerformanceCursor {
+        listing_source_id: uuid::Uuid,
+        name_search: String,
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct PostgreSqlPerformanceEnvironment {
+        server_version: String,
+        server_version_num: String,
+        server_encoding: String,
+        shared_buffers: String,
+        effective_cache_size: String,
+        work_mem: String,
+        random_page_cost: String,
+        jit: String,
+        database_collation: String,
+        database_ctype: String,
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    #[ignore = "opt-in real PostgreSQL public ListingSource search performance harness"]
+    async fn should_capture_public_listing_source_search_postgres_performance() {
+        let pool = get_postgres_client().await;
+        let mut timing_results = Vec::new();
+        for source_count in PERFORMANCE_SOURCE_COUNTS {
+            timing_results.extend(
+                run_performance_scenario(&pool, PerformanceScenario::new(source_count)).await,
+            );
+        }
+        for result in timing_results {
+            print_actual_timing_result(result);
+        }
+    }
+
+    async fn run_performance_scenario(
+        pool: &sqlx::PgPool,
+        scenario: PerformanceScenario,
+    ) -> Vec<PerformanceTimingResult> {
+        sqlx::query("TRUNCATE TABLE listing_sources, parties RESTART IDENTITY CASCADE")
+            .execute(pool)
+            .await
+            .unwrap_or_else(|error| panic!("reset performance scenario: {error}"));
+        seed_performance_sources(pool, scenario).await;
+        sqlx::query("ANALYZE parties")
+            .execute(pool)
+            .await
+            .unwrap_or_else(|error| panic!("analyze performance parties: {error}"));
+        sqlx::query("ANALYZE listing_sources")
+            .execute(pool)
+            .await
+            .unwrap_or_else(|error| panic!("analyze performance listing sources: {error}"));
+
+        let source_count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM listing_sources")
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|error| panic!("count performance listing sources: {error}"));
+        let operator_count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM parties")
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|error| panic!("count performance operators: {error}"));
+        assert_eq!(scenario.source_count, source_count);
+        assert_eq!(scenario.operator_count, operator_count);
+
+        let browse_cursor = performance_cursor(
+            pool,
+            "SELECT listing_source_id, name_search FROM listing_sources ORDER BY name_search COLLATE \"C\", listing_source_id LIMIT 11",
+        )
+        .await;
+        let prefix_cursor = performance_cursor(
+            pool,
+            "SELECT listing_source_id, name_search FROM listing_sources WHERE name_search LIKE 'muller%' ORDER BY name_search COLLATE \"C\", listing_source_id LIMIT 11",
+        )
+        .await;
+        let contains_cursor = performance_cursor(
+            pool,
+            "SELECT listing_source_id, name_search FROM listing_sources WHERE name_search LIKE '%auction%' AND name_search NOT LIKE 'muller%' ORDER BY name_search COLLATE \"C\", listing_source_id LIMIT 11",
+        )
+        .await;
+
+        let mut transaction = pool
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin performance transaction: {error}"));
+        let connection = &mut *transaction;
+        print_performance_environment(connection, scenario).await;
+        prepare_performance_queries(connection, scenario).await;
+
+        let cases = vec![
+            (
+                "browse-first-page",
+                performance_statement_name("public_listing_source_browse_first", scenario),
+                "21".to_owned(),
+            ),
+            (
+                "browse-later-page",
+                performance_statement_name("public_listing_source_browse_later", scenario),
+                format!(
+                    "'{}', '{}', 21",
+                    sql_literal(&browse_cursor.name_search),
+                    browse_cursor.listing_source_id
+                ),
+            ),
+            (
+                "prefix-first-page",
+                performance_statement_name("public_listing_source_prefix_first", scenario),
+                "'mu', 'mu%', 21".to_owned(),
+            ),
+            (
+                "prefix-later-page",
+                performance_statement_name("public_listing_source_prefix_later", scenario),
+                format!(
+                    "'mu', 'mu%', 1, '{}', '{}', 21",
+                    sql_literal(&prefix_cursor.name_search),
+                    prefix_cursor.listing_source_id
+                ),
+            ),
+            (
+                "contains-first-page",
+                performance_statement_name("public_listing_source_contains_first", scenario),
+                "'auction', 'auction%', '%auction%', 21".to_owned(),
+            ),
+            (
+                "contains-later-page",
+                performance_statement_name("public_listing_source_contains_later", scenario),
+                format!(
+                    "'auction', 'auction%', '%auction%', 1, '{}', '{}', 21",
+                    sql_literal(&contains_cursor.name_search),
+                    contains_cursor.listing_source_id
+                ),
+            ),
+            (
+                "slug-lookup",
+                performance_statement_name("public_listing_source_slug_lookup", scenario),
+                "'performance-source-000000'".to_owned(),
+            ),
+        ];
+        capture_plan_mode(connection, scenario, "force_custom_plan", &cases).await;
+        capture_plan_mode(connection, scenario, "force_generic_plan", &cases).await;
+        transaction
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit performance transaction: {error}"));
+        capture_actual_reader_timings(pool, scenario).await
+    }
+
+    async fn capture_actual_reader_timings(
+        pool: &sqlx::PgPool,
+        scenario: PerformanceScenario,
+    ) -> Vec<PerformanceTimingResult> {
+        let mut results = Vec::new();
+        for (operation, timing) in [
+            ("browse", measure_search_handler(pool, None).await),
+            ("prefix", measure_search_handler(pool, Some("mu")).await),
+            (
+                "contains",
+                measure_search_handler(pool, Some("auction")).await,
+            ),
+            ("slug", measure_slug_handler(pool).await),
+        ] {
+            assert!(
+                timing.p95 <= PERFORMANCE_P95_TARGET,
+                "local p95 target exceeded for {operation} at {} ListingSources: {:.3} ms > {:.3} ms",
+                scenario.source_count,
+                timing.p95.as_secs_f64() * 1_000.0,
+                PERFORMANCE_P95_TARGET.as_secs_f64() * 1_000.0,
+            );
+            results.push(PerformanceTimingResult {
+                scenario,
+                operation,
+                timing,
+            });
+        }
+        results
+    }
+
+    fn print_actual_timing_result(result: PerformanceTimingResult) {
+        println!(
+            "PUBLIC_LISTING_SOURCE_SEARCH_PERFORMANCE timing scenario_listing_sources={} scenario_operators={} operation={} warmup_samples={} measured_samples={} percentile=nearest-rank p50_ms={:.3} p95_ms={:.3} p95_target_ms={:.3} caveat=warm-local-sequential",
+            result.scenario.source_count,
+            result.scenario.operator_count,
+            result.operation,
+            PERFORMANCE_WARMUP_SAMPLE_COUNT,
+            PERFORMANCE_TIMING_SAMPLE_COUNT,
+            result.timing.p50.as_secs_f64() * 1_000.0,
+            result.timing.p95.as_secs_f64() * 1_000.0,
+            PERFORMANCE_P95_TARGET.as_secs_f64() * 1_000.0,
+        );
+    }
+
+    async fn measure_search_handler(pool: &sqlx::PgPool, query: Option<&str>) -> PerformanceTiming {
+        let mut samples = Vec::with_capacity(PERFORMANCE_TIMING_SAMPLE_COUNT);
+        for sample_index in 0..(PERFORMANCE_WARMUP_SAMPLE_COUNT + PERFORMANCE_TIMING_SAMPLE_COUNT) {
+            let started = Instant::now();
+            let result = search(pool, request(query, 21, None)).await;
+            assert!(
+                !result.items.is_empty(),
+                "timed search must return fixtures"
+            );
+            if sample_index >= PERFORMANCE_WARMUP_SAMPLE_COUNT {
+                samples.push(started.elapsed());
+            }
+        }
+        summarize_timing(samples)
+    }
+
+    async fn measure_slug_handler(pool: &sqlx::PgPool) -> PerformanceTiming {
+        let mut samples = Vec::with_capacity(PERFORMANCE_TIMING_SAMPLE_COUNT);
+        for sample_index in 0..(PERFORMANCE_WARMUP_SAMPLE_COUNT + PERFORMANCE_TIMING_SAMPLE_COUNT) {
+            let started = Instant::now();
+            let summary = GetPublicListingSourceBySlugHandler::new(
+                SqlxUnitOfWork::new(pool.clone()),
+                SqlxPublicListingSourceDetailsReaderFactory::new(),
+            )
+            .execute(
+                &performance_operation_context(),
+                GetPublicListingSourceBySlugRequest {
+                    slug_id: ListingSourceSlugId::raw("performance-source-000000")
+                        .unwrap_or_else(|error| panic!("valid performance slug: {error}")),
+                },
+            )
+            .await
+            .unwrap_or_else(|error| panic!("timed public slug lookup: {error}"));
+            assert_eq!(
+                "performance-source-000000",
+                summary.listing_source_slug_id.as_ref()
+            );
+            if sample_index >= PERFORMANCE_WARMUP_SAMPLE_COUNT {
+                samples.push(started.elapsed());
+            }
+        }
+        summarize_timing(samples)
+    }
+
+    fn summarize_timing(mut samples: Vec<Duration>) -> PerformanceTiming {
+        assert_eq!(PERFORMANCE_TIMING_SAMPLE_COUNT, samples.len());
+        samples.sort_unstable();
+        PerformanceTiming {
+            p50: samples[nearest_rank_index(samples.len(), 50)],
+            p95: samples[nearest_rank_index(samples.len(), 95)],
+        }
+    }
+
+    fn nearest_rank_index(sample_count: usize, percentile: usize) -> usize {
+        ((sample_count * percentile).div_ceil(100)).saturating_sub(1)
+    }
+
+    fn performance_operation_context() -> OperationContext {
+        OperationContext {
+            principal: Principal::Anonymous,
+            request_id: RequestId::new("performance-request"),
+            correlation_id: CorrelationId::new("performance-correlation"),
+        }
+    }
+
+    async fn seed_performance_sources(pool: &sqlx::PgPool, scenario: PerformanceScenario) {
+        sqlx::query(
+            "INSERT INTO parties (party_id, party_slug_id, name) SELECT ('00000000-0000-7000-8000-' || lpad(operator_index::text, 12, '0'))::uuid, 'performance-operator-' || lpad(operator_index::text, 6, '0'), CASE WHEN operator_index % 20 = 0 THEN 'Müller Auction Operator ' || operator_index ELSE 'Regional Operator ' || operator_index END FROM generate_series(0, $1) AS operator_index",
+        )
+        .bind(scenario.operator_count - 1)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("seed performance operators: {error}"));
+
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) SELECT ('00000000-0000-7001-8000-' || lpad(source_index::text, 12, '0'))::uuid, 'performance-source-' || lpad(source_index::text, 6, '0'), CASE WHEN source_index % 25 = 0 THEN 'Müller Auction House ' || source_index WHEN source_index % 25 = 1 THEN 'Auction Catalogue ' || source_index ELSE 'Regional Source ' || source_index END, ('00000000-0000-7000-8000-' || lpad((source_index % $1)::text, 12, '0'))::uuid FROM generate_series(0, $2) AS source_index",
+        )
+        .bind(scenario.operator_count)
+        .bind(scenario.source_count - 1)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("seed performance listing sources: {error}"));
+    }
+
+    async fn performance_cursor(pool: &sqlx::PgPool, query: &'static str) -> PerformanceCursor {
+        sqlx::query_as::<_, PerformanceCursor>(query)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_else(|error| panic!("select performance cursor rows: {error}"))
+            .into_iter()
+            .nth(10)
+            .unwrap_or_else(|| panic!("performance cursor fixture needs 11 ordered rows"))
+    }
+
+    async fn print_performance_environment(
+        connection: &mut sqlx::PgConnection,
+        scenario: PerformanceScenario,
+    ) {
+        let environment = sqlx::query_as::<_, PostgreSqlPerformanceEnvironment>(
+            "SELECT current_setting('server_version') AS server_version, current_setting('server_version_num') AS server_version_num, current_setting('server_encoding') AS server_encoding, current_setting('shared_buffers') AS shared_buffers, current_setting('effective_cache_size') AS effective_cache_size, current_setting('work_mem') AS work_mem, current_setting('random_page_cost') AS random_page_cost, current_setting('jit') AS jit, database.datcollate AS database_collation, database.datctype AS database_ctype FROM pg_database AS database WHERE database.datname = current_database()",
+        )
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap_or_else(|error| panic!("read performance environment: {error}"));
+        let image_override = std::env::var("AURA_TEST_POSTGRES_IMAGE")
+            .unwrap_or_else(|_| "test-api pinned image (no override)".to_owned());
+
+        println!(
+            "PUBLIC_LISTING_SOURCE_SEARCH_PERFORMANCE environment image_override={image_override:?} server_version={:?} server_version_num={} encoding={} database_collation={:?} database_ctype={:?} shared_buffers={} effective_cache_size={} work_mem={} random_page_cost={} jit={} scenario_operators={} scenario_listing_sources={}",
+            environment.server_version,
+            environment.server_version_num,
+            environment.server_encoding,
+            environment.database_collation,
+            environment.database_ctype,
+            environment.shared_buffers,
+            environment.effective_cache_size,
+            environment.work_mem,
+            environment.random_page_cost,
+            environment.jit,
+            scenario.operator_count,
+            scenario.source_count,
+        );
+    }
+
+    async fn prepare_performance_queries(
+        connection: &mut sqlx::PgConnection,
+        scenario: PerformanceScenario,
+    ) {
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_browse_first", scenario),
+            "bigint",
+            &format!("{BROWSE_SQL} ORDER BY s.name_search COLLATE \"C\" ASC, s.listing_source_id ASC LIMIT $1"),
+        )
+        .await;
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_browse_later", scenario),
+            "text, uuid, bigint",
+            &format!("{BROWSE_SQL} AND (s.name_search COLLATE \"C\" > $1 COLLATE \"C\" OR (s.name_search COLLATE \"C\" = $1 COLLATE \"C\" AND s.listing_source_id > $2)) ORDER BY s.name_search COLLATE \"C\" ASC, s.listing_source_id ASC LIMIT $3"),
+        )
+        .await;
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_prefix_first", scenario),
+            "text, text, bigint",
+            &format!("WITH input AS (SELECT $1::text AS query, $2{PREFIX_SQL_AFTER_INPUT} ORDER BY b.match_tier ASC, s.name_search COLLATE \"C\" ASC, s.listing_source_id ASC LIMIT $3"),
+        )
+        .await;
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_prefix_later", scenario),
+            "text, text, smallint, text, uuid, bigint",
+            &format!("WITH input AS (SELECT $1::text AS query, $2{PREFIX_SQL_AFTER_INPUT} AND (b.match_tier > $3 OR (b.match_tier = $3 AND s.name_search COLLATE \"C\" > $4 COLLATE \"C\") OR (b.match_tier = $3 AND s.name_search COLLATE \"C\" = $4 COLLATE \"C\" AND s.listing_source_id > $5)) ORDER BY b.match_tier ASC, s.name_search COLLATE \"C\" ASC, s.listing_source_id ASC LIMIT $6"),
+        )
+        .await;
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_contains_first", scenario),
+            "text, text, text, bigint",
+            &format!("WITH input AS (SELECT $1::text AS query, $2::text AS prefix_pattern, $3{CONTAINS_SQL_AFTER_INPUT} ORDER BY b.match_tier ASC, s.name_search COLLATE \"C\" ASC, s.listing_source_id ASC LIMIT $4"),
+        )
+        .await;
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_contains_later", scenario),
+            "text, text, text, smallint, text, uuid, bigint",
+            &format!("WITH input AS (SELECT $1::text AS query, $2::text AS prefix_pattern, $3{CONTAINS_SQL_AFTER_INPUT} AND (b.match_tier > $4 OR (b.match_tier = $4 AND s.name_search COLLATE \"C\" > $5 COLLATE \"C\") OR (b.match_tier = $4 AND s.name_search COLLATE \"C\" = $5 COLLATE \"C\" AND s.listing_source_id > $6)) ORDER BY b.match_tier ASC, s.name_search COLLATE \"C\" ASC, s.listing_source_id ASC LIMIT $7"),
+        )
+        .await;
+        prepare_performance_query(
+            connection,
+            &performance_statement_name("public_listing_source_slug_lookup", scenario),
+            "text",
+            DETAIL_BY_SLUG_SQL,
+        )
+        .await;
+    }
+
+    async fn prepare_performance_query(
+        connection: &mut sqlx::PgConnection,
+        name: &str,
+        parameter_types: &str,
+        query: &str,
+    ) {
+        // Names, types, and SQL come only from this fixed harness; no external input reaches it.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "PREPARE {name} ({parameter_types}) AS {query}"
+        )))
+        .persistent(false)
+        .execute(&mut *connection)
+        .await
+        .unwrap_or_else(|error| panic!("prepare performance query {name}: {error}"));
+    }
+
+    async fn capture_plan_mode(
+        connection: &mut sqlx::PgConnection,
+        scenario: PerformanceScenario,
+        mode: &str,
+        cases: &[(&str, String, String)],
+    ) {
+        sqlx::query("SELECT set_config('plan_cache_mode', $1, true)")
+            .bind(mode)
+            .execute(&mut *connection)
+            .await
+            .unwrap_or_else(|error| panic!("set performance plan mode {mode}: {error}"));
+
+        for (label, name, arguments) in cases {
+            let plan = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+                "EXPLAIN (ANALYZE, BUFFERS, SETTINGS, FORMAT TEXT) EXECUTE {name}({arguments})"
+            )))
+            .persistent(false)
+            .fetch_all(&mut *connection)
+            .await
+            .unwrap_or_else(|error| panic!("explain performance {label} in {mode}: {error}"));
+            assert!(
+                !plan.is_empty(),
+                "performance plan must not be empty: {label}"
+            );
+            println!(
+                "PUBLIC_LISTING_SOURCE_SEARCH_PERFORMANCE scenario_listing_sources={} scenario_operators={} case={label} plan_cache_mode={mode}\n{}",
+                scenario.source_count,
+                scenario.operator_count,
+                plan.join("\n")
+            );
+        }
+    }
+
+    fn performance_statement_name(base: &str, scenario: PerformanceScenario) -> String {
+        format!("{base}_{}", scenario.source_count)
+    }
+
+    fn sql_literal(value: &str) -> String {
+        value.replace('\'', "''")
     }
 
     fn request(

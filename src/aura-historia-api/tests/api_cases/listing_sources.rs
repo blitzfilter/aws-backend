@@ -43,6 +43,68 @@ async fn seed_listing_source_for_search(
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_expose_public_collection_and_exact_slug_detail_anonymously() {
+    let (listing_source_id, _party_id, slug_id) = seed_listing_source_for_search(
+        "Müller Public Auction",
+        "Public Operator",
+        "WEB_CRAWL",
+        Some(json!({"partnerize": {"campaign": "private"}})),
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    let collection_response = client
+        .get(format!(
+            "{}/api/v1/listing-sources?query=muller&size=21",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("get public ListingSource collection: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, collection_response.status());
+    assert_eq!(
+        Some("no-store"),
+        collection_response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    );
+    let (_, collection) = json_response(collection_response).await;
+    let item = collection["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["listingSourceId"] == listing_source_id.to_string())
+        })
+        .unwrap_or_else(|| panic!("public collection must contain seeded ListingSource"));
+    assert_eq!(Some("Müller Public Auction"), item["name"].as_str());
+    assert_eq!(Some("Public Operator"), item["operator"]["name"].as_str());
+    assert!(item.get("referralConfiguration").is_none());
+    assert!(item.get("ingestionMethods").is_none());
+    assert!(item.get("operatorPartyId").is_none());
+
+    let detail_response = client
+        .get(format!(
+            "{}/api/v1/listing-sources/by-slug/{slug_id}",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("get public ListingSource slug detail: {error}"));
+    assert_eq!(reqwest::StatusCode::OK, detail_response.status());
+    assert_eq!(
+        Some("no-store"),
+        detail_response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+    );
+    let (_, detail) = json_response(detail_response).await;
+    assert_eq!(item, &detail);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
 async fn should_delete_unused_listing_source_and_reject_a_repeat() {
     let listing_source_id = seed_listing_source().await;
     let unrelated_listing_source_id = seed_listing_source().await;

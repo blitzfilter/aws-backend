@@ -141,7 +141,7 @@ No checked-in command for recreating a shared development database was found in 
 
 Final defaults are per API process and shared by collection and slug reads: maximum four in-flight reads, 150 ms PostgreSQL statement timeout, and 500 ms route deadline. Exhaustion returns `503` with `Retry-After: 1`; no unbounded queue. Database timeout/unavailability returns `503`, never empty search or missing detail. Invalid persisted public data returns sanitized `500`.
 
-Use `PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT` (default 4) and `PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS` (default 500) for the shared per-process API permit/deadline; values are bounded and validated at startup. PostgreSQL readers apply their 150 ms statement timeout transaction-locally. Add bounded telemetry without raw query, slug, cursor, URL, credentials, source list, or SQL parameters.
+Use `PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT` (default 4) and `PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS` (default 500) for the shared per-process API permit/deadline; values are bounded and validated at startup. PostgreSQL readers apply their 150 ms statement timeout transaction-locally. Public-read tracing records only endpoint, operation, HTTP status, accepted size, returned-item count, continuation presence, bounded elapsed milliseconds, and outcome. It never records raw query, slug, cursor, URL, credentials, source list, or SQL parameters. The transport trace substitutes the slug route template for the raw slug path.
 
 Current infrastructure has only stage-wide API Gateway throttles: 20 requests/s with burst 50 outside production observability, and 2,000 requests/s with burst 5,000 with it. CloudFront WAF rules cover managed reputation/common/bad-input rules; Iteration 0 found no route-specific rate rule. Deployment owners must confirm anonymous edge-rate coverage for both public paths; do not invent an in-process IP limiter.
 
@@ -151,4 +151,4 @@ The frontend uses only the collection endpoint for debounced typing, Enter, and 
 
 Use returned exact slug for a detail navigation request without auth. Do not prefetch detail per card. Required race test: send `mu`, `mul`, `muller`; let `mu` return last; only `muller` may replace results. Repeat for stale continuation, backspace, IME, and clear.
 
-Performance targets are not measurements. Later work must add a runnable real-PostgreSQL harness and report plans, prepared generic/custom behavior, data shape, hardware, latency, cancellations, mixed load, and any unmet targets honestly.
+Performance targets are not measurements. The opt-in real-PostgreSQL prepared-plan harness and its unexecuted result record are in `docs/public-listing-source-search-performance.md`; it must report plans, generic/custom behavior, data shape, hardware, latency, cancellations, mixed load, and any unmet targets honestly.

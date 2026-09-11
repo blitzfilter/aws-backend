@@ -27,7 +27,7 @@ pub(crate) fn with_transport_middleware(router: Router) -> Router {
                 tracing::info_span!(
                     "http.request",
                     method = %request.method(),
-                    path = %request.uri().path(),
+                    path = %safe_request_path(request.uri().path()),
                     request_id = ?request.headers().get(&REQUEST_ID_HEADER),
                     correlation_id = ?request.headers().get(&CORRELATION_ID_HEADER),
                 )
@@ -66,6 +66,12 @@ pub(crate) fn with_transport_middleware(router: Router) -> Router {
                 .expose_headers([REQUEST_ID_HEADER, CORRELATION_ID_HEADER]),
         )
         .layer(axum::middleware::from_fn(request_metadata))
+}
+
+fn safe_request_path(path: &str) -> &str {
+    path.strip_prefix("/api/v1/listing-sources/by-slug/")
+        .map(|_| "/api/v1/listing-sources/by-slug/{listingSourceSlugId}")
+        .unwrap_or(path)
 }
 
 async fn request_metadata(mut request: Request, next: Next) -> Response {
@@ -116,6 +122,15 @@ mod tests {
 
     fn app() -> Router {
         with_transport_middleware(Router::new().route("/", get(|| async { "ok" })))
+    }
+
+    #[test]
+    fn should_redact_public_listing_source_slug_from_request_trace_path() {
+        assert_eq!(
+            "/api/v1/listing-sources/by-slug/{listingSourceSlugId}",
+            safe_request_path("/api/v1/listing-sources/by-slug/private-source-slug"),
+        );
+        assert_eq!("/health", safe_request_path("/health"));
     }
 
     #[tokio::test]

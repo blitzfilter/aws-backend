@@ -1745,6 +1745,89 @@ mod tests {
     use super::*;
 
     #[test]
+    fn should_default_and_apply_bounded_public_listing_source_read_configuration() {
+        let mut absent = |_| None;
+        assert_eq!(
+            DEFAULT_PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT as usize,
+            optional_bounded_usize_config(
+                &mut absent,
+                PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV,
+                DEFAULT_PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT,
+                1,
+                64,
+            )
+            .unwrap_or_default(),
+        );
+
+        let mut configured = |name| match name {
+            PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV => Some("8".to_owned()),
+            PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS_ENV => Some("250".to_owned()),
+            _ => None,
+        };
+        assert_eq!(
+            8,
+            optional_bounded_usize_config(
+                &mut configured,
+                PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV,
+                DEFAULT_PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT,
+                1,
+                64,
+            )
+            .unwrap_or_default(),
+        );
+        assert_eq!(
+            250,
+            optional_bounded_u64_config(
+                &mut configured,
+                PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS_ENV,
+                DEFAULT_PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS,
+                1,
+                5_000,
+            )
+            .unwrap_or_default(),
+        );
+    }
+
+    #[test]
+    fn should_reject_invalid_or_out_of_range_public_listing_source_read_configuration() {
+        for (name, value, min, max) in [
+            (PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV, "0", 1, 64),
+            (PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV, "65", 1, 64),
+            (
+                PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS_ENV,
+                "0",
+                1,
+                5_000,
+            ),
+            (
+                PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS_ENV,
+                "5001",
+                1,
+                5_000,
+            ),
+        ] {
+            let mut get = |candidate| (candidate == name).then(|| value.to_owned());
+            assert!(matches!(
+                optional_bounded_u64_config(&mut get, name, 1, min, max),
+                Err(ApiConfigError::OutOfRangeIntegerConfig { .. })
+            ));
+        }
+        let mut get = |name| {
+            (name == PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV).then(|| "many".to_owned())
+        };
+        assert!(matches!(
+            optional_bounded_usize_config(
+                &mut get,
+                PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV,
+                DEFAULT_PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT,
+                1,
+                64,
+            ),
+            Err(ApiConfigError::InvalidIntegerConfig { .. })
+        ));
+    }
+
+    #[test]
     fn should_default_parallel_product_listing_enrichment_to_disabled() {
         let mut get = |_| None;
 

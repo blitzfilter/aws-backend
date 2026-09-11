@@ -11,7 +11,7 @@ use listing_source_service::{
 use platform_postgres::SqlxTransaction;
 
 const STATEMENT_TIMEOUT: &str = "150ms";
-const DETAIL_BY_SLUG_SQL: &str = "SELECT s.listing_source_id, s.listing_source_slug_id, s.name, p.name AS operator_name, s.url, s.image FROM listing_sources s JOIN parties p ON p.party_id = s.operator_party_id WHERE s.listing_source_slug_id = $1";
+pub(super) const DETAIL_BY_SLUG_SQL: &str = "SELECT s.listing_source_id, s.listing_source_slug_id, s.name, p.name AS operator_name, s.url, s.image FROM listing_sources s JOIN parties p ON p.party_id = s.operator_party_id WHERE s.listing_source_slug_id = $1";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SqlxPublicListingSourceDetailsReaderFactory;

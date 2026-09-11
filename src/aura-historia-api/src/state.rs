@@ -468,13 +468,13 @@ impl ProductListingsState {
 }
 
 #[derive(Clone)]
-pub(crate) struct PublicListingSourceReadBudget {
+pub struct PublicListingSourceReadBudget {
     permits: Arc<Semaphore>,
     request_timeout: Duration,
 }
 
 impl PublicListingSourceReadBudget {
-    pub(crate) fn new(max_in_flight: usize, request_timeout: Duration) -> Self {
+    pub fn new(max_in_flight: usize, request_timeout: Duration) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(max_in_flight)),
             request_timeout,
@@ -504,6 +504,43 @@ pub struct ListingSourcesState {
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
+#[cfg(test)]
+mod public_listing_source_read_budget_tests {
+    use super::*;
+
+    #[test]
+    fn should_share_non_queuing_permits_and_release_after_drop() {
+        let budget = PublicListingSourceReadBudget::new(1, Duration::from_millis(500));
+        let permit = budget.try_acquire();
+        assert!(permit.is_some());
+        assert!(budget.try_acquire().is_none());
+
+        drop(permit);
+
+        assert!(budget.try_acquire().is_some());
+    }
+
+    #[tokio::test]
+    async fn should_release_public_read_permit_when_request_task_is_cancelled() {
+        let budget = PublicListingSourceReadBudget::new(1, Duration::from_millis(500));
+        let task_budget = budget.clone();
+        let (acquired_sender, acquired_receiver) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let permit = task_budget.try_acquire();
+            let _ = acquired_sender.send(permit.is_some());
+            let _permit = permit;
+            std::future::pending::<()>().await;
+        });
+
+        assert!(acquired_receiver.await.unwrap_or(false));
+        assert!(budget.try_acquire().is_none());
+        task.abort();
+        let _ = task.await;
+
+        assert!(budget.try_acquire().is_some());
+    }
+}
+
 impl ListingSourcesState {
     pub fn new(
         create: Arc<dyn CreateListingSourceUseCase>,
@@ -527,7 +564,7 @@ impl ListingSourcesState {
         }
     }
 
-    pub(crate) fn with_public_reads(
+    pub fn with_public_reads(
         mut self,
         search_public: Arc<dyn SearchPublicListingSourcesUseCase>,
         get_public_by_slug: Arc<dyn GetPublicListingSourceBySlugUseCase>,

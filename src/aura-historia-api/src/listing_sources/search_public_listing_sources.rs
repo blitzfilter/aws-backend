@@ -47,6 +47,8 @@ pub async fn search_public_listing_sources(
     let Some(_permit) = budget.try_acquire() else {
         return overloaded_response();
     };
+    let operation = public_search_operation(&request);
+    let first_page = request.continuation().is_none();
     let started = std::time::Instant::now();
     let metadata = request_metadata(&headers);
     let principal = match tokio::time::timeout(
@@ -87,6 +89,17 @@ pub async fn search_public_listing_sources(
         ),
         Ok(result) => match result {
             Ok(result) => {
+                tracing::info!(
+                    endpoint = "public_listing_source_search",
+                    operation,
+                    first_page,
+                    page_size = result.page_size,
+                    returned_items = result.items.len(),
+                    has_continuation = result.continuation.is_some(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    outcome = "success",
+                    "completed bounded public ListingSource read"
+                );
                 let search_after = result
                     .continuation
                     .as_ref()
@@ -105,6 +118,16 @@ pub async fn search_public_listing_sources(
             }
             Err(error) => no_store(ApiError::from(error).into_response()),
         },
+    }
+}
+
+fn public_search_operation(request: &SearchPublicListingSourcesRequest) -> &'static str {
+    if request.query().is_browse() {
+        "browse"
+    } else if request.query().is_insufficient_input() {
+        "insufficient-input"
+    } else {
+        "text"
     }
 }
 
@@ -228,6 +251,11 @@ fn overloaded_response() -> Response {
 }
 
 fn no_store(mut response: Response) -> Response {
+    tracing::info!(
+        endpoint = "public_listing_source_search",
+        status = response.status().as_u16(),
+        "completed public ListingSource search response"
+    );
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
