@@ -1,11 +1,16 @@
 mod listing_source_details_reader;
 mod listing_source_search_reader;
+mod public_listing_source;
+mod public_listing_source_details_reader;
+mod public_listing_source_search_reader;
 mod shopify_source_reader;
 mod web_crawl_source_reader;
 mod woocommerce_signature_verifier;
 mod woocommerce_source_reader;
 
 pub use listing_source_search_reader::SqlxListingSourceSearchReaderFactory;
+pub use public_listing_source_details_reader::SqlxPublicListingSourceDetailsReaderFactory;
+pub use public_listing_source_search_reader::SqlxPublicListingSourceSearchReaderFactory;
 
 use application::error::box_error;
 use listing_source_service::ports::ListingSourceReadError;
