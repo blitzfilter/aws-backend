@@ -1,6 +1,10 @@
 use crate::auth::TokenAuthenticator;
 use admin_overview_service::GetAdminOverviewUseCase;
 use async_trait::async_trait;
+use auction_service::use_cases::{
+    commands::{create_auction::CreateAuctionUseCase, update_auction::UpdateAuctionUseCase},
+    queries::get_auction::GetAuctionUseCase,
+};
 use billing_service::use_cases::{
     CreateBillingCheckoutSessionUseCase, CreateBillingManagementSessionUseCase,
     CreateBillingPortalSessionUseCase,
@@ -118,6 +122,7 @@ pub struct AppState {
     pub(crate) newsletter: Option<NewsletterState>,
     pub(crate) notifications: Option<NotificationsState>,
     pub(crate) webhooks: Option<WebhooksState>,
+    pub(crate) auctions: Option<AuctionsState>,
 }
 
 impl Default for AppState {
@@ -145,6 +150,7 @@ impl AppState {
             newsletter: None,
             notifications: None,
             webhooks: None,
+            auctions: None,
         }
     }
 
@@ -232,6 +238,35 @@ impl AppState {
     pub fn with_notifications(mut self, notifications: NotificationsState) -> Self {
         self.notifications = Some(notifications);
         self
+    }
+
+    pub fn with_auctions(mut self, auctions: AuctionsState) -> Self {
+        self.auctions = Some(auctions);
+        self
+    }
+}
+
+#[derive(Clone)]
+pub struct AuctionsState {
+    pub(crate) create: Arc<dyn CreateAuctionUseCase>,
+    pub(crate) get: Arc<dyn GetAuctionUseCase>,
+    pub(crate) update: Arc<dyn UpdateAuctionUseCase>,
+    pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
+}
+
+impl AuctionsState {
+    pub fn new(
+        create: Arc<dyn CreateAuctionUseCase>,
+        get: Arc<dyn GetAuctionUseCase>,
+        update: Arc<dyn UpdateAuctionUseCase>,
+        authenticator: Arc<dyn TokenAuthenticator>,
+    ) -> Self {
+        Self {
+            create,
+            get,
+            update,
+            authenticator,
+        }
     }
 }
 

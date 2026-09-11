@@ -39,7 +39,7 @@
 ## Child DOX Index
 
 - `admin-overview.md` — administrator overview source and count semantics.
-- `auction.md` — planned Auction domain contract; current implementation status is explicit.
+- `auction.md` — Auction domain contract and current implementation status.
 - `auction-implementation.md` — isolated Auction iteration ownership and reset plan.
 - `auction-iterations/` — per-iteration Auction handoffs and verification records.
 - `party-and-listing-source.md` — Party, ListingSource, and Partnership contract.

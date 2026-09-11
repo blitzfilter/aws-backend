@@ -8,6 +8,8 @@ static AURA_API: AuraHistoriaApi = AuraHistoriaApi::new(api_support::aura_api_ap
 
 #[path = "api_cases/admin_overview.rs"]
 mod admin_overview;
+#[path = "api_cases/auctions.rs"]
+mod auctions;
 #[path = "api_cases/billing.rs"]
 mod billing;
 #[path = "api_cases/listing_sources.rs"]

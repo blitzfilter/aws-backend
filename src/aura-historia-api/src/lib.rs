@@ -1,4 +1,5 @@
 pub(crate) mod admin_overview;
+pub mod auctions;
 pub mod auth;
 pub mod billing;
 pub mod error;
@@ -28,14 +29,22 @@ use crate::auth::{
     UserAuthenticationAuthenticator,
 };
 use crate::state::{
-    AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
-    NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
+    AdminOverviewState, AppState, AuctionsState, BillingState, ListingSourcesState,
+    NewsletterState, NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
     PartnershipApplicationsState, PartnershipsState, ProductListingsState, ReadinessCheck,
     SearchFiltersState, UsersState, WatchlistState, WebhooksState,
 };
 use crate::transport::with_transport_middleware;
 use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
 use admin_overview_service::GetAdminOverviewHandler;
+use auction_postgres::{
+    SqlxAuctionDetailsReader, SqlxAuctionEventAppenderFactory,
+    SqlxAuctionMetadataPolicyRepositoryFactory, SqlxAuctionRepositoryFactory,
+};
+use auction_service::use_cases::{
+    commands::{create_auction::CreateAuctionHandler, update_auction::UpdateAuctionHandler},
+    queries::get_auction::GetAuctionHandler,
+};
 use axum::Router;
 use axum::routing::{delete, get, patch, post};
 use billing_service::use_cases::{
@@ -651,6 +660,22 @@ pub fn app(state: AppState) -> Router {
         );
     }
 
+    if let Some(auctions) = state.auctions {
+        routes = routes.merge(
+            Router::new()
+                .route(
+                    "/api/v1/admin/auctions",
+                    post(auctions::create_auction::create_auction),
+                )
+                .route(
+                    "/api/v1/admin/auctions/{auction_id}",
+                    get(auctions::get_auction::get_auction)
+                        .patch(auctions::update_auction::update_auction),
+                )
+                .with_state(auctions),
+        );
+    }
+
     if let Some(admin_overview) = state.admin_overview {
         routes = routes.merge(
             Router::new()
@@ -897,6 +922,24 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         unit_of_work.clone(),
         SqlxAdminOverviewReaderFactory::new(),
         SqlxUserAdminReaderFactory::new(),
+    );
+    let create_auction = CreateAuctionHandler::new(
+        unit_of_work.clone(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+    );
+    let get_auction = GetAuctionHandler::new(
+        SqlxAuctionDetailsReader::new(pool.clone()),
+        CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+    );
+    let update_auction = UpdateAuctionHandler::new(
+        unit_of_work.clone(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
     );
     let create_listing_source = CreateListingSourceHandler::new(
         unit_of_work.clone(),
@@ -1485,6 +1528,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     });
 
     Ok(AppState::new()
+        .with_auctions(AuctionsState::new(
+            Arc::new(create_auction),
+            Arc::new(get_auction),
+            Arc::new(update_auction),
+            Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+        ))
         .with_admin_overview(AdminOverviewState::new(
             Arc::new(get_admin_overview),
             Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,

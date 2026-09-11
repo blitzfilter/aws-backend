@@ -19,6 +19,7 @@
 - No API Gateway adapter.
 
 - `admin_overview/` owns the admin-only `GET /api/v1/admin/overview` controller. It maps the bounded, authoritative PostgreSQL overview result to a versioned REST response and always sends `Cache-Control: no-store`; it exposes no PII or secrets and persists no audit event.
+- `auctions/` owns administrator-only Auction create/detail/update at `POST /api/v1/admin/auctions` and `GET`/`PATCH /api/v1/admin/auctions/{auctionId}`. It only maps strict DTOs and TypeIDs to Auction service use cases; service owns authorization, concurrency, metadata policy, and transactions. Every response sends `Cache-Control: no-store`; creation returns its detail `Location`. No public Auction route exists here yet.
 - `parties/` owns admin Party collection and detail create/read/update/delete routes. Party DELETE hard-deletes only an unused Party after commit; ListingSources and retained active or dissolved Partnerships block, no dependent history cascades, and every response uses `Cache-Control: no-store`.
 - `listing_sources/` owns authenticated canonical admin create at `POST /api/v1/admin/listing-sources`, admin ID detail/update/delete at `GET`/`PATCH`/`DELETE /api/v1/admin/listing-sources/{listingSourceId}`, slug lookup, `GET /api/v1/me/listing-sources`, and bounded admin search at `GET /api/v1/admin/listing-sources`. Eligible hard deletion returns bodyless `204` with `no-store` after PostgreSQL commit; it has no synchronous crawler shutdown, crawler-DB, or OpenSearch transaction. New crawler passes refresh authoritative source scope before admission, and in-flight raw capture is fenced by the business missing-source outcome. Detail, mutations, and admin search use ListingSource service use cases; the `me` list uses the Partnership administered-listing-source use case. Admin reads never expose provider secrets or crawler-local configuration.
 - `users/` owns account, admin user (`GET /api/v1/admin/users` collection search plus `GET`, `PATCH`, and `DELETE /api/v1/admin/users/{userId}` item operations), admin suspension/reactivation at `PUT`/`DELETE /api/v1/admin/users/{userId}/suspension` (suspension reasons are capped at 1,000 bytes and must contain no secrets because they are operationally logged; reactivation accepts no body), Cognito global session revocation at `POST /api/v1/admin/users/{userId}/sessions/revoke`, owner access-token controllers, bounded admin token metadata listing at `GET /api/v1/admin/users/{userId}/access-tokens`, and admin token revocation at `DELETE /api/v1/admin/users/{userId}/access-tokens` (bulk) and `DELETE /api/v1/admin/users/{userId}/access-tokens/{accessTokenId}` (single). No legacy `/api/v1/users/{userId}` admin item route remains.
@@ -71,6 +72,7 @@
 
 
 - `admin_overview/` — administrator overview REST controller.
+- `auctions/` — administrator Auction REST controllers.
 - `listing_sources/` — ListingSource REST controllers.
 - `parties/` — admin Party collection and detail REST controllers.
 - `users/` — user account, admin, and access-token REST controllers.

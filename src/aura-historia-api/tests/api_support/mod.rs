@@ -3,13 +3,21 @@
 use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
 use admin_overview_service::GetAdminOverviewHandler;
 use application::transaction::{Transaction, UnitOfWork};
+use auction_postgres::{
+    SqlxAuctionDetailsReader, SqlxAuctionEventAppenderFactory,
+    SqlxAuctionMetadataPolicyRepositoryFactory, SqlxAuctionRepositoryFactory,
+};
+use auction_service::use_cases::{
+    commands::{create_auction::CreateAuctionHandler, update_auction::UpdateAuctionHandler},
+    queries::get_auction::GetAuctionHandler,
+};
 use aura_historia_api::auth::{
     ApiAuthService, AuraAccessTokenAuthenticator, AuthError, RequestMetadata, TokenAuthenticator,
     TransportPrincipal, UserAuthenticationAuthenticator,
 };
 use aura_historia_api::state::{
-    AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
-    NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
+    AdminOverviewState, AppState, AuctionsState, BillingState, ListingSourcesState,
+    NewsletterState, NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
     PartnershipApplicationsState, PartnershipsState, ProductListingsState, SearchFiltersState,
     UsersState, WatchlistState, WebhooksState,
 };
@@ -1122,6 +1130,36 @@ async fn test_state(
         authenticate_user,
     ));
     let opensearch_client = get_opensearch_client().await;
+    let auctions_state = AuctionsState::new(
+        Arc::new(CreateAuctionHandler::new(
+            unit_of_work.clone(),
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
+        )),
+        Arc::new(GetAuctionHandler::new(
+            SqlxAuctionDetailsReader::new(pool.clone()),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
+        )),
+        Arc::new(UpdateAuctionHandler::new(
+            unit_of_work.clone(),
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            CheckUserAdminHandler::new(
+                unit_of_work.clone(),
+                user_postgres::SqlxUserAdminReaderFactory::new(),
+            ),
+        )),
+        Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+    );
     let create_listing_source = CreateListingSourceHandler::new(
         unit_of_work.clone(),
         SqlxListingSourceRepositoryFactory::new(),
@@ -1730,6 +1768,7 @@ async fn test_state(
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
     );
     state::AppState::new()
+        .with_auctions(auctions_state)
         .with_admin_overview(AdminOverviewState::new(
             Arc::new(GetAdminOverviewHandler::new(
                 unit_of_work.clone(),

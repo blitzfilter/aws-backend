@@ -1,5 +1,9 @@
 use crate::auth::AuthError;
 use admin_overview_service::GetAdminOverviewError;
+use auction_service::use_cases::{
+    commands::{create_auction::CreateAuctionError, update_auction::UpdateAuctionError},
+    queries::get_auction::GetAuctionError,
+};
 use axum::Json;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -107,6 +111,10 @@ pub(crate) const ADMIN_OVERVIEW_INTERNAL_ERROR: ApiErrorCode =
     ApiErrorCode("ADMIN_OVERVIEW_INTERNAL_ERROR");
 pub(crate) const ADMIN_OVERVIEW_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
     ApiErrorCode("ADMIN_OVERVIEW_TEMPORARILY_UNAVAILABLE");
+pub(crate) const AUCTION_INTERNAL_ERROR: ApiErrorCode = ApiErrorCode("AUCTION_INTERNAL_ERROR");
+pub(crate) const AUCTION_NOT_FOUND: ApiErrorCode = ApiErrorCode("AUCTION_NOT_FOUND");
+pub(crate) const AUCTION_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
+    ApiErrorCode("AUCTION_TEMPORARILY_UNAVAILABLE");
 pub(crate) const AUTH_INTERNAL_ERROR: ApiErrorCode = ApiErrorCode("AUTH_INTERNAL_ERROR");
 pub(crate) const AUTH_TEMPORARILY_UNAVAILABLE: ApiErrorCode =
     ApiErrorCode("AUTH_TEMPORARILY_UNAVAILABLE");
@@ -414,6 +422,106 @@ impl From<GetAdminOverviewError> for ApiError {
             | GetAdminOverviewError::ReaderInternal { .. } => {
                 ApiError::internal_server_error(ADMIN_OVERVIEW_INTERNAL_ERROR)
                     .with_detail("Admin overview failed internally.")
+            }
+        }
+    }
+}
+
+impl From<CreateAuctionError> for ApiError {
+    fn from(error: CreateAuctionError) -> Self {
+        match error {
+            CreateAuctionError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            CreateAuctionError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            CreateAuctionError::ListingSourceNotFound => {
+                ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                    .with_detail("Listing source was not found.")
+            }
+            CreateAuctionError::SourceAuctionAlreadyExists => ApiError::conflict(CONFLICT)
+                .with_detail(
+                    "An Auction already exists for this listing source and source auction ID.",
+                ),
+            CreateAuctionError::TemporarilyUnavailable { .. }
+            | CreateAuctionError::BeginTransactionFailed
+            | CreateAuctionError::CommitTransactionFailed => {
+                ApiError::service_unavailable(AUCTION_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Auction could not be created right now.")
+            }
+            CreateAuctionError::InvalidPersistedState { .. }
+            | CreateAuctionError::EventPersistenceFailed { .. }
+            | CreateAuctionError::PolicyPersistenceFailed { .. }
+            | CreateAuctionError::InvalidAuditActor { .. }
+            | CreateAuctionError::Internal { .. } => {
+                ApiError::internal_server_error(AUCTION_INTERNAL_ERROR)
+                    .with_detail("Auction create failed internally.")
+            }
+        }
+    }
+}
+
+impl From<GetAuctionError> for ApiError {
+    fn from(error: GetAuctionError) -> Self {
+        match error {
+            GetAuctionError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            GetAuctionError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            GetAuctionError::NotFound => {
+                ApiError::not_found(AUCTION_NOT_FOUND).with_detail("Auction was not found.")
+            }
+            GetAuctionError::TemporarilyUnavailable { .. } => {
+                ApiError::service_unavailable(AUCTION_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Auction is temporarily unavailable.")
+            }
+            GetAuctionError::InvalidPersistedState { .. } | GetAuctionError::Internal { .. } => {
+                ApiError::internal_server_error(AUCTION_INTERNAL_ERROR)
+                    .with_detail("Auction details failed internally.")
+            }
+        }
+    }
+}
+
+impl From<UpdateAuctionError> for ApiError {
+    fn from(error: UpdateAuctionError) -> Self {
+        match error {
+            UpdateAuctionError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS)
+                    .with_header_field("Authorization")
+                    .with_detail("Bearer token is required.")
+            }
+            UpdateAuctionError::Forbidden => {
+                ApiError::forbidden(FORBIDDEN).with_detail("Operation is not permitted.")
+            }
+            UpdateAuctionError::NotFound => {
+                ApiError::not_found(AUCTION_NOT_FOUND).with_detail("Auction was not found.")
+            }
+            UpdateAuctionError::ConcurrencyConflict => {
+                ApiError::conflict(CONFLICT).with_detail("Auction was changed concurrently.")
+            }
+            UpdateAuctionError::InvalidSchedule { .. } => ApiError::bad_request(BAD_BODY_VALUE)
+                .with_detail("schedule has invalid comparable bounds."),
+            UpdateAuctionError::TemporarilyUnavailable { .. }
+            | UpdateAuctionError::BeginTransactionFailed
+            | UpdateAuctionError::CommitTransactionFailed => {
+                ApiError::service_unavailable(AUCTION_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Auction could not be updated right now.")
+            }
+            UpdateAuctionError::InvalidPersistedState { .. }
+            | UpdateAuctionError::EventPersistenceFailed { .. }
+            | UpdateAuctionError::PolicyPersistenceFailed { .. }
+            | UpdateAuctionError::InvalidAuditActor { .. }
+            | UpdateAuctionError::Internal { .. } => {
+                ApiError::internal_server_error(AUCTION_INTERNAL_ERROR)
+                    .with_detail("Auction update failed internally.")
             }
         }
     }

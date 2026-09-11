@@ -1,6 +1,6 @@
 # Auction iteration 02 — persistence
 
-**Status:** IMPLEMENTED — full workspace library-suite verification is pending a longer run.
+**Status:** PASS.
 
 ## Objective
 
@@ -46,10 +46,10 @@ cargo test -p listing-source-postgres --all-features
 
 Real PostgreSQL coverage verifies schedule/event/policy persistence, source-key uniqueness, root CAS, bounded schedule replacement, rollback, and ListingSource deletion blocking. Service fakes verify authorization, commit/no-commit behavior, expected-version handling, no-op behavior, equal policy-only touches, and failure rollback.
 
-Pending:
+Also passed after a longer bounded run:
 
 ```sh
 cargo test --workspace --lib --all-features
 ```
 
-The command compiled successfully and began the suite, but was killed by the required 120-second command timeout. Its captured output showed no failing test. Run it with a longer authorized timeout before marking iteration 02 `PASS`.
+The full workspace library suite completed successfully. Iteration 02 is `PASS`; iteration 03 may begin.

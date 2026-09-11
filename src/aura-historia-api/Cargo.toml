@@ -10,6 +10,9 @@ async-trait = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-cognitoidentityprovider = { workspace = true }
 application = { workspace = true }
+auction-core = { workspace = true }
+auction-postgres = { workspace = true }
+auction-service = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 billing-service = { workspace = true }
@@ -61,7 +64,7 @@ search-filter-core = { workspace = true }
 search-filter-postgres = { workspace = true }
 search-filter-service = { workspace = true }
 thiserror = { workspace = true }
-time = { workspace = true, features = ["formatting"] }
+time = { workspace = true, features = ["formatting", "parsing"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http = { workspace = true }
 tracing = { workspace = true }

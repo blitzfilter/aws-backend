@@ -53,6 +53,132 @@ servers:
   - url: https://api.aura-historia.com
     description: Production environment
 paths:
+  /api/v1/admin/auctions:
+    post:
+      summary: Create a source-scoped Auction (admin)
+      operationId: createAdminAuction
+      tags: [Auctions]
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAuctionData"
+      responses:
+        "201":
+          description: Auction created. `Location` names the new admin detail resource.
+          headers:
+            Location:
+              schema: { type: string }
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuctionAdminData"
+        "400": { description: Invalid body or value (`BAD_BODY_VALUE`). }
+        "401":
+          {
+            description: Missing or invalid credentials (`INVALID_CREDENTIALS`).,
+          }
+        "403": { description: Administrator authority required (`FORBIDDEN`). }
+        "404":
+          { description: ListingSource missing (`LISTING_SOURCE_NOT_FOUND`). }
+        "409":
+          {
+            description: The ListingSource/sourceAuctionId key already exists (`CONFLICT`).,
+          }
+        "503":
+          {
+            description: Temporary Auction persistence failure (`AUCTION_TEMPORARILY_UNAVAILABLE`).,
+          }
+  /api/v1/admin/auctions/{auctionId}:
+    get:
+      summary: Get Auction administration detail
+      operationId: getAdminAuction
+      tags: [Auctions]
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: auctionId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Strict `auc_` UUIDv7 TypeID. Bare UUIDs and wrong prefixes are invalid.
+      responses:
+        "200":
+          description: "Current administrative Auction data. Always `Cache-Control: no-store`."
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuctionAdminData"
+        "400": { description: Invalid Auction ID (`INVALID_OBJECT_ID`). }
+        "401":
+          {
+            description: Missing or invalid credentials (`INVALID_CREDENTIALS`).,
+          }
+        "403": { description: Administrator authority required (`FORBIDDEN`). }
+        "404": { description: Auction missing (`AUCTION_NOT_FOUND`). }
+        "503":
+          {
+            description: Temporary Auction persistence failure (`AUCTION_TEMPORARILY_UNAVAILABLE`).,
+          }
+    patch:
+      summary: Update Auction metadata (admin)
+      operationId: updateAdminAuction
+      tags: [Auctions]
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: auctionId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Strict `auc_` UUIDv7 TypeID. Auction identity and source key are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAuctionData"
+      responses:
+        "200":
+          description: "Updated administrative Auction data. Always `Cache-Control: no-store`."
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuctionAdminData"
+        "400":
+          {
+            description: Invalid body,
+            expectedVersion,
+            or schedule (`BAD_BODY_VALUE`).,
+          }
+        "401":
+          {
+            description: Missing or invalid credentials (`INVALID_CREDENTIALS`).,
+          }
+        "403": { description: Administrator authority required (`FORBIDDEN`). }
+        "404": { description: Auction missing (`AUCTION_NOT_FOUND`). }
+        "409": { description: Stale expectedVersion (`CONFLICT`). }
+        "503":
+          {
+            description: Temporary Auction persistence failure (`AUCTION_TEMPORARILY_UNAVAILABLE`).,
+          }
   /api/v1/listing-sources/{listingSourceId}/product-listings:
     post:
       summary: Batch create product-listings (Partner API)
@@ -15932,6 +16058,179 @@ components:
           enum:
             - APPROVE
             - REJECT
+    CreateAuctionData:
+      type: object
+      additionalProperties: false
+      required: [listingSourceId, sourceAuctionId]
+      properties:
+        listingSourceId:
+          type: string
+          description: Strict ListingSource TypeID.
+        sourceAuctionId:
+          type: string
+          maxLength: 512
+          description: Opaque source key. Outer Unicode whitespace is trimmed; case and internal whitespace are preserved.
+        name:
+          $ref: "#/components/schemas/LocalizedTextData"
+        description:
+          $ref: "#/components/schemas/LocalizedTextData"
+        catalogueUrl:
+          type: string
+          format: uri
+        format:
+          $ref: "#/components/schemas/AuctionFormatData"
+        schedule:
+          $ref: "#/components/schemas/AuctionScheduleData"
+        reportedStatus:
+          $ref: "#/components/schemas/AuctionReportedStatusData"
+        reportedLotCount:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 4294967295
+    UpdateAuctionData:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      description: Omitted members are unchanged. Nullable members explicitly clear their value. A touched field becomes protected from later embedded metadata.
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+        name:
+          allOf: [{ $ref: "#/components/schemas/LocalizedTextData" }]
+          nullable: true
+        description:
+          allOf: [{ $ref: "#/components/schemas/LocalizedTextData" }]
+          nullable: true
+        catalogueUrl:
+          type: string
+          format: uri
+          nullable: true
+        format:
+          allOf: [{ $ref: "#/components/schemas/AuctionFormatData" }]
+          nullable: true
+        schedule:
+          $ref: "#/components/schemas/AuctionSchedulePatchData"
+        reportedStatus:
+          allOf: [{ $ref: "#/components/schemas/AuctionReportedStatusData" }]
+          nullable: true
+        reportedLotCount:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 4294967295
+          nullable: true
+    AuctionAdminData:
+      type: object
+      required:
+        [
+          auctionId,
+          listingSourceId,
+          sourceAuctionId,
+          name,
+          description,
+          catalogueUrl,
+          format,
+          schedule,
+          reportedStatus,
+          reportedLotCount,
+          expectedVersion,
+          protectedFields,
+          created,
+          updated,
+        ]
+      properties:
+        auctionId: { type: string, description: Strict `auc_` UUIDv7 TypeID. }
+        listingSourceId: { type: string }
+        sourceAuctionId: { type: string }
+        name:
+          allOf: [{ $ref: "#/components/schemas/LocalizedTextData" }]
+          nullable: true
+        description:
+          allOf: [{ $ref: "#/components/schemas/LocalizedTextData" }]
+          nullable: true
+        catalogueUrl: { type: string, format: uri, nullable: true }
+        format:
+          allOf: [{ $ref: "#/components/schemas/AuctionFormatData" }]
+          nullable: true
+        schedule: { $ref: "#/components/schemas/AuctionScheduleData" }
+        reportedStatus:
+          allOf: [{ $ref: "#/components/schemas/AuctionReportedStatusData" }]
+          nullable: true
+        reportedLotCount: { type: integer, format: int32, nullable: true }
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        protectedFields:
+          type: array
+          items: { $ref: "#/components/schemas/AuctionMetadataFieldData" }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+    AuctionFormatData:
+      type: string
+      enum: [LIVE, TIMED]
+    AuctionReportedStatusData:
+      type: string
+      enum: [SCHEDULED, IN_PROGRESS, ENDED, POSTPONED, CANCELLED]
+    AuctionMetadataFieldData:
+      type: string
+      enum:
+        [
+          NAME,
+          DESCRIPTION,
+          CATALOGUE_URL,
+          FORMAT,
+          REPORTED_STATUS,
+          REPORTED_LOT_COUNT,
+          BIDDING_OPENS,
+          LIVE_STARTS,
+          LOTS_BEGIN_CLOSING,
+          SCHEDULED_END,
+        ]
+    AuctionScheduleData:
+      type: object
+      additionalProperties: false
+      properties:
+        biddingOpens: { $ref: "#/components/schemas/AuctionTimeData" }
+        liveStarts: { $ref: "#/components/schemas/AuctionTimeData" }
+        lotsBeginClosing: { $ref: "#/components/schemas/AuctionTimeData" }
+        scheduledEnd: { $ref: "#/components/schemas/AuctionTimeData" }
+    AuctionSchedulePatchData:
+      type: object
+      additionalProperties: false
+      description: Omitted roles are unchanged; `null` clears an asserted role.
+      properties:
+        biddingOpens:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+        liveStarts:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+        lotsBeginClosing:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+        scheduledEnd:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+    AuctionTimeData:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [precision, at]
+          properties:
+            precision: { type: string, enum: [INSTANT] }
+            at: { type: string, format: date-time }
+            sourceTimezone:
+              { type: string, description: Optional validated IANA timezone. }
+        - type: object
+          additionalProperties: false
+          required: [precision, on]
+          properties:
+            precision: { type: string, enum: [DATE] }
+            on: { type: string, format: date }
+            sourceTimezone:
+              { type: string, description: Optional validated IANA timezone. }
+      description: Exact instants retain their instant; date precision remains a date and is never converted to midnight.
     ProductListingSourceData:
       type: object
       description: ListingSource presentation hydrated for a ProductListing response.

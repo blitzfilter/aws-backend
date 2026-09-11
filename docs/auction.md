@@ -1,8 +1,8 @@
 # Auctions
 
-**Status:** iterations 01–02 implement the pure model plus authoritative PostgreSQL Auction state, journal, metadata-protection policy, and admin-only service use cases. There is no Auction HTTP route, public Auction read, raw field, listing membership, crawler extraction, or search behavior yet. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
+**Status:** iterations 01–03 implement the pure model, authoritative PostgreSQL state/journal/policy, and administrator HTTP create/detail/update. Public Auction reads, raw fields, listing membership, crawler extraction, and search behavior are not implemented. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
 
-See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/02-auction-persistence.md).
+See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/03-auction-admin-api.md).
 
 ## Scope
 
@@ -30,6 +30,8 @@ PostgreSQL is authoritative for standalone source-scoped Auctions. The initial b
 - restricted `auction_metadata_policy_audits` and closed-world `auction_metadata_field_protections` for fields touched by an administrator.
 
 `auction-service` has authenticated-administrator create, update, and detail use cases. They use one caller-owned PostgreSQL transaction for root state, journal write, and policy audit. Admin creation protects supplied fields; an explicit update protects every touched field, including a clear or equal write. A policy-only touch advances the Auction storage version and audit state, but appends no false domain event. Audit actor labels are validated before persistence (nonempty, no NUL, at most 512 UTF-8 bytes).
+
+Iteration 03 exposes only these administrator routes: `POST /api/v1/admin/auctions`, `GET /api/v1/admin/auctions/{auctionId}`, and `PATCH /api/v1/admin/auctions/{auctionId}`. They require the persisted administrator role and always return `Cache-Control: no-store`. Create requires immutable `listingSourceId` and `sourceAuctionId`, returns `201` plus the detail `Location`, and rejects duplicate source keys with `409 CONFLICT`. GET/PATCH require strict `auc_` TypeIDs; bare UUIDs and wrong prefixes return `400 INVALID_OBJECT_ID`. PATCH requires a positive `expectedVersion`; omitted fields remain unchanged and explicit `null` clears only documented metadata/schedule fields. Its response exposes the resulting `expectedVersion` and closed-world `protectedFields` for administration only. Exact schedule instants and date-only values retain their precision; no public Auction endpoint exists yet.
 
 Embedded metadata acceptance is implemented as a service policy for later listing integration: it can fill only an absent, unprotected shared field. Equal, protected, and conflicting candidates do not replace shared facts. It is not reachable from raw or partner listing writes until iteration 06.
 
