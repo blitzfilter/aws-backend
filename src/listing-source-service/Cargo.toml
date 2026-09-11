@@ -14,9 +14,11 @@ money = { workspace = true }
 party-core = { workspace = true }
 party-service = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
+unicode-normalization = { workspace = true }
 url = { workspace = true }
 user-service = { workspace = true }
 

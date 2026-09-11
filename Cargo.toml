@@ -202,6 +202,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 typed-builder = "0.23.2"
 percent-encoding = "2.3.2"
 url = { version = "2.5.8", features = ["serde"] }
+unicode-normalization = "0.1.25"
 uuid = { version = "1.23.3", features = ["serde"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 futures-util = "0.3.32"
