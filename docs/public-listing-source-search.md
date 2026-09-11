@@ -151,4 +151,4 @@ The frontend uses only the collection endpoint for debounced typing, Enter, and 
 
 Use returned exact slug for a detail navigation request without auth. Do not prefetch detail per card. Required race test: send `mu`, `mul`, `muller`; let `mu` return last; only `muller` may replace results. Repeat for stale continuation, backspace, IME, and clear.
 
-Performance targets are not measurements. The opt-in real-PostgreSQL prepared-plan harness and its unexecuted result record are in `docs/public-listing-source-search-performance.md`; it must report plans, generic/custom behavior, data shape, hardware, latency, cancellations, mixed load, and any unmet targets honestly.
+Performance targets are not measurements. The opt-in real-PostgreSQL prepared-plan harness was executed at `2c194f2703c1ed0c262267d39e23a27158f009f5`; its local run record is in `docs/public-listing-source-search-performance.md`. It reports plans, generic/custom behavior, data shape, hardware, latency, cancellations, mixed load, and unmet targets honestly.

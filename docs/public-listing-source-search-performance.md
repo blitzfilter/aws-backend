@@ -2,7 +2,7 @@
 
 ## Status
 
-**Executed locally on September 11, 2026.** The expanded ignored harness passed all 1,000, 10,000, and 100,000 ListingSource scenarios, including real SQLx handler timing. Cargo reported 10.97 s test time. These are one warm local-run result, not a deployment latency claim.
+**Executed locally at `2c194f2703c1ed0c262267d39e23a27158f009f5` on September 11, 2026.** The ignored harness passed all 1,000, 10,000, and 100,000 ListingSource scenarios, including real SQLx handler timing. Cargo reported 11.27 s test time. These are one warm local-run result, not a deployment latency claim.
 
 ## Run
 
@@ -53,33 +53,35 @@ Capture these fields with the command output:
 
 | Field | Value |
 | --- | --- |
-| Status | Passed locally for all three scenarios |
-| UTC run time | September 11, 2026 (wall-clock time not retained) |
-| Git revision | Uncommitted working tree based on `5c9c5dd014b5058a594afd0c01bd9dca797e8b03` |
+| Status | Passed locally for all three scenarios; every measured p95 was below 150 ms |
+| UTC run time | `2026-09-11T16:35:10Z` |
+| Git revision | `2c194f2703c1ed0c262267d39e23a27158f009f5` |
 | Exact command | Command above |
 | `AURA_TEST_POSTGRES_IMAGE` | Unset; test-api pinned image used |
 | Host OS, kernel, CPU model/count, RAM, and storage class | Linux 6.8.0-117-generic x86_64; Intel Core i7-8700 @ 3.20GHz, 12 logical CPUs; 62 GiB RAM; storage class unrecorded |
 | Docker version/resources | Docker 29.7.2 (build `a7dcaa6`); resource limits unrecorded |
 | PostgreSQL server version/number | PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2), `160015` |
 | PostgreSQL image reference/digest | test-api pinned `ghcr.io/aura-historia/test-postgres:pg16-pgttl-3.0.0-r1`; digest not recaptured in this run |
+| Extensions | `pg_trgm` and `unaccent` installed by the benchmark schema; pinned-image checks report `pg_trgm` 1.6 and `unaccent` 1.1 |
 | Database encoding, collation, and ctype | UTF8; `en_US.utf8`; `en_US.utf8` |
 | `shared_buffers`, `effective_cache_size`, `work_mem`, `random_page_cost`, `jit` | 128MB; 4GB; 4MB; 4; on |
 | Seed cardinality | 1,000/50; 10,000/500; 100,000/5,000 (`listing_sources`/`parties`) |
 | `ANALYZE` completion by scenario | Passed for 1k, 10k, and 100k scenarios |
 | Custom-plan output by scenario | Captured in test stdout for all scenarios |
 | Generic-plan output by scenario | Captured in test stdout for all scenarios |
+| Representative index evidence | Browse used `listing_sources_public_name_order_idx`; text plans used `listing_sources_name_search_trgm_idx`; slug lookup used `listing_sources_slug_unique` |
 | Cancellations or timeouts | Unmeasured by the timing workload |
 | Handler/reader failures | None in this run |
 | Mixed-load/concurrency result | Unmeasured |
 
 ## Captured results
 
-All three scenarios completed prepared browse, prefix, contains, later-page, and slug plan cases under both plan modes. The actual-handler timing workload also passed its 150 ms local p95 guard for every operation.
+All three scenarios completed prepared browse, prefix, contains, later-page, and slug plan cases under both plan modes. The actual-handler timing workload passed its 150 ms local p95 guard for every operation. The representative observed plans used the intended B-tree browse/slug and trigram text indexes named above.
 
 | ListingSources | Browse p50 / p95 | Prefix p50 / p95 | Contains p50 / p95 | Slug p50 / p95 |
 | ---: | --- | --- | --- | --- |
-| 1,000 | 1.378 / 1.527 ms | 2.018 / 2.281 ms | 2.069 / 2.592 ms | 0.620 / 0.741 ms |
-| 10,000 | 1.472 / 1.645 ms | 3.980 / 4.110 ms | 4.611 / 4.820 ms | 0.496 / 0.675 ms |
-| 100,000 | 1.306 / 1.616 ms | 31.257 / 32.202 ms | 45.330 / 46.646 ms | 0.671 / 0.765 ms |
+| 1,000 | 1.163 / 1.280 ms | 2.130 / 2.783 ms | 2.227 / 3.727 ms | 0.713 / 0.864 ms |
+| 10,000 | 1.230 / 1.422 ms | 3.896 / 4.245 ms | 4.541 / 4.854 ms | 0.627 / 0.748 ms |
+| 100,000 | 1.302 / 1.473 ms | 31.098 / 32.030 ms | 46.329 / 51.024 ms | 0.503 / 0.811 ms |
 
-These are nearest-rank values from 25 measured samples after 3 warm-up calls per operation/scenario. Cargo reported 10.97 s test time; shell wall time was not retained. Cancellations, timeouts, mixed-load behavior, concurrency, cold-cache behavior, and remote/deployed latency remain unmeasured.
+These are nearest-rank values from 25 measured samples after 3 warm-up calls per operation/scenario. Cargo reported 11.27 s test time; shell wall time was not retained. Cancellations, timeouts, mixed-load behavior, concurrency, cold-cache behavior, and remote/deployed latency remain unmeasured.
