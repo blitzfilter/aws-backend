@@ -25,6 +25,7 @@ Prefixes are durable and collision-free.
 | Rust type | Prefix | Owner |
 |---|---|---|
 | `ProductListingId` | `pl` | `product-listing-core` |
+| `AuctionId` | `auc` | `auction-core` |
 | `PartyId` | `pty` | `party-core` |
 | `ListingSourceId` | `ls` | `listing-source-core` |
 | `UserId` | `usr` | `user-core` |

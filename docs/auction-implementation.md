@@ -5,7 +5,7 @@
 - Target issue: #1465; reliable identifier path of #1464.
 - Baseline: `c10ea0f44e63f249d398c10a7211933a3c48868f`.
 - Development policy: direct replacement; no successor raw/API/event/index version, compatibility reader, aliases, dual writes, backfill, or transition migration.
-- Iteration records: [00 inventory](auction-iterations/00-inventory.md). Later records are added only after their own passing gates.
+- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md). Later records are added only after their own passing gates.
 
 ## Observed baseline
 
@@ -27,7 +27,7 @@ The original broad inventory scan requested `rg`, but this checkout does not hav
 | Iteration | Complete capability | Contract owners and consumers |
 | --- | --- | --- |
 | 00 | Inventory only | `docs/auction.md`, this plan, iteration record, documentation index. |
-| 01 | Pure Auction model and time values | New `auction-core`, object-ID registry, workspace/dependency rules, pure core tests. No listing changes. |
+| 01 | Pure Auction model and time values | **PASS.** `auction-core`, object-ID registry, workspace/dependency rules, pure core tests. No listing changes. |
 | 02 | Persisted standalone Auction and admin write use cases | New `auction-service`, `auction-postgres`, initial business schema, source deletion blocker, PostgreSQL tests. |
 | 03 | Admin Auction HTTP | `aura-historia-api`, service wiring/DTOs, OpenAPI, changelog, black-box API tests. |
 | 04 | One raw-values shape | `product-listing-normalization`, capture/hash/dispatch, crawler, Shopify, WooCommerce, raw fixtures/runbook. Replace V1/V2 directly while retaining both price formats. |
@@ -46,7 +46,7 @@ Target dependency direction is `auction-core -> auction-service -> auction-postg
 
 | Contract | Baseline | Owning replacement iteration | Required closure |
 | --- | --- | --- | --- |
-| Object ID registry | no `auc` prefix | 01 | `docs/object-ids.md`, strict codec tests, workspace graph. |
+| Object ID registry | no `auc` prefix | 01 — complete | `docs/object-ids.md`, strict codec tests, workspace graph. |
 | Auction state/event/schema | absent | 02 | initial DDL, repository/event codec, CAS/protection, source delete blocker. |
 | Admin Auction REST | absent | 03 | routes, mappings, OpenAPI, changelog, service authorization/API tests. |
 | Raw values | V1/V2 branches | 04 | all producers, capture/hash/dispatch, fixtures and reset note; discriminator remains only `1`. |

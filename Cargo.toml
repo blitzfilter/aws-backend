@@ -14,6 +14,7 @@ members = [
     "src/aura-historia-cron",
     "src/admin-overview-service",
     "src/admin-overview-postgres",
+    "src/auction-core",
     "src/billing-service",
     "src/billing-stripe",
     "src/cloudwatch-log-retention-lambda",
@@ -112,6 +113,7 @@ fake = { version = "5.1.0", features = ["derive", "time", "uuid", "url"] }
 application = { path = "src/application" }
 admin-overview-service = { path = "src/admin-overview-service" }
 admin-overview-postgres = { path = "src/admin-overview-postgres" }
+auction-core = { path = "src/auction-core" }
 platform-observability = { path = "src/platform-observability" }
 platform-opensearch = { path = "src/platform-opensearch" }
 platform-postgres = { path = "src/platform-postgres" }
@@ -193,6 +195,7 @@ testcontainers = "0.24.0"
 testcontainers-modules = "0.12.1"
 thiserror = "2.0.18"
 time = "0.3.47"
+time-tz = "2.0.0"
 tokio = { version = "1.52.3", default-features = false }
 tower = "0.5.2"
 tower-http = { version = "0.7.0", features = ["cors", "limit", "sensitive-headers", "timeout", "trace"] }

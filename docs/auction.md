@@ -1,6 +1,6 @@
 # Auctions
 
-**Status:** planned target contract. Iteration 00 created this record only. No `Auction` Rust type, table, route, raw field, or API behavior exists yet. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
+**Status:** iteration 01 implements the pure `auction-core` model only. `Auction`, its strict `auc_` identity, source key, optional metadata, discovered/changed payloads, and precision-bearing schedule values exist. No Auction table, route, raw field, listing membership, or API behavior exists yet. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
 
 See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/00-inventory.md).
 
@@ -10,7 +10,7 @@ An Auction is Aura's source-scoped record of one sale occasion. It supports disc
 
 ## Target identity
 
-The final implementation will own `AuctionId` (`auc_` strict UUIDv7 TypeID) in `auction-core`. PostgreSQL will store its backing UUID. `auc` was unassigned in the current [object-ID registry](object-ids.md) at inventory time.
+`auction-core` owns `AuctionId` (`auc_` strict UUIDv7 TypeID). `auc` is registered in the [object-ID registry](object-ids.md). Future PostgreSQL ownership will store its backing UUID.
 
 An Auction key is:
 
@@ -34,9 +34,9 @@ An asserted empty context is valid and must not collapse to `None`. The context 
 
 Ordinary source and partner writes may attach an unresolved listing or a listing with no context to a reliable same-source key. They preserve a current membership when evidence is sparse, and reject/diagnose A-to-B membership changes. They never infer a key from a name. Administrative correction is the only reassignment or retraction path; it replaces the entire context with a required restricted reason. A listing-owned override barrier then blocks ordinary source/partner auction changes until an explicitly safe release establishes raw-stream revision floors.
 
-## Target time semantics
+## Time semantics
 
-Auction and lot times retain either an exact instant or a source calendar date. Date-only values never become midnight instants. Exact comparisons and exact-time filters use only instants; date-only values remain visible but do not match them.
+Auction times in `auction-core` retain either an exact instant or a source calendar date, with a validated IANA source timezone when supplied. Date-only values never become midnight instants. Exact comparisons and future exact-time filters use only instants; date-only values remain visible but do not match them.
 
 Auction schedule roles are `BIDDING_OPENS`, `LIVE_STARTS`, `LOTS_BEGIN_CLOSING`, and `SCHEDULED_END`. Lot roles are `bidding_opens`, `scheduled_closes`, and exact `reported_closed_at`. Auction-level milestones are never copied into lot deadlines. Passing a scheduled time never changes status, availability, sale observation, or result.
 

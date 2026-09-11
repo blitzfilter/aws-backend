@@ -8,7 +8,7 @@ serde = { workspace = true, features = ["derive"] }
 slug = { workspace = true }
 strong_id = { workspace = true }
 thiserror = { workspace = true }
-time = { workspace = true, features = ["macros", "parsing", "serde"] }
+time = { workspace = true, features = ["formatting", "macros", "parsing", "serde"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
 
 fake = { workspace = true, optional = true }
