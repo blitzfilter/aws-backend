@@ -11,7 +11,9 @@ use listing_source_service::use_cases::commands::create_listing_source::CreateLi
 use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceError;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceError;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceError;
+use listing_source_service::use_cases::queries::get_public_listing_source_by_slug::GetPublicListingSourceBySlugError;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesError;
+use listing_source_service::use_cases::queries::search_public_listing_sources::SearchPublicListingSourcesError;
 use notification_service::use_cases::commands::delete_notification::DeleteNotificationError;
 use notification_service::use_cases::commands::delete_notifications::DeleteNotificationsError;
 use notification_service::use_cases::commands::update_all_notifications_seen::UpdateAllNotificationsSeenError;
@@ -926,6 +928,46 @@ impl From<GetListingSourceError> for ApiError {
             | GetListingSourceError::Internal { .. } => {
                 ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
                     .with_detail("Listing source details failed internally.")
+            }
+        }
+    }
+}
+
+impl From<GetPublicListingSourceBySlugError> for ApiError {
+    fn from(error: GetPublicListingSourceBySlugError) -> Self {
+        match error {
+            GetPublicListingSourceBySlugError::NotFound => {
+                ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
+                    .with_detail("Listing source was not found.")
+            }
+            GetPublicListingSourceBySlugError::TemporarilyUnavailable { .. }
+            | GetPublicListingSourceBySlugError::BeginTransaction { .. }
+            | GetPublicListingSourceBySlugError::CommitTransaction { .. } => {
+                ApiError::service_unavailable(LISTING_SOURCE_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Public listing source details are temporarily unavailable.")
+            }
+            GetPublicListingSourceBySlugError::InvalidReadModel { .. }
+            | GetPublicListingSourceBySlugError::Internal { .. } => {
+                ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
+                    .with_detail("Public listing source details failed internally.")
+            }
+        }
+    }
+}
+
+impl From<SearchPublicListingSourcesError> for ApiError {
+    fn from(error: SearchPublicListingSourcesError) -> Self {
+        match error {
+            SearchPublicListingSourcesError::TemporarilyUnavailable { .. }
+            | SearchPublicListingSourcesError::BeginTransaction { .. }
+            | SearchPublicListingSourcesError::CommitTransaction { .. } => {
+                ApiError::service_unavailable(LISTING_SOURCE_TEMPORARILY_UNAVAILABLE)
+                    .with_detail("Public listing source search is temporarily unavailable.")
+            }
+            SearchPublicListingSourcesError::InvalidReadModel { .. }
+            | SearchPublicListingSourcesError::Internal { .. } => {
+                ApiError::internal_server_error(LISTING_SOURCE_INTERNAL_ERROR)
+                    .with_detail("Public listing source search failed internally.")
             }
         }
     }

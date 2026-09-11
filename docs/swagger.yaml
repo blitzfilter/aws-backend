@@ -9497,64 +9497,121 @@ paths:
                 status: 503
                 title: Service Unavailable
                 error: OAUTH_TEMPORARILY_UNAVAILABLE
-  /api/v1/listing-sources/by-slug/{listingSourceSlugId}:
+  /api/v1/listing-sources:
     get:
-      summary: Get a ListingSource by slug
-      operationId: getListingSourceBySlug
+      summary: Search public ListingSources
+      description: Anonymous, literal partial-name search and browse of every persisted ListingSource. Optional valid credentials never widen the public representation; invalid supplied credentials are rejected. Query values are NFC/Unicode-whitespace canonicalized. One scalar and punctuation-only input return a terminal empty collection.
+      operationId: searchPublicListingSources
       tags:
         - ListingSources
+      security:
+        - {}
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 256
+          description: Optional contiguous literal text. Only `query`, `size`, and `searchAfter` are accepted once; unknown or repeated parameters return 400.
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 21
+        - name: searchAfter
+          in: query
+          schema:
+            type: string
+          description: Opaque URL-safe base64 continuation from this endpoint. Omit on the first page and restart after a query or size change.
+      responses:
+        "200":
+          description: Public collection page. Cache-Control is no-store.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicListingSourceSearchCollectionData"
+        "400":
+          description: Invalid query parameter or continuation. Cache-Control is no-store.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "401":
+          description: Invalid supplied credential. Cache-Control is no-store.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "500":
+          description: Invalid persisted public read model. Cache-Control is no-store.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "503":
+          description: Temporary public-read failure. Cache-Control is no-store.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+  /api/v1/listing-sources/by-slug/{listingSourceSlugId}:
+    get:
+      summary: Get a public ListingSource by immutable slug
+      description: Anonymous exact immutable-slug lookup. This route accepts no query parameters. Optional valid credentials never widen the public representation; invalid supplied credentials are rejected.
+      operationId: getPublicListingSourceBySlug
+      tags:
+        - ListingSources
+      security:
+        - {}
+        - BearerAuth: []
+        - AccessTokenAuth: []
       parameters:
         - name: listingSourceSlugId
           in: path
           required: true
           schema:
             type: string
+          description: Exact persisted immutable ListingSource slug.
       responses:
         "200":
-          description: Success
+          description: Public ListingSource. Cache-Control is no-store.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              example: no-store
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListingSourceData"
+                $ref: "#/components/schemas/PublicListingSourceData"
         "400":
-          description: Problem response
+          description: Invalid slug or nonempty query string. Cache-Control is no-store.
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "401":
-          description: Problem response
+          description: Invalid supplied credential. Cache-Control is no-store.
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-        "403":
-          description: Problem response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
-          description: Problem response
+          description: LISTING_SOURCE_NOT_FOUND. Cache-Control is no-store.
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "500":
-          description: Problem response
+          description: Invalid persisted public read model. Cache-Control is no-store.
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "503":
-          description: Problem response
+          description: Temporary public-read failure. Cache-Control is no-store.
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiError"
-      security:
-        - BearerAuth: []
-        - AccessTokenAuth: []
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ApiError" }
   /api/v1/me/listing-sources:
     get:
       summary: List caller-administered ListingSources
@@ -15551,6 +15608,59 @@ components:
         listingSourceSlugId:
           type: string
           example: ada-antiques
+    PublicListingSourceOperatorData:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Original display name of the ListingSource operator Party. The operator is not a seller resource.
+    PublicListingSourceData:
+      type: object
+      description: Allowlisted public ListingSource card used by both public collection search and exact slug lookup. It omits Party identifiers/contact, ingestion/provider/referral configuration, timestamps, versions, and search metadata.
+      required:
+        - listingSourceId
+        - listingSourceSlugId
+        - name
+        - operator
+      properties:
+        listingSourceId:
+          type: string
+          description: Canonical `ls_` TypeID.
+        listingSourceSlugId:
+          type: string
+          description: Immutable navigation slug.
+        name:
+          type: string
+        operator:
+          $ref: "#/components/schemas/PublicListingSourceOperatorData"
+        url:
+          type: string
+          format: uri
+          description: Optional http/https presentation URL, omitted when absent.
+        image:
+          type: string
+          format: uri
+          description: Optional http/https presentation image URL, omitted when absent.
+    PublicListingSourceSearchCollectionData:
+      type: object
+      required:
+        - items
+        - size
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicListingSourceData"
+        size:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Accepted requested page size, not item count.
+        searchAfter:
+          type: string
+          description: Opaque continuation, omitted on a terminal page.
     ListingSourceData:
       type: object
       required:

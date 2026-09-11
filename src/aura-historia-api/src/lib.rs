@@ -30,8 +30,9 @@ use crate::auth::{
 use crate::state::{
     AdminOverviewState, AppState, BillingState, ListingSourcesState, NewsletterState,
     NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
-    PartnershipApplicationsState, PartnershipsState, ProductListingsState, ReadinessCheck,
-    SearchFiltersState, UsersState, WatchlistState, WebhooksState,
+    PartnershipApplicationsState, PartnershipsState, ProductListingsState,
+    PublicListingSourceReadBudget, ReadinessCheck, SearchFiltersState, UsersState, WatchlistState,
+    WebhooksState,
 };
 use crate::transport::with_transport_middleware;
 use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
@@ -81,13 +82,16 @@ use woocommerce_service::WoocommerceWebhookIntake;
 
 use listing_source_postgres::{
     SqlxListingSourceReaders, SqlxListingSourceRepositoryFactory,
-    SqlxListingSourceSearchReaderFactory,
+    SqlxListingSourceSearchReaderFactory, SqlxPublicListingSourceDetailsReaderFactory,
+    SqlxPublicListingSourceSearchReaderFactory,
 };
 use listing_source_service::use_cases::commands::create_listing_source::CreateListingSourceHandler;
 use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceHandler;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceHandler;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceHandler;
+use listing_source_service::use_cases::queries::get_public_listing_source_by_slug::GetPublicListingSourceBySlugHandler;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesHandler;
+use listing_source_service::use_cases::queries::search_public_listing_sources::SearchPublicListingSourcesHandler;
 use partnership_postgres::{
     SqlxListingSourceAuthorization, SqlxListingSourceGrantRepositoryFactory,
     SqlxPartnershipApplicationReaderFactory, SqlxPartnershipApplicationRepositoryFactory,
@@ -220,6 +224,10 @@ pub const ZOHO_ACCOUNTS_URL_ENV: &str = "ZOHO_ACCOUNTS_URL";
 pub const ZOHO_CAMPAIGNS_URL_ENV: &str = "ZOHO_CAMPAIGNS_URL";
 pub const PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED_ENV: &str =
     "PRODUCT_LISTING_SEARCH_PARALLEL_ENRICHMENT_ENABLED";
+pub const PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV: &str =
+    "PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT";
+pub const PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS_ENV: &str =
+    "PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS";
 pub const PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED_ENV: &str =
     "PRODUCT_LISTING_SEARCH_FX_CACHE_ENABLED";
 pub const PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES_ENV: &str =
@@ -234,6 +242,8 @@ pub const PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES_ENV: &str =
     "PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES";
 pub const PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS_ENV: &str =
     "PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS";
+const DEFAULT_PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT: u64 = 4;
+const DEFAULT_PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS: u64 = 500;
 const DEFAULT_PRODUCT_LISTING_SEARCH_FX_CACHE_MAX_ENTRIES: u64 = 512;
 const DEFAULT_PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS: u64 = 30;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES: u64 = 4_096;
@@ -266,6 +276,8 @@ pub struct ApiConfig {
     product_listing_search_parallel_enrichment_enabled: bool,
     product_listing_search_fx_cache: FxSearchCacheConfig,
     product_listing_search_source_cache: SourceSearchCacheConfig,
+    public_listing_source_read_max_in_flight: usize,
+    public_listing_source_read_request_timeout: Duration,
 }
 
 impl ApiConfig {
@@ -326,6 +338,21 @@ impl ApiConfig {
             parse_product_listing_search_fx_cache_config(&mut get)?;
         let product_listing_search_source_cache =
             parse_product_listing_search_source_cache_config(&mut get)?;
+        let public_listing_source_read_max_in_flight = optional_bounded_usize_config(
+            &mut get,
+            PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT_ENV,
+            DEFAULT_PUBLIC_LISTING_SOURCE_READ_MAX_IN_FLIGHT,
+            1,
+            64,
+        )?;
+        let public_listing_source_read_request_timeout =
+            Duration::from_millis(optional_bounded_u64_config(
+                &mut get,
+                PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS_ENV,
+                DEFAULT_PUBLIC_LISTING_SOURCE_READ_REQUEST_TIMEOUT_MS,
+                1,
+                5_000,
+            )?);
         let zoho = ZohoConfig {
             list_key: required_config(&mut get, ZOHO_LIST_KEY_ENV)?,
             client_id: required_config(&mut get, ZOHO_CLIENT_ID_ENV)?,
@@ -346,6 +373,8 @@ impl ApiConfig {
             product_listing_search_parallel_enrichment_enabled,
             product_listing_search_fx_cache,
             product_listing_search_source_cache,
+            public_listing_source_read_max_in_flight,
+            public_listing_source_read_request_timeout,
         })
     }
 
@@ -383,6 +412,14 @@ impl ApiConfig {
 
     fn product_listing_search_source_cache_config(&self) -> SourceSearchCacheConfig {
         self.product_listing_search_source_cache.clone()
+    }
+
+    /// Shared, non-queuing public ListingSource read budget for this API process.
+    fn public_listing_source_read_budget(&self) -> PublicListingSourceReadBudget {
+        PublicListingSourceReadBudget::new(
+            self.public_listing_source_read_max_in_flight,
+            self.public_listing_source_read_request_timeout,
+        )
     }
 
     fn product_listing_search_read_execution_policy(
@@ -672,6 +709,10 @@ pub fn app(state: AppState) -> Router {
                         .delete(listing_sources::delete_listing_source::delete_listing_source),
                 )
                 .route(
+                    "/api/v1/listing-sources",
+                    get(listing_sources::search_public_listing_sources::search_public_listing_sources),
+                )
+                .route(
                     "/api/v1/listing-sources/by-slug/{listing_source_slug_id}",
                     get(listing_sources::get_listing_source_by_slug::get_listing_source_by_slug),
                 )
@@ -925,6 +966,14 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         unit_of_work.clone(),
         SqlxListingSourceSearchReaderFactory::new(),
         CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+    );
+    let search_public_listing_sources = SearchPublicListingSourcesHandler::new(
+        unit_of_work.clone(),
+        SqlxPublicListingSourceSearchReaderFactory::new(),
+    );
+    let get_public_listing_source_by_slug = GetPublicListingSourceBySlugHandler::new(
+        unit_of_work.clone(),
+        SqlxPublicListingSourceDetailsReaderFactory::new(),
     );
     let get_own_user =
         GetOwnUserHandler::new(unit_of_work.clone(), SqlxUserAccountReaderFactory::new());
@@ -1284,6 +1333,11 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         Arc::new(list_administered_listing_sources),
         Arc::new(search_listing_sources),
         Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+    )
+    .with_public_reads(
+        Arc::new(search_public_listing_sources),
+        Arc::new(get_public_listing_source_by_slug),
+        config.public_listing_source_read_budget(),
     )
     .with_delete(Arc::new(delete_listing_source));
     let parties_state = PartiesState::new(

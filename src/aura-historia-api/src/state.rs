@@ -9,7 +9,9 @@ use listing_source_service::use_cases::commands::create_listing_source::CreateLi
 use listing_source_service::use_cases::commands::delete_listing_source::DeleteListingSourceUseCase;
 use listing_source_service::use_cases::commands::update_listing_source::UpdateListingSourceUseCase;
 use listing_source_service::use_cases::queries::get_listing_source::GetListingSourceUseCase;
+use listing_source_service::use_cases::queries::get_public_listing_source_by_slug::GetPublicListingSourceBySlugUseCase;
 use listing_source_service::use_cases::queries::search_listing_sources::SearchListingSourcesUseCase;
+use listing_source_service::use_cases::queries::search_public_listing_sources::SearchPublicListingSourcesUseCase;
 use notification_service::use_cases::commands::delete_notification::DeleteNotificationUseCase;
 use notification_service::use_cases::commands::delete_notifications::DeleteNotificationsUseCase;
 use notification_service::use_cases::commands::update_all_notifications_seen::UpdateAllNotificationsSeenUseCase;
@@ -61,7 +63,8 @@ use search_filter_service::use_cases::{
 };
 use woocommerce_service::WoocommerceWebhookIntakeUseCase;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use user_service::use_cases::commands::change_user_role::ChangeUserRoleUseCase;
 use user_service::use_cases::commands::change_user_tier::ChangeUserTierUseCase;
 use user_service::use_cases::commands::create_access_token::CreateAccessTokenUseCase;
@@ -465,6 +468,29 @@ impl ProductListingsState {
 }
 
 #[derive(Clone)]
+pub(crate) struct PublicListingSourceReadBudget {
+    permits: Arc<Semaphore>,
+    request_timeout: Duration,
+}
+
+impl PublicListingSourceReadBudget {
+    pub(crate) fn new(max_in_flight: usize, request_timeout: Duration) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(max_in_flight)),
+            request_timeout,
+        }
+    }
+
+    pub(crate) fn try_acquire(&self) -> Option<OwnedSemaphorePermit> {
+        self.permits.clone().try_acquire_owned().ok()
+    }
+
+    pub(crate) const fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
+}
+
+#[derive(Clone)]
 pub struct ListingSourcesState {
     pub(crate) create: Arc<dyn CreateListingSourceUseCase>,
     pub(crate) get: Arc<dyn GetListingSourceUseCase>,
@@ -472,6 +498,9 @@ pub struct ListingSourcesState {
     pub(crate) delete: Option<Arc<dyn DeleteListingSourceUseCase>>,
     pub(crate) list_administered: Arc<dyn ListAdministeredListingSourcesUseCase>,
     pub(crate) search: Arc<dyn SearchListingSourcesUseCase>,
+    pub(crate) search_public: Option<Arc<dyn SearchPublicListingSourcesUseCase>>,
+    pub(crate) get_public_by_slug: Option<Arc<dyn GetPublicListingSourceBySlugUseCase>>,
+    pub(crate) public_read_budget: Option<PublicListingSourceReadBudget>,
     pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
 }
 
@@ -491,8 +520,23 @@ impl ListingSourcesState {
             delete: None,
             list_administered,
             search,
+            search_public: None,
+            get_public_by_slug: None,
+            public_read_budget: None,
             authenticator,
         }
+    }
+
+    pub(crate) fn with_public_reads(
+        mut self,
+        search_public: Arc<dyn SearchPublicListingSourcesUseCase>,
+        get_public_by_slug: Arc<dyn GetPublicListingSourceBySlugUseCase>,
+        public_read_budget: PublicListingSourceReadBudget,
+    ) -> Self {
+        self.search_public = Some(search_public);
+        self.get_public_by_slug = Some(get_public_by_slug);
+        self.public_read_budget = Some(public_read_budget);
+        self
     }
 
     pub fn with_delete(mut self, delete: Arc<dyn DeleteListingSourceUseCase>) -> Self {
