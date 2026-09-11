@@ -9,7 +9,7 @@
 - Rows, SQL, provider configuration, and secrets stay adapter-private. Shopify/WooCommerce readers and WooCommerce signature verification require the exact `(partnership_id, listing_source_id)` grant for the ListingSource operator's Partnership. The `WebCrawlSourceReader` maps a complete canonical ListingSource snapshot with ID/name/slug, derived `WEB_CRAWL` enablement, and optional fallback currency.
 - Repository uses caller-owned `SqlxTransaction`; unknown persisted ingestion values fail. Eligible hard delete locks the source, checks protected ProductListing/raw/application references, explicitly removes grants and owned configuration without selecting secrets, then uses versioned physical deletion.
 - `lib.rs` only declares and re-exports; the aggregate repository lives in `repositories/listing_source_repository.rs`.
-- Each reader implementation owns one `readers/<capability>.rs` file; `readers/mod.rs` holds shared adapter state, helpers, and narrow reader re-exports. The bounded ListingSource search reader joins only business ListingSource/Party data and never selects provider configuration or crawler-local state.
+- Each reader implementation owns one `readers/<capability>.rs` file; `readers/mod.rs` holds shared adapter state, helpers, and narrow reader re-exports. The bounded ListingSource search reader joins only business ListingSource/Party data and never selects provider configuration or crawler-local state. The initial business schema maintains adapter-only `name_search` columns with triggers; no aggregate, row, or existing admin read exposes them.
 
 ## Verification
 

@@ -755,6 +755,14 @@ mod tests {
 
         assert_eq!(source.id(), stored.source.id());
         assert_eq!(configuration, stored.configuration);
+        let name_search = sqlx::query_scalar::<_, String>(
+            "SELECT name_search FROM listing_sources WHERE listing_source_id = $1",
+        )
+        .bind(source.id().into_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("read repository-created source name search: {error}"));
+        assert_eq!("provider source", name_search);
 
         let readers = SqlxListingSourceReaders::new(pool.clone());
         let details = readers

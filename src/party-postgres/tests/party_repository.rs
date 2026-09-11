@@ -16,7 +16,7 @@ const BUSINESS_SCHEMA: test_api::Postgres = test_api::Postgres::new("migrations"
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_insert_and_find_party_by_id_and_slug() {
     let pool = get_postgres_client().await;
-    let unit_of_work = SqlxUnitOfWork::new(pool);
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let parties = SqlxPartyRepositoryFactory::new();
     let party = sample_party("insert-find");
 
@@ -45,12 +45,19 @@ async fn should_insert_and_find_party_by_id_and_slug() {
     assert_eq!(party.id(), by_id.party.id());
     assert_eq!(party.id(), by_slug.party.id());
     assert_eq!(party.contact().email, by_id.party.contact().email);
+    let name_search =
+        sqlx::query_scalar::<_, String>("SELECT name_search FROM parties WHERE party_id = $1")
+            .bind(party.id().into_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("read repository-created party name search: {error}"));
+    assert_eq!("insert-find", name_search);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_retain_slug_when_renaming_party_and_replace_contact() {
     let pool = get_postgres_client().await;
-    let unit_of_work = SqlxUnitOfWork::new(pool);
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let parties = SqlxPartyRepositoryFactory::new();
     let party = sample_party("stable-slug");
 
@@ -100,6 +107,13 @@ async fn should_retain_slug_when_renaming_party_and_replace_contact() {
             .map(ToString::to_string)
             .as_deref()
     );
+    let name_search =
+        sqlx::query_scalar::<_, String>("SELECT name_search FROM parties WHERE party_id = $1")
+            .bind(updated.party.id().into_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("read repository-renamed party name search: {error}"));
+    assert_eq!("renamed party", name_search);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
@@ -287,6 +301,119 @@ async fn should_enforce_party_name_and_slug_schema_constraints() {
             .execute(&pool)
             .await;
     assert!(blank_slug.is_err());
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_install_and_maintain_normalized_party_and_listing_source_names() {
+    let pool = get_postgres_client().await;
+    let raw_party_name = "\u{2003}Mu\u{308}ller\tKunst\u{00a0}Handel\u{202f}\u{3000}";
+    let expected_party_name_search = "muller kunst handel";
+    let party_id = uuid::Uuid::now_v7();
+
+    let extensions = sqlx::query_scalar::<_, String>(
+        "SELECT n.nspname || '.' || e.extname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname IN ('pg_trgm', 'unaccent') ORDER BY e.extname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("read public search extensions: {error}"));
+    assert_eq!(vec!["public.pg_trgm", "public.unaccent"], extensions);
+
+    let normalized = sqlx::query_scalar::<_, String>("SELECT public.aura_search_name($1)")
+        .bind(raw_party_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("normalize party name: {error}"));
+    assert_eq!(expected_party_name_search, normalized);
+    let cjk_and_cyrillic = sqlx::query_scalar::<_, String>("SELECT public.aura_search_name($1)")
+        .bind(" 東京\u{3000}АНТИК ")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("normalize CJK and Cyrillic name: {error}"));
+    assert_eq!("東京 антик", cjk_and_cyrillic);
+
+    sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+        .bind(party_id)
+        .bind("normalized-party")
+        .bind(raw_party_name)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert normalized party fixture: {error}"));
+
+    let party_name_search =
+        sqlx::query_scalar::<_, String>("SELECT name_search FROM parties WHERE party_id = $1")
+            .bind(party_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("read party name search: {error}"));
+    assert_eq!(expected_party_name_search, party_name_search);
+
+    sqlx::query("UPDATE parties SET name_search = 'drift' WHERE party_id = $1")
+        .bind(party_id)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("attempt party search drift: {error}"));
+    let party_name_search =
+        sqlx::query_scalar::<_, String>("SELECT name_search FROM parties WHERE party_id = $1")
+            .bind(party_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("read recomputed party name search: {error}"));
+    assert_eq!(expected_party_name_search, party_name_search);
+
+    let source_id = uuid::Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(source_id)
+    .bind(format!("normalized-source-{source_id}"))
+    .bind(" Café\u{3000}MÜLLER ")
+    .bind(party_id)
+    .execute(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("insert normalized listing source fixture: {error}"));
+
+    sqlx::query("UPDATE listing_sources SET name_search = 'drift' WHERE listing_source_id = $1")
+        .bind(source_id)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("attempt listing source search drift: {error}"));
+    let source_name_search = sqlx::query_scalar::<_, String>(
+        "SELECT name_search FROM listing_sources WHERE listing_source_id = $1",
+    )
+    .bind(source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("read recomputed listing source name search: {error}"));
+    assert_eq!("cafe muller", source_name_search);
+
+    sqlx::query("UPDATE listing_sources SET name = $1 WHERE listing_source_id = $2")
+        .bind("Renamed\u{00a0}Source")
+        .bind(source_id)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("rename listing source fixture: {error}"));
+    let renamed_source_name_search = sqlx::query_scalar::<_, String>(
+        "SELECT name_search FROM listing_sources WHERE listing_source_id = $1",
+    )
+    .bind(source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("read renamed listing source name search: {error}"));
+    assert_eq!("renamed source", renamed_source_name_search);
+
+    sqlx::query("UPDATE parties SET name = $1 WHERE party_id = $2")
+        .bind("Renamed\u{00a0}Operator")
+        .bind(party_id)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("rename party fixture: {error}"));
+    let renamed_party_name_search =
+        sqlx::query_scalar::<_, String>("SELECT name_search FROM parties WHERE party_id = $1")
+            .bind(party_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("read renamed party name search: {error}"));
+    assert_eq!("renamed operator", renamed_party_name_search);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]

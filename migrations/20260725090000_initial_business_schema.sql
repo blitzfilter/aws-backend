@@ -1,3 +1,42 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public;
+
+-- Search representation only. This is STABLE because the selected unaccent
+-- dictionary is configurable; maintained columns and triggers avoid claiming
+-- it is immutable for generated-column or expression-index use.
+CREATE OR REPLACE FUNCTION public.aura_search_name(value text)
+RETURNS text
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+AS $$
+    WITH unicode_whitespace(characters) AS (
+        SELECT chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32)
+            || chr(133) || chr(160) || chr(5760)
+            || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196)
+            || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201)
+            || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287)
+            || chr(12288)
+    )
+    SELECT lower(
+        public.unaccent(
+            'public.unaccent'::regdictionary,
+            regexp_replace(
+                regexp_replace(
+                    normalize(value, NFC),
+                    '[' || characters || ']+',
+                    ' ',
+                    'g'
+                ),
+                '^[' || characters || ']+|[' || characters || ']+$',
+                '',
+                'g'
+            )
+        )
+    )
+    FROM unicode_whitespace
+$$;
+
 CREATE TABLE users (
     user_id uuid PRIMARY KEY,
     email text NOT NULL UNIQUE,
@@ -42,6 +81,7 @@ CREATE TABLE parties (
     party_slug_id text NOT NULL,
     CONSTRAINT parties_slug_unique UNIQUE (party_slug_id),
     name text NOT NULL,
+    name_search text COLLATE "C" NOT NULL,
     phone text,
     email text,
     version bigint NOT NULL DEFAULT 1,
@@ -58,6 +98,7 @@ CREATE TABLE listing_sources (
     listing_source_slug_id text NOT NULL,
     CONSTRAINT listing_sources_slug_unique UNIQUE (listing_source_slug_id),
     name text NOT NULL,
+    name_search text COLLATE "C" NOT NULL,
     operator_party_id uuid NOT NULL REFERENCES parties(party_id) ON DELETE RESTRICT,
     url text,
     image text,
@@ -71,6 +112,34 @@ CREATE TABLE listing_sources (
     CONSTRAINT listing_sources_referral_configuration_object CHECK (referral_configuration IS NULL OR jsonb_typeof(referral_configuration) = 'object'),
     CONSTRAINT listing_sources_version_positive CHECK (version >= 1)
 );
+
+CREATE OR REPLACE FUNCTION public.maintain_party_name_search()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.name_search := public.aura_search_name(NEW.name);
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER parties_maintain_name_search
+BEFORE INSERT OR UPDATE OF name, name_search ON parties
+FOR EACH ROW EXECUTE FUNCTION public.maintain_party_name_search();
+
+CREATE OR REPLACE FUNCTION public.maintain_listing_source_name_search()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.name_search := public.aura_search_name(NEW.name);
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER listing_sources_maintain_name_search
+BEFORE INSERT OR UPDATE OF name, name_search ON listing_sources
+FOR EACH ROW EXECUTE FUNCTION public.maintain_listing_source_name_search();
 
 CREATE TABLE listing_source_ingestion_methods (
     listing_source_id uuid NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE CASCADE,
@@ -105,6 +174,14 @@ CREATE TABLE listing_source_woocommerce_ingestion_configurations (
 );
 
 CREATE INDEX listing_sources_operator_party_id_idx ON listing_sources (operator_party_id);
+CREATE INDEX listing_sources_name_search_trgm_idx
+    ON listing_sources USING gin (name_search public.gin_trgm_ops);
+CREATE INDEX parties_name_search_trgm_idx
+    ON parties USING gin (name_search public.gin_trgm_ops);
+CREATE INDEX listing_sources_public_name_order_idx
+    ON listing_sources (name_search COLLATE "C", listing_source_id);
+CREATE INDEX parties_public_name_prefix_idx
+    ON parties (name_search COLLATE "C", party_id);
 CREATE INDEX listing_source_ingestion_methods_method_idx ON listing_source_ingestion_methods (ingestion_method, listing_source_id);
 
 CREATE TABLE product_listing_raw_streams (
