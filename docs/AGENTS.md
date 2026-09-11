@@ -39,6 +39,9 @@
 ## Child DOX Index
 
 - `admin-overview.md` — administrator overview source and count semantics.
+- `auction.md` — planned Auction domain contract; current implementation status is explicit.
+- `auction-implementation.md` — isolated Auction iteration ownership and reset plan.
+- `auction-iterations/` — per-iteration Auction handoffs and verification records.
 - `party-and-listing-source.md` — Party, ListingSource, and Partnership contract.
 - `product-listing.md` — canonical ProductListing domain contract.
 - `product-listing-raw-normalization-runbook.md` — raw capture, durable wake-ups, reconstructible reconciliation cursor/FIFO, shutdown, backlog, and crawler checks.
