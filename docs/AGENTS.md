@@ -40,6 +40,7 @@
 
 - `admin-overview.md` — administrator overview source and count semantics.
 - `party-and-listing-source.md` — Party, ListingSource, and Partnership contract.
+- `public-listing-source-search.md` — frozen #1634/#1602 public ListingSource collection and slug-read contract.
 - `product-listing.md` — canonical ProductListing domain contract.
 - `product-listing-raw-normalization-runbook.md` — raw capture, durable wake-ups, reconstructible reconciliation cursor/FIFO, shutdown, backlog, and crawler checks.
 - `durable-worker-runbook.md` — durable SQS settings, identity/Sequin handoff, safe operations, tombstones, and notification recovery.
