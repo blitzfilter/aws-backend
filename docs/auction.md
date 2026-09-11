@@ -1,8 +1,8 @@
 # Auctions
 
-**Status:** iteration 01 implements the pure `auction-core` model only. `Auction`, its strict `auc_` identity, source key, optional metadata, discovered/changed payloads, and precision-bearing schedule values exist. No Auction table, route, raw field, listing membership, or API behavior exists yet. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
+**Status:** iterations 01–02 implement the pure model plus authoritative PostgreSQL Auction state, journal, metadata-protection policy, and admin-only service use cases. There is no Auction HTTP route, public Auction read, raw field, listing membership, crawler extraction, or search behavior yet. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
 
-See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/00-inventory.md).
+See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/02-auction-persistence.md).
 
 ## Scope
 
@@ -10,7 +10,7 @@ An Auction is Aura's source-scoped record of one sale occasion. It supports disc
 
 ## Target identity
 
-`auction-core` owns `AuctionId` (`auc_` strict UUIDv7 TypeID). `auc` is registered in the [object-ID registry](object-ids.md). Future PostgreSQL ownership will store its backing UUID.
+`auction-core` owns `AuctionId` (`auc_` strict UUIDv7 TypeID). `auc` is registered in the [object-ID registry](object-ids.md). PostgreSQL stores its backing UUID.
 
 An Auction key is:
 
@@ -19,6 +19,23 @@ An Auction key is:
 ```
 
 `SourceAuctionId` is a trimmed, opaque source value: 1–512 UTF-8 bytes after outer Unicode-whitespace trimming, no NUL, and exact preservation of case, punctuation, and internal whitespace. It is unique only within its ListingSource. Names, schedules, URLs, lot labels, Parties, and source operators are not key parts. A URL-derived ID is allowed only for a source-specific, fixture-backed extractor; there is no generic URL or name matching.
+
+## Current persistence and administration
+
+PostgreSQL is authoritative for standalone source-scoped Auctions. The initial business schema owns:
+
+- `auctions`, with immutable `(listing_source_id, source_auction_id)` uniqueness, a root optimistic-lock version, restrictive ListingSource foreign key, and optional localized metadata;
+- bounded `auction_schedule_points`, one row per asserted schedule role;
+- immutable `auction_events` for `AUCTION_DISCOVERED` and `AUCTION_CHANGED` payloads using the established journal convention and schema value `1`; it has no CDC or worker consumer in this iteration;
+- restricted `auction_metadata_policy_audits` and closed-world `auction_metadata_field_protections` for fields touched by an administrator.
+
+`auction-service` has authenticated-administrator create, update, and detail use cases. They use one caller-owned PostgreSQL transaction for root state, journal write, and policy audit. Admin creation protects supplied fields; an explicit update protects every touched field, including a clear or equal write. A policy-only touch advances the Auction storage version and audit state, but appends no false domain event. Audit actor labels are validated before persistence (nonempty, no NUL, at most 512 UTF-8 bytes).
+
+Embedded metadata acceptance is implemented as a service policy for later listing integration: it can fill only an absent, unprotected shared field. Equal, protected, and conflicting candidates do not replace shared facts. It is not reachable from raw or partner listing writes until iteration 06.
+
+A retained Auction blocks ListingSource deletion, including ID-only, ended, and cancelled Auctions. There is no Auction deletion endpoint or lifecycle in this iteration.
+
+The initial business schema changed directly. Local disposable PostgreSQL state must be recreated through the established test harness or an explicitly authorized local reset before running a checkout with this schema; no shared database, queue, or remote environment was reset here.
 
 ## Target ProductListing context
 

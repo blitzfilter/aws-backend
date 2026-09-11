@@ -33,6 +33,14 @@ PostgreSQL is authoritative for Partnerships, Party identity, membership, and Li
 - The admin Partnership detail reader uses one joined PostgreSQL statement with correlated, UUID-ordered association arrays. It returns at most 100 member IDs and 100 ListingSource IDs using SQL-side limits, plus complete member/grant counts; empty associations decode as empty arrays. It performs no N+1 reads.
 - The safe admin read models contain only Partnership ID, Party ID/immutable slug/name, member and grant references or counts, and `created`/`updated`. They omit Party contact, persistence `version`, provider credentials, webhook secrets, and crawler-local configuration.
 
+## Auctions
+
+PostgreSQL is authoritative for standalone source-scoped Auction state. `auctions` stores the immutable `(listing_source_id, source_auction_id)` key, optional canonical metadata, and a positive root optimistic-concurrency version. Its ListingSource foreign key is restrictive, so any retained Auction blocks source deletion. `auction_schedule_points` holds at most one asserted row for each Auction-owned schedule role and is replaced only through the root Auction repository in the same transaction.
+
+`auction_events` is an immutable journal of `AUCTION_DISCOVERED` and `AUCTION_CHANGED` payloads. The current schema version is `1`; state snapshot and semantic event commit atomically. It is retained for audit but has no CDC, projection, or worker route in iteration 02. Rehydration and event encoding validate canonical IDs, enum codes, localization pairs, URLs, schedule precision, timezones, and version values; invalid persisted state is an explicit operation error.
+
+`auction_metadata_policy_audits` and `auction_metadata_field_protections` hold restricted administrator authority evidence. Protection codes are a closed set. An explicit administrator touch—including an equal set or a clear—writes audit/protection state and advances the Auction root storage version to fence stale writers. That policy-only write does not append a fabricated domain event. Audit actor labels are nonempty, NUL-free, and at most 512 UTF-8 bytes.
+
 ## Credentials
 
 PostgreSQL is authoritative for User access tokens and canonical OAuth credentials:

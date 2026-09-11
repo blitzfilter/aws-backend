@@ -97,6 +97,7 @@ pub struct StoredListingSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingSourceDeletionBlocker {
+    Auctions,
     ProductListings,
     RawStreams,
     ApprovedPartnershipApplication,

@@ -15,6 +15,8 @@ members = [
     "src/admin-overview-service",
     "src/admin-overview-postgres",
     "src/auction-core",
+    "src/auction-service",
+    "src/auction-postgres",
     "src/billing-service",
     "src/billing-stripe",
     "src/cloudwatch-log-retention-lambda",
@@ -114,6 +116,8 @@ application = { path = "src/application" }
 admin-overview-service = { path = "src/admin-overview-service" }
 admin-overview-postgres = { path = "src/admin-overview-postgres" }
 auction-core = { path = "src/auction-core" }
+auction-service = { path = "src/auction-service" }
+auction-postgres = { path = "src/auction-postgres" }
 platform-observability = { path = "src/platform-observability" }
 platform-opensearch = { path = "src/platform-opensearch" }
 platform-postgres = { path = "src/platform-postgres" }

@@ -1,11 +1,11 @@
 # Auction implementation plan
 
-**Status:** iteration 00 inventory. This is a change plan, not a declaration of shipped API behavior. The current implementation remains the baseline described in existing ProductListing documentation until each owner iteration passes.
+**Status:** iterations 00–01 are complete; iteration 02 implements standalone Auction persistence and admin service use cases. This remains a change plan, not a declaration of Auction HTTP or public-read behavior. ProductListing contracts remain the current baseline until their owning iteration passes.
 
 - Target issue: #1465; reliable identifier path of #1464.
 - Baseline: `c10ea0f44e63f249d398c10a7211933a3c48868f`.
 - Development policy: direct replacement; no successor raw/API/event/index version, compatibility reader, aliases, dual writes, backfill, or transition migration.
-- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md). Later records are added only after their own passing gates.
+- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md). Later records are added only after their own passing gates.
 
 ## Observed baseline
 
@@ -28,7 +28,7 @@ The original broad inventory scan requested `rg`, but this checkout does not hav
 | --- | --- | --- |
 | 00 | Inventory only | `docs/auction.md`, this plan, iteration record, documentation index. |
 | 01 | Pure Auction model and time values | **PASS.** `auction-core`, object-ID registry, workspace/dependency rules, pure core tests. No listing changes. |
-| 02 | Persisted standalone Auction and admin write use cases | New `auction-service`, `auction-postgres`, initial business schema, source deletion blocker, PostgreSQL tests. |
+| 02 | Persisted standalone Auction and admin write use cases | **Implemented; full workspace library suite pending rerun.** `auction-service`, `auction-postgres`, initial business schema, source deletion blocker, PostgreSQL tests. No HTTP/public reads, listing membership, raw changes, crawler, or search. |
 | 03 | Admin Auction HTTP | `aura-historia-api`, service wiring/DTOs, OpenAPI, changelog, black-box API tests. |
 | 04 | One raw-values shape | `product-listing-normalization`, capture/hash/dispatch, crawler, Shopify, WooCommerce, raw fixtures/runbook. Replace V1/V2 directly while retaining both price formats. |
 | 05 | Qualified listing auction context and lot timing | Listing core/service/PostgreSQL/OpenSearch, raw and partner inputs, events/history, crawler selectors, saved filters/percolation, API and affected listing consumers. |

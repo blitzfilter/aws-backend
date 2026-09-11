@@ -1,0 +1,26 @@
+[package]
+name = "auction-postgres"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+application = { workspace = true }
+async-trait = { workspace = true }
+auction-core = { workspace = true }
+auction-service = { workspace = true }
+domain-primitives = { workspace = true }
+listing-source-core = { workspace = true }
+localization = { workspace = true }
+platform-postgres = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+strum = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serial_test = { workspace = true }
+test-api = { workspace = true, features = ["postgres"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

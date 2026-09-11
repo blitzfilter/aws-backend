@@ -179,6 +179,7 @@ fn delete_outcome(result: &Result<(), DeleteListingSourceError>) -> &'static str
 
 fn blocker_name(blocker: ListingSourceDeletionBlocker) -> &'static str {
     match blocker {
+        ListingSourceDeletionBlocker::Auctions => "auctions",
         ListingSourceDeletionBlocker::ProductListings => "product_listings",
         ListingSourceDeletionBlocker::RawStreams => "raw_streams",
         ListingSourceDeletionBlocker::ApprovedPartnershipApplication => "approved_application",
@@ -613,6 +614,7 @@ mod tests {
     #[tokio::test]
     async fn should_preserve_source_and_owned_rows_when_a_dependency_blocks_delete() {
         for blocker in [
+            ListingSourceDeletionBlocker::Auctions,
             ListingSourceDeletionBlocker::ProductListings,
             ListingSourceDeletionBlocker::RawStreams,
             ListingSourceDeletionBlocker::ApprovedPartnershipApplication,

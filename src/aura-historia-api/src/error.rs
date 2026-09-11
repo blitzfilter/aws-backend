@@ -845,6 +845,7 @@ impl From<DeleteListingSourceError> for ApiError {
                 .with_detail("Listing source was not found."),
             DeleteListingSourceError::DependencyConflict { blocker } => ApiError::conflict(CONFLICT)
                 .with_detail(match blocker {
+                    listing_source_service::ports::ListingSourceDeletionBlocker::Auctions => "Listing source has retained Auctions.",
                     listing_source_service::ports::ListingSourceDeletionBlocker::ProductListings => "Listing source has ProductListings.",
                     listing_source_service::ports::ListingSourceDeletionBlocker::RawStreams => "Listing source has raw-ingestion data.",
                     listing_source_service::ports::ListingSourceDeletionBlocker::ApprovedPartnershipApplication => "Listing source is retained by an approved PartnershipApplication.",

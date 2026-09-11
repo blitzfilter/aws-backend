@@ -83,6 +83,8 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
         let blocker = sqlx::query_scalar::<_, Option<String>>(
             r#"
             SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM auctions WHERE listing_source_id = $1)
+                    THEN 'AUCTIONS'
                 WHEN EXISTS (SELECT 1 FROM product_listings WHERE listing_source_id = $1)
                     THEN 'PRODUCT_LISTINGS'
                 WHEN EXISTS (SELECT 1 FROM product_listing_raw_streams WHERE listing_source_id = $1)
@@ -105,6 +107,7 @@ impl ListingSourceRepository for SqlxListingSourceRepository<'_> {
         .map_err(db_read)?;
         match blocker.as_deref() {
             None => Ok(None),
+            Some("AUCTIONS") => Ok(Some(ListingSourceDeletionBlocker::Auctions)),
             Some("PRODUCT_LISTINGS") => Ok(Some(ListingSourceDeletionBlocker::ProductListings)),
             Some("RAW_STREAMS") => Ok(Some(ListingSourceDeletionBlocker::RawStreams)),
             Some("APPROVED_APPLICATION") => Ok(Some(
@@ -1030,6 +1033,74 @@ mod tests {
         assert!(matches!(
             product_error,
             sqlx::Error::Database(ref error) if error.constraint() == Some("product_listings_listing_source_id_fkey")
+        ));
+    }
+
+    #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+    async fn should_return_auction_deletion_blocker_and_reject_direct_source_delete_when_auction_exists()
+     {
+        let pool = get_postgres_client().await;
+        let party_id = PartyId::new();
+        let source_id = ListingSourceId::new();
+        let auction_id = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO parties (party_id, party_slug_id, name) VALUES ($1, $2, $3)")
+            .bind(party_id.into_uuid())
+            .bind(format!(
+                "auction-blocker-party-{}",
+                party_id.as_uuid().simple()
+            ))
+            .bind("Auction blocker operator")
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("insert auction blocker party: {error}"));
+        sqlx::query(
+            "INSERT INTO listing_sources (listing_source_id, listing_source_slug_id, name, operator_party_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(source_id.into_uuid())
+        .bind(format!(
+            "auction-blocker-source-{}",
+            source_id.as_uuid().simple()
+        ))
+        .bind("Auction blocker source")
+        .bind(party_id.into_uuid())
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert auction blocker source: {error}"));
+        sqlx::query(
+            "INSERT INTO auctions (auction_id, listing_source_id, source_auction_id) VALUES ($1, $2, $3)",
+        )
+        .bind(auction_id)
+        .bind(source_id.into_uuid())
+        .bind("auction-blocker")
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("insert auction blocker auction: {error}"));
+
+        let unit_of_work = platform_postgres::SqlxUnitOfWork::new(pool.clone());
+        let mut transaction = unit_of_work
+            .begin()
+            .await
+            .unwrap_or_else(|error| panic!("begin auction blocker transaction: {error}"));
+        let blocker = SqlxListingSourceRepositoryFactory::new()
+            .in_transaction(&mut transaction)
+            .find_deletion_blocker(source_id)
+            .await
+            .unwrap_or_else(|error| panic!("find auction deletion blocker: {error}"));
+        transaction
+            .commit()
+            .await
+            .unwrap_or_else(|error| panic!("commit auction blocker transaction: {error}"));
+        assert_eq!(Some(ListingSourceDeletionBlocker::Auctions), blocker);
+
+        let delete_error = sqlx::query("DELETE FROM listing_sources WHERE listing_source_id = $1")
+            .bind(source_id.into_uuid())
+            .execute(&pool)
+            .await
+            .expect_err("auction source delete must be restricted");
+        assert!(matches!(
+            delete_error,
+            sqlx::Error::Database(ref error)
+                if error.constraint() == Some("auctions_listing_source_id_fkey")
         ));
     }
 

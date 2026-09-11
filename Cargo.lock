@@ -233,6 +233,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "auction-postgres"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "auction-core",
+ "auction-service",
+ "domain-primitives",
+ "listing-source-core",
+ "localization",
+ "platform-postgres",
+ "serde_json",
+ "serial_test",
+ "sqlx",
+ "strum 0.28.0",
+ "test-api",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "auction-service"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "auction-core",
+ "domain-primitives",
+ "fake",
+ "listing-source-core",
+ "localization",
+ "serde",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+ "user-core",
+ "user-service",
+]
+
+[[package]]
 name = "aura-historia-api"
 version = "0.1.0"
 dependencies = [

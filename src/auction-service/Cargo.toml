@@ -1,0 +1,29 @@
+[package]
+name = "auction-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+application = { workspace = true }
+async-trait = { workspace = true }
+auction-core = { workspace = true }
+domain-primitives = { workspace = true }
+fake = { workspace = true, optional = true }
+listing-source-core = { workspace = true }
+localization = { workspace = true }
+serde = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+user-service = { workspace = true }
+
+[features]
+default = []
+test-data = ["fake"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+user-core = { workspace = true }

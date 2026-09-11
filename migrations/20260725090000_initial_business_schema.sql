@@ -107,6 +107,93 @@ CREATE TABLE listing_source_woocommerce_ingestion_configurations (
 CREATE INDEX listing_sources_operator_party_id_idx ON listing_sources (operator_party_id);
 CREATE INDEX listing_source_ingestion_methods_method_idx ON listing_source_ingestion_methods (ingestion_method, listing_source_id);
 
+-- Auction is source-scoped. The source key is immutable; metadata and schedule are optional.
+CREATE TABLE auctions (
+    auction_id uuid PRIMARY KEY,
+    listing_source_id uuid NOT NULL
+        REFERENCES listing_sources(listing_source_id) ON DELETE RESTRICT,
+    source_auction_id text NOT NULL,
+    name_text text,
+    name_language text,
+    description_text text,
+    description_language text,
+    catalogue_url text,
+    format text,
+    reported_status text,
+    reported_lot_count bigint,
+    version bigint NOT NULL DEFAULT 1,
+    created timestamptz NOT NULL DEFAULT now(),
+    updated timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT auctions_source_key_unique UNIQUE (listing_source_id, source_auction_id),
+    CONSTRAINT auctions_id_source_unique UNIQUE (auction_id, listing_source_id),
+    CONSTRAINT auctions_source_auction_id_length_check
+        CHECK (octet_length(source_auction_id) BETWEEN 1 AND 512),
+    CONSTRAINT auctions_format_check CHECK (format IS NULL OR format IN ('LIVE', 'TIMED')),
+    CONSTRAINT auctions_reported_status_check CHECK (reported_status IS NULL OR reported_status IN (
+        'SCHEDULED', 'IN_PROGRESS', 'ENDED', 'POSTPONED', 'CANCELLED'
+    )),
+    CONSTRAINT auctions_reported_lot_count_check CHECK (reported_lot_count IS NULL OR reported_lot_count BETWEEN 0 AND 4294967295),
+    CONSTRAINT auctions_version_positive CHECK (version >= 1),
+    CONSTRAINT auctions_name_localization_shape_check CHECK ((name_text IS NULL) = (name_language IS NULL)),
+    CONSTRAINT auctions_description_localization_shape_check CHECK ((description_text IS NULL) = (description_language IS NULL))
+);
+
+CREATE TABLE auction_schedule_points (
+    auction_id uuid NOT NULL REFERENCES auctions(auction_id) ON DELETE CASCADE,
+    role text NOT NULL,
+    precision text NOT NULL,
+    instant_at timestamptz,
+    date_on date,
+    source_timezone text,
+    PRIMARY KEY (auction_id, role),
+    CONSTRAINT auction_schedule_points_role_check CHECK (role IN (
+        'BIDDING_OPENS', 'LIVE_STARTS', 'LOTS_BEGIN_CLOSING', 'SCHEDULED_END'
+    )),
+    CONSTRAINT auction_schedule_points_precision_check CHECK (precision IN ('INSTANT', 'DATE')),
+    CONSTRAINT auction_schedule_points_precision_shape_check CHECK (
+        (precision = 'INSTANT' AND instant_at IS NOT NULL AND date_on IS NULL)
+        OR (precision = 'DATE' AND date_on IS NOT NULL AND instant_at IS NULL)
+    )
+);
+
+CREATE INDEX auction_schedule_points_role_instant_idx
+    ON auction_schedule_points (role, instant_at) WHERE precision = 'INSTANT';
+
+CREATE TABLE auction_events (
+    event_id uuid PRIMARY KEY,
+    auction_id uuid NOT NULL REFERENCES auctions(auction_id) ON DELETE CASCADE,
+    event_type text NOT NULL,
+    event_type_schema_version smallint NOT NULL,
+    payload jsonb NOT NULL,
+    event_time timestamptz NOT NULL,
+    CONSTRAINT auction_events_type_check CHECK (event_type IN ('AUCTION_DISCOVERED', 'AUCTION_CHANGED')),
+    CONSTRAINT auction_events_schema_version_check CHECK (event_type_schema_version = 1),
+    CONSTRAINT auction_events_payload_object_check CHECK (jsonb_typeof(payload) = 'object')
+);
+
+CREATE INDEX auction_events_auction_time_idx ON auction_events (auction_id, event_time, event_id);
+
+CREATE TABLE auction_metadata_policy_audits (
+    audit_id uuid PRIMARY KEY,
+    auction_id uuid NOT NULL REFERENCES auctions(auction_id) ON DELETE CASCADE,
+    actor_label text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT auction_metadata_policy_audits_actor_label_length_check
+        CHECK (octet_length(actor_label) BETWEEN 1 AND 512)
+);
+
+CREATE TABLE auction_metadata_field_protections (
+    auction_id uuid NOT NULL REFERENCES auctions(auction_id) ON DELETE CASCADE,
+    field_code text NOT NULL,
+    latest_audit_id uuid NOT NULL REFERENCES auction_metadata_policy_audits(audit_id) ON DELETE RESTRICT,
+    PRIMARY KEY (auction_id, field_code),
+    CONSTRAINT auction_metadata_field_protections_field_code_check CHECK (field_code IN (
+        'NAME', 'DESCRIPTION', 'CATALOGUE_URL', 'FORMAT', 'REPORTED_STATUS',
+        'REPORTED_LOT_COUNT', 'BIDDING_OPENS', 'LIVE_STARTS',
+        'LOTS_BEGIN_CLOSING', 'SCHEDULED_END'
+    ))
+);
+
 CREATE TABLE product_listing_raw_streams (
     product_listing_raw_stream_id uuid PRIMARY KEY,
     listing_source_id uuid NOT NULL REFERENCES listing_sources(listing_source_id) ON DELETE RESTRICT,
