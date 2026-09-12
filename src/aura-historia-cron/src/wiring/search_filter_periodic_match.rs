@@ -27,7 +27,7 @@ use search_filter_service::use_cases::{
     RunPeriodicSearchFilterMatchingUseCase,
 };
 use std::{
-    num::{NonZeroU32, NonZeroU64, NonZeroUsize},
+    num::{NonZeroU64, NonZeroUsize},
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -42,7 +42,6 @@ pub async fn build_from_env() -> Result<(Arc<dyn CronJob>, String, Duration), Wi
         .postgres
         .connect()
         .await
-        .map_err(PostgresConnectError::Connect)
         .map_err(WiringError::Postgres)?;
     let client = opensearch_client(&config)?;
     let credentials = GoogleCredentialsBuilder::default()
@@ -121,19 +120,12 @@ impl PeriodicMatchConfig {
                 required("OPENSEARCH_PASSWORD")?,
             ))
         };
-        let postgres_max_connections =
-            NonZeroU32::new(number::<u32>("POSTGRES_MAX_CONNECTIONS", 2)?)
-                .ok_or(WiringError::InvalidPolicy)?
-                .get();
-        let postgres = PostgresPoolConfig::new(
-            required("POSTGRES_HOST")?,
-            number::<u16>("POSTGRES_PORT", 5432)?,
-            required("POSTGRES_DATABASE")?,
-            required("POSTGRES_USERNAME")?,
-            required("POSTGRES_PASSWORD")?,
-            postgres_max_connections,
-        )
-        .map_err(WiringError::PostgresConfig)?;
+        let postgres = postgres_config(&mut |name| match std::env::var(name) {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            // Preserve presence so malformed optional inputs cannot fall back to defaults.
+            Err(std::env::VarError::NotUnicode(_)) => Some(String::new()),
+        })?;
         let schedule = optional("SEARCH_FILTER_PERIODIC_MATCH_CRON", "0 0 15 * * * *");
         validate_schedule(&schedule)?;
         Ok(Self {
@@ -163,6 +155,16 @@ impl PeriodicMatchConfig {
         })
     }
 }
+fn postgres_config(
+    get: &mut impl FnMut(&'static str) -> Option<String>,
+) -> Result<PostgresPoolConfig, WiringError> {
+    PostgresPoolConfig::from_lookup("aura-historia-cron", get).map_err(WiringError::PostgresConfig)
+}
+
+#[cfg(test)]
+#[path = "postgres_config_tests.rs"]
+mod postgres_config_tests;
+
 fn required(name: &'static str) -> Result<String, WiringError> {
     std::env::var(name)
         .ok()
@@ -305,15 +307,15 @@ mod tests {
             Some("value".to_owned())
         );
         assert!(matches!(
-            parse_number::<u16>("POSTGRES_PORT", " 5432 "),
-            Ok(5432)
+            parse_number::<u16>("PERIODIC_MATCH_MAX_ATTEMPTS", " 3 "),
+            Ok(3)
         ));
     }
 
     #[test]
     fn should_reject_numeric_values_outside_the_target_type() {
         assert!(matches!(
-            parse_number::<u16>("POSTGRES_PORT", "65536"),
+            parse_number::<u16>("PERIODIC_MATCH_MAX_ATTEMPTS", "65536"),
             Err(WiringError::InvalidNumber { .. })
         ));
         assert!(matches!(

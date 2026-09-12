@@ -87,7 +87,10 @@
 
 ## Service dependencies
 
-- All scopes require `POSTGRES_*`. Projection/percolator require scoped OpenSearch endpoint and production credentials.
+- All scopes use `platform-postgres::PostgresPoolConfig::from_lookup`. Required: `STAGE`, `POSTGRES_SSL_MODE`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `POSTGRES_USERNAME`, and exactly one of `POSTGRES_PASSWORD` / `POSTGRES_PASSWORD_FILE`. Password files require Unix mode `0400` or `0600` and no final symlink.
+- `dev`/`prod` require `verify-full` plus `POSTGRES_SSL_ROOT_CERT` (PEM CA file). Only explicit `local`/`test`/`ephemeral` may use `disable`; no stage or TLS default. Port defaults to `5432`; positive max connections defaults to `2`. Strict shared parsing rejects malformed/non-Unicode inputs and unsupported ambient `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT`, `PGOPTIONS`; lookup must forward them. Application name is `aura-historia-worker`; config/connect causes stay typed and redacted.
+- Private `postgres_config_tests` need no database. `src/postgres-test-ca.crt` is a public test-only CA for production config tests, never deployment trust. Process fixtures set `STAGE=test`, `POSTGRES_SSL_MODE=disable`. Rollout wiring remains out of this slice; default-off stays off.
+- Projection/percolator require scoped OpenSearch endpoint and production credentials.
 - Percolator/translation need Vertex project/location/model and Google ADC. Embedding needs Vertex project/location and ADC. Only selected scope initializes adapters.
 - EMAIL delivery needs S3 templates, SES credentials, from/reply-to addresses, `STAGE`, `COMMIT_SHA`; generic dispatcher verifies planner channels.
 - Worker uses workspace `aws-sdk-sqs`, `axum`, `strum`, `strum_macros`, plus pinned `hyper` (`server,http1`) and `hyper-util` (`tokio,service`). Update manifests/lockfile and black-box process/Sequin/SQS/DLQ acceptance together.

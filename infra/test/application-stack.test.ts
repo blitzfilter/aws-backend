@@ -22,6 +22,25 @@ describe("Application stacks", () => {
     expect(Object.values(Template.fromStack(stacks.compute).findResources("AWS::StepFunctions::StateMachine"))).toHaveLength(0);
   });
 
+  test.each(STAGES)("passes explicit PostgreSQL TLS policy to every %s database Lambda", (stage) => {
+    const stacks = createStacks(stage);
+    const functions = Object.values(Template.fromStack(stacks.compute).findResources("AWS::Lambda::Function"));
+    const databaseFunctions = functions.filter((resource) => resource.Properties.Environment?.Variables?.POSTGRES_HOST !== undefined);
+    expect(databaseFunctions).toHaveLength(stage === "ephemeral" ? 3 : 4);
+    for (const resource of databaseFunctions) {
+      const environment = resource.Properties.Environment.Variables;
+      expect(environment.STAGE).toBe(stage);
+      expect(environment.POSTGRES_SSL_MODE).toBe(stage === "ephemeral" ? "disable" : "verify-full");
+      expect(environment.POSTGRES_MAX_CONNECTIONS).toBe("2");
+      if (stage === "ephemeral") {
+        expect(environment.POSTGRES_SSL_ROOT_CERT).toBeUndefined();
+      } else {
+        expect(environment.POSTGRES_SSL_ROOT_CERT).toBe(`{{resolve:ssm:/postgres/${stage}/ssl-root-cert-path}}`);
+      }
+      expect(environment.PGSSLMODE).toBeUndefined();
+    }
+  });
+
   test("synthesizes the ephemeral stack without CloudFront", () => {
     const app = new cdk.App({ analyticsReporting: false });
     const template = Template.fromStack(new ApplicationEphemeralStack(app, "application-ephemeral", { stage: "ephemeral" }));

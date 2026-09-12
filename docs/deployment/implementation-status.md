@@ -9,8 +9,9 @@ Models: orchestrator GPT-6-Astra; delegation has no model selector. Runtime inve
 | Iteration | State | Accepted commit / evidence |
 |---|---|---|
 | 00 | Accepted | `303f50b8de5c603f2c11498979cb2867634c620e`; reviewer `5d2424e8-0e8b-4dd9-b0cc-d3507ead76ac` accepted after two P2 inventory omissions fixed; no runtime change |
-| 01 | Accepted default-off contracts | Local commit follows; independent reviewers `c6ac1bf8-98c5-4451-a690-0e1df1d045b5` (release/topology/catalog) and `b37687e6-7f20-44dd-8cae-96c3fb29216d` (state/hash/CLI/bootstrap) accepted after fixes |
-| 02–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
+| 01 | Accepted default-off contracts | `f96206473b1fc0395089008b799306c67251f6da`; independent reviewers `c6ac1bf8-98c5-4451-a690-0e1df1d045b5` (release/topology/catalog) and `b37687e6-7f20-44dd-8cae-96c3fb29216d` (state/hash/CLI/bootstrap) accepted after fixes |
+| 02 | Accepted local TLS/configuration slice | Local commit follows; reviewers `08d567dc-f8ac-48b9-9740-801995410d99` (shared/TLS) and `96c8525b-bafa-4807-ad71-b3c0bfce2263` (callers/crawler/CDK) accepted; no runtime activation |
+| 03–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
 
 ## Baseline checks
 
@@ -42,6 +43,20 @@ Reviewer regression fixes: exact trusted catalog asset completeness; unmasked en
 DEP coverage is **pure/unit only**, not complete acceptance: DEP-03 (CalVer/ref policy), 04/06/07/27 (ownership/intent protocol), 08 (typed inputs), 09 (catalog omissions), 29 (classification), 32 (budgets), 37 (placement), 38 (combined host resource/port accounting only, no distributed host lock). Other aspects/cases remain unpassed. No artifact/provider/backup/process/approval behavior simulated as working tooling.
 
 Rollback/removal: 01 has no active call sites; remove its tooling commit without data/runtime effects. Operational schema v1 is draft-installed only; no automatic upgrade of old state. New inputs: verified CA/identities, per-role pools/resources/ports, exact registries/artifacts/compatibility evidence, approved revisions/nonces and GitHub protection owners. Architecture/key-set retirement remains deliberately blocked pending explicit protocol.
+
+## Iteration 02 evidence
+
+Shared policy owner `aa94ad01-8a18-40b3-8a38-3dbed9b65c06`; native/Lambda wiring `465d79c7-d0d6-4264-9663-76d7fcdb7ecc`; crawler `560d0d58-5b33-4ce6-855d-a30979503a92`. Prior runtime session exhausted context with zero edits; replacement owns accepted work. Available model GPT-6-Astra.
+
+Every native and DB Lambda entrypoint now uses explicit stage/verified TLS policy; crawler URL bypass removed. Protected password files and safe complete error chains supported; direct sessions bounded to 5s outside pool cap. Crawler server no longer starts Docker/creates databases/migrates; separate `bootstrap-local` rejects real/missing stages. Crawler read-only history checks do not prove full schema/role readiness. This startup portion overlaps 04; cancellation/process custody still pending. CDK passes stage/mode/CA-path reference but does not deliver the CA file. Exact SQLx pin and constrained ambient-read exception: ADR-004; no CA-only pinning claimed.
+
+Checks: shared `cargo test --locked --offline -p platform-postgres --all-features --lib` **119 pass** (six ignored: four real TLS tests run separately plus two subprocess helpers covered by parent tests); `cargo test --locked --offline -p platform-postgres --lib tls_tests::should_ -- --ignored --test-threads=1` **4 pass**, independently rerun by reviewer. DEP-30 **local integration** proves verified TLS, bad host/CA/expired cert/password/plaintext refusal, structured/URL/direct-session paths; host firewall/NAT remains untested. Fixed local Unix Docker, only acquired IDs cleaned; no remaining fixture resources/keys.
+
+Caller config checks: seven-package all-target/all-feature check pass; native/Lambda **60 targeted tests** pass, then full API config **10 pass** after ordering fix; crawler `local_db::` **79 pass**, pool-sizing **3 pass**. Shared Clippy `-D warnings` pass. Integrated `cargo check --workspace --all-targets --all-features --locked --offline`, depgraph, full fmt check pass. Infra build/test/dev-prod-ephemeral synth pass (existing warnings remain). Controller fresh Node26.8.2 build/**571 tests**/catalog pass after excluding new bootstrap tool.
+
+New required runtime inputs: `STAGE`, `POSTGRES_SSL_MODE`, real-stage readable `POSTGRES_SSL_ROOT_CERT`; one password source; crawler both URLs and pre-provisioned histories. Crawler acquire timeout changed 30s→5s. Credential/CA rotation requires pool/process recycle; Lambda current-config delivery remains 09/10 gate. Editing `infra/examples/worker.env.example` was blocked by a tool security rule (not bypassed); updated contract is in `infra/README.md` and crate docs instead.
+
+Review fixes cover every error-source formatter, invalid-Unicode rejection, API validation before AWS discovery, owned-ID Docker cleanup and explicit SQLx ambient exception. No live account/host/firewall/secret changes. Reverting 02 would remove TLS enforcement and restore unsafe old startup; do not deploy such a rollback. Full workspace library test still has baseline timeout; no longer rerun authorized. No data migrations changed.
 
 ## Required external rollout gates
 

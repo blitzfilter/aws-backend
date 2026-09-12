@@ -10,7 +10,7 @@
 - Crawler be async, Postgres-backed, LLM-assisted ingest system for antique ListingSource sites.
 - Root modules: `llm_runtime`, `local_db`, `logging`, `network`, `review`, `scraper`, `service`, `spider`, `vertex_ai`.
 - Main neighbors: `application`, `large-language-model`, `listing-source-core`/`listing-source-service`/`listing-source-postgres`, `localization`, `money`, `platform-postgres`, `product-listing-core`/`product-listing-service`/`product-listing-postgres`.
-- Main binaries: `server`, `demo`, `demo-spider`, `demo-scraper`, `fetch-fixture`.
+- Main binaries: `server`, `bootstrap-local`, `demo`, `demo-spider`, `demo-scraper`, `fetch-fixture`.
 - `service::cron` drives ListingSource sync plus spider/scraper loops. Every spider or scraper pass completes a fresh authoritative ListingSource sync before candidate selection; sync failure fails closed and skips that pass.
 - Spider and scraper cron use global slot schedulers. Refill only schedulable work; scraper fetch picks random eligible domains, takes up to 100 due URLs per domain by default, and excludes domains already seen in the pass. Spider caps one crawl at 10,000 pages and 10 minutes; its per-request timeout remains separate.
 - ListingSource sync reads a complete canonical ListingSource snapshot with derived `WEB_CRAWL` enablement and optional fallback currency. It receives canonical ID/name/slug, mirrors enablement and fallback currency into local state, preserves local state while disabled, and never derives business identity from a domain or URL.
@@ -43,7 +43,10 @@
 - Local dev support live here too: `docker-compose.yml`, `scripts/linux/`, `scripts/windows/`, `migrations/`, and test fixtures under `tests/`.
 - `fetch-fixture` writes fetched HTML to `tests/fixtures/html`.
 - Demo raw-capture file snapshots are display-only, never replay input; they copy source payload, generic raw values, normalization context, and provenance unchanged.
-- `server` and `demo` auto-run crawler-local migrations on startup. Migrations be authoritative crawler DB contract. This pre-production branch folds final crawler schema into its authoritative creation migrations instead of retaining temporary remediation migrations.
+- `server` never starts Docker, creates databases, or runs application DDL, in any stage. Startup checks required crawler tables and existing `_sqlx_migrations` history read-only: all shipped versions/checksums must exist, no failed entry. It never stamps or repairs history. Schema must be provisioned separately; dedicated production migrator belongs to task05. Migrations remain authoritative; no schema/history rewrite in task02.
+- `bootstrap-local` explicitly starts bundled Docker, creates all four fixed local crawler databases, and applies crawler migrations. `demo`, `demo-spider`, and `demo-scraper` retain automatic local bootstrap/migrations. All require `LocalDevelopmentConfig`: explicit `STAGE=local|ephemeral|test` plus shared TLS config; reject missing/dev/prod/unknown stage before Docker. Local URL helpers also require this capability. Demo database names stay fixed; they do not use server URL inputs.
+- Both server URLs (`LOCAL_DB_URL`, `BUSINESS_DATABASE_URL`) are required, with explicit credentials/host/database and no localhost fallback. `STAGE` and `POSTGRES_SSL_MODE` are mandatory. Real `dev`/`prod` require `verify-full` and `POSTGRES_SSL_ROOT_CERT` pointing to a readable CA PEM file; only explicit local/ephemeral/test may use `disable`. Both pools use `platform-postgres::PostgresPoolConfig::from_url` then `.connect()`, application name `crawler-server`, shared 5s acquire timeout, and existing cron pool caps (server defaults: crawler 16, business 8). URL TLS/application overrides must match policy; unsupported query options and ambient TLS/options are rejected by shared policy. Do not log URLs, raw connect options, or pool debug. Config/connect/schema/bootstrap errors and every exposed source-chain member must redact Display/Debug/alternate Debug. Read/create SQLx causes use shared `PostgresConnectError`; migration causes remain private behind a redacted classification.
+- Server validates both PostgreSQL configs, review config, and Vertex environment config before CloudWatch APIs. CloudWatch export remains optional and unchanged when enabled; AWS config loads only when export is enabled. `CrawlerCronConfig` keeps sizing only; raw-URL `connect_pool` is removed. Runtime roots build validated pool configs before side effects. All five PostgreSQL entrypoints use `parse_postgres_environment` with strict root-owned `std::env::var` lookup: missing stays absent; non-Unicode fails as typed `InvalidInput(key)`, never lossy replacement or an implicit default. No environment value enters the error.
 - `server` needs `BUSINESS_DATABASE_URL` for ListingSource reads and raw ProductListing capture. `SPIDER_MAX_SIZE_BYTES=8388608` is required for all spider-running binaries. LLM-enabled binaries need `VERTEX_AI_PROJECT_ID`, `VERTEX_AI_LOCATION`, and Google Application Default Credentials (for example `GOOGLE_APPLICATION_CREDENTIALS` locally). `VERTEX_AI_MODEL` selects schema generation/repair; `CRAWLER_VERTEX_AI_CHEAP_MODEL` and operation-specific overrides select low-risk models. `CRAWLER_LLM_MAX_CONCURRENT_REQUESTS` and `CRAWLER_LLM_MIN_REQUEST_INTERVAL_MS` bound all crawler LLM calls. Crawler-local state and business capture use separate Postgres transactions; a capture commit followed by a local mark failure remains retryable through `Unchanged`. Server raw-capture tuning is held in `CrawlerCronConfig`: `push_batch_size`, `push_queue_capacity`, `push_max_batch_age`, `push_max_concurrency`, and `business_db_max_connections`. These are code-level settings, not environment variables.
 
 ## Ownership
@@ -61,7 +64,7 @@
 - If new table, index, retry field, review field, or query contract appear, document it here and cover it with tests.
 - If loop cadence, candidate rules, lock semantics, retry semantics, or LLM budget semantics change, document it here in same change.
 - Local DB scripts live in `scripts/linux/` and `scripts/windows/`. Keep both sides honest when workflow change.
-- `server` and `demo` auto-run migrations. Keep that startup contract stable unless strong reason.
+- No production-startup migration/bootstrap fallback. Local development setup: `STAGE=local POSTGRES_SSL_MODE=disable cargo run -p crawler --bin bootstrap-local` (PowerShell: set the same two env vars, then run Cargo). This command performs no crawling, provider calls, or business-DB setup. Existing manual DB scripts are local operator tools, not server startup paths; never use them against real stages.
 - Review mode env behavior be durable contract. Changes there need doc and test thought.
 - Keep no semantic duplicate drift across code comments, tests, and this file. One crawler truth.
 
@@ -85,7 +88,9 @@
 
 ## Verification
 
-- `cargo check -p crawler`
+- `cargo check -p crawler --all-targets --all-features` (task02: bound to 120s; use `--offline --locked` to avoid network/root-lock writes).
+- `cargo test -p crawler --lib --all-features local_db::` for provider-free config/bootstrap-gate/full-source-chain redaction/history checks and Unix invalid-OS-string rejection (no global environment mutation). Public CA fixture under `tests/fixtures/crawler-postgres-ca.pem` is config-only; no private key, Docker, or TLS handshake.
+- Task04 pending: real no-Docker remote-PostgreSQL server process proof, read-only schema queries against PostgreSQL, provider-free startup seam, cancellation/scheduler handover. Shared TLS handshake fixtures belong to platform-postgres; do not duplicate here.
 - `cargo test -p crawler --all-features`
 - `cargo test -p crawler --tests`
 - For DB/dev-flow change: check `docker-compose.yml`, `migrations/`, both script folders, and affected tests together.

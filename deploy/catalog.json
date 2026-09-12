@@ -15,6 +15,7 @@
     { "id": "fxrate-lambda", "package": "fxrate-lambda", "binary": "fxrate-lambda", "path": "src/fxrate-lambda", "status": "IMPLEMENTED", "architecture": "x86_64", "database": true }
   ],
   "excluded_tools": [
+    { "package": "crawler", "binary": "bootstrap-local" },
     { "package": "crawler", "binary": "demo" },
     { "package": "crawler", "binary": "demo-spider" },
     { "package": "crawler", "binary": "demo-scraper" },

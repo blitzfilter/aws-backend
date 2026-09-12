@@ -58,6 +58,14 @@
 - Put business behavior in domain crates and services.
 - Use runtime-neutral request/auth context; no API Gateway context.
 
+## PostgreSQL startup
+
+- `platform-postgres::PostgresPoolConfig::from_lookup` owns parsing. Required: `STAGE`, `POSTGRES_SSL_MODE`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `POSTGRES_USERNAME`, and exactly one of `POSTGRES_PASSWORD` / `POSTGRES_PASSWORD_FILE`.
+- `dev`/`prod` require `verify-full` plus `POSTGRES_SSL_ROOT_CERT` (PEM CA file). Only explicit `local`/`test`/`ephemeral` may use `disable`; no stage or TLS default. Password files require Unix mode `0400` or `0600` and no final symlink.
+- Port defaults to `5432`; max connections defaults to `2` and must be positive. Shared strict parsing rejects malformed/non-Unicode inputs and unsupported ambient `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT`, `PGOPTIONS`; never filter these keys from lookup. Application name is `aura-historia-api`. Config/connect errors preserve safe typed causes, not raw values.
+- Parse PostgreSQL config once before AWS config loading/provider discovery; reuse that validated snapshot for pool connection. Existing pure `ApiConfig` parsing still comes first. Private ordering spies prove invalid stage/missing CA never invoke cloud startup.
+- Private `postgres_config_tests` cover startup policy without connecting. `src/postgres-test-ca.crt` is public test-only CA material; never deploy it. Runtime fixtures need explicit local stage/TLS. Rollout wiring remains out of this slice; default-off stays off.
+
 ## Test Lifecycle
 
 - Keep API acceptance source modules by route/unit under `tests/api_cases/`, but run compatible modules through the single `tests/api.rs` suite binary. Shared Postgres, LocalStack/OpenSearch, and normal API server fixtures are process-lived; mutable DB/OpenSearch data resets after each test.

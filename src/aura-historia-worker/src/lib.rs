@@ -47,15 +47,6 @@ pub const NOTIFICATION_EMAIL_FROM_ENV: &str = "NOTIFICATION_EMAIL_FROM";
 pub const NOTIFICATION_EMAIL_REPLY_TO_ENV: &str = "NOTIFICATION_EMAIL_REPLY_TO";
 pub const COMMIT_SHA_ENV: &str = "COMMIT_SHA";
 
-const POSTGRES_HOST_ENV: &str = "POSTGRES_HOST";
-const POSTGRES_PORT_ENV: &str = "POSTGRES_PORT";
-const POSTGRES_DATABASE_ENV: &str = "POSTGRES_DATABASE";
-const POSTGRES_USERNAME_ENV: &str = "POSTGRES_USERNAME";
-const POSTGRES_PASSWORD_ENV: &str = "POSTGRES_PASSWORD";
-const POSTGRES_MAX_CONNECTIONS_ENV: &str = "POSTGRES_MAX_CONNECTIONS";
-const DEFAULT_POSTGRES_PORT: u16 = 5432;
-const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 2;
-
 const DEFAULT_WORKER_HEALTH_BIND_ADDR: &str = "0.0.0.0:8081";
 const DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS: u64 = 270;
 const DEFAULT_LOCAL_WORKER_SCOPE: &str = "search-filter-projection";
@@ -292,7 +283,12 @@ pub struct WorkerStartupConfig {
 
 impl WorkerStartupConfig {
     pub fn from_env() -> Result<Self, WorkerStartupConfigError> {
-        Self::from_getter(|name| std::env::var(name).ok())
+        Self::from_getter(|name| match std::env::var(name) {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            // Preserve presence so malformed optional inputs cannot fall back to defaults.
+            Err(std::env::VarError::NotUnicode(_)) => Some(String::new()),
+        })
     }
 
     pub(crate) fn from_getter<F>(mut get: F) -> Result<Self, WorkerStartupConfigError>
@@ -405,56 +401,14 @@ fn postgres_config<F>(get: &mut F) -> Result<PostgresPoolConfig, WorkerPostgresC
 where
     F: FnMut(&'static str) -> Option<String>,
 {
-    let host = required_postgres_env(get, POSTGRES_HOST_ENV)?;
-    let database = required_postgres_env(get, POSTGRES_DATABASE_ENV)?;
-    let username = required_postgres_env(get, POSTGRES_USERNAME_ENV)?;
-    let password = required_postgres_env(get, POSTGRES_PASSWORD_ENV)?;
-    let port = optional_postgres_env(get, POSTGRES_PORT_ENV, DEFAULT_POSTGRES_PORT)?;
-    let max_connections = optional_postgres_env(
+    Ok(PostgresPoolConfig::from_lookup(
+        "aura-historia-worker",
         get,
-        POSTGRES_MAX_CONNECTIONS_ENV,
-        DEFAULT_POSTGRES_MAX_CONNECTIONS,
-    )?;
-
-    PostgresPoolConfig::new(host, port, database, username, password, max_connections).map_err(
-        |error| match error {
-            PostgresPoolConfigError::ZeroMaxConnections => {
-                WorkerPostgresConfigError::ZeroMaxConnections
-            }
-        },
-    )
+    )?)
 }
 
-fn required_postgres_env<F>(
-    get: &mut F,
-    name: &'static str,
-) -> Result<String, WorkerPostgresConfigError>
-where
-    F: FnMut(&'static str) -> Option<String>,
-{
-    get(name).ok_or(WorkerPostgresConfigError::MissingEnv { name })
-}
-
-fn optional_postgres_env<F, T>(
-    get: &mut F,
-    name: &'static str,
-    default: T,
-) -> Result<T, WorkerPostgresConfigError>
-where
-    F: FnMut(&'static str) -> Option<String>,
-    T: std::str::FromStr<Err = ParseIntError>,
-{
-    match get(name) {
-        Some(value) => value
-            .parse()
-            .map_err(|source| WorkerPostgresConfigError::InvalidInteger {
-                name,
-                value,
-                source,
-            }),
-        None => Ok(default),
-    }
-}
+#[cfg(test)]
+mod postgres_config_tests;
 
 fn opensearch_config<F>(
     get: &mut F,
@@ -497,16 +451,8 @@ where
 
 #[derive(thiserror::Error, Debug)]
 pub enum WorkerPostgresConfigError {
-    #[error("missing required environment variable {name}")]
-    MissingEnv { name: &'static str },
-    #[error("invalid integer in environment variable {name}: {value}")]
-    InvalidInteger {
-        name: &'static str,
-        value: String,
-        source: ParseIntError,
-    },
-    #[error("POSTGRES_MAX_CONNECTIONS must be greater than zero")]
-    ZeroMaxConnections,
+    #[error("invalid PostgreSQL configuration")]
+    Config(#[from] PostgresPoolConfigError),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -963,10 +909,15 @@ mod tests {
                     "https://sqs.eu-central-1.amazonaws.com/123456789012/aura-worker-{scope}-prod"
                 ),
             ),
-            (POSTGRES_HOST_ENV, "postgres"),
-            (POSTGRES_DATABASE_ENV, "aura_historia"),
-            (POSTGRES_USERNAME_ENV, "worker"),
-            (POSTGRES_PASSWORD_ENV, "not-a-real-secret"),
+            ("POSTGRES_HOST", "postgres"),
+            ("POSTGRES_DATABASE", "aura_historia"),
+            ("POSTGRES_USERNAME", "worker"),
+            ("POSTGRES_PASSWORD", "not-a-real-secret"),
+            ("POSTGRES_SSL_MODE", "verify-full"),
+            (
+                "POSTGRES_SSL_ROOT_CERT",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/src/postgres-test-ca.crt"),
+            ),
         ])
     }
 

@@ -32,6 +32,18 @@ src/constructs/            # focused infrastructure modules
 
 ```
 
+## PostgreSQL TLS integration gate
+
+Hybrid work remains on a non-deploying integration branch. **Do not activate this configuration before CA delivery, network and identity prerequisites are implemented and approved.** Deployment status: `docs/deployment/implementation-status.md`.
+
+Every DB-using Lambda now receives `STAGE` and `POSTGRES_SSL_MODE`. Dev/prod require `verify-full` plus `POSTGRES_SSL_ROOT_CERT`, whose file path comes from `/postgres/{stage}/ssl-root-cert-path`. The CA must already exist at that path in the approved Lambda runtime/configuration; CDK does not materialize it. Missing/invalid CA blocks startup. Ephemeral explicitly uses `disable`. This is a configuration contract, not proof of Internet reachability or completed Lambda secret handoff.
+
+All native constructors share that policy, including crawler URLs and cron's dedicated session. Native credentials may use `POSTGRES_PASSWORD_FILE` (0400/0600) instead of `POSTGRES_PASSWORD`; both together fail. Root CA files are nonsecret and at most 1 MiB. Do not set ambient `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT` or `PGOPTIONS`. Supplied CA plus WebPKI trust is documented in deployment ADR-004; client certificates are not supported yet.
+
+Keep total connections within the reviewed inventory budget: ten worker pools + both API pools + cron pool **and one dedicated session** + crawler business/local pools + Lambda reserved concurrency × per-function pool + Sequin + migration/backup sessions + reserve. Defaults of two connections are per process, not an environment budget. Lambda concurrency/network enforcement lands in the approved prerequisite iteration.
+
+Certificate rotation: install old+new trust bundle first, restart/recycle each client through lifecycle controls, rotate server certificate, verify fresh connections, then remove old trust. Existing pools and published Lambda environment snapshots do not refresh themselves. Never roll secrets back with old code. No live rotation performed here.
+
 ## Common commands
 
 Use Node **26**, matching the workflow pin. `npm ci` uses `package-lock.json`;

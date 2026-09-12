@@ -14,7 +14,10 @@
 //!
 //! | Variable                        | Purpose                                                        |
 //! |---------------------------------|----------------------------------------------------------------|
-//! | `LOCAL_DB_URL`                  | Crawler-local Postgres URL (`crawler_server`)                  |
+//! | `STAGE`                         | Required: `dev`, `prod`, `local`, `ephemeral`, or `test`         |
+//! | `POSTGRES_SSL_MODE`             | `verify-full` for dev/prod; explicit `disable` allowed only in non-real stages |
+//! | `POSTGRES_SSL_ROOT_CERT`        | Required CA PEM file for `verify-full`                         |
+//! | `LOCAL_DB_URL`                  | Required crawler-state Postgres URL; no localhost fallback    |
 //! | `BUSINESS_DATABASE_URL`         | Required authoritative Postgres URL for listing_sources and products     |
 //! | `VERTEX_AI_PROJECT_ID`          | Required Google Cloud project for Vertex AI                    |
 //! | `VERTEX_AI_LOCATION`            | Required Vertex AI location                                    |
@@ -27,6 +30,10 @@
 //! | `CRAWLER_CLOUDWATCH_LOG_GROUP`  | Optional CloudWatch Logs group name for crawler server logs    |
 //! | `CRAWLER_CLOUDWATCH_LOG_STREAM` | Optional CloudWatch Logs stream name; defaults to host name    |
 //! | `SPIDER_MAX_SIZE_BYTES`          | Required Spider transport page-body ceiling; set to `8388608`  |
+//!
+//! Server never starts Docker, creates databases, or runs DDL. Existing crawler tables and
+//! SQLx migration history must match the shipped migrations. Use `bootstrap-local` only for
+//! explicit local/ephemeral/test development setup; production schema is provisioned separately.
 //!
 //! # CloudWatch IAM permissions
 //!
@@ -44,9 +51,9 @@ use aws_sdk_cloudwatchlogs::operation::create_log_group::CreateLogGroupError;
 use aws_sdk_cloudwatchlogs::operation::create_log_stream::CreateLogStreamError;
 use crawler::llm_runtime::{CrawlerLlmGovernor, CrawlerLlmRateLimitConfig};
 use crawler::local_db::{
-    SERVER_DB_NAME, bootstrap_local_database,
+    CrawlerSchemaError, ServerDatabaseConfig,
     crawler_domain_configuration_repository::CrawlerDomainConfigurationRepositoryImpl,
-    server_db_url,
+    parse_postgres_environment, verify_crawler_schema,
 };
 use crawler::logging::{
     CloudWatchBootstrapClient, CloudWatchBootstrapError, CloudWatchLoggingConfig,
@@ -81,12 +88,11 @@ use crawler::spider::service::spider_service::{SpiderServiceConfig, SpiderServic
 use crawler::vertex_ai::{CrawlerVertexAiConfig, CrawlerVertexAiModels};
 use listing_source_postgres::SqlxListingSourceReaders;
 use listing_source_service::ports::WebCrawlSourceReader;
-use platform_postgres::SqlxUnitOfWork;
+use platform_postgres::{PostgresConnectError, PostgresPoolConfigError, SqlxUnitOfWork};
 use product_listing_postgres::{
     SqlxPartnerProductListingAuthorizerFactory, SqlxProductListingRawCaptureWriterFactory,
 };
 use product_listing_service::use_cases::CaptureProductListingRawObservationHandler;
-use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Instrument, info};
@@ -256,18 +262,67 @@ fn crawler_review_url_pattern_required() -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug, thiserror::Error)]
+enum StartupError {
+    #[error(transparent)]
+    DatabaseConfig(#[from] PostgresPoolConfigError),
+    #[error(transparent)]
+    DatabaseConnect(#[from] PostgresConnectError),
+    #[error(transparent)]
+    Schema(#[from] CrawlerSchemaError),
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), StartupError> {
     dotenvy::dotenv().ok();
+
+    let config = CrawlerCronConfig {
+        spider_interval: Duration::from_hours(72),
+        scraper_interval: Duration::from_mins(10),
+        scraper_urls_per_domain: 100,
+        spider_concurrency: 3,
+        spider_site_concurrency_limit: 8,
+        scraper_concurrency: 3,
+        spider_classify_threshold: 400,
+        scraper_schema_seed_pages: DEFAULT_SCHEMA_SEED_PAGES,
+        push_batch_size: 1000,
+        push_queue_capacity: 2000,
+        push_max_batch_age: Duration::from_secs(5),
+        push_max_concurrency: 4,
+        business_db_max_connections: 8,
+        ..Default::default()
+    };
+    config.validate_business_capacity();
+    // Validate both URLs and the shared TLS policy before any provider or logging side effects.
+    let databases = parse_postgres_environment(
+        |key| std::env::var(key),
+        |get| {
+            ServerDatabaseConfig::from_lookup(
+                config.effective_db_max_connections(),
+                config.effective_business_db_max_connections(),
+                get,
+            )
+        },
+    )?;
+    let review_required = crawler_review_required();
+    let url_pattern_review_required = crawler_review_url_pattern_required();
+    let review_config =
+        ReviewServerConfig::from_env().expect("Invalid crawler review configuration");
+    let vertex_ai_config = CrawlerVertexAiConfig::from_env()
+        .expect("VERTEX_AI_PROJECT_ID and VERTEX_AI_LOCATION must be set");
+    let vertex_ai_models = CrawlerVertexAiModels::from_env();
+    let llm_rate_limit_config = CrawlerLlmRateLimitConfig::from_env();
 
     let cloudwatch_logging = cloudwatch_logging_config()
         .expect("Failed to parse crawler CloudWatch logging configuration");
-    let aws_config = aws_config::defaults(BehaviorVersion::v2026_01_12())
-        .load()
-        .await;
-    let cloudwatch_client = cloudwatch_logging
-        .as_ref()
-        .map(|_| CloudWatchLogsClient::new(&aws_config));
+    let cloudwatch_client = if cloudwatch_logging.is_some() {
+        let aws_config = aws_config::defaults(BehaviorVersion::v2026_01_12())
+            .load()
+            .await;
+        Some(CloudWatchLogsClient::new(&aws_config))
+    } else {
+        None
+    };
 
     if let (Some(config), Some(client)) = (cloudwatch_logging.as_ref(), cloudwatch_client.as_ref())
     {
@@ -293,26 +348,6 @@ async fn main() {
             );
         }
 
-        // 1. Build cron config (needed for pool sizing before everything else)
-        let config = CrawlerCronConfig {
-            spider_interval: Duration::from_hours(72),
-            scraper_interval: Duration::from_mins(10),
-            scraper_urls_per_domain: 100,
-            spider_concurrency: 3,
-            spider_site_concurrency_limit: 8,
-            scraper_concurrency: 3,
-            spider_classify_threshold: 400,
-            scraper_schema_seed_pages: DEFAULT_SCHEMA_SEED_PAGES,
-            push_batch_size: 1000,
-            push_queue_capacity: 2000,
-            push_max_batch_age: Duration::from_secs(5),
-            push_max_concurrency: 4,
-            business_db_max_connections: 8,
-            ..Default::default()
-        };
-
-        config.validate_business_capacity();
-
         info!(
             spider_interval_s = config.spider_interval.as_secs(),
             scraper_interval_s = config.scraper_interval.as_secs(),
@@ -335,57 +370,29 @@ async fn main() {
             "Crawler cron configuration loaded"
         );
 
-        // 2. Connect to database — pool is sized to spider_concurrency + scraper_concurrency + 10
-        //    to keep headroom for concurrent repository queries.
-        bootstrap_local_database(SERVER_DB_NAME)
-            .await
-            .expect("Failed to bootstrap local Postgres database");
-        let db_url = server_db_url();
-        let pool = config
-            .connect_pool(&db_url)
-            .await
-            .expect("Failed to connect to database");
+        let pool = databases.crawler.connect().await?;
 
         info!(
             max_connections = config.effective_db_max_connections(),
             "Connected to crawler-local Postgres"
         );
 
-        // 3. Apply pending migrations — runs at startup so deploying a new binary
-        //    is the only step required to update the production schema.
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("Failed to run database migrations");
-        info!("Crawler-local database migrations applied successfully");
+        verify_crawler_schema(&pool).await?;
+        info!("Crawler-local schema and migration history verified (read-only)");
 
-        let business_database_url = std::env::var("BUSINESS_DATABASE_URL")
-            .expect("BUSINESS_DATABASE_URL environment variable must be set");
         let business_db_max_connections = config.effective_business_db_max_connections();
-        let business_pool = PgPoolOptions::new()
-            .max_connections(business_db_max_connections)
-            .acquire_timeout(Duration::from_secs(30))
-            .connect(&business_database_url)
-            .await
-            .expect("Failed to connect to authoritative business Postgres");
+        let business_pool = databases.business.connect().await?;
         info!(
             max_connections = business_db_max_connections,
             raw_capture_max_concurrency = config.effective_push_max_concurrency(),
             "Connected to authoritative business Postgres"
         );
 
-        let review_required = crawler_review_required();
-        let url_pattern_review_required = crawler_review_url_pattern_required();
-        let review_config =
-            ReviewServerConfig::from_env().expect("CRAWLER_REVIEW_BIND_ADDR must be host:port");
         let review_repo = CrawlerReviewRepository::new(pool.clone());
 
         // 4. Wire scraper + spider dependencies. Provider and model choices stay here;
         // crawler services depend only on the generic LargeLanguageModel capability.
-        let vertex_ai_config = CrawlerVertexAiConfig::from_env()
-            .expect("VERTEX_AI_PROJECT_ID and VERTEX_AI_LOCATION must be set");
-        let vertex_ai_models = CrawlerVertexAiModels::from_env();
-        let llm_rate_limit_config = CrawlerLlmRateLimitConfig::from_env();
+
         let llm_governor = Arc::new(CrawlerLlmGovernor::new(llm_rate_limit_config));
 
         info!(
@@ -560,7 +567,8 @@ async fn main() {
                 result.expect("crawler cron task panicked");
             }
         }
+        Ok(())
     }
     .instrument(tracing::info_span!("crawler_startup"))
-    .await;
+    .await
 }

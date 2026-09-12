@@ -1,5 +1,5 @@
 use application::error::box_error;
-use platform_postgres::PostgresPoolConfig;
+use platform_postgres::{PostgresConnectError, PostgresPoolConfig};
 use search_filter_service::ports::{
     PeriodicSearchFilterMatchingRunLease, PeriodicSearchFilterMatchingRunLock,
     PeriodicSearchFilterMatchingRunLockError,
@@ -31,13 +31,11 @@ impl PeriodicSearchFilterMatchingRunLock for SqlxPeriodicSearchFilterMatchingRun
         Option<Box<dyn PeriodicSearchFilterMatchingRunLease>>,
         PeriodicSearchFilterMatchingRunLockError,
     > {
-        let mut connection = PgConnection::connect_with(&self.config.connect_options())
-            .await
-            .map_err(
-                |source| PeriodicSearchFilterMatchingRunLockError::LockFailed {
-                    source: box_error(source),
-                },
-            )?;
+        let mut connection = self.config.connect_session().await.map_err(|source| {
+            PeriodicSearchFilterMatchingRunLockError::LockFailed {
+                source: box_error(source),
+            }
+        })?;
         let acquired = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1, $2)")
             .bind(AURA_SCHEDULER_LOCK_NAMESPACE)
             .bind(SEARCH_FILTER_PERIODIC_MATCH_LOCK_ID)
@@ -45,7 +43,7 @@ impl PeriodicSearchFilterMatchingRunLock for SqlxPeriodicSearchFilterMatchingRun
             .await
             .map_err(
                 |source| PeriodicSearchFilterMatchingRunLockError::LockFailed {
-                    source: box_error(source),
+                    source: box_error(PostgresConnectError::from(source)),
                 },
             )?;
         Ok(acquired.then(|| {
@@ -65,12 +63,12 @@ impl PeriodicSearchFilterMatchingRunLease for SqlxPeriodicSearchFilterMatchingRu
             .await
             .map_err(
                 |source| PeriodicSearchFilterMatchingRunLockError::ReleaseFailed {
-                    source: box_error(source),
+                    source: box_error(PostgresConnectError::from(source)),
                 },
             )?;
         self.connection.close().await.map_err(|source| {
             PeriodicSearchFilterMatchingRunLockError::ReleaseFailed {
-                source: box_error(source),
+                source: box_error(PostgresConnectError::from(source)),
             }
         })
     }

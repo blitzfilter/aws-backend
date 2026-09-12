@@ -5610,9 +5610,14 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "libc",
+ "percent-encoding",
+ "rstest",
+ "rustls 0.23.43",
  "sqlx",
  "thiserror 2.0.20",
  "tokio",
+ "url",
 ]
 
 [[package]]

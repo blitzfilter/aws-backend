@@ -77,7 +77,9 @@ use opensearch::{
     auth::Credentials,
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
 };
-use platform_postgres::{PostgresConnectError, PostgresPoolConfig, SqlxUnitOfWork};
+use platform_postgres::{
+    PostgresConnectError, PostgresPoolConfig, PostgresPoolConfigError, SqlxUnitOfWork,
+};
 use woocommerce_service::WoocommerceWebhookIntake;
 
 use listing_source_postgres::{
@@ -249,14 +251,7 @@ const DEFAULT_PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS: u64 = 30;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES: u64 = 4_096;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS: u64 = 60;
-const POSTGRES_HOST_ENV: &str = "POSTGRES_HOST";
-const POSTGRES_PORT_ENV: &str = "POSTGRES_PORT";
-const POSTGRES_DATABASE_ENV: &str = "POSTGRES_DATABASE";
-const POSTGRES_USERNAME_ENV: &str = "POSTGRES_USERNAME";
-const POSTGRES_PASSWORD_ENV: &str = "POSTGRES_PASSWORD";
-const POSTGRES_MAX_CONNECTIONS_ENV: &str = "POSTGRES_MAX_CONNECTIONS";
-const DEFAULT_POSTGRES_PORT: u16 = 5432;
-const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 2;
+
 const DEFAULT_API_BIND_ADDR: &str = "0.0.0.0:8080";
 const JWKS_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const JWKS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -916,12 +911,21 @@ pub async fn app_state_from_env() -> Result<AppState, ApiStateError> {
 }
 
 async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateError> {
-    let cognito_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+    let (postgres, cognito_config) = postgres_config_before_cloud_startup(
+        &mut |name| match std::env::var(name) {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            // Preserve presence so malformed optional inputs cannot fall back to defaults.
+            Err(std::env::VarError::NotUnicode(_)) => Some(String::new()),
+        },
+        || aws_config::defaults(BehaviorVersion::latest()).load(),
+    )
+    .await?;
     let cognito_session_revoker = CognitoUserSessionRevoker::new(
         aws_sdk_cognitoidentityprovider::Client::new(&cognito_config),
         config.cognito_user_pool_id(),
     );
-    let pool = postgres_pool_from_env().await?;
+    let pool = postgres.connect().await?;
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let get_product_listing_history = GetProductListingHistoryHandler::new(
         unit_of_work.clone(),
@@ -1574,41 +1578,26 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         .with_readiness(readiness))
 }
 
-async fn postgres_pool_from_env() -> Result<PgPool, ApiStateError> {
-    let host = required_postgres_env(POSTGRES_HOST_ENV)?;
-    let database = required_postgres_env(POSTGRES_DATABASE_ENV)?;
-    let username = required_postgres_env(POSTGRES_USERNAME_ENV)?;
-    let password = required_postgres_env(POSTGRES_PASSWORD_ENV)?;
-    let port = optional_postgres_env(POSTGRES_PORT_ENV, DEFAULT_POSTGRES_PORT)?;
-    let max_connections = optional_postgres_env(
-        POSTGRES_MAX_CONNECTIONS_ENV,
-        DEFAULT_POSTGRES_MAX_CONNECTIONS,
-    )?;
-    let config = PostgresPoolConfig::new(host, port, database, username, password, max_connections)
-        .map_err(|_| ApiStateError::InvalidPostgresMaxConnections)?;
-
-    Ok(config
-        .connect()
-        .await
-        .map_err(PostgresConnectError::Connect)?)
-}
-
-fn required_postgres_env(name: &'static str) -> Result<String, ApiStateError> {
-    std::env::var(name).map_err(|_| ApiStateError::MissingEnv { name })
-}
-
-fn optional_postgres_env<T>(name: &'static str, default: T) -> Result<T, ApiStateError>
+async fn postgres_config_before_cloud_startup<T, F>(
+    get: &mut impl FnMut(&'static str) -> Option<String>,
+    start_cloud: impl FnOnce() -> F,
+) -> Result<(PostgresPoolConfig, T), ApiStateError>
 where
-    T: std::str::FromStr,
+    F: Future<Output = T>,
 {
-    match std::env::var(name) {
-        Ok(value) => value
-            .parse()
-            .map_err(|_| ApiStateError::InvalidPostgresInteger { name, value }),
-        Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(ApiStateError::MissingEnv { name }),
-    }
+    let postgres = postgres_config(get)?;
+    let cloud = start_cloud().await;
+    Ok((postgres, cloud))
 }
+
+fn postgres_config(
+    get: &mut impl FnMut(&'static str) -> Option<String>,
+) -> Result<PostgresPoolConfig, ApiStateError> {
+    Ok(PostgresPoolConfig::from_lookup("aura-historia-api", get)?)
+}
+
+#[cfg(test)]
+mod postgres_config_tests;
 
 fn opensearch_client_from_env() -> Result<OpenSearch, ApiStateError> {
     let endpoint =
@@ -1682,10 +1671,8 @@ pub enum ApiStateError {
     Postgres(#[from] PostgresConnectError),
     #[error(transparent)]
     Config(#[from] ApiConfigError),
-    #[error("invalid integer in environment variable {name}: {value}")]
-    InvalidPostgresInteger { name: &'static str, value: String },
-    #[error("POSTGRES_MAX_CONNECTIONS must be greater than zero")]
-    InvalidPostgresMaxConnections,
+    #[error("invalid PostgreSQL configuration")]
+    PostgresConfig(#[from] PostgresPoolConfigError),
     #[error("missing required environment variable {name}")]
     MissingEnv { name: &'static str },
     #[error("failed to configure OpenSearch: {detail}")]

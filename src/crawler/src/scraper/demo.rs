@@ -1,12 +1,8 @@
 //! Demo binary — showcases end-to-end usage of [`ScraperService`].
 //!
-//! Uses a hardcoded local Postgres database (`crawler_demo_scraper`). Bootstrap with:
-//!
-//! ```powershell
-//! # from src/crawler/
-//! .\db-up.ps1
-//! .\db-migrate.ps1
-//! ```
+//! Uses a fixed local Postgres database (`crawler_demo_scraper`). Demo startup bootstraps
+//! Docker and migrations only with explicit `STAGE=local`, `ephemeral`, or `test`.
+//! Bundled Docker needs `POSTGRES_SSL_MODE=disable`. No production bootstrap.
 //!
 //! # What it does
 //!
@@ -22,7 +18,8 @@
 //!
 //! | Env var          | Purpose                              | Default                         |
 //! |------------------|--------------------------------------|--------------------|
-//! | `LOCAL_DB_URL`   | Hardcoded local DB URL               | `.../crawler_demo_scraper` |
+//! | `STAGE` | Required non-real stage | no default |
+//! | `POSTGRES_SSL_MODE` | Explicit shared PostgreSQL TLS mode | no default |
 //! | `VERTEX_AI_PROJECT_ID` | Google Cloud project for Vertex AI | *(required)* |
 //! | `VERTEX_AI_LOCATION` | Vertex AI location | *(required)* |
 //! | `GOOGLE_APPLICATION_CREDENTIALS` | Optional local Application Default Credentials file | unset |
@@ -35,6 +32,8 @@
 //! # Running
 //!
 //! ```powershell
+//! $env:STAGE="local"
+//! $env:POSTGRES_SSL_MODE="disable"
 //! gcloud auth application-default login
 //! $env:VERTEX_AI_PROJECT_ID="my-project"
 //! $env:VERTEX_AI_LOCATION="europe-west3"
@@ -47,7 +46,10 @@ use std::io::BufWriter;
 use std::sync::Arc;
 
 use crawler::llm_runtime::{CrawlerLlmGovernor, CrawlerLlmRateLimitConfig};
-use crawler::local_db::{DEMO_SCRAPER_DB_NAME, bootstrap_local_database, demo_scraper_db_url};
+use crawler::local_db::{
+    DEMO_SCRAPER_DB_NAME, LocalDatabaseError, LocalDevelopmentConfig, bootstrap_local_database,
+    migrate_local_database, parse_postgres_environment,
+};
 use crawler::logging::HTML5EVER_TREE_BUILDER_LOG_DIRECTIVE;
 use crawler::scraper::candidate_service::ScraperCandidateServiceImpl;
 use crawler::scraper::css_selector::product_schema_repository::ListingSourceProductSchemaRepositoryImpl;
@@ -61,7 +63,6 @@ use crawler::scraper::scraper_service::{
 use crawler::vertex_ai::{CrawlerVertexAiConfig, CrawlerVertexAiModels};
 
 use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
 use tracing::{Instrument, error, info};
 use url::Url;
 
@@ -86,8 +87,12 @@ struct ScrapeTarget {
 // ---------------------------------------------------------------------------
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), LocalDatabaseError> {
     dotenvy::dotenv().ok();
+    let local = parse_postgres_environment(
+        |key| std::env::var(key),
+        |get| LocalDevelopmentConfig::from_lookup("crawler-demo-scraper", get),
+    )?;
 
     let targets: &[ScrapeTarget] = &[
         ScrapeTarget {
@@ -128,7 +133,13 @@ async fn main() {
     init_logging();
 
     async {
-        let pool: &'static PgPool = connect_and_migrate().await;
+        let pool = match connect_and_migrate(&local).await {
+            Ok(pool) => pool,
+            Err(error) => {
+                error!(%error, "Failed to prepare demo PostgreSQL");
+                return;
+            }
+        };
         let service = build_scraper_service(pool);
 
         let mut products: Vec<serde_json::Value> = vec![];
@@ -191,6 +202,7 @@ async fn main() {
         target_count = targets.len()
     ))
     .await;
+    Ok(())
 }
 
 fn init_logging() {
@@ -211,34 +223,26 @@ fn init_logging() {
 ///
 /// The pool is intentionally leaked: the repositories hold `&'static PgPool`
 /// references and must outlive the service, which lives until end of `main`.
-#[tracing::instrument]
-async fn connect_and_migrate() -> &'static PgPool {
-    bootstrap_local_database(DEMO_SCRAPER_DB_NAME)
-        .await
-        .expect("Failed to bootstrap local Postgres database");
-    let db_url = demo_scraper_db_url();
-
-    let pool = PgPoolOptions::new()
-        .max_connections(DEMO_POOL_MAX_CONNECTIONS)
-        .connect(&db_url)
-        .await
-        .expect("Failed to connect to Postgres");
+#[tracing::instrument(skip_all)]
+async fn connect_and_migrate(
+    local: &LocalDevelopmentConfig,
+) -> Result<&'static PgPool, LocalDatabaseError> {
+    let database = local.pool_config(DEMO_SCRAPER_DB_NAME, DEMO_POOL_MAX_CONNECTIONS)?;
+    bootstrap_local_database(local, DEMO_SCRAPER_DB_NAME).await?;
+    let pool = database.connect().await?;
 
     info!(
         max_connections = DEMO_POOL_MAX_CONNECTIONS,
         "Connected to Postgres"
     );
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("Failed to apply database migrations");
+    migrate_local_database(local, &pool).await?;
 
     info!("Database migrations applied successfully");
 
     // Leak the pool so it obtains a `'static` lifetime that can be shared
     // across all repository impls without fighting the borrow checker.
-    Box::leak(Box::new(pool))
+    Ok(Box::leak(Box::new(pool)))
 }
 
 // ---------------------------------------------------------------------------

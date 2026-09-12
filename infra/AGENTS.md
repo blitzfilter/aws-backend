@@ -13,7 +13,7 @@
 - `src/worker-queue-config.ts` own ten native worker scopes and queue settings. `src/constructs/worker-queues.ts` own separate Standard source/DLQ pairs, exact unbound IAM, and handoff outputs. Keep Shopify catalog/wiring separate.
 - Prefer typed definition maps for repeated resources like Lambdas and queues. No copy-paste forests.
 - CloudFormation input surface stay tiny. Compute deploy version come from `CommitSHA`. Secrets and external IDs come from SSM dynamic refs. Fixed shared buckets stay fixed.
-- Postgres is self-hosted. Infra passes explicit `POSTGRES_*` env vars from SSM/test settings; no RDS Proxy.
+- Postgres is self-hosted. Every DB Lambda receives explicit `STAGE`, `POSTGRES_SSL_MODE` (`verify-full` real / `disable` ephemeral), and real-stage `POSTGRES_SSL_ROOT_CERT` file path from SSM. CA file materialization/network/identity remain blocked hybrid rollout prerequisites; path alone does not provision trust. No RDS Proxy.
 - Infra own runtime glue: env vars, triggers, schedules, IAM, queue wiring, outputs, retention, alarms. Rust crates own business rules.
 
 ## Ownership

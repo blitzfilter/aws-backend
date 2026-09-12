@@ -114,11 +114,7 @@ async fn run() -> Result<(), MainError> {
     let scope = startup.scope();
     let worker_config = startup.worker().clone();
     let queue = aura_historia_worker::queue::SqsQueue::from_config(startup.queue().clone()).await?;
-    let pool = startup
-        .postgres()
-        .connect()
-        .await
-        .map_err(PostgresConnectError::Connect)?;
+    let pool = startup.postgres().connect().await?;
     let composition = WorkerRuntimeComposition::from_sqs_queue(queue);
 
     match scope {

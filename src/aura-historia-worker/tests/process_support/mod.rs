@@ -82,6 +82,7 @@ impl WorkerProcess {
                     .map(|path| ("LLVM_PROFILE_FILE", path)),
             )
             .env("STAGE", "test")
+            .env("POSTGRES_SSL_MODE", "disable")
             .env("AWS_REGION", "eu-central-1")
             .env("AWS_ACCESS_KEY_ID", "test")
             .env("AWS_SECRET_ACCESS_KEY", "test")

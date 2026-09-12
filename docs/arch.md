@@ -2422,6 +2422,10 @@ Secrets MUST NOT be embedded in domain/application types, logs, errors, or commi
 
 External clients and pools SHOULD be constructed once and shared through cloneable handles such as `PgPool` or `Arc<Client>`.
 
+PostgreSQL runtime configuration MUST require an explicit stage and TLS mode. `dev`/`prod` require SQLx `VerifyFull` and an explicit trusted CA input; only explicit `local`/`ephemeral`/`test` may disable TLS. Structured and URL paths use `platform-postgres`; URL options cannot weaken the protected policy. Credentials, certificate paths and provider error bodies MUST NOT escape error formatting, including source chains.
+
+Pinned SQLx 0.9.0 has no environment-free options constructor. Its transient PG* reads are a narrow adapter exception: skip pgpass, reject inherited client certificate/key/CA/options (including empty values), overwrite all connection/TLS/application fields, then cache validated options. This is not an environment-independent constructor; unsupported ambient configuration fails closed. Audit this behavior before changing the pin. SQLx rustls uses supplied CAs plus WebPKI roots, not exclusive CA pinning. See deployment ADR-004.
+
 ---
 
 ## 17. Concurrency and idempotency
