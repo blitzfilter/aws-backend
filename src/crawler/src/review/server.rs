@@ -14,12 +14,14 @@ use dashmap::DashMap;
 use listing_source_core::{Domain, ListingSourceId};
 use serde::Deserialize;
 use serde_json::json;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Semaphore;
+use tokio::task::{JoinError, JoinSet};
+use tokio::time::Instant;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -78,6 +80,45 @@ pub struct ReviewServer {
     sessions: Arc<DashMap<uuid::Uuid, std::time::Instant>>,
 }
 
+/// Owns the listener before the runtime announces readiness.
+#[must_use]
+pub struct BoundReviewServer {
+    server: ReviewServer,
+    listener: TcpListener,
+}
+
+impl BoundReviewServer {
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
+
+    /// Stop admission, drain to one absolute deadline, then abort and join survivors.
+    /// The caller must await this future; outer runtime/watchdog ownership stays with it.
+    pub async fn run_until<F>(self, shutdown: F, drain: Duration) -> std::io::Result<()>
+    where
+        F: Future<Output = ()>,
+    {
+        let Self { server, listener } = self;
+        let mut connections = JoinSet::new();
+        let result = server
+            .accept_until(|| listener.accept(), shutdown, &mut connections)
+            .await;
+        let stopped_at = Instant::now();
+        drop(listener);
+        let (deadline, result) = match stopped_at.checked_add(drain) {
+            Some(deadline) => (deadline, result),
+            None => (
+                stopped_at,
+                result.and(Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "review drain duration is too large",
+                ))),
+            ),
+        };
+        drain_connections(&mut connections, deadline, result).await
+    }
+}
+
 impl ReviewServer {
     pub fn new(
         repository: CrawlerReviewRepository,
@@ -109,27 +150,65 @@ impl ReviewServer {
     }
 
     pub async fn run(self) -> std::io::Result<()> {
+        self.run_until(
+            std::future::pending(),
+            REQUEST_DEADLINE + RESPONSE_WRITE_DEADLINE,
+        )
+        .await
+    }
+
+    /// Bind using the configured address and auth policy, before publishing readiness.
+    pub async fn bind(self) -> std::io::Result<BoundReviewServer> {
+        self.config
+            .clone()
+            .validate()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
         let listener = TcpListener::bind(self.config.bind_addr).await?;
         info!(
-            bind_addr = %self.config.bind_addr,
+            bind_addr = %listener.local_addr()?,
             "Crawler review console listening"
         );
+        Ok(BoundReviewServer {
+            server: self,
+            listener,
+        })
+    }
 
-        let connection_limiter = connection_limiter();
+    /// Returns failure on accept/connection task failure or an incomplete drain.
+    /// Signal shutdown and await completion; dropping this future cannot join tasks.
+    pub async fn run_until<F>(self, shutdown: F, drain: Duration) -> std::io::Result<()>
+    where
+        F: Future<Output = ()>,
+    {
+        self.bind().await?.run_until(shutdown, drain).await
+    }
+
+    async fn accept_until<F, A, R>(
+        &self,
+        mut accept: A,
+        shutdown: F,
+        connections: &mut JoinSet<std::io::Result<()>>,
+    ) -> std::io::Result<()>
+    where
+        F: Future<Output = ()>,
+        A: FnMut() -> R,
+        R: Future<Output = std::io::Result<(TcpStream, SocketAddr)>>,
+    {
+        tokio::pin!(shutdown);
         loop {
-            let permit = connection_limiter
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(std::io::Error::other)?;
-            let (stream, peer) = listener.accept().await?;
-            let server = self.clone();
-            tokio::spawn(async move {
-                let _permit = permit;
-                if let Err(err) = server.handle_connection(stream).await {
-                    warn!(peer = %peer, error = ?err, "Review console request failed");
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => return Ok(()),
+                Some(result) = connections.join_next(), if !connections.is_empty() => {
+                    connection_result(result)?;
                 }
-            });
+                // Count retained tasks, not only running tasks: completed handles stay bounded too.
+                accepted = async { accept().await }, if connections.len() < MAX_CONCURRENT_CONNECTIONS => {
+                    let (stream, _) = accepted?;
+                    let server = self.clone();
+                    connections.spawn(async move { server.handle_connection(stream).await });
+                }
+            }
         }
     }
 
@@ -709,8 +788,53 @@ impl ReviewServer {
     }
 }
 
-fn connection_limiter() -> Arc<Semaphore> {
-    Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS))
+fn connection_result(result: Result<std::io::Result<()>, JoinError>) -> std::io::Result<()> {
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            // Peer I/O failure is request-local, not a listener liveness failure.
+            warn!(error_kind = ?error.kind(), "Review console connection I/O failed");
+            Ok(())
+        }
+        // Never expose a task's panic payload through runtime errors or logs.
+        Err(error) => Err(std::io::Error::other(if error.is_panic() {
+            "review connection task panicked"
+        } else {
+            "review connection task cancelled"
+        })),
+    }
+}
+
+async fn drain_connections(
+    connections: &mut JoinSet<std::io::Result<()>>,
+    deadline: Instant,
+    mut result: std::io::Result<()>,
+) -> std::io::Result<()> {
+    while !connections.is_empty() {
+        let joined = tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => None,
+            joined = connections.join_next() => joined,
+        };
+        // A ready join can win after the clock passed the deadline, before the timer was polled.
+        let expired = joined.is_none() || Instant::now() >= deadline;
+        if let Some(joined) = joined {
+            result = result.and(connection_result(joined));
+        }
+        if expired {
+            result = result.and(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "review connection drain timed out",
+            )));
+            connections.abort_all();
+            // Do not detach cleanup. Non-cooperative polls/destructors need the caller's watchdog.
+            while let Some(joined) = connections.join_next().await {
+                result = result.and(connection_result(joined));
+            }
+            break;
+        }
+    }
+    result
 }
 
 async fn write_response<W>(
@@ -1025,6 +1149,143 @@ mod tests {
         CrawlerDomainConfiguration, CrawlerDomainRemoval,
     };
 
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::{Notify, Semaphore, oneshot};
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+    const TEST_TIMEOUT: Duration = Duration::from_secs(3);
+    const LIVE_REQUEST: &[u8] = b"GET /api/live-html?url=https%3A%2F%2Fexample.com HTTP/1.1\r\nAuthorization: Bearer review-token\r\n\r\n";
+
+    struct ActiveTask(Arc<AtomicUsize>);
+
+    impl ActiveTask {
+        fn new(active: Arc<AtomicUsize>) -> Self {
+            active.fetch_add(1, Ordering::SeqCst);
+            Self(active)
+        }
+    }
+
+    impl Drop for ActiveTask {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    struct GatedHtmlFetcher {
+        entered: Semaphore,
+        release: Notify,
+        active: Arc<AtomicUsize>,
+    }
+
+    impl GatedHtmlFetcher {
+        fn new() -> Self {
+            Self {
+                entered: Semaphore::new(0),
+                release: Notify::new(),
+                active: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        async fn wait_for_requests(&self, count: u32) -> TestResult {
+            tokio::time::timeout(TEST_TIMEOUT, self.entered.acquire_many(count))
+                .await??
+                .forget();
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HtmlFetcher for GatedHtmlFetcher {
+        async fn fetch(&self, url: &Url) -> Result<FetchedHtml, FetchError> {
+            let release = self.release.notified();
+            tokio::pin!(release);
+            release.as_mut().enable();
+            let _active = ActiveTask::new(self.active.clone());
+            self.entered.add_permits(1);
+            release.await;
+            StaticHtmlFetcher.fetch(url).await
+        }
+    }
+
+    struct RunningReviewServer {
+        address: SocketAddr,
+        stop: Option<oneshot::Sender<()>>,
+        stopped: oneshot::Receiver<()>,
+        tasks: JoinSet<std::io::Result<()>>,
+    }
+
+    impl RunningReviewServer {
+        async fn start(server: ReviewServer, drain: Duration) -> TestResult<Self> {
+            let bound = server.bind().await?;
+            let address = bound.local_addr()?;
+            let (stop, shutdown) = oneshot::channel();
+            let (observed, stopped) = oneshot::channel();
+            let mut tasks = JoinSet::new();
+            tasks.spawn(bound.run_until(
+                async move {
+                    let _sender_closed = shutdown.await;
+                    let _receiver_dropped = observed.send(());
+                },
+                drain,
+            ));
+            Ok(Self {
+                address,
+                stop: Some(stop),
+                stopped,
+                tasks,
+            })
+        }
+
+        async fn stop(&mut self) -> TestResult {
+            self.stop
+                .take()
+                .ok_or("server already stopped")?
+                .send(())
+                .map_err(|_| "server lost shutdown receiver")?;
+            tokio::time::timeout(TEST_TIMEOUT, &mut self.stopped).await??;
+            Ok(())
+        }
+
+        async fn finish(&mut self) -> TestResult<std::io::Result<()>> {
+            let joined = tokio::time::timeout(TEST_TIMEOUT, self.tasks.join_next())
+                .await?
+                .ok_or("server task missing")?;
+            assert!(self.tasks.is_empty());
+            Ok(joined?)
+        }
+    }
+
+    async fn socket_response(address: SocketAddr, chunks: &[&[u8]]) -> TestResult<String> {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut client = TcpStream::connect(address).await?;
+            for chunk in chunks {
+                client.write_all(chunk).await?;
+                tokio::task::yield_now().await;
+            }
+            let mut response = String::new();
+            client.read_to_string(&mut response).await?;
+            Ok::<_, std::io::Error>(response)
+        })
+        .await?
+        .map_err(Into::into)
+    }
+
+    async fn assert_socket_closed(client: &mut TcpStream) -> TestResult {
+        let mut byte = [0];
+        match tokio::time::timeout(TEST_TIMEOUT, client.read(&mut byte)).await? {
+            Ok(0) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ) =>
+            {
+                Ok(())
+            }
+            result => Err(format!("expected closed socket, got {result:?}").into()),
+        }
+    }
+
     struct RejectingDomainAdministration;
 
     struct StaticHtmlFetcher;
@@ -1086,27 +1347,431 @@ mod tests {
     async fn review_server_for_test(auth_token: Option<&str>) -> Result<ReviewServer, sqlx::Error> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@localhost/crawler")?;
-        Ok(ReviewServer::new(
+        Ok(ReviewServer::new_with_fetcher(
             CrawlerReviewRepository::new(pool),
             Arc::new(RejectingDomainAdministration),
             ReviewServerConfig {
                 bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
                 auth_token: auth_token.map(str::to_owned),
             },
+            Arc::new(StaticHtmlFetcher),
         ))
     }
 
     #[tokio::test]
-    async fn should_limit_review_connections() -> Result<(), Box<dyn std::error::Error>> {
-        let limiter = connection_limiter();
-        let mut permits = Vec::with_capacity(MAX_CONCURRENT_CONNECTIONS);
+    async fn should_drain_accepted_request_when_stopped() -> TestResult {
+        let fetcher = Arc::new(GatedHtmlFetcher::new());
+        let mut server = review_server_for_test(Some("review-token")).await?;
+        server.html_fetcher = fetcher.clone();
+        let mut running = RunningReviewServer::start(server, TEST_TIMEOUT).await?;
+        let mut client = TcpStream::connect(running.address).await?;
+        client.write_all(LIVE_REQUEST).await?;
+        fetcher.wait_for_requests(1).await?;
+
+        running.stop().await?;
+        assert!(!running.tasks.is_empty());
+        assert!(TcpStream::connect(running.address).await.is_err());
+        fetcher.release.notify_waiters();
+        let mut response = String::new();
+        tokio::time::timeout(TEST_TIMEOUT, client.read_to_string(&mut response)).await??;
+        running.finish().await??;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("Content-Type: text/plain; charset=utf-8"));
+        assert!(response.ends_with("<script>alert('remote')</script>"));
+        assert_eq!(fetcher.active.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_serve_health_after_peer_reset_while_shutdown_is_pending() -> TestResult {
+        let fetcher = Arc::new(GatedHtmlFetcher::new());
+        let mut server = review_server_for_test(Some("review-token")).await?;
+        server.html_fetcher = fetcher.clone();
+        let mut running = RunningReviewServer::start(server, TEST_TIMEOUT).await?;
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        #[allow(
+            deprecated,
+            reason = "zero linger forces RST without a blocking linger wait"
+        )]
+        socket.set_linger(Some(Duration::ZERO))?;
+        let mut client = socket.connect(running.address).await?;
+        client.write_all(LIVE_REQUEST).await?;
+        fetcher.wait_for_requests(1).await?;
+
+        // Reset an accepted request before its response write, rather than closing gracefully.
+        drop(client);
+        fetcher.release.notify_waiters();
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            while fetcher.active.load(Ordering::SeqCst) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+
+        let response = socket_response(running.address, &[b"GET /health HTTP/1.1\r\n\r\n"]).await?;
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.ends_with("{\n  \"ok\": true\n}"));
+        assert!(running.tasks.try_join_next().is_none());
+        assert!(matches!(
+            running.stopped.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        running.stop().await?;
+        running.finish().await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_stop_admission_when_all_connection_slots_are_busy() -> TestResult {
+        let fetcher = Arc::new(GatedHtmlFetcher::new());
+        let mut server = review_server_for_test(Some("review-token")).await?;
+        server.html_fetcher = fetcher.clone();
+        let mut running = RunningReviewServer::start(server, TEST_TIMEOUT).await?;
+        let mut clients = Vec::new();
         for _ in 0..MAX_CONCURRENT_CONNECTIONS {
-            permits.push(limiter.clone().acquire_owned().await?);
+            let mut client = TcpStream::connect(running.address).await?;
+            client.write_all(LIVE_REQUEST).await?;
+            clients.push(client);
+        }
+        fetcher
+            .wait_for_requests(MAX_CONCURRENT_CONNECTIONS as u32)
+            .await?;
+        let mut queued = TcpStream::connect(running.address).await?;
+        queued.write_all(LIVE_REQUEST).await?;
+
+        running.stop().await?;
+        assert_eq!(
+            fetcher.active.load(Ordering::SeqCst),
+            MAX_CONCURRENT_CONNECTIONS
+        );
+        fetcher.release.notify_waiters();
+        for client in &mut clients {
+            let mut response = String::new();
+            tokio::time::timeout(TEST_TIMEOUT, client.read_to_string(&mut response)).await??;
+            assert!(response.starts_with("HTTP/1.1 200 OK"));
+        }
+        running.finish().await??;
+        assert_socket_closed(&mut queued).await?;
+        assert_eq!(fetcher.active.load(Ordering::SeqCst), 0);
+        assert_eq!(fetcher.entered.available_permits(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_abort_and_join_connections_when_drain_deadline_expires() -> TestResult {
+        let fetcher = Arc::new(GatedHtmlFetcher::new());
+        let mut server = review_server_for_test(Some("review-token")).await?;
+        server.html_fetcher = fetcher.clone();
+        let drain = Duration::from_millis(20);
+        let mut running = RunningReviewServer::start(server, drain).await?;
+        let mut client = TcpStream::connect(running.address).await?;
+        client.write_all(LIVE_REQUEST).await?;
+        fetcher.wait_for_requests(1).await?;
+
+        running.stop().await?;
+        // New peers cannot reset or extend the original deadline.
+        for _ in 0..MAX_CONCURRENT_CONNECTIONS {
+            assert!(TcpStream::connect(running.address).await.is_err());
+        }
+        let error = running.finish().await?.expect_err("drain must time out");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "review connection drain timed out");
+        // Check before another await: abort without joining would leave this guard alive.
+        assert_eq!(fetcher.active.load(Ordering::SeqCst), 0);
+        assert_socket_closed(&mut client).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_stop_when_waiting_for_accept() -> TestResult {
+        let server = review_server_for_test(None).await?;
+        let mut running = RunningReviewServer::start(server, Duration::ZERO).await?;
+        tokio::task::yield_now().await;
+        running.stop().await?;
+        running.finish().await??;
+        assert!(TcpStream::connect(running.address).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_reap_completed_connections_before_admitting_more() -> TestResult {
+        let server = review_server_for_test(None).await?;
+        let mut running = RunningReviewServer::start(server, TEST_TIMEOUT).await?;
+        for _ in 0..MAX_CONCURRENT_CONNECTIONS * 2 {
+            let response =
+                socket_response(running.address, &[b"GET /health HTTP/1.1\r\n\r\n"]).await?;
+            assert!(response.starts_with("HTTP/1.1 200 OK"));
+        }
+        running.stop().await?;
+        running.finish().await??;
+        Ok(())
+    }
+
+    #[rstest::rstest]
+    #[case::completed_cleanup(true)]
+    #[case::expired_cleanup(false)]
+    #[tokio::test]
+    async fn should_preserve_accept_failure_while_joining_connections(
+        #[case] complete: bool,
+    ) -> TestResult {
+        let server = review_server_for_test(None).await?;
+        let active = Arc::new(AtomicUsize::new(0));
+        let guard = ActiveTask::new(active.clone());
+        let (release, receiver) = oneshot::channel();
+        let mut connections = JoinSet::new();
+        connections.spawn(async move {
+            let _guard = guard;
+            receiver.await.map_err(std::io::Error::other)
+        });
+        let result = tokio::time::timeout(
+            TEST_TIMEOUT,
+            server.accept_until(
+                || {
+                    std::future::ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "synthetic accept failure",
+                    )))
+                },
+                std::future::pending(),
+                &mut connections,
+            ),
+        )
+        .await?;
+        if complete {
+            release.send(()).map_err(|_| "cleanup receiver missing")?;
         }
 
-        assert!(limiter.clone().try_acquire_owned().is_err());
-        drop(permits);
-        assert!(limiter.clone().try_acquire_owned().is_ok());
+        let error = drain_connections(
+            &mut connections,
+            Instant::now() + Duration::from_millis(20),
+            result,
+        )
+        .await
+        .expect_err("accept failure must survive cleanup");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "synthetic accept failure");
+        assert!(connections.is_empty());
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[rstest::rstest]
+    #[case::broken_pipe(std::io::ErrorKind::BrokenPipe)]
+    #[case::connection_reset(std::io::ErrorKind::ConnectionReset)]
+    #[case::timed_out(std::io::ErrorKind::TimedOut)]
+    #[tokio::test]
+    async fn should_keep_peer_io_errors_request_local_during_drain(
+        #[case] kind: std::io::ErrorKind,
+    ) -> TestResult {
+        let mut connections = JoinSet::new();
+        connections.spawn(async move { Err(std::io::Error::new(kind, "private request payload")) });
+
+        drain_connections(&mut connections, Instant::now() + TEST_TIMEOUT, Ok(())).await?;
+        assert!(connections.is_empty());
+        Ok(())
+    }
+
+    #[rstest::rstest]
+    #[case::unexpected_cancellation(false)]
+    #[case::panic(true)]
+    #[tokio::test]
+    async fn should_preserve_task_failure_while_joining_other_connections(
+        #[case] panic_task: bool,
+    ) -> TestResult {
+        let server = review_server_for_test(None).await?;
+        let active = Arc::new(AtomicUsize::new(0));
+        let guard = ActiveTask::new(active.clone());
+        let mut connections = JoinSet::new();
+        connections.spawn(async move {
+            let _guard = guard;
+            std::future::pending::<std::io::Result<()>>().await
+        });
+        let task = connections.spawn(async move {
+            if panic_task {
+                std::panic::resume_unwind(Box::new("private task payload"));
+            }
+            std::future::pending::<std::io::Result<()>>().await
+        });
+        if !panic_task {
+            task.abort();
+        }
+        let result = tokio::time::timeout(
+            TEST_TIMEOUT,
+            server.accept_until(
+                std::future::pending,
+                std::future::pending(),
+                &mut connections,
+            ),
+        )
+        .await?;
+
+        let error = drain_connections(
+            &mut connections,
+            Instant::now() + Duration::from_millis(20),
+            result,
+        )
+        .await
+        .expect_err("task failure must survive cleanup");
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        if panic_task {
+            assert_eq!(error.to_string(), "review connection task panicked");
+        } else {
+            assert_eq!(error.to_string(), "review connection task cancelled");
+        }
+        assert!(connections.is_empty());
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn should_reject_ready_completion_after_absolute_deadline() {
+        let mut connections = JoinSet::new();
+        connections.spawn(async { Ok(()) });
+        tokio::task::yield_now().await;
+        let deadline = Instant::now() + Duration::from_millis(10);
+        tokio::time::advance(Duration::from_millis(11)).await;
+
+        let error = drain_connections(&mut connections, deadline, Ok(()))
+            .await
+            .expect_err("late completion must not report success");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(connections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn should_reject_completion_when_task_poll_runs_past_drain_deadline() {
+        let mut connections = JoinSet::new();
+        connections.spawn(async {
+            // Bounded non-yielding poll: completion can be ready before the timer driver runs.
+            std::thread::sleep(Duration::from_millis(30));
+            Ok(())
+        });
+        let error = drain_connections(
+            &mut connections,
+            Instant::now() + Duration::from_millis(5),
+            Ok(()),
+        )
+        .await
+        .expect_err("late completion must not report success");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(connections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn should_keep_auth_cookie_body_and_response_contracts_over_real_sockets() -> TestResult {
+        let server = review_server_for_test(Some("review-token")).await?;
+        let mut running = RunningReviewServer::start(server, TEST_TIMEOUT).await?;
+        for request in [
+            "GET /api/health HTTP/1.1\r\n\r\n",
+            "GET /api/health HTTP/1.1\r\nAuthorization: Bearer wrong-token\r\n\r\n",
+            // Missing body must not delay auth rejection until the 10s read timeout.
+            "POST /api/session HTTP/1.1\r\nContent-Length: 64\r\n\r\n",
+        ] {
+            let response = socket_response(running.address, &[request.as_bytes()]).await?;
+            assert!(response.starts_with("HTTP/1.1 401 Unauthorized"));
+        }
+        let login = socket_response(running.address, &[
+            b"POST /api/session HTTP/1.1\r\nAuthorization: Bearer review-token\r\nContent-Length: 2\r\n\r\n{",
+            b"}",
+        ]).await?;
+        assert!(login.starts_with("HTTP/1.1 200 OK"));
+        assert!(login.contains("HttpOnly"));
+        assert!(login.contains("SameSite=Strict"));
+        assert!(!login.contains("Secure"));
+        assert!(!login.contains("review-token"));
+        let cookie = login
+            .lines()
+            .find_map(|line| line.strip_prefix("Set-Cookie: "))
+            .and_then(|value| value.split(';').next())
+            .ok_or("session cookie missing")?;
+        for (request, status) in [
+            (
+                format!("GET /api/health HTTP/1.1\r\nCookie: {cookie}\r\n\r\n"),
+                200,
+            ),
+            (
+                format!("POST /api/session HTTP/1.1\r\nCookie: {cookie}\r\n\r\n"),
+                401,
+            ),
+            (
+                format!("POST /api/reviews/invalid/approve HTTP/1.1\r\nCookie: {cookie}\r\n\r\n"),
+                401,
+            ),
+            (
+                format!("POST /api/session/logout HTTP/1.1\r\nCookie: {cookie}\r\n\r\n"),
+                200,
+            ),
+            (
+                format!("GET /api/health HTTP/1.1\r\nCookie: {cookie}\r\n\r\n"),
+                401,
+            ),
+        ] {
+            let response = socket_response(running.address, &[request.as_bytes()]).await?;
+            assert!(response.starts_with(&format!("HTTP/1.1 {status}")));
+        }
+        for request in [
+            format!(
+                "GET /health HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+                MAX_REQUEST_BODY_BYTES + 1
+            ),
+            "GET /health HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".to_string(),
+            "GET /health HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n".to_string(),
+        ] {
+            let response = socket_response(running.address, &[request.as_bytes()]).await?;
+            assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+        }
+        let request = format!(
+            "GET /health HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
+            MAX_REQUEST_BODY_BYTES,
+            "a".repeat(MAX_REQUEST_BODY_BYTES),
+        );
+        let response = socket_response(running.address, &[request.as_bytes()]).await?;
+        let (headers, body) = response
+            .split_once("\r\n\r\n")
+            .ok_or("response framing missing")?;
+        assert!(headers.starts_with("HTTP/1.1 200 OK"));
+        assert!(headers.contains("Content-Type: application/json; charset=utf-8"));
+        assert!(headers.contains(&format!("Content-Length: {}", body.len())));
+        assert!(headers.contains("Connection: close"));
+        assert!(headers.contains("X-Content-Type-Options: nosniff"));
+        assert!(headers.contains("Content-Security-Policy:"));
+        assert_eq!(body, "{\n  \"ok\": true\n}");
+        running.stop().await?;
+        running.finish().await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_require_mutation_token_on_loopback_without_configured_token() -> TestResult {
+        let server = review_server_for_test(None).await?;
+        let mut running = RunningReviewServer::start(server, TEST_TIMEOUT).await?;
+        let response =
+            socket_response(running.address, &[b"GET /api/health HTTP/1.1\r\n\r\n"]).await?;
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        for request in [
+            "POST /api/session HTTP/1.1\r\n\r\n",
+            "POST /api/session HTTP/1.1\r\nAuthorization: Bearer arbitrary\r\n\r\n",
+        ] {
+            let response = socket_response(running.address, &[request.as_bytes()]).await?;
+            assert!(response.starts_with("HTTP/1.1 401 Unauthorized"));
+        }
+        running.stop().await?;
+        running.finish().await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_keep_run_until_wrapper_and_validate_non_loopback_bind() -> TestResult {
+        let server = review_server_for_test(None).await?;
+        tokio::time::timeout(TEST_TIMEOUT, server.run_until(async {}, Duration::ZERO)).await??;
+        let mut server = review_server_for_test(None).await?;
+        server.config.bind_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+        let result = server.run_until(async {}, Duration::ZERO).await;
+        assert_eq!(
+            result.expect_err("non-loopback bind requires token").kind(),
+            std::io::ErrorKind::InvalidInput
+        );
         Ok(())
     }
 

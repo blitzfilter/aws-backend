@@ -425,9 +425,7 @@ impl SpiderServiceImpl {
                 "configured crawler domain URL is invalid".to_string(),
             ))
         })?;
-        let crawl = self.spider.crawl(crawl_root_url).await?;
-        let diagnostics_rx = crawl.diagnostics;
-        let mut crawl_rx = crawl.pages;
+        let mut crawl = self.spider.crawl(crawl_root_url).await?;
 
         let initial_pattern = self
             .pattern_service
@@ -439,7 +437,7 @@ impl SpiderServiceImpl {
             debug!("Loaded persisted product URL pattern");
         }
 
-        while let Some(page) = crawl_rx.recv().await {
+        while let Some(page) = crawl.recv().await? {
             if !is_same_or_www_host(&configured_root, page.url.as_url()) {
                 debug!(url = %page.url, configured_root = %configured_root, "Ignoring discovered URL outside configured crawler domain");
                 continue;
@@ -466,7 +464,7 @@ impl SpiderServiceImpl {
             self.log_progress(&state);
         }
 
-        let diagnostics = diagnostics_rx.await.unwrap_or_default();
+        let diagnostics = crawl.completion().await?;
         if let Some(error) =
             diagnostic_failure_error(crawl_root_url, state.total_crawled, &diagnostics)
                 .or_else(|| crawl_size_failure_error(crawl_root_url, state.total_crawled))
@@ -615,7 +613,6 @@ mod service_tests {
         CrawlDiagnostics, CrawlFailureKind, MockSpider, SpiderCrawl,
     };
     use regex::Regex;
-    use tokio::sync::{mpsc, oneshot};
 
     fn setup_mock_url_repo(
         mock: &mut MockUrlMetadataRepository,
@@ -656,28 +653,16 @@ mod service_tests {
         mock.expect_crawl()
             .with(mockall::predicate::eq(crawl_root_url))
             .returning(move |_| {
-                let paths = paths.clone();
-                let diagnostics = diagnostics.clone();
-                let (tx, rx) = mpsc::channel(25);
-                tokio::spawn(async move {
-                    for path in paths {
-                        tx.send(CrawledPage {
-                            url: CrawledUrl::new(
-                                Url::parse(&format!("https://example.com{path}")).unwrap(),
-                            ),
-                        })
-                        .await
-                        .unwrap();
-                    }
-                });
-                let (diagnostics_tx, diagnostics_rx) = oneshot::channel();
-                diagnostics_tx.send(diagnostics).unwrap();
-                Box::pin(async {
-                    Ok(SpiderCrawl {
-                        pages: rx,
-                        diagnostics: diagnostics_rx,
+                let pages = paths
+                    .iter()
+                    .map(|path| CrawledPage {
+                        url: CrawledUrl::new(
+                            Url::parse(&format!("https://example.com{path}")).unwrap(),
+                        ),
                     })
-                })
+                    .collect();
+                let diagnostics = diagnostics.clone();
+                Box::pin(async move { Ok(SpiderCrawl::fixture(pages, Some(diagnostics))) })
             });
     }
 
@@ -840,14 +825,11 @@ mod service_tests {
             .expect_crawl()
             .with(mockall::predicate::eq(crawl_root_url))
             .returning(|_| {
-                let (_tx, rx) = mpsc::channel(10);
-                let (diagnostics_tx, diagnostics_rx) = oneshot::channel();
-                diagnostics_tx.send(CrawlDiagnostics::default()).unwrap();
                 Box::pin(async {
-                    Ok(SpiderCrawl {
-                        pages: rx,
-                        diagnostics: diagnostics_rx,
-                    })
+                    Ok(SpiderCrawl::fixture(
+                        Vec::new(),
+                        Some(CrawlDiagnostics::default()),
+                    ))
                 })
             });
 

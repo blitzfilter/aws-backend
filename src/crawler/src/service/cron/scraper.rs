@@ -8,12 +8,13 @@ use crate::service::raw_capture::{
 };
 use crate::spider::advisory_lock::{ListingSourceLock, LocalLockManager, UrlLock};
 use crate::spider::classification::url_metadata::{CrawlerDisposition, CrawlerUrlWriteOutcome};
+use futures::FutureExt;
 use listing_source_core::ListingSourceId;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinSet;
 use tracing::{Instrument, debug, error, info, warn};
 
@@ -84,10 +85,12 @@ struct ScrapeCandidateOutcome {
     skipped: bool,
 }
 
+#[derive(Default)]
 struct ScrapeDomainOutcome {
     accepted: usize,
     failed: usize,
     skipped: usize,
+    admission_stopped: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -140,6 +143,7 @@ pub(super) struct ScraperPassOutcome {
     captures: RawCaptureDrainSummary,
     failed: usize,
     skipped: usize,
+    admission_stopped: bool,
     scope_refresh_failed: bool,
     candidate_lookup_failed: bool,
     worker_failed: bool,
@@ -147,6 +151,12 @@ pub(super) struct ScraperPassOutcome {
 }
 
 impl ScraperPassOutcome {
+    /// A stopped pass can be complete: interrupted, unaccepted URLs remain due for retry.
+    pub(super) fn admission_stopped(&self) -> bool {
+        self.admission_stopped
+    }
+
+    /// Confirms admitted capture custody and task success, not exhaustion of due URLs.
     pub(super) fn is_complete(&self) -> bool {
         self.failed == 0
             && self.captures.is_complete()
@@ -387,20 +397,47 @@ async fn flush_batch(
     }
 }
 
-#[allow(clippy::result_large_err)]
+fn scraper_stop_requested(stop: &watch::Receiver<bool>) -> bool {
+    *stop.borrow() || stop.has_changed().is_err()
+}
+
+async fn wait_for_scraper_stop(stop: &mut watch::Receiver<bool>) {
+    loop {
+        if *stop.borrow_and_update() {
+            return;
+        }
+        if stop.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+/// None means stopped before acceptance; no completion metadata may be written for that input.
 async fn enqueue_raw_capture(
     command_tx: &mpsc::Sender<QueuedRawCapture>,
     request: impl Into<RawCaptureRequest>,
-) -> Result<Duration, mpsc::error::SendError<QueuedRawCapture>> {
+    stop: &mut watch::Receiver<bool>,
+) -> Result<Option<Duration>, mpsc::error::SendError<()>> {
     let queued = QueuedRawCapture {
         request: request.into(),
         enqueued_at: tokio::time::Instant::now(),
     };
     let wait_started_at = tokio::time::Instant::now();
+    let permit = tokio::select! {
+        biased;
+        _ = wait_for_scraper_stop(stop) => return Ok(None),
+        permit = command_tx.reserve() => permit?,
+    };
 
-    command_tx.send(queued).await?;
+    // Recheck after capacity becomes available. Keep the read guard through the synchronous
+    // send so a concurrent true signal cannot overtake this final admission check.
+    let stopping = stop.borrow();
+    if *stopping || stop.has_changed().is_err() {
+        return Ok(None);
+    }
+    permit.send(queued);
 
-    Ok(wait_started_at.elapsed())
+    Ok(Some(wait_started_at.elapsed()))
 }
 
 #[tracing::instrument(
@@ -801,27 +838,35 @@ fn scraper_error_kind(e: &ScraperError) -> &'static str {
 
 #[tracing::instrument(
     name = "crawler_scrape_domain_candidates",
-    skip(candidates, ctx),
+    skip(candidates, ctx, stop),
     fields(candidate_count = candidates.len())
 )]
 async fn scrape_domain_candidates(
     candidates: Vec<ScraperCandidate>,
     ctx: ScrapeDomainContext,
+    mut stop: watch::Receiver<bool>,
 ) -> ScrapeDomainOutcome {
-    let mut outcome = ScrapeDomainOutcome {
-        accepted: 0,
-        failed: 0,
-        skipped: 0,
-    };
+    let mut outcome = ScrapeDomainOutcome::default();
 
     for candidate in candidates {
-        let candidate_outcome = scrape_candidate(candidate, &ctx).await;
+        let candidate_outcome = tokio::select! {
+            biased;
+            _ = wait_for_scraper_stop(&mut stop) => {
+                outcome.admission_stopped = true;
+                break;
+            }
+            _ = ctx.command_tx.closed() => {
+                outcome.failed += 1;
+                break;
+            }
+            result = scrape_candidate(candidate, &ctx) => result,
+        };
 
         if candidate_outcome.errored {
             outcome.failed += 1;
         } else if let Some(pair) = candidate_outcome.capture {
-            match enqueue_raw_capture(&ctx.command_tx, pair).await {
-                Ok(queue_wait) => {
+            match enqueue_raw_capture(&ctx.command_tx, pair, &mut stop).await {
+                Ok(Some(queue_wait)) => {
                     outcome.accepted += 1;
 
                     if queue_wait >= Duration::from_millis(10) {
@@ -832,9 +877,14 @@ async fn scrape_domain_candidates(
                         );
                     }
                 }
+                Ok(None) => {
+                    outcome.admission_stopped = true;
+                    break;
+                }
                 Err(_) => {
                     error!("Command channel closed while scraper worker is running");
                     outcome.failed += 1;
+                    break;
                 }
             }
         } else if candidate_outcome.skipped {
@@ -848,8 +898,8 @@ async fn scrape_domain_candidates(
     outcome
 }
 
-/// Spawn independently of producers. Stop producers, drop every sender, then await this task;
-/// cancelling the collector itself cannot establish custody of its in-memory observations.
+/// Poll concurrently with producers, never on their stop path. Every sender must be dropped
+/// before drain can finish; cancelling this future cannot establish in-memory capture custody.
 async fn run_raw_capture_collector(
     mut command_rx: mpsc::Receiver<QueuedRawCapture>,
     raw_capture: Arc<dyn ProductListingRawCaptureService>,
@@ -900,7 +950,6 @@ async fn run_raw_capture_collector(
         summary.merge(flush_batch(&raw_capture, &scraper_candidates, pending, 0).await);
     }
 
-    // Report here too: dropping a producer/pass future detaches, rather than joins, this task.
     if summary.is_complete() {
         info!(
             event = "crawler.raw_capture.drained",
@@ -929,8 +978,27 @@ impl CrawlerCronJob {
         }
     }
 
-    /// Runtime owners must inspect this outcome, not treat return from the pass as completion.
+    /// Compatibility boundary for callers without a cooperative stop signal.
     pub(super) async fn run_scraper_pass(&self) -> ScraperPassOutcome {
+        let (keep_running, stop) = watch::channel(false);
+        let outcome = self.run_scraper_pass_until(stop).await;
+        drop(keep_running);
+        outcome
+    }
+
+    /// True or sender loss stops admission and producer waits, then drains accepted captures.
+    /// Runtime must retain/join this whole future and inspect the outcome before closing pools.
+    /// An outer deadline or abort means unknown custody, never a successful drain.
+    pub(super) async fn run_scraper_pass_until(
+        &self,
+        mut stop: watch::Receiver<bool>,
+    ) -> ScraperPassOutcome {
+        if scraper_stop_requested(&stop) {
+            return ScraperPassOutcome {
+                admission_stopped: true,
+                ..Default::default()
+            };
+        }
         let scraper_concurrency = self.config.scraper_concurrency;
         if scraper_concurrency == 0 {
             warn!(
@@ -939,7 +1007,17 @@ impl CrawlerCronJob {
             );
             return ScraperPassOutcome::default();
         }
-        if !self.admit_authoritative_scope_for_work("scraper").await {
+        let admitted = tokio::select! {
+            biased;
+            _ = wait_for_scraper_stop(&mut stop) => {
+                return ScraperPassOutcome {
+                    admission_stopped: true,
+                    ..Default::default()
+                };
+            }
+            admitted = self.admit_authoritative_scope_for_work("scraper") => admitted,
+        };
+        if !admitted {
             return ScraperPassOutcome {
                 scope_refresh_failed: true,
                 ..Default::default()
@@ -955,192 +1033,300 @@ impl CrawlerCronJob {
             push_max_concurrency = self.config.effective_push_max_concurrency(),
             "Scraper scheduler pass starting"
         );
-        let mut seen_domains: HashSet<String> = HashSet::new();
-        let mut active_domains: HashSet<String> = HashSet::new();
-        let mut pending_domains: VecDeque<(String, Vec<ScraperCandidate>)> = VecDeque::new();
-        let mut join_set: JoinSet<ScheduledScrapeDomainOutcome> = JoinSet::new();
         let (command_tx, command_rx) =
             mpsc::channel::<QueuedRawCapture>(self.config.effective_push_queue_capacity());
 
-        let budget_exhausted_listing_sources = Arc::new(Mutex::new(HashSet::new()));
-        let schema_pending_listing_sources = Arc::new(Mutex::new(HashSet::new()));
-
         let mut unique_listing_source_ids = HashSet::new();
-        let mut outcome = ScraperPassOutcome::default();
-        let mut no_more_candidates = false;
-
-        let raw_capture_collector = tokio::spawn(run_raw_capture_collector(
-            command_rx,
-            Arc::clone(&self.raw_capture),
-            Arc::clone(&self.scraper_candidates),
-            self.config.effective_push_batch_size(),
-            self.config.effective_push_max_batch_age(),
-        ));
-
-        loop {
-            while join_set.len() < scraper_concurrency {
-                if let Some((domain, candidates)) = pending_domains
-                    .iter()
-                    .position(|(domain, _)| !active_domains.contains(domain))
-                    .and_then(|idx| pending_domains.remove(idx))
-                {
-                    let scraper = Arc::clone(&self.scraper_service);
-                    let scraper_candidates = Arc::clone(&self.scraper_candidates);
-                    let lock_manager = Arc::clone(&self.lock_manager);
-                    let domain_tx = command_tx.clone();
-                    let budget_exhausted_listing_sources =
-                        Arc::clone(&budget_exhausted_listing_sources);
-                    let schema_pending_listing_sources =
-                        Arc::clone(&schema_pending_listing_sources);
-                    let span = tracing::info_span!("scrape_domain", domain = %domain);
-                    active_domains.insert(domain.clone());
-                    outcome.total += candidates.len();
-
-                    join_set.spawn(
-                        async move {
-                            let ctx = ScrapeDomainContext {
-                                scraper,
-                                scraper_candidates,
-                                lock_manager,
-                                command_tx: domain_tx,
-                                budget_exhausted_listing_sources,
-                                schema_pending_listing_sources,
-                            };
-
-                            ScheduledScrapeDomainOutcome {
-                                domain,
-                                outcome: scrape_domain_candidates(candidates, ctx).await,
-                            }
-                        }
-                        .instrument(span),
-                    );
-                    continue;
-                }
-
-                if no_more_candidates {
-                    break;
-                }
-
-                let mut excluded_domains: HashSet<String> = seen_domains.clone();
-                excluded_domains.extend(active_domains.iter().cloned());
-                excluded_domains.extend(
-                    pending_domains
-                        .iter()
-                        .map(|(domain, _)| domain.to_ascii_lowercase()),
-                );
-                let excluded_domains: Vec<String> = excluded_domains.into_iter().collect();
-                let candidates = match self
-                    .scraper_candidates
-                    .get_candidates(
-                        self.config.effective_scraper_domain_batch_size() as i64,
-                        self.config.scraper_urls_per_domain.max(1),
-                        &excluded_domains,
-                    )
-                    .await
-                {
-                    Ok(candidates) => candidates,
-                    Err(_) => {
-                        warn!(
-                            error_kind = "candidate_lookup_failed",
-                            "Failed to retrieve scraper candidates"
-                        );
-                        outcome.candidate_lookup_failed = true;
-                        no_more_candidates = true;
-                        break;
-                    }
-                };
-
-                if candidates.is_empty() {
-                    no_more_candidates = true;
-                    break;
-                }
-
-                let mut by_domain: HashMap<String, Vec<ScraperCandidate>> = HashMap::new();
-                for candidate in candidates {
-                    unique_listing_source_ids.insert(candidate.listing_source_id);
-                    let domain = candidate.url.host_str().unwrap_or("").to_ascii_lowercase();
-                    seen_domains.insert(domain.clone());
-                    by_domain.entry(domain).or_default().push(candidate);
-                }
-
-                if by_domain.is_empty() {
-                    no_more_candidates = true;
-                    break;
-                }
-
-                debug!(domains = by_domain.len(), "Candidates grouped by domain");
-                pending_domains.extend(by_domain);
-            }
-
-            if join_set.is_empty() {
-                break;
-            }
-
-            match join_set.join_next().await {
-                Some(Ok(scheduled)) => {
-                    active_domains.remove(&scheduled.domain);
-                    outcome.accepted += scheduled.outcome.accepted;
-                    outcome.failed += scheduled.outcome.failed;
-                    outcome.skipped += scheduled.outcome.skipped;
-                }
-                Some(Err(_)) => {
-                    error!(
-                        error_kind = "worker_join_failed",
-                        "Scraper domain worker failed; unfinished URL count is unknown"
-                    );
-                    outcome.worker_failed = true;
-                }
-                None => break,
-            }
-        }
-
-        drop(command_tx);
-
-        match raw_capture_collector.await {
+        // Unwind isolation replaces the old collector task boundary without detaching work.
+        // The producer side observes receiver closure if the collector panics.
+        let (mut outcome, captures) = tokio::join!(
+            self.run_scraper_producers(command_tx, stop.clone(), &mut unique_listing_source_ids),
+            async {
+                AssertUnwindSafe(run_raw_capture_collector(
+                    command_rx,
+                    Arc::clone(&self.raw_capture),
+                    Arc::clone(&self.scraper_candidates),
+                    self.config.effective_push_batch_size(),
+                    self.config.effective_push_max_batch_age(),
+                ))
+                .catch_unwind()
+                .await
+            },
+        );
+        match captures {
             Ok(Ok(summary)) => outcome.captures = summary,
             Ok(Err(error)) => outcome.captures = error.summary,
             Err(_) => {
                 error!(
-                    error_kind = "collector_join_failed",
+                    error_kind = "collector_failed",
                     "Scraper raw capture collector failed; durable and unfinished counts are unknown"
                 );
                 outcome.collector_failed = true;
             }
         }
 
+        outcome.admission_stopped |= scraper_stop_requested(&stop);
         let duration_ms = pass_start.elapsed().as_millis() as u64;
-
         #[cfg(not(test))]
-        {
-            match self
-                .scraper_candidates
-                .get_listing_source_llm_usage(unique_listing_source_ids.into_iter().collect())
-                .await
-            {
-                Ok(usages) => {
-                    for usage in usages {
-                        debug!(
-                            listing_source_name = %usage.listing_source_name,
-                            llm_calls_count = usage.llm_calls_count,
-                            llm_calls_cap = self.config.scraper_max_llm_calls_per_listing_source,
-                            llm_budget_exhausted = usage.llm_calls_count >= self.config.scraper_max_llm_calls_per_listing_source,
-                            "ListingSource LLM usage summary"
-                        );
+        if !outcome.admission_stopped() {
+            tokio::select! {
+                biased;
+                _ = wait_for_scraper_stop(&mut stop) => outcome.admission_stopped = true,
+                usages = async {
+                    self.scraper_candidates
+                        .get_listing_source_llm_usage(unique_listing_source_ids.into_iter().collect())
+                        .await
+                } => match usages {
+                    Ok(usages) => {
+                        for usage in usages {
+                            debug!(
+                                listing_source_name = %usage.listing_source_name,
+                                llm_calls_count = usage.llm_calls_count,
+                                llm_calls_cap = self.config.scraper_max_llm_calls_per_listing_source,
+                                llm_budget_exhausted = usage.llm_calls_count >= self.config.scraper_max_llm_calls_per_listing_source,
+                                "ListingSource LLM usage summary"
+                            );
+                        }
                     }
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to load per-ListingSource LLM usage summary");
-                }
+                    Err(_) => {
+                        warn!(error_kind = "llm_usage_lookup_failed", "Failed to load per-ListingSource LLM usage summary");
+                    }
+                },
             }
         }
-
         self.scraper_perf.record(outcome.total as u64, duration_ms);
         outcome
+    }
+
+    async fn run_scraper_producers(
+        &self,
+        command_tx: mpsc::Sender<QueuedRawCapture>,
+        mut stop: watch::Receiver<bool>,
+        unique_listing_source_ids: &mut HashSet<ListingSourceId>,
+    ) -> ScraperPassOutcome {
+        let scraper_concurrency = self.config.scraper_concurrency;
+        let mut seen_domains: HashSet<String> = HashSet::new();
+        let mut active_domains: HashSet<String> = HashSet::new();
+        let mut pending_domains: VecDeque<(String, Vec<ScraperCandidate>)> = VecDeque::new();
+        let mut join_set: JoinSet<ScheduledScrapeDomainOutcome> = JoinSet::new();
+
+        let budget_exhausted_listing_sources = Arc::new(Mutex::new(HashSet::new()));
+        let schema_pending_listing_sources = Arc::new(Mutex::new(HashSet::new()));
+
+        let mut outcome = ScraperPassOutcome::default();
+        let mut no_more_candidates = false;
+
+        // Keep the JoinSet outside the unwind boundary so even scheduler failure is joined.
+        let admission = AssertUnwindSafe(async {
+            'admission: loop {
+                while join_set.len() < scraper_concurrency {
+                    if scraper_stop_requested(&stop) {
+                        outcome.admission_stopped = true;
+                        break 'admission;
+                    }
+                    if command_tx.is_closed() {
+                        outcome.collector_failed = true;
+                        break 'admission;
+                    }
+                    if let Some((domain, candidates)) = pending_domains
+                        .iter()
+                        .position(|(domain, _)| !active_domains.contains(domain))
+                        .and_then(|idx| pending_domains.remove(idx))
+                    {
+                        let scraper = Arc::clone(&self.scraper_service);
+                        let scraper_candidates = Arc::clone(&self.scraper_candidates);
+                        let lock_manager = Arc::clone(&self.lock_manager);
+                        let domain_tx = command_tx.clone();
+                        let domain_stop = stop.clone();
+                        let budget_exhausted_listing_sources =
+                            Arc::clone(&budget_exhausted_listing_sources);
+                        let schema_pending_listing_sources =
+                            Arc::clone(&schema_pending_listing_sources);
+                        let span = tracing::info_span!("scrape_domain", domain = %domain);
+                        active_domains.insert(domain.clone());
+                        outcome.total += candidates.len();
+
+                        join_set.spawn(
+                            async move {
+                                let ctx = ScrapeDomainContext {
+                                    scraper,
+                                    scraper_candidates,
+                                    lock_manager,
+                                    command_tx: domain_tx,
+                                    budget_exhausted_listing_sources,
+                                    schema_pending_listing_sources,
+                                };
+
+                                ScheduledScrapeDomainOutcome {
+                                    domain,
+                                    outcome: scrape_domain_candidates(candidates, ctx, domain_stop)
+                                        .await,
+                                }
+                            }
+                            .instrument(span),
+                        );
+                        continue;
+                    }
+
+                    if no_more_candidates {
+                        break;
+                    }
+
+                    let mut excluded_domains: HashSet<String> = seen_domains.clone();
+                    excluded_domains.extend(active_domains.iter().cloned());
+                    excluded_domains.extend(
+                        pending_domains
+                            .iter()
+                            .map(|(domain, _)| domain.to_ascii_lowercase()),
+                    );
+                    let excluded_domains: Vec<String> = excluded_domains.into_iter().collect();
+                    let candidates = {
+                        let lookup = async {
+                            self.scraper_candidates
+                                .get_candidates(
+                                    self.config.effective_scraper_domain_batch_size() as i64,
+                                    self.config.scraper_urls_per_domain.max(1),
+                                    &excluded_domains,
+                                )
+                                .await
+                        };
+                        tokio::pin!(lookup);
+                        loop {
+                            tokio::select! {
+                                biased;
+                                _ = wait_for_scraper_stop(&mut stop) => {
+                                    outcome.admission_stopped = true;
+                                    break 'admission;
+                                }
+                                _ = command_tx.closed() => {
+                                    outcome.collector_failed = true;
+                                    break 'admission;
+                                }
+                                joined = join_set.join_next(), if !join_set.is_empty() => {
+                                    if let Some(joined) = joined {
+                                        if let Ok(scheduled) = &joined {
+                                            active_domains.remove(&scheduled.domain);
+                                        }
+                                        record_scraper_worker_outcome(&mut outcome, joined);
+                                        if outcome.worker_failed || outcome.admission_stopped {
+                                            break 'admission;
+                                        }
+                                    }
+                                }
+                                result = &mut lookup => break result,
+                            }
+                        }
+                    };
+                    let candidates = match candidates {
+                        Ok(candidates) => candidates,
+                        Err(_) => {
+                            warn!(
+                                error_kind = "candidate_lookup_failed",
+                                "Failed to retrieve scraper candidates"
+                            );
+                            outcome.candidate_lookup_failed = true;
+                            break 'admission;
+                        }
+                    };
+
+                    if candidates.is_empty() {
+                        no_more_candidates = true;
+                        break;
+                    }
+
+                    let mut by_domain: HashMap<String, Vec<ScraperCandidate>> = HashMap::new();
+                    for candidate in candidates {
+                        unique_listing_source_ids.insert(candidate.listing_source_id);
+                        let domain = candidate.url.host_str().unwrap_or("").to_ascii_lowercase();
+                        seen_domains.insert(domain.clone());
+                        by_domain.entry(domain).or_default().push(candidate);
+                    }
+
+                    if by_domain.is_empty() {
+                        no_more_candidates = true;
+                        break;
+                    }
+
+                    debug!(domains = by_domain.len(), "Candidates grouped by domain");
+                    pending_domains.extend(by_domain);
+                }
+
+                if join_set.is_empty() {
+                    break;
+                }
+
+                let joined = tokio::select! {
+                    biased;
+                    _ = wait_for_scraper_stop(&mut stop) => {
+                        outcome.admission_stopped = true;
+                        break;
+                    }
+                    _ = command_tx.closed() => {
+                        outcome.collector_failed = true;
+                        break;
+                    }
+                    joined = join_set.join_next() => joined,
+                };
+                if let Some(joined) = joined {
+                    if let Ok(scheduled) = &joined {
+                        active_domains.remove(&scheduled.domain);
+                    }
+                    record_scraper_worker_outcome(&mut outcome, joined);
+                    if outcome.worker_failed || outcome.admission_stopped {
+                        break;
+                    }
+                }
+            }
+        })
+        .catch_unwind()
+        .await;
+        if admission.is_err() {
+            error!(error_kind = "admission_failed", "Scraper admission failed");
+            outcome.worker_failed = true;
+        }
+
+        if outcome.worker_failed || outcome.candidate_lookup_failed || outcome.collector_failed {
+            join_set.abort_all();
+        }
+        // Cooperative stop preserves partial producer counts. Error-path aborts must also join;
+        // JoinSet::shutdown would silently discard producer panics and their unknown work.
+        while let Some(joined) = join_set.join_next().await {
+            record_scraper_worker_outcome(&mut outcome, joined);
+        }
+        drop(command_tx);
+        outcome.admission_stopped |= scraper_stop_requested(&stop);
+
+        outcome
+    }
+}
+
+fn record_scraper_worker_outcome(
+    outcome: &mut ScraperPassOutcome,
+    joined: Result<ScheduledScrapeDomainOutcome, tokio::task::JoinError>,
+) {
+    match joined {
+        Ok(scheduled) => {
+            outcome.accepted += scheduled.outcome.accepted;
+            outcome.failed += scheduled.outcome.failed;
+            outcome.skipped += scheduled.outcome.skipped;
+            outcome.admission_stopped |= scheduled.outcome.admission_stopped;
+        }
+        Err(_) => {
+            error!(
+                error_kind = "worker_join_failed",
+                "Scraper domain worker failed; unfinished URL count is unknown"
+            );
+            outcome.worker_failed = true;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    mod cancellation {
+        include!("scraper_cancellation_tests.rs");
+    }
+
     use super::*;
     use crate::scraper::candidate_service::MockScraperCandidateService;
     use crate::scraper::scraper_service::{MockScraperService, ScrapedProduct};
@@ -1548,12 +1734,14 @@ mod tests {
         let mut ctx = scrape_candidate_context(candidates, scraper);
         let (tx, mut rx) = mpsc::channel(1);
         ctx.command_tx = tx;
+        let (_stop_tx, stop) = watch::channel(false);
         let summary = scrape_domain_candidates(
             vec![scraper_candidate(
                 "Source",
                 url::Url::parse("https://example.test/products/accepted").unwrap(),
             )],
             ctx,
+            stop,
         )
         .await;
         assert_eq!(summary.accepted, 1);
@@ -1600,6 +1788,7 @@ mod tests {
         ));
         let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
         let producer = tokio::spawn(async move {
+            let (_stop_tx, mut stop) = watch::channel(false);
             let id = ListingSourceId::new();
             for index in 0..5 {
                 enqueue_raw_capture(
@@ -1608,6 +1797,7 @@ mod tests {
                         item(id, &index.to_string()),
                         meta(id, "https://example.test/products/drain", "page"),
                     ),
+                    &mut stop,
                 )
                 .await
                 .unwrap();
@@ -1713,6 +1903,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_apply_backpressure_when_raw_capture_queue_is_full() {
+        let (_stop_tx, mut stop) = watch::channel(false);
         let (command_tx, mut command_rx) = mpsc::channel::<QueuedRawCapture>(1);
         let listing_source_id = ListingSourceId::new();
 
@@ -1726,6 +1917,7 @@ mod tests {
                     "first",
                 ),
             ),
+            &mut stop,
         )
         .await
         .expect("first enqueue must fit");
@@ -1742,6 +1934,7 @@ mod tests {
                         "second",
                     ),
                 ),
+                &mut stop,
             )
             .await
         });
@@ -1764,6 +1957,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn should_flush_partial_batch_at_maximum_age() {
+        let (_stop_tx, mut stop) = watch::channel(false);
         let push_calls = Arc::new(AtomicUsize::new(0));
         let push_calls_for_mock = Arc::clone(&push_calls);
 
@@ -1801,6 +1995,7 @@ mod tests {
                 item(listing_source_id, "one"),
                 meta(listing_source_id, "https://example.com/product/one", "one"),
             ),
+            &mut stop,
         )
         .await
         .expect("enqueue must succeed");
@@ -1824,6 +2019,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_flush_final_partial_batch_when_raw_capture_channel_closes() {
+        let (_stop_tx, mut stop) = watch::channel(false);
         let push_calls = Arc::new(AtomicUsize::new(0));
         let push_calls_for_mock = Arc::clone(&push_calls);
 
@@ -1866,6 +2062,7 @@ mod tests {
                 item(listing_source_id, "one"),
                 meta(listing_source_id, "https://example.com/product/one", "one"),
             ),
+            &mut stop,
         )
         .await
         .expect("first enqueue must succeed");
@@ -1875,6 +2072,7 @@ mod tests {
                 item(listing_source_id, "two"),
                 meta(listing_source_id, "https://example.com/product/two", "two"),
             ),
+            &mut stop,
         )
         .await
         .expect("second enqueue must succeed");
