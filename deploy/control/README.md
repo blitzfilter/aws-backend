@@ -1,0 +1,35 @@
+# Deployment controller contracts
+
+**Default-off. No live mutation adapters or enabled workflow.** Node 26 production target; pinned TypeScript/Zod dependencies and lockfile. This iteration implements validation and pure protocol logic, not S3/Docker/SSM/CloudFormation execution.
+
+From repository root:
+
+```sh
+npm --prefix deploy/control ci
+npm --prefix deploy/control test
+npm --prefix deploy/control run validate-catalog
+node deploy/control/dist/src/cli/main.js --help
+```
+
+`release validate-catalog` checks actual Cargo bin metadata, the CDK Lambda/scope AST, all MJML inputs and OpenSearch assets. It reports pending components explicitly. A `NOT_IMPLEMENTED` catalog entry prevents bundle acceptance. All other proposed deployment/host commands validate typed arguments, then return `NOT_IMPLEMENTED` / exit 8. They do not contact providers or fake success.
+
+## Frozen v1 boundary
+
+- `src/contracts/release.ts`: strict manifest, plan, intent and SQLx metadata. **`parseManifest` must be followed by `verifyManifestCatalog(manifest, installedTrustedCatalog)`**. Neither proves artifact existence/provenance or approves execution.
+- `src/contracts/inventory.ts`: independent host/role placement, exact scoped queues, hostname/TLS requirements, protected references, resource/pool/deadline budgets. Operational host profiles reserve both API slots. Real stages cannot use test endpoint overrides. Cron/crawler target configuration does not start jobs.
+- `src/state/model.ts`: pure conditional revision transitions, durable nonce, per-phase attempt/read-back journal, mixed actual component identities. Only successful completing-attempt evidence can finish its phase. Uncertainty never expires ownership. Storage adapters must CAS the returned state **before** an external effect.
+- `src/contracts/hash.ts`: canonical compact UTF-8 control JSON, sorted keys, dense ordered arrays, safe integer numbers. Manifest publication must use these exact bytes; verify raw artifact digest before parsing. No self-digest. SQLx SHA-384 checksums differ from artifact SHA-256. S3 ETag is only a conditional-write token.
+- `src/contracts/bootstrap.ts`: owner-supplied GitHub protection/ref/OIDC policy, separate creation/immutability rules. Status remains disabled even if untrusted input claims live setup exists.
+- `src/contracts/result.ts`: stable exit codes, safe errors. Arbitrary payloads are fully redacted; separately validate any operational fields before logging.
+
+Source schemas generate `../schemas/*.schema.json` with `npm --prefix deploy/control run schemas`. Tests compare generated schemas. **JSON Schema alone is insufficient**: semantic parsers also enforce identity, completeness, budgets and transitions. Fixture builders under `fixtures/` are synthetic, not working production configuration or evidence.
+
+The required eventual trust chain is installed catalog/controller → immutable complete artifact/provenance verification → read-only target plan → independently authenticated approved intent → conditional ownership → authenticated observations → verified actual component state. No builder-supplied catalog, approval or observations may substitute for those trusted adapters.
+
+## Intentional limits
+
+No live inspection, artifact upload/download, migration application, service start/stop, scheduler fencing, backup restore, promotion or credential resolution exists here yet. No S3/OS-lock correctness is claimed from pure tests. Node/host helper bundling and provenance verification land later.
+
+The v1 protocol blocks component-key/architecture retirement and multiple architecture selections before acquisition until an approved target-selection/retirement protocol exists. It preserves old observations rather than deleting unknown runtime state. Planned migrator identity is a one-shot tool checked in `postgres_expand`, never a singleton scheduler.
+
+Full acceptance coverage and external rollout gates: `docs/deployment/implementation-status.md`. No compatibility rollback may downgrade SQL, remove mappings, reset indexes or purge queues.

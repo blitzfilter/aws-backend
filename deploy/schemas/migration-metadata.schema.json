@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Two separate SQLx histories: business and crawler. parseMigrationMetadata also checks unique streams/dependency lists, ascending versions, source-key binding and explicit compatibility. SHA-384 is SQLx history identity; SHA-256 is artifact/evidence identity. Execution controls and old/new compatibility evidence are mandatory per migration.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "streams": {
+      "minItems": 2,
+      "maxItems": 2,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "stream": {
+            "type": "string",
+            "enum": [
+              "business",
+              "crawler"
+            ]
+          },
+          "source_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "artifact": {
+            "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+            "type": "object",
+            "properties": {
+              "bucket": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+              },
+              "key": {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+              },
+              "version_id": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^[A-Za-z0-9_+/.=-]+$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "bucket",
+              "key",
+              "version_id",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "migrations": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "description": "Explicit execution controls and author-declared dependencies; empty lists mean explicitly none. Old/new compatibility requires separate evidence identity, never SQL inference. An evidence digest is not evidence verification.",
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                },
+                "sql_sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "sqlx_checksum": {
+                  "type": "string",
+                  "pattern": "^sha384:[0-9a-f]{96}$"
+                },
+                "transaction_mode": {
+                  "type": "string",
+                  "enum": [
+                    "TRANSACTIONAL",
+                    "NONTRANSACTIONAL"
+                  ]
+                },
+                "lock_timeout_ms": {
+                  "description": "Positive PostgreSQL timeout in milliseconds, at most INT_MAX. Zero (disabled timeout) is not allowed.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647
+                },
+                "statement_timeout_ms": {
+                  "description": "Positive PostgreSQL timeout in milliseconds, at most INT_MAX. Zero (disabled timeout) is not allowed.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647
+                },
+                "affected_capabilities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  }
+                },
+                "required_extensions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 63,
+                    "pattern": "^[a-z][a-z0-9_-]*$"
+                  }
+                },
+                "old_new_compatibility_evidence_sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "change": {
+                  "type": "string",
+                  "enum": [
+                    "EXPAND",
+                    "CONTRACT",
+                    "DATA_BACKFILL"
+                  ]
+                },
+                "compatibility": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "class": {
+                          "type": "string",
+                          "enum": [
+                            "COMPATIBLE"
+                          ]
+                        },
+                        "backfill": {
+                          "type": "object",
+                          "properties": {
+                            "policy": {
+                              "type": "string",
+                              "const": "NONE"
+                            }
+                          },
+                          "required": [
+                            "policy"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "backfill"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "class": {
+                          "type": "string",
+                          "enum": [
+                            "COMPATIBLE_WITH_BACKFILL"
+                          ]
+                        },
+                        "backfill": {
+                          "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                          "type": "object",
+                          "properties": {
+                            "policy": {
+                              "type": "string",
+                              "const": "REGISTERED"
+                            },
+                            "id": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            },
+                            "implementation_sha256": {
+                              "type": "string",
+                              "pattern": "^sha256:[0-9a-f]{64}$"
+                            },
+                            "input_schema_version": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "checkpoint_schema_version": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "gate_id": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            }
+                          },
+                          "required": [
+                            "policy",
+                            "id",
+                            "implementation_sha256",
+                            "input_schema_version",
+                            "checkpoint_schema_version",
+                            "gate_id"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "backfill"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "class": {
+                          "type": "string",
+                          "enum": [
+                            "MAINTENANCE_REQUIRED"
+                          ]
+                        },
+                        "backfill": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "policy": {
+                                  "type": "string",
+                                  "const": "NONE"
+                                }
+                              },
+                              "required": [
+                                "policy"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                              "type": "object",
+                              "properties": {
+                                "policy": {
+                                  "type": "string",
+                                  "const": "REGISTERED"
+                                },
+                                "id": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                },
+                                "implementation_sha256": {
+                                  "type": "string",
+                                  "pattern": "^sha256:[0-9a-f]{64}$"
+                                },
+                                "input_schema_version": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "checkpoint_schema_version": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "gate_id": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                }
+                              },
+                              "required": [
+                                "policy",
+                                "id",
+                                "implementation_sha256",
+                                "input_schema_version",
+                                "checkpoint_schema_version",
+                                "gate_id"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "reason_code": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "backfill",
+                        "reason_code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "class": {
+                          "type": "string",
+                          "enum": [
+                            "BLOCKED"
+                          ]
+                        },
+                        "backfill": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "policy": {
+                                  "type": "string",
+                                  "const": "NONE"
+                                }
+                              },
+                              "required": [
+                                "policy"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                              "type": "object",
+                              "properties": {
+                                "policy": {
+                                  "type": "string",
+                                  "const": "REGISTERED"
+                                },
+                                "id": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                },
+                                "implementation_sha256": {
+                                  "type": "string",
+                                  "pattern": "^sha256:[0-9a-f]{64}$"
+                                },
+                                "input_schema_version": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "checkpoint_schema_version": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "gate_id": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                }
+                              },
+                              "required": [
+                                "policy",
+                                "id",
+                                "implementation_sha256",
+                                "input_schema_version",
+                                "checkpoint_schema_version",
+                                "gate_id"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "reason_code": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "backfill",
+                        "reason_code"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "rollback": {
+                  "type": "string",
+                  "enum": [
+                    "PREVIOUS_BINARY_COMPATIBLE",
+                    "REPAIR_FORWARD_ONLY"
+                  ]
+                }
+              },
+              "required": [
+                "version",
+                "name",
+                "sql_sha256",
+                "sqlx_checksum",
+                "transaction_mode",
+                "lock_timeout_ms",
+                "statement_timeout_ms",
+                "affected_capabilities",
+                "required_extensions",
+                "old_new_compatibility_evidence_sha256",
+                "change",
+                "compatibility",
+                "rollback"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "stream",
+          "source_sha",
+          "artifact",
+          "migrations"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "streams"
+  ],
+  "additionalProperties": false
+}

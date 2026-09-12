@@ -1,0 +1,703 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Strict operational state v1. Use parseState as well as JSON Schema: ordering, revision continuity, ownership, evidence and target-equality checks are semantic. No timed owner stealing. No storage CAS or approval verification is implemented here.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "DEPLOYMENT_STATE"
+    },
+    "example": {
+      "type": "boolean"
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "dev",
+            "prod",
+            "ephemeral",
+            "local",
+            "test"
+          ]
+        },
+        "account": {
+          "type": "string",
+          "pattern": "^[0-9]{12}$"
+        },
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-[1-9][0-9]?$"
+        }
+      },
+      "required": [
+        "stage",
+        "account",
+        "region"
+      ],
+      "additionalProperties": false
+    },
+    "revision": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "current_manifest_sha256": {
+      "description": "Last fully completed release ONLY. During an owned operation, actual components may be mixed or unknown.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actual": {
+      "description": "Last read-back per component, including failed/unverified attempts; never dropped to accommodate target changes. These facts alone do not prove completion: it needs APPLIED/VERIFIED current-attempt evidence from the required phase, or a successful final verification phase. In-flight effects may have changed since read-back.",
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "identity": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "observation": {
+            "type": "object",
+            "properties": {
+              "operation_id": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "nonce": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "plan_sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "intent_sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "phase": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "attempt": {
+                "$ref": "#/$defs/__schema10"
+              },
+              "start_sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "evidence": {
+                "$ref": "#/$defs/__schema11"
+              }
+            },
+            "required": [
+              "operation_id",
+              "nonce",
+              "plan_sha256",
+              "intent_sha256",
+              "phase",
+              "attempt",
+              "start_sha256",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "component",
+          "identity",
+          "observation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "operation": {
+      "description": "OWNED retains the durable nonce through failures and uncertainty. COMPLETED releases ownership but retains the last binding/journal for exact replay.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "nonce": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "plan_sha256": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "intent_sha256": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "OWNED",
+                "COMPLETED"
+              ]
+            },
+            "approved_environment_revision": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "approved_current_manifest_sha256": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "manifest_sha256": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "source_sha": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "acquired": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "intended": {
+              "description": "One architecture per logical native component, worker scope, migrator and Lambda. Plans have no reviewed variant selector or retirement protocol: multiple variants and changes to an existing component-key set are unsupported before acquisition.",
+              "minItems": 1,
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "identity": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "phase": {
+                    "$ref": "#/$defs/__schema9"
+                  }
+                },
+                "required": [
+                  "component",
+                  "identity",
+                  "phase"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "phases": {
+              "minItems": 16,
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "phase": {
+                    "$ref": "#/$defs/__schema9"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "PLANNED",
+                      "STARTED",
+                      "OBSERVED",
+                      "COMPLETED",
+                      "FAILED",
+                      "UNCERTAIN"
+                    ]
+                  },
+                  "attempts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "attempt": {
+                          "$ref": "#/$defs/__schema10"
+                        },
+                        "started": {
+                          "$ref": "#/$defs/__schema12"
+                        },
+                        "observations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "revision": {
+                                "$ref": "#/$defs/__schema0"
+                              },
+                              "observation": {
+                                "description": "Read-back facts are retained for every outcome. Completion evidence must itself be APPLIED/VERIFIED and bound to the completing phase, current attempt and start journal digest.",
+                                "type": "object",
+                                "properties": {
+                                  "operation_id": {
+                                    "$ref": "#/$defs/__schema7"
+                                  },
+                                  "nonce": {
+                                    "$ref": "#/$defs/__schema8"
+                                  },
+                                  "plan_sha256": {
+                                    "$ref": "#/$defs/__schema1"
+                                  },
+                                  "intent_sha256": {
+                                    "$ref": "#/$defs/__schema1"
+                                  },
+                                  "phase": {
+                                    "$ref": "#/$defs/__schema9"
+                                  },
+                                  "attempt": {
+                                    "$ref": "#/$defs/__schema10"
+                                  },
+                                  "start_sha256": {
+                                    "$ref": "#/$defs/__schema1"
+                                  },
+                                  "evidence": {
+                                    "$ref": "#/$defs/__schema11"
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "APPLIED",
+                                      "NOT_APPLIED",
+                                      "UNKNOWN"
+                                    ]
+                                  },
+                                  "postconditions": {
+                                    "type": "string",
+                                    "enum": [
+                                      "VERIFIED",
+                                      "UNVERIFIED"
+                                    ]
+                                  },
+                                  "components": {
+                                    "maxItems": 256,
+                                    "type": "array",
+                                    "items": {
+                                      "description": "An independently read-back identity; null means unknown. Planned targets are never observations.",
+                                      "type": "object",
+                                      "properties": {
+                                        "component": {
+                                          "$ref": "#/$defs/__schema2"
+                                        },
+                                        "identity": {
+                                          "$ref": "#/$defs/__schema4"
+                                        }
+                                      },
+                                      "required": [
+                                        "component",
+                                        "identity"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "operation_id",
+                                  "nonce",
+                                  "plan_sha256",
+                                  "intent_sha256",
+                                  "phase",
+                                  "attempt",
+                                  "start_sha256",
+                                  "evidence",
+                                  "outcome",
+                                  "postconditions",
+                                  "components"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "revision",
+                              "observation"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "attempt",
+                        "started",
+                        "observations"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "completed": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema12"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "phase",
+                  "status",
+                  "attempts",
+                  "completed"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "completed": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/__schema12"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "operation_id",
+            "nonce",
+            "plan_sha256",
+            "intent_sha256",
+            "status",
+            "approved_environment_revision",
+            "approved_current_manifest_sha256",
+            "manifest_sha256",
+            "source_sha",
+            "acquired",
+            "intended",
+            "phases",
+            "completed"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "example",
+    "target",
+    "revision",
+    "current_manifest_sha256",
+    "actual",
+    "operation"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema1": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "__schema2": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "NATIVE"
+            },
+            "component": {
+              "type": "string",
+              "enum": [
+                "aura-historia-api",
+                "aura-historia-cron",
+                "crawler"
+              ]
+            },
+            "architecture": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "kind",
+            "component",
+            "architecture"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "WORKER"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "product-listing-opensearch",
+                "search-filter-projection",
+                "search-filter-percolator",
+                "search-filter-match-notification",
+                "watchlist-notification",
+                "product-content-assessment",
+                "product-embedding",
+                "product-translation",
+                "product-listing-normalization",
+                "notification-delivery"
+              ]
+            },
+            "architecture": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
+            "architecture"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Verified aura-historia-migrate tool image for postgres_expand; not a running daemon, singleton or job owner.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "MIGRATOR"
+            },
+            "architecture": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "kind",
+            "architecture"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "LAMBDA"
+            },
+            "component": {
+              "type": "string",
+              "enum": [
+                "cloudwatch-log-retention-lambda",
+                "cognito-post-confirmation",
+                "shopify-lambda",
+                "stripe-lambda",
+                "fxrate-lambda"
+              ]
+            },
+            "architecture": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "kind",
+            "component",
+            "architecture"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "POSTGRES"
+            },
+            "stream": {
+              "type": "string",
+              "enum": [
+                "business",
+                "crawler"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "stream"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "SEARCH"
+            },
+            "family": {
+              "type": "string",
+              "enum": [
+                "PRODUCT_LISTINGS",
+                "USER_SEARCH_FILTERS"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "family"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "INFRASTRUCTURE"
+            },
+            "stack": {
+              "type": "string",
+              "enum": [
+                "DATA",
+                "COMPUTE",
+                "API",
+                "OBSERVABILITY"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "stack"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "MAIL"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema3": {
+      "type": "string",
+      "enum": [
+        "x86_64",
+        "arm64"
+      ]
+    },
+    "__schema4": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/__schema5"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "__schema5": {
+      "description": "Canonical hash of the complete immutable manifest component entry, not an artifact byte digest. Worker identity hashes { image: native entry, queue: scope contract }. Infrastructure identity hashes the infrastructure entry, separately observed for every stack.",
+      "type": "object",
+      "properties": {
+        "source_sha": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "definition_sha256": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": [
+        "source_sha",
+        "definition_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "__schema7": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "__schema8": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "__schema9": {
+      "type": "string",
+      "enum": [
+        "verify_release",
+        "acquire_operation",
+        "revalidate_plan",
+        "aws_prerequisites",
+        "host_preflight",
+        "postgres_expand",
+        "opensearch_expand",
+        "prepare_cdc",
+        "prepare_compute",
+        "verify_candidates",
+        "replace_worker_scopes",
+        "activate_lambda",
+        "switch_api",
+        "handover_jobs",
+        "verify_release_behavior",
+        "commit_release"
+      ]
+    },
+    "__schema10": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema11": {
+      "description": "Immutable content-free journal/evidence reference in an adapter-owned namespace; not a URL or fetch authorization.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": [
+        "key",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "journal": {
+          "$ref": "#/$defs/__schema11"
+        }
+      },
+      "required": [
+        "revision",
+        "journal"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Hybrid deployment decisions
 
-Status: implementation contracts in progress; **not deployment-ready**.
+Status: v1 pure contracts reviewed; **not deployment-ready**. No provider/runtime mutation adapter or new workflow enabled.
 
 ## ADR-001 — Scope and trust boundary
 
@@ -42,6 +42,6 @@ At most three substantial implementers at once, disjoint files only. Integrator 
 
 JSON control records use schema version 1 with strict unknown-field rejection. Persisted operational enum values follow repository SCREAMING_SNAKE_CASE; stage names remain `dev`/`prod` and explicit test stages. CLI phase names are allowlisted identifiers, never shell.
 
-Artifact digest: SHA-256 of exact immutable bytes, lowercase `sha256:<64 hex>`. Manifest digest is external, never a self-digest field. Canonical control JSON sorts object keys recursively, preserves array order, emits compact UTF-8 with no trailing newline; no undefined/nonfinite/unsafe-number values. Canonical hashes are not S3 ETags. SQLx migration checksums use SQLx's own SHA-384 history convention, separately typed.
+Artifact digest: SHA-256 of exact immutable bytes, lowercase `sha256:<64 hex>`. Manifest digest is external, never a self-digest field. Canonical control JSON sorts object keys recursively, preserves array order, emits compact UTF-8 with no trailing newline; no undefined/nonfinite/unsafe-number values. Manifest publication must use those exact canonical bytes; raw digest verification precedes parsing. Canonical hashes are not S3 ETags. SQLx migration checksums use SQLx's own SHA-384 history convention, separately typed.
 
-Runner planning, artifact verification and host inspection are read-only capabilities, separated from mutation adapters. Unsupported commands return explicit nonzero machine-readable results; no echo/mock adapter is a deploy implementation. Configuration/manifests contain references, not resolved credentials or arbitrary shell, paths, registries or Compose documents. Live examples must be rejected until replaced by approved target inputs.
+Runner planning, artifact verification and host inspection are read-only capabilities, separated from mutation adapters. Unsupported commands return explicit nonzero machine-readable results; no echo/mock adapter is a deploy implementation. Configuration/manifests contain references, not resolved credentials or arbitrary shell, paths, registries or Compose documents. Live examples must be rejected until replaced by approved target inputs. The initial pure protocol blocks component-key/architecture changes and multiple target architectures before ownership; future target selection/retirement needs explicit evidence and review, never deletion of mixed state.

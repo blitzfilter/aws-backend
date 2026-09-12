@@ -1,0 +1,1699 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Environment-neutral immutable build record, NOT deployment intent or attestation verification. No self digest. parseManifest checks structure, source policy and internal consistency, not full bundle completeness or build availability. Callers must separately run verifyManifestCatalog(manifest, trustedCatalog). JSON Schema alone does not enforce semantic invariants.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "RELEASE_MANIFEST"
+    },
+    "example": {
+      "type": "boolean"
+    },
+    "release_id": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "build": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*\\/[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "workflow": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^\\.github\\/workflows\\/[a-zA-Z0-9_-]+\\.ya?ml$"
+        },
+        "run_id": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "run_attempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "provenance": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "GITHUB_ATTESTATION"
+            },
+            "artifact": {
+              "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+                },
+                "key": {
+                  "type": "string",
+                  "maxLength": 512,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+                },
+                "version_id": {
+                  "type": "string",
+                  "maxLength": 1024,
+                  "pattern": "^[A-Za-z0-9_+/.=-]+$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "bucket",
+                "key",
+                "version_id",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "artifact"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "repository",
+        "workflow",
+        "run_id",
+        "run_attempt",
+        "source_sha",
+        "provenance"
+      ],
+      "additionalProperties": false
+    },
+    "toolchain": {
+      "type": "object",
+      "properties": {
+        "rust": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "node": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "typescript": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "sqlx": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "cargo_lock_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "deployment_lock_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "rust",
+        "node",
+        "typescript",
+        "sqlx",
+        "cargo_lock_sha256",
+        "deployment_lock_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "targets": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "architecture": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "arm64"
+            ]
+          },
+          "rust_target": {
+            "type": "string",
+            "enum": [
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl",
+              "aarch64-unknown-linux-musl"
+            ]
+          }
+        },
+        "required": [
+          "architecture",
+          "rust_target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "native_images": {
+      "minItems": 5,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string",
+            "enum": [
+              "aura-historia-api",
+              "aura-historia-worker",
+              "aura-historia-cron",
+              "crawler",
+              "aura-historia-migrate"
+            ]
+          },
+          "architecture": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "arm64"
+            ]
+          },
+          "rust_target": {
+            "type": "string",
+            "enum": [
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl",
+              "aarch64-unknown-linux-musl"
+            ]
+          },
+          "source_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "image": {
+            "type": "object",
+            "properties": {
+              "registry": {
+                "type": "string",
+                "maxLength": 253,
+                "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*\\.[a-z]{2,}$"
+              },
+              "repository": {
+                "type": "string",
+                "maxLength": 512,
+                "allOf": [
+                  {
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+                  },
+                  {
+                    "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+                  }
+                ]
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "registry",
+              "repository",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "component",
+          "architecture",
+          "rust_target",
+          "source_sha",
+          "image"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "lambdas": {
+      "minItems": 5,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string",
+            "enum": [
+              "cloudwatch-log-retention-lambda",
+              "cognito-post-confirmation",
+              "shopify-lambda",
+              "stripe-lambda",
+              "fxrate-lambda"
+            ]
+          },
+          "architecture": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "arm64"
+            ]
+          },
+          "rust_target": {
+            "type": "string",
+            "enum": [
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl",
+              "aarch64-unknown-linux-musl"
+            ]
+          },
+          "source_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "runtime": {
+            "type": "string",
+            "const": "provided.al2023"
+          },
+          "artifact": {
+            "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+            "type": "object",
+            "properties": {
+              "bucket": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+              },
+              "key": {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+              },
+              "version_id": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^[A-Za-z0-9_+/.=-]+$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "bucket",
+              "key",
+              "version_id",
+              "sha256"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "component",
+          "architecture",
+          "rust_target",
+          "source_sha",
+          "runtime",
+          "artifact"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "mail_bundle": {
+      "description": "Environment neutral: prefix MUST be <source_sha>/mjml; template key MUST be <template>/<language>.html. Activation prepends the separately approved target stage. Archive digest covers exact bundle bytes.",
+      "type": "object",
+      "properties": {
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "artifact": {
+          "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 512,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+            },
+            "version_id": {
+              "type": "string",
+              "maxLength": 1024,
+              "pattern": "^[A-Za-z0-9_+/.=-]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "bucket",
+            "key",
+            "version_id",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+        },
+        "prefix_semantics": {
+          "type": "string",
+          "const": "PREPEND_TARGET_STAGE"
+        },
+        "templates": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "template": {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+              },
+              "language": {
+                "type": "string",
+                "enum": [
+                  "de",
+                  "en",
+                  "es",
+                  "fr",
+                  "it"
+                ]
+              },
+              "key": {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "template",
+              "language",
+              "key",
+              "sha256"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "source_sha",
+        "artifact",
+        "prefix",
+        "prefix_semantics",
+        "templates"
+      ],
+      "additionalProperties": false
+    },
+    "migrations": {
+      "description": "Two separate SQLx histories: business and crawler. parseMigrationMetadata also checks unique streams/dependency lists, ascending versions, source-key binding and explicit compatibility. SHA-384 is SQLx history identity; SHA-256 is artifact/evidence identity. Execution controls and old/new compatibility evidence are mandatory per migration.",
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "number",
+          "const": 1
+        },
+        "streams": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stream": {
+                "type": "string",
+                "enum": [
+                  "business",
+                  "crawler"
+                ]
+              },
+              "source_sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "artifact": {
+                "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+                "type": "object",
+                "properties": {
+                  "bucket": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+                  },
+                  "key": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+                  },
+                  "version_id": {
+                    "type": "string",
+                    "maxLength": 1024,
+                    "pattern": "^[A-Za-z0-9_+/.=-]+$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "bucket",
+                  "key",
+                  "version_id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "migrations": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "description": "Explicit execution controls and author-declared dependencies; empty lists mean explicitly none. Old/new compatibility requires separate evidence identity, never SQL inference. An evidence digest is not evidence verification.",
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "sql_sha256": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "sqlx_checksum": {
+                      "type": "string",
+                      "pattern": "^sha384:[0-9a-f]{96}$"
+                    },
+                    "transaction_mode": {
+                      "type": "string",
+                      "enum": [
+                        "TRANSACTIONAL",
+                        "NONTRANSACTIONAL"
+                      ]
+                    },
+                    "lock_timeout_ms": {
+                      "description": "Positive PostgreSQL timeout in milliseconds, at most INT_MAX. Zero (disabled timeout) is not allowed.",
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "statement_timeout_ms": {
+                      "description": "Positive PostgreSQL timeout in milliseconds, at most INT_MAX. Zero (disabled timeout) is not allowed.",
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "affected_capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      }
+                    },
+                    "required_extensions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 63,
+                        "pattern": "^[a-z][a-z0-9_-]*$"
+                      }
+                    },
+                    "old_new_compatibility_evidence_sha256": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "change": {
+                      "type": "string",
+                      "enum": [
+                        "EXPAND",
+                        "CONTRACT",
+                        "DATA_BACKFILL"
+                      ]
+                    },
+                    "compatibility": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "class": {
+                              "type": "string",
+                              "enum": [
+                                "COMPATIBLE"
+                              ]
+                            },
+                            "backfill": {
+                              "type": "object",
+                              "properties": {
+                                "policy": {
+                                  "type": "string",
+                                  "const": "NONE"
+                                }
+                              },
+                              "required": [
+                                "policy"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "backfill"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "class": {
+                              "type": "string",
+                              "enum": [
+                                "COMPATIBLE_WITH_BACKFILL"
+                              ]
+                            },
+                            "backfill": {
+                              "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                              "type": "object",
+                              "properties": {
+                                "policy": {
+                                  "type": "string",
+                                  "const": "REGISTERED"
+                                },
+                                "id": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                },
+                                "implementation_sha256": {
+                                  "type": "string",
+                                  "pattern": "^sha256:[0-9a-f]{64}$"
+                                },
+                                "input_schema_version": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "checkpoint_schema_version": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "gate_id": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                }
+                              },
+                              "required": [
+                                "policy",
+                                "id",
+                                "implementation_sha256",
+                                "input_schema_version",
+                                "checkpoint_schema_version",
+                                "gate_id"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "backfill"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "class": {
+                              "type": "string",
+                              "enum": [
+                                "MAINTENANCE_REQUIRED"
+                              ]
+                            },
+                            "backfill": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "policy": {
+                                      "type": "string",
+                                      "const": "NONE"
+                                    }
+                                  },
+                                  "required": [
+                                    "policy"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                                  "type": "object",
+                                  "properties": {
+                                    "policy": {
+                                      "type": "string",
+                                      "const": "REGISTERED"
+                                    },
+                                    "id": {
+                                      "type": "string",
+                                      "maxLength": 80,
+                                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                    },
+                                    "implementation_sha256": {
+                                      "type": "string",
+                                      "pattern": "^sha256:[0-9a-f]{64}$"
+                                    },
+                                    "input_schema_version": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "checkpoint_schema_version": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "gate_id": {
+                                      "type": "string",
+                                      "maxLength": 80,
+                                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                    }
+                                  },
+                                  "required": [
+                                    "policy",
+                                    "id",
+                                    "implementation_sha256",
+                                    "input_schema_version",
+                                    "checkpoint_schema_version",
+                                    "gate_id"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "reason_code": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "backfill",
+                            "reason_code"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "class": {
+                              "type": "string",
+                              "enum": [
+                                "BLOCKED"
+                              ]
+                            },
+                            "backfill": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "policy": {
+                                      "type": "string",
+                                      "const": "NONE"
+                                    }
+                                  },
+                                  "required": [
+                                    "policy"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                                  "type": "object",
+                                  "properties": {
+                                    "policy": {
+                                      "type": "string",
+                                      "const": "REGISTERED"
+                                    },
+                                    "id": {
+                                      "type": "string",
+                                      "maxLength": 80,
+                                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                    },
+                                    "implementation_sha256": {
+                                      "type": "string",
+                                      "pattern": "^sha256:[0-9a-f]{64}$"
+                                    },
+                                    "input_schema_version": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "checkpoint_schema_version": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "gate_id": {
+                                      "type": "string",
+                                      "maxLength": 80,
+                                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                                    }
+                                  },
+                                  "required": [
+                                    "policy",
+                                    "id",
+                                    "implementation_sha256",
+                                    "input_schema_version",
+                                    "checkpoint_schema_version",
+                                    "gate_id"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "reason_code": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "backfill",
+                            "reason_code"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "rollback": {
+                      "type": "string",
+                      "enum": [
+                        "PREVIOUS_BINARY_COMPATIBLE",
+                        "REPAIR_FORWARD_ONLY"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "name",
+                    "sql_sha256",
+                    "sqlx_checksum",
+                    "transaction_mode",
+                    "lock_timeout_ms",
+                    "statement_timeout_ms",
+                    "affected_capabilities",
+                    "required_extensions",
+                    "old_new_compatibility_evidence_sha256",
+                    "change",
+                    "compatibility",
+                    "rollback"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "stream",
+              "source_sha",
+              "artifact",
+              "migrations"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "streams"
+      ],
+      "additionalProperties": false
+    },
+    "search": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "required_plugins": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              }
+            }
+          },
+          "required": [
+            "version",
+            "required_plugins"
+          ],
+          "additionalProperties": false
+        },
+        "families": {
+          "minItems": 2,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "family": {
+                "type": "string",
+                "enum": [
+                  "PRODUCT_LISTINGS",
+                  "USER_SEARCH_FILTERS"
+                ]
+              },
+              "operation": {
+                "type": "string",
+                "enum": [
+                  "NO_CHANGE",
+                  "ADDITIVE",
+                  "MAINTENANCE_REBUILD",
+                  "BLOCKED"
+                ]
+              },
+              "compatibility": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "class": {
+                        "type": "string",
+                        "enum": [
+                          "COMPATIBLE"
+                        ]
+                      },
+                      "backfill": {
+                        "type": "object",
+                        "properties": {
+                          "policy": {
+                            "type": "string",
+                            "const": "NONE"
+                          }
+                        },
+                        "required": [
+                          "policy"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "class",
+                      "backfill"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "class": {
+                        "type": "string",
+                        "enum": [
+                          "COMPATIBLE_WITH_BACKFILL"
+                        ]
+                      },
+                      "backfill": {
+                        "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                        "type": "object",
+                        "properties": {
+                          "policy": {
+                            "type": "string",
+                            "const": "REGISTERED"
+                          },
+                          "id": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                          },
+                          "implementation_sha256": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$"
+                          },
+                          "input_schema_version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "checkpoint_schema_version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gate_id": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                          }
+                        },
+                        "required": [
+                          "policy",
+                          "id",
+                          "implementation_sha256",
+                          "input_schema_version",
+                          "checkpoint_schema_version",
+                          "gate_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "class",
+                      "backfill"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "class": {
+                        "type": "string",
+                        "enum": [
+                          "MAINTENANCE_REQUIRED"
+                        ]
+                      },
+                      "backfill": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "policy": {
+                                "type": "string",
+                                "const": "NONE"
+                              }
+                            },
+                            "required": [
+                              "policy"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                            "type": "object",
+                            "properties": {
+                              "policy": {
+                                "type": "string",
+                                "const": "REGISTERED"
+                              },
+                              "id": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                              },
+                              "implementation_sha256": {
+                                "type": "string",
+                                "pattern": "^sha256:[0-9a-f]{64}$"
+                              },
+                              "input_schema_version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "checkpoint_schema_version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "gate_id": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                              }
+                            },
+                            "required": [
+                              "policy",
+                              "id",
+                              "implementation_sha256",
+                              "input_schema_version",
+                              "checkpoint_schema_version",
+                              "gate_id"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "reason_code": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      }
+                    },
+                    "required": [
+                      "class",
+                      "backfill",
+                      "reason_code"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "class": {
+                        "type": "string",
+                        "enum": [
+                          "BLOCKED"
+                        ]
+                      },
+                      "backfill": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "policy": {
+                                "type": "string",
+                                "const": "NONE"
+                              }
+                            },
+                            "required": [
+                              "policy"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "description": "Named implementation only; a future trusted registry must resolve and approve this identity. No replay command or arbitrary parameters.",
+                            "type": "object",
+                            "properties": {
+                              "policy": {
+                                "type": "string",
+                                "const": "REGISTERED"
+                              },
+                              "id": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                              },
+                              "implementation_sha256": {
+                                "type": "string",
+                                "pattern": "^sha256:[0-9a-f]{64}$"
+                              },
+                              "input_schema_version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "checkpoint_schema_version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "gate_id": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                              }
+                            },
+                            "required": [
+                              "policy",
+                              "id",
+                              "implementation_sha256",
+                              "input_schema_version",
+                              "checkpoint_schema_version",
+                              "gate_id"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "reason_code": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                      }
+                    },
+                    "required": [
+                      "class",
+                      "backfill",
+                      "reason_code"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "incompatible_policy": {
+                "type": "string",
+                "enum": [
+                  "BLOCK",
+                  "REQUIRE_MAINTENANCE"
+                ]
+              },
+              "source_sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "definition": {
+                "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+                "type": "object",
+                "properties": {
+                  "bucket": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+                  },
+                  "key": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+                  },
+                  "version_id": {
+                    "type": "string",
+                    "maxLength": 1024,
+                    "pattern": "^[A-Za-z0-9_+/.=-]+$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "bucket",
+                  "key",
+                  "version_id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "analysis_assets": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                    },
+                    "artifact": {
+                      "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+                      "type": "object",
+                      "properties": {
+                        "bucket": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+                        },
+                        "key": {
+                          "type": "string",
+                          "maxLength": 512,
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+                        },
+                        "version_id": {
+                          "type": "string",
+                          "maxLength": 1024,
+                          "pattern": "^[A-Za-z0-9_+/.=-]+$"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^sha256:[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "bucket",
+                        "key",
+                        "version_id",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "artifact"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "operation_metadata": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "number",
+                    "const": 1
+                  },
+                  "artifact": {
+                    "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+                    "type": "object",
+                    "properties": {
+                      "bucket": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+                      },
+                      "key": {
+                        "type": "string",
+                        "maxLength": 512,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+                      },
+                      "version_id": {
+                        "type": "string",
+                        "maxLength": 1024,
+                        "pattern": "^[A-Za-z0-9_+/.=-]+$"
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "bucket",
+                      "key",
+                      "version_id",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "artifact"
+                ],
+                "additionalProperties": false
+              },
+              "projection": {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "versioning": {
+                    "type": "string",
+                    "const": "EXTERNAL"
+                  },
+                  "tombstone": {
+                    "type": "string",
+                    "const": "CONTENT_FREE_PROJECTION_DELETED"
+                  },
+                  "rollback": {
+                    "type": "string",
+                    "const": "REPAIR_FORWARD_ONLY"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "versioning",
+                  "tombstone",
+                  "rollback"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "family",
+              "operation",
+              "compatibility",
+              "incompatible_policy",
+              "source_sha",
+              "definition",
+              "analysis_assets",
+              "operation_metadata",
+              "projection"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "engine",
+        "families"
+      ],
+      "additionalProperties": false
+    },
+    "infrastructure": {
+      "type": "object",
+      "properties": {
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source": {
+          "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 512,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+            },
+            "version_id": {
+              "type": "string",
+              "maxLength": 1024,
+              "pattern": "^[A-Za-z0-9_+/.=-]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "bucket",
+            "key",
+            "version_id",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "assembly": {
+          "description": "Immutable object reference, not fetch authorization. Semantic checks reject null versions and keys outside releases/<source_sha>/.",
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$"
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 512,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+            },
+            "version_id": {
+              "type": "string",
+              "maxLength": 1024,
+              "pattern": "^[A-Za-z0-9_+/.=-]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "bucket",
+            "key",
+            "version_id",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "toolchain": {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "typescript": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "cdk": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "lock_sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "node",
+            "typescript",
+            "cdk",
+            "lock_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "NONSECRET_CONTEXT"
+            },
+            "schema_version": {
+              "type": "number",
+              "const": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "kind",
+            "schema_version",
+            "sha256"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "source_sha",
+        "source",
+        "assembly",
+        "toolchain",
+        "context"
+      ],
+      "additionalProperties": false
+    },
+    "required_capabilities": {
+      "type": "object",
+      "properties": {
+        "controller": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              },
+              "minimum_version": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "minimum_version"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "platform": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              },
+              "minimum_version": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "minimum_version"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "controller",
+        "platform"
+      ],
+      "additionalProperties": false
+    },
+    "queues": {
+      "minItems": 10,
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "product-listing-opensearch",
+              "search-filter-projection",
+              "search-filter-percolator",
+              "search-filter-match-notification",
+              "watchlist-notification",
+              "product-content-assessment",
+              "product-embedding",
+              "product-translation",
+              "product-listing-normalization",
+              "notification-delivery"
+            ]
+          },
+          "accepted_versions": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "emitted_versions": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "schemas": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "version",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "tombstone": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "const": "CONTENT_FREE_PROJECTION_DELETED"
+              },
+              "minimum_schema_version": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "policy",
+              "minimum_schema_version"
+            ],
+            "additionalProperties": false
+          },
+          "rollback": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": [
+                  "PREVIOUS_CONSUMERS_ACCEPT_EMITTED",
+                  "REPAIR_FORWARD_ONLY"
+                ]
+              },
+              "required_accepted_versions": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "preserve_queued_messages": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "policy",
+              "required_accepted_versions",
+              "preserve_queued_messages"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "scope",
+          "accepted_versions",
+          "emitted_versions",
+          "schemas",
+          "tombstone",
+          "rollback"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "example",
+    "release_id",
+    "source_sha",
+    "build",
+    "toolchain",
+    "targets",
+    "native_images",
+    "lambdas",
+    "mail_bundle",
+    "migrations",
+    "search",
+    "infrastructure",
+    "required_capabilities",
+    "queues"
+  ],
+  "additionalProperties": false
+}

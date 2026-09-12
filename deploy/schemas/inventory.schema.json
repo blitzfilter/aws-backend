@@ -1,0 +1,1152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Version 1 placement and protected references only. Semantic topology, identity and budget checks require parseInventory; JSON Schema alone is insufficient.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "example": {
+      "type": "boolean"
+    },
+    "hosts": {
+      "minItems": 1,
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "architecture": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "arm64"
+            ]
+          },
+          "operating_system": {
+            "type": "string",
+            "const": "UBUNTU_24_04"
+          },
+          "owned_stages": {
+            "minItems": 1,
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "shared_hardware_acknowledged": {
+            "type": "boolean"
+          },
+          "capacity": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "reserve": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "dns": {
+            "type": "object",
+            "properties": {
+              "management": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "public": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "private": {
+                "$ref": "#/$defs/__schema4"
+              }
+            },
+            "required": [
+              "management",
+              "public",
+              "private"
+            ],
+            "additionalProperties": false
+          },
+          "ssm_node_identity": {
+            "type": "object",
+            "properties": {
+              "managed_node_id": {
+                "type": "string",
+                "pattern": "^(?:mi-[0-9a-f]{17}|i-(?:[0-9a-f]{8}|[0-9a-f]{17}))$"
+              },
+              "registration_ref": {
+                "$ref": "#/$defs/__schema5"
+              }
+            },
+            "required": [
+              "managed_node_id",
+              "registration_ref"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "architecture",
+          "operating_system",
+          "owned_stages",
+          "shared_hardware_acknowledged",
+          "capacity",
+          "reserve",
+          "dns",
+          "ssm_node_identity"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "stages": {
+      "minItems": 1,
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "stage": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "aws": {
+            "type": "object",
+            "properties": {
+              "account_id": {
+                "type": "string",
+                "pattern": "^[0-9]{12}$"
+              },
+              "region": {
+                "type": "string",
+                "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-[1-9][0-9]?$"
+              }
+            },
+            "required": [
+              "account_id",
+              "region"
+            ],
+            "additionalProperties": false
+          },
+          "roles": {
+            "type": "object",
+            "properties": {
+              "api": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources_per_slot": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "slots": {
+                    "type": "object",
+                    "properties": {
+                      "blue": {
+                        "type": "object",
+                        "properties": {
+                          "listener": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "endpoint": {
+                            "$ref": "#/$defs/__schema8"
+                          }
+                        },
+                        "required": [
+                          "listener",
+                          "endpoint"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "green": {
+                        "type": "object",
+                        "properties": {
+                          "listener": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "endpoint": {
+                            "$ref": "#/$defs/__schema8"
+                          }
+                        },
+                        "required": [
+                          "listener",
+                          "endpoint"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "blue",
+                      "green"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "credentials": {
+                    "type": "object",
+                    "properties": {
+                      "business": {
+                        "$ref": "#/$defs/__schema10"
+                      },
+                      "aws": {
+                        "$ref": "#/$defs/__schema12"
+                      },
+                      "opensearch_ref": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "vertex": {
+                        "$ref": "#/$defs/__schema13"
+                      },
+                      "cognito_ref": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "stripe_ref": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "zoho_ref": {
+                        "$ref": "#/$defs/__schema5"
+                      }
+                    },
+                    "required": [
+                      "business",
+                      "aws",
+                      "opensearch_ref",
+                      "vertex",
+                      "cognito_ref",
+                      "stripe_ref",
+                      "zoho_ref"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources_per_slot",
+                  "ca_ref",
+                  "slots",
+                  "credentials"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "minItems": 10,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "host_id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "resources": {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    "listener": {
+                      "$ref": "#/$defs/__schema6"
+                    },
+                    "endpoint": {
+                      "$ref": "#/$defs/__schema8"
+                    },
+                    "ca_ref": {
+                      "$ref": "#/$defs/__schema5"
+                    },
+                    "scope": {
+                      "$ref": "#/$defs/__schema14"
+                    },
+                    "credentials": {
+                      "type": "object",
+                      "properties": {
+                        "business": {
+                          "$ref": "#/$defs/__schema10"
+                        },
+                        "aws": {
+                          "$ref": "#/$defs/__schema12"
+                        },
+                        "queue_scope": {
+                          "$ref": "#/$defs/__schema14"
+                        },
+                        "opensearch_ref": {
+                          "$ref": "#/$defs/__schema5"
+                        },
+                        "vertex": {
+                          "$ref": "#/$defs/__schema13"
+                        },
+                        "email": {
+                          "type": "object",
+                          "properties": {
+                            "s3_read_ref": {
+                              "$ref": "#/$defs/__schema5"
+                            },
+                            "ses_send_ref": {
+                              "$ref": "#/$defs/__schema5"
+                            }
+                          },
+                          "required": [
+                            "s3_read_ref",
+                            "ses_send_ref"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "business",
+                        "aws",
+                        "queue_scope"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "host_id",
+                    "resources",
+                    "listener",
+                    "endpoint",
+                    "ca_ref",
+                    "scope",
+                    "credentials"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "cron": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listener": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema8"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "ownership_plan": {
+                    "type": "string",
+                    "const": "READ_ONLY_TARGET"
+                  },
+                  "credentials": {
+                    "type": "object",
+                    "properties": {
+                      "business": {
+                        "$ref": "#/$defs/__schema10"
+                      },
+                      "aws": {
+                        "$ref": "#/$defs/__schema12"
+                      },
+                      "opensearch_ref": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "vertex": {
+                        "$ref": "#/$defs/__schema13"
+                      }
+                    },
+                    "required": [
+                      "business",
+                      "aws",
+                      "opensearch_ref",
+                      "vertex"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "listener",
+                  "endpoint",
+                  "ca_ref",
+                  "ownership_plan",
+                  "credentials"
+                ],
+                "additionalProperties": false
+              },
+              "crawler": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listener": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema8"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "ownership_plan": {
+                    "type": "string",
+                    "const": "READ_ONLY_TARGET"
+                  },
+                  "credentials": {
+                    "type": "object",
+                    "properties": {
+                      "business": {
+                        "$ref": "#/$defs/__schema10"
+                      },
+                      "crawler": {
+                        "$ref": "#/$defs/__schema10"
+                      },
+                      "aws": {
+                        "$ref": "#/$defs/__schema12"
+                      },
+                      "vertex": {
+                        "$ref": "#/$defs/__schema13"
+                      },
+                      "review_auth_ref": {
+                        "$ref": "#/$defs/__schema5"
+                      }
+                    },
+                    "required": [
+                      "business",
+                      "crawler",
+                      "aws",
+                      "vertex",
+                      "review_auth_ref"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "listener",
+                  "endpoint",
+                  "ca_ref",
+                  "ownership_plan",
+                  "credentials"
+                ],
+                "additionalProperties": false
+              },
+              "postgres_business": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listener": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema8"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "lambda_endpoint": {
+                    "$ref": "#/$defs/__schema15"
+                  },
+                  "database": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "enum": [
+                          "business"
+                        ]
+                      },
+                      "name": {
+                        "$ref": "#/$defs/__schema16"
+                      },
+                      "history_id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "max_connections": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "migrator": {
+                        "$ref": "#/$defs/__schema17"
+                      },
+                      "backup": {
+                        "$ref": "#/$defs/__schema17"
+                      },
+                      "reserve_sessions": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "sequin": {
+                        "$ref": "#/$defs/__schema17"
+                      }
+                    },
+                    "required": [
+                      "target",
+                      "name",
+                      "history_id",
+                      "max_connections",
+                      "migrator",
+                      "backup",
+                      "reserve_sessions",
+                      "sequin"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "listener",
+                  "endpoint",
+                  "ca_ref",
+                  "lambda_endpoint",
+                  "database"
+                ],
+                "additionalProperties": false
+              },
+              "postgres_crawler": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listener": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema8"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "database": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "enum": [
+                          "crawler"
+                        ]
+                      },
+                      "name": {
+                        "$ref": "#/$defs/__schema16"
+                      },
+                      "history_id": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "max_connections": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "migrator": {
+                        "$ref": "#/$defs/__schema17"
+                      },
+                      "backup": {
+                        "$ref": "#/$defs/__schema17"
+                      },
+                      "reserve_sessions": {
+                        "$ref": "#/$defs/__schema3"
+                      }
+                    },
+                    "required": [
+                      "target",
+                      "name",
+                      "history_id",
+                      "max_connections",
+                      "migrator",
+                      "backup",
+                      "reserve_sessions"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "listener",
+                  "endpoint",
+                  "ca_ref",
+                  "database"
+                ],
+                "additionalProperties": false
+              },
+              "opensearch": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listener": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema8"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "admin_identity_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "listener",
+                  "endpoint",
+                  "ca_ref",
+                  "admin_identity_ref"
+                ],
+                "additionalProperties": false
+              },
+              "sequin": {
+                "description": "Resources cover Sequin and its dedicated metadata PostgreSQL/Redis, not the business or crawler databases.",
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "listener": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema8"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "admin_identity_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "listener",
+                  "endpoint",
+                  "ca_ref",
+                  "admin_identity_ref"
+                ],
+                "additionalProperties": false
+              },
+              "edge": {
+                "type": "object",
+                "properties": {
+                  "host_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "http": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "https": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "endpoint": {
+                    "$ref": "#/$defs/__schema15"
+                  },
+                  "ca_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "certificate_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "private_key_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "origin_auth_ref": {
+                    "$ref": "#/$defs/__schema5"
+                  }
+                },
+                "required": [
+                  "host_id",
+                  "resources",
+                  "http",
+                  "https",
+                  "endpoint",
+                  "ca_ref",
+                  "certificate_ref",
+                  "private_key_ref",
+                  "origin_auth_ref"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "api",
+              "workers",
+              "cron",
+              "crawler",
+              "postgres_business",
+              "postgres_crawler",
+              "opensearch",
+              "sequin",
+              "edge"
+            ],
+            "additionalProperties": false
+          },
+          "lambda_postgres_clients": {
+            "type": "object",
+            "properties": {
+              "cognito_post_confirmation": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "shopify": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "stripe": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "fxrate": {
+                "$ref": "#/$defs/__schema18"
+              }
+            },
+            "required": [
+              "cognito_post_confirmation",
+              "shopify",
+              "stripe",
+              "fxrate"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "stage",
+          "aws",
+          "roles",
+          "lambda_postgres_clients"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "example",
+    "hosts",
+    "stages"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "__schema1": {
+      "type": "string",
+      "enum": [
+        "dev",
+        "prod",
+        "ephemeral",
+        "local",
+        "test"
+      ]
+    },
+    "__schema2": {
+      "type": "object",
+      "properties": {
+        "cpu_millicores": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "memory_mib": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "disk_mib": {
+          "$ref": "#/$defs/__schema3"
+        }
+      },
+      "required": [
+        "cpu_millicores",
+        "memory_mib",
+        "disk_mib"
+      ],
+      "additionalProperties": false
+    },
+    "__schema3": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema4": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "SECRETS_MANAGER",
+            "SSM_SECURE",
+            "PROTECTED_FILE"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "revision": {
+          "$ref": "#/$defs/__schema0"
+        }
+      },
+      "required": [
+        "provider",
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "description": "TCP reservation. One host port belongs to one listener, even across bind addresses.",
+      "type": "object",
+      "properties": {
+        "port": {
+          "$ref": "#/$defs/__schema7"
+        },
+        "bind": {
+          "type": "string",
+          "enum": [
+            "LOOPBACK",
+            "PRIVATE",
+            "PUBLIC",
+            "ALL_IPV4",
+            "ALL_IPV6",
+            "ALL_INTERFACES"
+          ]
+        }
+      },
+      "required": [
+        "port",
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "__schema7": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 65535
+    },
+    "__schema8": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "port": {
+          "$ref": "#/$defs/__schema7"
+        },
+        "tls": {
+          "$ref": "#/$defs/__schema9"
+        },
+        "routing": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "PRIVATE_NETWORK",
+                "WIREGUARD",
+                "LOCAL_TEST"
+              ]
+            },
+            "target_host_id": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "method",
+            "target_host_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "host",
+        "port",
+        "tls",
+        "routing"
+      ],
+      "additionalProperties": false
+    },
+    "__schema9": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "VERIFY_FULL"
+            },
+            "server_name": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "ca_ref": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "required": [
+            "mode",
+            "server_name",
+            "ca_ref"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "DISABLED"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema10": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "pool_max": {
+          "$ref": "#/$defs/__schema3"
+        }
+      },
+      "required": [
+        "identity",
+        "pool_max"
+      ],
+      "additionalProperties": false
+    },
+    "__schema11": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+        },
+        "secret_ref": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": [
+        "principal",
+        "secret_ref"
+      ],
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "ROLES_ANYWHERE"
+        },
+        "stage": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "application_identity_ref": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "trust_anchor_ref": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "profile_ref": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "certificate_ref": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "private_key_ref": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": [
+        "method",
+        "stage",
+        "application_identity_ref",
+        "trust_anchor_ref",
+        "profile_ref",
+        "certificate_ref",
+        "private_key_ref"
+      ],
+      "additionalProperties": false
+    },
+    "__schema13": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "MOUNTED_ADC"
+            },
+            "configuration_ref": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "const": "PROTECTED_FILE"
+                },
+                "id": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "revision": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": [
+                "provider",
+                "id",
+                "revision"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "method",
+            "configuration_ref"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "WORKLOAD_IDENTITY_FEDERATION"
+            },
+            "configuration_ref": {
+              "$ref": "#/$defs/__schema5"
+            },
+            "subject_token_ref": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "required": [
+            "method",
+            "configuration_ref",
+            "subject_token_ref"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema14": {
+      "type": "string",
+      "enum": [
+        "product-listing-opensearch",
+        "search-filter-projection",
+        "search-filter-percolator",
+        "search-filter-match-notification",
+        "watchlist-notification",
+        "product-content-assessment",
+        "product-embedding",
+        "product-translation",
+        "product-listing-normalization",
+        "notification-delivery"
+      ]
+    },
+    "__schema15": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/__schema4"
+        },
+        "port": {
+          "$ref": "#/$defs/__schema7"
+        },
+        "tls": {
+          "$ref": "#/$defs/__schema9"
+        },
+        "routing": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "PUBLIC_INTERNET"
+            },
+            "target_host_id": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "method",
+            "target_host_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "host",
+        "port",
+        "tls",
+        "routing"
+      ],
+      "additionalProperties": false
+    },
+    "__schema16": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "__schema17": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "sessions": {
+          "$ref": "#/$defs/__schema3"
+        }
+      },
+      "required": [
+        "identity",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "__schema18": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "reserved_concurrency": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pool_max": {
+          "$ref": "#/$defs/__schema3"
+        }
+      },
+      "required": [
+        "identity",
+        "reserved_concurrency",
+        "pool_max"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

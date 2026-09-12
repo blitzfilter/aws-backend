@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "native": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "package": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "binary": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "IMPLEMENTED",
+              "NOT_IMPLEMENTED"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "package",
+          "binary",
+          "path",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "lambdas": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "package": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "binary": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "IMPLEMENTED",
+              "NOT_IMPLEMENTED"
+            ]
+          },
+          "architecture": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "arm64"
+            ]
+          },
+          "database": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "package",
+          "binary",
+          "path",
+          "status",
+          "architecture",
+          "database"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "excluded_tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "package": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "binary": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          }
+        },
+        "required": [
+          "package",
+          "binary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "workers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "product-listing-opensearch",
+              "search-filter-projection",
+              "search-filter-percolator",
+              "search-filter-match-notification",
+              "watchlist-notification",
+              "product-content-assessment",
+              "product-embedding",
+              "product-translation",
+              "product-listing-normalization",
+              "notification-delivery"
+            ]
+          },
+          "table": {
+            "type": "string",
+            "pattern": "^[a-z_]+$"
+          },
+          "operations": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "INSERT",
+                "UPDATE",
+                "DELETE"
+              ]
+            }
+          }
+        },
+        "required": [
+          "scope",
+          "table",
+          "operations"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "mail": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+        },
+        "groups": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          }
+        },
+        "languages": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "de",
+              "en",
+              "es",
+              "fr",
+              "it"
+            ]
+          }
+        }
+      },
+      "required": [
+        "root",
+        "groups",
+        "languages"
+      ],
+      "additionalProperties": false
+    },
+    "migrations": {
+      "minItems": 2,
+      "maxItems": 2,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": [
+              "business",
+              "crawler"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          }
+        },
+        "required": [
+          "target",
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "search": {
+      "minItems": 2,
+      "maxItems": 2,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "family": {
+            "type": "string",
+            "enum": [
+              "PRODUCT_LISTINGS",
+              "USER_SEARCH_FILTERS"
+            ]
+          },
+          "definition": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          },
+          "physical_baseline": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          }
+        },
+        "required": [
+          "family",
+          "definition",
+          "physical_baseline"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "analysis": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          },
+          "node_path": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?:\\/[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "node_path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "release_inputs": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?:[a-zA-Z0-9_.-]+\\/?)+$"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "native",
+    "lambdas",
+    "excluded_tools",
+    "workers",
+    "mail",
+    "migrations",
+    "search",
+    "analysis",
+    "release_inputs"
+  ],
+  "additionalProperties": false
+}

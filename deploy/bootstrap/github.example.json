@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "example": true,
+  "repository": "aura-historia/backend",
+  "default_branch": "develop",
+  "merge": {
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false
+  },
+  "branch_protection": {
+    "ref": "refs/heads/develop",
+    "require_pull_request": true,
+    "require_up_to_date_branch": true,
+    "required_checks": [],
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "bypass_actors": []
+  },
+  "environments": {
+    "aws-dev": {
+      "reviewers": [],
+      "prevent_self_review": true,
+      "admin_bypass": false,
+      "deployment_ref": {
+        "type": "BRANCH",
+        "pattern": "develop"
+      },
+      "workflow": {
+        "path": null,
+        "ref_pattern": "refs/heads/develop"
+      },
+      "oidc": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "aud": "sts.amazonaws.com",
+        "sub": "repo:aura-historia/backend:environment:aws-dev"
+      }
+    },
+    "aws-prod": {
+      "reviewers": [],
+      "prevent_self_review": true,
+      "admin_bypass": false,
+      "deployment_ref": {
+        "type": "TAG",
+        "pattern": "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"
+      },
+      "workflow": {
+        "path": null,
+        "ref_pattern": "refs/tags/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"
+      },
+      "oidc": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "aud": "sts.amazonaws.com",
+        "sub": "repo:aura-historia/backend:environment:aws-prod"
+      }
+    },
+    "prod-recovery": {
+      "reviewers": [],
+      "prevent_self_review": true,
+      "admin_bypass": false,
+      "deployment_ref": {
+        "type": "BRANCH",
+        "pattern": "develop"
+      },
+      "workflow": {
+        "path": null,
+        "ref_pattern": "refs/heads/develop"
+      },
+      "oidc": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "aud": "sts.amazonaws.com",
+        "sub": "repo:aura-historia/backend:environment:prod-recovery"
+      }
+    }
+  },
+  "oidc_subject_configuration": null,
+  "tag_protection": {
+    "format": "UTC_CALVER",
+    "timezone": "UTC",
+    "creation_ruleset": {
+      "enforcement": "ACTIVE",
+      "target": "TAG",
+      "include": ["refs/tags/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"],
+      "exclude": [],
+      "restrict_creations": true,
+      "authorized_actors": []
+    },
+    "immutability_ruleset": {
+      "enforcement": "ACTIVE",
+      "target": "TAG",
+      "include": ["refs/tags/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"],
+      "exclude": [],
+      "deny_updates": true,
+      "deny_deletions": true,
+      "bypass_actors": []
+    }
+  },
+  "external_observations": null
+}
