@@ -1,4 +1,5 @@
 use super::*;
+use crate::service::cron::test_support::{PanicOnDrop, RetryableScraperFailure};
 use futures::poll;
 use tokio::sync::Notify;
 
@@ -55,6 +56,657 @@ fn select_once(candidates: Vec<ScraperCandidate>) -> MockScraperCandidateService
         .return_once(move |_, _, _| Box::pin(async move { Ok(candidates) }));
     service.expect_touch_scraped().never();
     service
+}
+
+#[derive(Clone, Default)]
+struct PendingMetadataWrite {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+    finished: Arc<Notify>,
+    completed: Arc<AtomicBool>,
+    committed: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl PendingMetadataWrite {
+    async fn write(&self, fails: bool) -> Result<CrawlerUrlWriteOutcome, sqlx::Error> {
+        let _guard = DropFlag(self.dropped.clone());
+        self.entered.notify_one();
+        self.release.notified().await;
+        // Fake transaction commits only here; dropping a pending write cannot confirm it.
+        self.committed.store(!fails, Ordering::SeqCst);
+        self.completed.store(true, Ordering::SeqCst);
+        self.finished.notify_one();
+        if fails {
+            Err(sqlx::Error::PoolClosed)
+        } else {
+            Ok(CrawlerUrlWriteOutcome::Applied)
+        }
+    }
+
+    fn expect(
+        &self,
+        candidates: &mut MockScraperCandidateService,
+        candidate: &ScraperCandidate,
+        failure: RetryableScraperFailure,
+        fails: bool,
+    ) {
+        let pending = self.clone();
+        let id = candidate.listing_source_id;
+        let url = candidate.url.clone();
+        let expected = candidate.last_captured_raw_input_sha256.clone();
+        if matches!(failure, RetryableScraperFailure::Provider) {
+            candidates.expect_mark_scraper_failure().once().returning(
+                move |actual_id, actual_url, _, _, actual_expected| {
+                    assert_eq!(*actual_id, id);
+                    assert_eq!(*actual_url, url);
+                    assert_eq!(actual_expected, expected.as_deref());
+                    let pending = pending.clone();
+                    Box::pin(async move { pending.write(fails).await })
+                },
+            );
+        } else {
+            candidates.expect_mark_fetch_failure().once().returning(
+                move |actual_id, actual_url, _, _, _, _, actual_expected| {
+                    assert_eq!(*actual_id, id);
+                    assert_eq!(*actual_url, url);
+                    assert_eq!(actual_expected, expected.as_deref());
+                    let pending = pending.clone();
+                    Box::pin(async move { pending.write(fails).await })
+                },
+            );
+        }
+    }
+}
+
+#[rstest::rstest]
+#[case::http_cooldown(RetryableScraperFailure::RateLimit)]
+#[case::budget_cooldown(RetryableScraperFailure::Budget)]
+#[case::review_cooldown(RetryableScraperFailure::Review)]
+#[case::scraper_failure(RetryableScraperFailure::Provider)]
+#[tokio::test]
+async fn should_retain_pending_failure_metadata_on_stop(
+    #[case] failure: RetryableScraperFailure,
+    #[values(false, true)] metadata_fails: bool,
+    #[values(false, true)] release_with_stop: bool,
+) {
+    let mut selected = candidate("mark");
+    selected.last_captured_raw_input_sha256 = Some(vec![7; 32]);
+    let id = selected.listing_source_id;
+    let url = selected.url.clone();
+    let error = failure.error(&selected);
+    let mark = PendingMetadataWrite::default();
+    let mut candidates = MockScraperCandidateService::new();
+    mark.expect(&mut candidates, &selected, failure, metadata_fails);
+    let mut scraper = MockScraperService::new();
+    scraper
+        .expect_scrape()
+        .once()
+        .return_once(move |_, _, _, _, _, _| Box::pin(async move { Err(error) }));
+    let (mut ctx, _rx) = scrape_candidate_context(candidates, scraper);
+    let locks = ctx.lock_manager.clone();
+    let (failure_tx, failed) = watch::channel(false);
+    ctx.failure = OperationalFailureSignal::new(Some(failure_tx));
+    let (stop_tx, stop) = watch::channel(false);
+    let producer = scrape_domain_candidates(vec![selected, candidate("never")], ctx, stop);
+    tokio::pin!(producer);
+    assert!(poll!(&mut producer).is_pending());
+    mark.entered.notified().await;
+    stop_tx.send_replace(true);
+    if !release_with_stop {
+        assert!(
+            poll!(&mut producer).is_pending(),
+            "stop must retain the admitted mark"
+        );
+        assert!(!mark.dropped.load(Ordering::SeqCst));
+        assert!(UrlLock::try_acquire(&locks, &url).is_none());
+        assert!(ListingSourceLock::try_acquire(&locks, id).is_none());
+    }
+    assert!(!*failed.borrow());
+    // When released immediately, stop and the mark's result are ready in the same poll.
+    mark.release.notify_one();
+    let outcome = bounded(producer).await;
+    assert!(
+        mark.completed.load(Ordering::SeqCst),
+        "must observe the actual mark result"
+    );
+    assert_eq!(mark.committed.load(Ordering::SeqCst), !metadata_fails);
+    assert!(mark.dropped.load(Ordering::SeqCst));
+    assert_eq!(outcome.failed, 1);
+    assert_eq!(outcome.operational_failed, usize::from(metadata_fails));
+    assert_eq!(*failed.borrow(), metadata_fails);
+    assert_eq!(outcome.accepted, 0);
+    assert!(UrlLock::try_acquire(&locks, &url).is_some());
+    assert!(ListingSourceLock::try_acquire(&locks, id).is_some());
+}
+
+#[rstest::rstest]
+#[case::http_cooldown(RetryableScraperFailure::RateLimit)]
+#[case::budget_cooldown(RetryableScraperFailure::Budget)]
+#[case::review_cooldown(RetryableScraperFailure::Review)]
+#[case::scraper_failure(RetryableScraperFailure::Provider)]
+#[tokio::test]
+async fn should_return_actual_failure_metadata_result_from_stopping_job(
+    #[case] failure: RetryableScraperFailure,
+    #[values(false, true)] metadata_fails: bool,
+) {
+    let selected = candidate("mark");
+    let error = failure.error(&selected);
+    let mark = PendingMetadataWrite::default();
+    let mut candidates = MockScraperCandidateService::new();
+    mark.expect(&mut candidates, &selected, failure, metadata_fails);
+    candidates
+        .expect_get_candidates()
+        .once()
+        .return_once(move |_, _, _| {
+            Box::pin(async move { Ok(vec![selected, candidate("never")]) })
+        });
+    let mut scraper = MockScraperService::new();
+    scraper
+        .expect_scrape()
+        .once()
+        .return_once(move |_, _, _, _, _, _| Box::pin(async move { Err(error) }));
+    let job = scraper_job(
+        CrawlerCronConfig {
+            spider_concurrency: 0,
+            scraper_concurrency: 1,
+            ..Default::default()
+        },
+        candidates,
+        scraper,
+    );
+    let (stop_tx, stop) = watch::channel(false);
+    let (failure_tx, failed) = watch::channel(false);
+    let (result, ()) = bounded(async {
+        tokio::join!(job.run_until_with_failure(stop, failure_tx), async {
+            mark.entered.notified().await;
+            stop_tx.send_replace(true);
+            mark.release.notify_one();
+        })
+    })
+    .await;
+    assert!(mark.completed.load(Ordering::SeqCst));
+    assert_eq!(mark.committed.load(Ordering::SeqCst), !metadata_fails);
+    assert_eq!(*failed.borrow(), metadata_fails);
+    assert_eq!(
+        result,
+        if metadata_fails {
+            Err(crate::service::cron::CrawlerRunError::ScraperPassIncomplete)
+        } else {
+            Ok(())
+        }
+    );
+}
+
+#[rstest::rstest]
+#[case::rate_limit(RetryableScraperFailure::RateLimit)]
+#[case::budget(RetryableScraperFailure::Budget)]
+#[case::review(RetryableScraperFailure::Review)]
+#[case::provider(RetryableScraperFailure::Provider)]
+#[tokio::test]
+async fn should_count_site_failures_and_reject_failed_metadata(
+    #[case] failure: RetryableScraperFailure,
+    #[values(false, true)] metadata_fails: bool,
+) {
+    let mut selected = candidate("retry");
+    selected.last_captured_raw_input_sha256 = Some(vec![7; 32]);
+    let error = failure.error(&selected);
+    let mut candidates = MockScraperCandidateService::new();
+    failure.expect_metadata(&mut candidates, &selected, metadata_fails);
+    candidates
+        .expect_get_candidates()
+        .once()
+        .return_once(move |_, _, _| Box::pin(async move { Ok(vec![selected]) }));
+    candidates
+        .expect_get_candidates()
+        .returning(|_, _, excluded| {
+            assert!(!excluded.is_empty());
+            Box::pin(async { Ok(vec![]) })
+        });
+    candidates.expect_mark_as_scraped().never();
+    candidates.expect_mark_removed().never();
+    candidates.expect_touch_scraped().never();
+    let mut scraper = MockScraperService::new();
+    scraper
+        .expect_scrape()
+        .once()
+        .return_once(move |_, _, _, _, _, _| Box::pin(async move { Err(error) }));
+    let job = scraper_job(
+        CrawlerCronConfig {
+            scraper_concurrency: 1,
+            ..Default::default()
+        },
+        candidates,
+        scraper,
+    );
+    let (_stop_tx, stop) = watch::channel(false);
+    let (failure_tx, failed) = watch::channel(false);
+    let outcome = bounded(job.run_scraper_pass_until_with_failure(stop, failure_tx)).await;
+    assert_eq!(outcome.failed, 1, "expected errors must still be counted");
+    assert_eq!(outcome.operational_failed, usize::from(metadata_fails));
+    assert!(!outcome.is_complete());
+    assert_eq!(outcome.has_operational_failure(), metadata_fails);
+    assert_eq!(*failed.borrow(), metadata_fails);
+    assert_eq!(outcome.accepted, 0);
+    assert_eq!(outcome.captures, RawCaptureDrainSummary::default());
+}
+
+#[rstest::rstest]
+#[case::candidate(false)]
+#[case::system(true)]
+#[test]
+fn should_classify_normalization_scope_including_fresh_generation(
+    #[case] system: bool,
+    #[values(false, true)] fresh: bool,
+) {
+    use crate::scraper::normalization::error::NormalizationError;
+    let error = if system {
+        NormalizationError::AvailabilityRegexSetCompilationFailed
+    } else {
+        NormalizationError::TitleEmpty
+    };
+    let error = if fresh {
+        ScraperError::FreshSchemaNormalizationFailed {
+            url: candidate("retry").url,
+            attempts: 3,
+            last_norm_error: Box::new(error),
+        }
+    } else {
+        ScraperError::NormalizationError(error)
+    };
+    assert_eq!(scraper_error_is_operational(&error), system);
+}
+
+#[rstest::rstest]
+#[case::schema_database(ScraperError::SchemaServiceError(crate::scraper::css_selector::product_schema_service::ProductListingSchemaServiceError::DatabaseError(sqlx::Error::PoolClosed)))]
+#[case::removed_schema_database(ScraperError::RemovedPageSchemaDatabaseError(
+    sqlx::Error::PoolClosed
+))]
+#[case::no_host(ScraperError::NoHost { url: "file:///invalid".parse().unwrap() })]
+#[case::fingerprint(ScraperError::SchemaFingerprint(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err()))]
+#[case::raw_input(ScraperError::RawNormalizationInput(product_listing_normalization::NormalizationInputError::JsonSerialization(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err())))]
+#[test]
+fn should_keep_infrastructure_and_custody_errors_operational(#[case] error: ScraperError) {
+    assert!(scraper_error_is_operational(&error));
+}
+
+#[tokio::test]
+async fn should_keep_operational_failure_sticky_for_late_subscribers_without_shared_stop() {
+    let failure = OperationalFailureSignal::default();
+    failure.notify();
+    assert!(failure.is_notified());
+    bounded(failure.notified()).await;
+    bounded(failure.clone().notified()).await;
+    assert!(failure.is_notified());
+}
+
+#[rstest::rstest]
+#[case::http_cooldown(RetryableScraperFailure::RateLimit)]
+#[case::budget_cooldown(RetryableScraperFailure::Budget)]
+#[case::review_cooldown(RetryableScraperFailure::Review)]
+#[case::scraper_failure(RetryableScraperFailure::Provider)]
+#[tokio::test]
+async fn should_retain_failure_metadata_and_collector_after_sibling_panic(
+    #[case] failure: RetryableScraperFailure,
+    #[values(false, true)] metadata_fails: bool,
+    #[values(false, true)] mark_finishes_first: bool,
+) {
+    let mut selected = candidate("mark");
+    selected.last_captured_raw_input_sha256 = Some(vec![7; 32]);
+    let id = selected.listing_source_id;
+    let url = selected.url.clone();
+    let error = failure.error(&selected);
+    let mark = PendingMetadataWrite::default();
+    let mut candidates = MockScraperCandidateService::new();
+    mark.expect(&mut candidates, &selected, failure, metadata_fails);
+    candidates
+        .expect_get_candidates()
+        .once()
+        .return_once(move |_, _, _| {
+            Box::pin(async move {
+                Ok(vec![
+                    candidate("accepted"),
+                    selected,
+                    candidate("never"),
+                    scraper_candidate("panic", "https://sibling.test/panic".parse().unwrap()),
+                ])
+            })
+        });
+    let capture_finished = Arc::new(Notify::new());
+    let capture_completed = Arc::new(AtomicBool::new(false));
+    let (finished, completed) = (capture_finished.clone(), capture_completed.clone());
+    candidates
+        .expect_mark_as_scraped()
+        .once()
+        .return_once(move |_, url, _, _, _, _, _| {
+            assert_eq!(url.path(), "/accepted");
+            Box::pin(async move {
+                completed.store(true, Ordering::SeqCst);
+                finished.notify_one();
+                Ok(CrawlerUrlWriteOutcome::Applied)
+            })
+        });
+    let mut scraper = MockScraperService::new();
+    scraper
+        .expect_scrape()
+        .withf(|_, url, _, _, _, _| url.path() == "/accepted")
+        .once()
+        .returning(|_, url, _, _, _, _| {
+            let scraped = scraped(url);
+            Box::pin(async move { Ok(Some(scraped)) })
+        });
+    scraper
+        .expect_scrape()
+        .withf(|_, url, _, _, _, _| url.path() == "/mark")
+        .once()
+        .return_once(move |_, _, _, _, _, _| Box::pin(async move { Err(error) }));
+    scraper
+        .expect_scrape()
+        .withf(|_, url, _, _, _, _| url.path() == "/never")
+        .never();
+    let panic_entered = Arc::new(Notify::new());
+    let trigger_panic = Arc::new(Notify::new());
+    let (entered, trigger) = (panic_entered.clone(), trigger_panic.clone());
+    scraper
+        .expect_scrape()
+        .withf(|_, url, _, _, _, _| url.path() == "/panic")
+        .once()
+        .return_once(move |_, _, _, _, _, _| {
+            Box::pin(async move {
+                entered.notify_one();
+                trigger.notified().await;
+                panic!("injected sibling failure while metadata is pending");
+            })
+        });
+    let capture_entered = Arc::new(Notify::new());
+    let release_capture = Arc::new(Notify::new());
+    let capture_dropped = Arc::new(AtomicBool::new(false));
+    let (entered, release, dropped) = (
+        capture_entered.clone(),
+        release_capture.clone(),
+        capture_dropped.clone(),
+    );
+    let mut capture = MockProductListingRawCaptureService::new();
+    capture.expect_capture().once().return_once(move |items| {
+        Box::pin(async move {
+            let _guard = DropFlag(dropped);
+            assert_eq!(items.len(), 1);
+            entered.notify_one();
+            release.notified().await;
+            vec![ProductListingRawCaptureOutcome::Persisted]
+        })
+    });
+    let mut job = scraper_job(
+        CrawlerCronConfig {
+            scraper_concurrency: 2,
+            push_batch_size: 1,
+            ..Default::default()
+        },
+        candidates,
+        scraper,
+    );
+    job.raw_capture = Arc::new(capture);
+    let (_stop_tx, stop) = watch::channel(false);
+    let (failure_tx, mut failed) = watch::channel(false);
+    let mut pass = Box::pin(job.run_scraper_pass_until_with_failure(stop, failure_tx));
+    let outcome = bounded(async {
+        tokio::select! {
+            _ = async {
+                mark.entered.notified().await;
+                capture_entered.notified().await;
+                panic_entered.notified().await;
+            } => {}
+            _ = &mut pass => panic!("pass must retain pending mark and collector"),
+        }
+        trigger_panic.notify_one();
+        tokio::select! {
+            _ = wait_for_scraper_stop(&mut failed) => assert!(*failed.borrow()),
+            _ = &mut pass => panic!("failure notification must precede drain completion"),
+        }
+        // Drive the scheduler's failure/drain branch before either checkpoint is released.
+        assert!(poll!(&mut pass).is_pending());
+        assert!(!mark.dropped.load(Ordering::SeqCst));
+        assert!(!capture_dropped.load(Ordering::SeqCst));
+        assert!(UrlLock::try_acquire(&job.lock_manager, &url).is_none());
+        assert!(ListingSourceLock::try_acquire(&job.lock_manager, id).is_none());
+        if mark_finishes_first {
+            mark.release.notify_one();
+            tokio::select! {
+                _ = mark.finished.notified() => {}
+                _ = &mut pass => panic!("collector remains independently owned"),
+            }
+            assert!(!capture_dropped.load(Ordering::SeqCst));
+            assert!(!capture_completed.load(Ordering::SeqCst));
+            release_capture.notify_one();
+        } else {
+            release_capture.notify_one();
+            tokio::select! {
+                _ = capture_finished.notified() => {}
+                _ = &mut pass => panic!("admitted metadata remains independently owned"),
+            }
+            assert!(!mark.dropped.load(Ordering::SeqCst));
+            assert!(!mark.completed.load(Ordering::SeqCst));
+            mark.release.notify_one();
+        }
+        pass.await
+    })
+    .await;
+    assert!(
+        outcome.worker_failed,
+        "the panicked producer remains unknown, not graceful"
+    );
+    assert!(outcome.has_operational_failure());
+    assert!(mark.completed.load(Ordering::SeqCst));
+    assert_eq!(mark.committed.load(Ordering::SeqCst), !metadata_fails);
+    assert!(mark.dropped.load(Ordering::SeqCst));
+    assert_eq!(
+        outcome.failed, 1,
+        "retain the surviving producer's mark outcome"
+    );
+    assert_eq!(outcome.operational_failed, usize::from(metadata_fails));
+    assert_eq!(
+        outcome.accepted, 1,
+        "retain the surviving producer's accepted count"
+    );
+    assert_eq!(outcome.captures.accepted, 1);
+    assert_eq!(outcome.captures.completed, 1);
+    assert!(outcome.captures.is_complete());
+    assert!(capture_dropped.load(Ordering::SeqCst));
+    assert!(capture_completed.load(Ordering::SeqCst));
+    assert!(UrlLock::try_acquire(&job.lock_manager, &url).is_some());
+    assert!(ListingSourceLock::try_acquire(&job.lock_manager, id).is_some());
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CollectorFailure {
+    Capture,
+    ShortResult,
+    LongResult,
+    ScrapedMark,
+    RemovedMark,
+    FailureMetadata,
+}
+
+#[rstest::rstest]
+#[case::capture_error(CollectorFailure::Capture)]
+#[case::short_results(CollectorFailure::ShortResult)]
+#[case::long_results(CollectorFailure::LongResult)]
+#[case::scraped_mark(CollectorFailure::ScrapedMark)]
+#[case::removed_mark(CollectorFailure::RemovedMark)]
+#[case::failure_metadata(CollectorFailure::FailureMetadata)]
+#[tokio::test]
+async fn should_notify_collector_failure_before_next_blocking_mark(#[case] kind: CollectorFailure) {
+    let (failure_tx, failed) = watch::channel(false);
+    let failure = OperationalFailureSignal::new(Some(failure_tx));
+    let mark_entered = Arc::new(Notify::new());
+    let release_mark = Arc::new(Notify::new());
+    let marked = Arc::new(AtomicUsize::new(0));
+    let mut candidates = MockScraperCandidateService::new();
+    let (entered, release, completed, signal) = (
+        mark_entered.clone(),
+        release_mark.clone(),
+        marked.clone(),
+        failure.clone(),
+    );
+    let block_first = matches!(
+        kind,
+        CollectorFailure::Capture | CollectorFailure::ShortResult | CollectorFailure::LongResult
+    );
+    let expected_marks = match kind {
+        CollectorFailure::Capture
+        | CollectorFailure::ShortResult
+        | CollectorFailure::RemovedMark
+        | CollectorFailure::FailureMetadata => 1,
+        CollectorFailure::LongResult | CollectorFailure::ScrapedMark => 2,
+    };
+    candidates
+        .expect_mark_as_scraped()
+        .times(expected_marks)
+        .returning(move |_, url, _, _, _, _, _| {
+            let first = url.path() == "/first";
+            let (entered, release, completed, signal) = (
+                entered.clone(),
+                release.clone(),
+                completed.clone(),
+                signal.clone(),
+            );
+            Box::pin(async move {
+                if first && matches!(kind, CollectorFailure::ScrapedMark) {
+                    return Err(sqlx::Error::PoolClosed);
+                }
+                if first == block_first {
+                    assert!(
+                        signal.is_notified(),
+                        "publish failure before another metadata await"
+                    );
+                    entered.notify_one();
+                    release.notified().await;
+                }
+                completed.fetch_add(1, Ordering::SeqCst);
+                Ok(CrawlerUrlWriteOutcome::Applied)
+            })
+        });
+    candidates
+        .expect_mark_removed()
+        .times(usize::from(matches!(kind, CollectorFailure::RemovedMark)))
+        .returning(|_, _, _, _| Box::pin(async { Err(sqlx::Error::PoolClosed) }));
+    candidates
+        .expect_mark_scraper_failure()
+        .times(usize::from(matches!(
+            kind,
+            CollectorFailure::FailureMetadata
+        )))
+        .returning(|_, _, _, _, _| Box::pin(async { Err(sqlx::Error::PoolClosed) }));
+    let mut capture = MockProductListingRawCaptureService::new();
+    capture.expect_capture().once().returning(move |items| {
+        assert_eq!(items.len(), 2);
+        use ProductListingRawCaptureOutcome::{Persisted, RetryableFailure};
+        Box::pin(async move {
+            match kind {
+                CollectorFailure::Capture => vec![Persisted, RetryableFailure],
+                CollectorFailure::ShortResult => vec![Persisted],
+                CollectorFailure::LongResult => vec![Persisted, Persisted, Persisted],
+                CollectorFailure::ScrapedMark | CollectorFailure::RemovedMark => {
+                    vec![Persisted, Persisted]
+                }
+                CollectorFailure::FailureMetadata => vec![RetryableFailure, Persisted],
+            }
+        })
+    });
+    let (tx, rx) = mpsc::channel(2);
+    let first = candidate("first");
+    let second = candidate("second");
+    let first = if matches!(
+        kind,
+        CollectorFailure::RemovedMark | CollectorFailure::FailureMetadata
+    ) {
+        QueuedRawCapture {
+            request: handle_verified_removal(&first).capture.unwrap(),
+            enqueued_at: tokio::time::Instant::now(),
+        }
+    } else {
+        queued(
+            item(first.listing_source_id, "first"),
+            meta(first.listing_source_id, first.url.as_str(), "page"),
+        )
+    };
+    tx.send(first).await.unwrap();
+    tx.send(queued(
+        item(second.listing_source_id, "second"),
+        meta(second.listing_source_id, second.url.as_str(), "page"),
+    ))
+    .await
+    .unwrap();
+    drop(tx);
+    let returned = AtomicBool::new(false);
+    let (result, ()) = bounded(async {
+        tokio::join!(
+            async {
+                let result = run_raw_capture_collector_with_failure(
+                    rx,
+                    Arc::new(capture),
+                    Arc::new(candidates),
+                    2,
+                    Duration::from_secs(86400),
+                    &failure,
+                )
+                .await;
+                returned.store(true, Ordering::SeqCst);
+                result
+            },
+            async {
+                mark_entered.notified().await;
+                assert!(*failed.borrow());
+                assert!(
+                    !returned.load(Ordering::SeqCst),
+                    "keep collector until every accepted mark finishes"
+                );
+                assert_eq!(marked.load(Ordering::SeqCst), 0);
+                release_mark.notify_one();
+            }
+        )
+    })
+    .await;
+    let summary = result
+        .expect_err("collector failure must remain fatal")
+        .summary;
+    assert_eq!(summary.accepted, 2);
+    assert_eq!(
+        summary.completed,
+        if matches!(kind, CollectorFailure::LongResult) {
+            2
+        } else {
+            1
+        }
+    );
+    assert_eq!(
+        summary.capture_failed,
+        usize::from(matches!(
+            kind,
+            CollectorFailure::Capture
+                | CollectorFailure::ShortResult
+                | CollectorFailure::FailureMetadata
+        ))
+    );
+    assert_eq!(
+        summary.local_mark_failed,
+        usize::from(matches!(
+            kind,
+            CollectorFailure::ScrapedMark | CollectorFailure::RemovedMark
+        ))
+    );
+    assert_eq!(
+        summary.failure_mark_failed,
+        usize::from(matches!(kind, CollectorFailure::FailureMetadata))
+    );
+    assert_eq!(
+        summary.result_mismatches,
+        usize::from(matches!(
+            kind,
+            CollectorFailure::ShortResult | CollectorFailure::LongResult
+        ))
+    );
+    assert_eq!(marked.load(Ordering::SeqCst), summary.completed);
 }
 
 #[rstest::rstest]
@@ -295,9 +947,7 @@ async fn should_stop_pending_enqueue_and_leave_fetched_unaccepted_work_retryable
             let scraped = scraped(url);
             Box::pin(async move { Ok(Some(scraped)) })
         });
-    let mut ctx = scrape_candidate_context(candidates, scraper);
-    let (tx, mut rx) = mpsc::channel(1);
-    ctx.command_tx = tx;
+    let (ctx, mut rx) = scrape_candidate_context(candidates, scraper);
     let (stop_tx, stop) = watch::channel(false);
     let producer = scrape_domain_candidates(
         vec![
@@ -640,8 +1290,11 @@ async fn should_join_cancelled_sibling_and_drain_after_producer_panic() {
     assert!(!format!("{outcome:?}").contains("injected"));
 }
 
+#[rstest::rstest]
+#[case::poll_panic(false)]
+#[case::destructor_panic(true)]
 #[tokio::test]
-async fn should_stop_active_producer_when_collector_panics() {
+async fn should_stop_active_producer_when_collector_panics(#[case] drop_panic: bool) {
     let pending = PendingWork::default();
     let pending_for_mock = pending.clone();
     let mut scraper = MockScraperService::new();
@@ -668,7 +1321,9 @@ async fn should_stop_active_producer_when_collector_panics() {
     capture.expect_capture().once().return_once(move |_| {
         Box::pin(async move {
             entered.notified().await;
-            panic!("injected collector failure");
+            let _bomb = drop_panic.then(|| PanicOnDrop);
+            assert!(drop_panic, "injected collector failure");
+            vec![ProductListingRawCaptureOutcome::Persisted]
         })
     });
     let mut job = scraper_job(
@@ -682,7 +1337,11 @@ async fn should_stop_active_producer_when_collector_panics() {
     );
     job.raw_capture = Arc::new(capture);
 
-    let outcome = bounded(job.run_scraper_pass()).await;
+    let (_stop_tx, stop) = watch::channel(false);
+    let (failure_tx, failed) = watch::channel(false);
+    let outcome = bounded(job.run_scraper_pass_until_with_failure(stop, failure_tx)).await;
+    assert!(*failed.borrow());
+    assert!(outcome.has_operational_failure());
     assert!(pending.dropped.load(Ordering::SeqCst));
     assert!(outcome.collector_failed);
     assert!(!outcome.is_complete());
@@ -755,7 +1414,12 @@ async fn should_join_producers_and_drain_when_candidate_lookup_fails(#[case] pan
     assert!(pending.dropped.load(Ordering::SeqCst));
     assert!(!outcome.is_complete());
     assert_eq!(outcome.candidate_lookup_failed, !panic);
-    assert!(outcome.worker_failed);
+    assert_eq!(outcome.worker_failed, panic);
+    assert!(outcome.has_operational_failure());
+    assert_eq!(
+        outcome.accepted, 1,
+        "cooperatively stopped worker reports its accepted work"
+    );
     assert_eq!(outcome.captures.accepted, 1);
     assert_eq!(outcome.captures.completed, 1);
 }

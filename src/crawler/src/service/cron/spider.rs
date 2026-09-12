@@ -1,17 +1,22 @@
-use super::job::CrawlerCronJob;
+use super::job::{CrawlerCronJob, CrawlerRunError, stop_requested, wait_for_stop};
+#[cfg(test)]
 use crate::CrawlerDomainId;
 use crate::network::policy::{NetworkErrorKind, durable_retry_cooldown_for};
 use crate::spider::advisory_lock::DomainLock;
 use crate::spider::candidate_service::SpiderCandidate;
+use crate::spider::classification::url_classification_service::UrlClassificationError;
 use crate::spider::classification::url_pattern_service::UrlPatternServiceError;
 use crate::spider::service::{SpiderService, SpiderServiceError};
+use futures::FutureExt;
 #[cfg(test)]
 use listing_source_core::ListingSourceId;
 use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
 use tokio::task::JoinSet;
-use tracing::{Instrument, debug, error, info, warn};
+use tracing::{Instrument, info, warn};
 
 const CRAWL_RETRY_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
 const TRANSIENT_CRAWL_LONG_COOLDOWN: Duration = Duration::from_secs(24 * 60 * 60);
@@ -87,82 +92,132 @@ fn error_kind_for_spider_error(error: &SpiderServiceError) -> &'static str {
     }
 }
 
-struct SpiderSlotOutcome {
-    domain_id: CrawlerDomainId,
-    succeeded: bool,
-    skipped: bool,
+/// Expected, durably cooled-down site failures do not poison future passes.
+/// Unknown service/task errors and failed metadata writes always reject the pass.
+#[must_use]
+#[derive(Debug)]
+pub(super) struct SpiderPassOutcome {
+    result: Result<(), CrawlerRunError>,
+    admission_stopped: bool,
 }
 
+impl SpiderPassOutcome {
+    pub(super) fn admission_stopped(&self) -> bool {
+        self.admission_stopped
+    }
+
+    pub(super) fn into_result(self) -> Result<(), CrawlerRunError> {
+        self.result
+    }
+
+    fn fail(&mut self, error: CrawlerRunError, stop_tx: &watch::Sender<bool>) {
+        stop_tx.send_replace(true);
+        warn!(%error, "Spider pass failed; stopping and joining workers");
+        if self.result.is_ok() {
+            self.result = Err(error);
+        }
+    }
+}
+
+enum SpiderSlotOutcome {
+    Succeeded,
+    Skipped,
+    Stopped,
+    SiteFailure,
+}
+
+fn expected_site_failure(error: &SpiderServiceError) -> bool {
+    matches!(
+        error,
+        SpiderServiceError::EmptyCrawl { .. }
+            | SpiderServiceError::TinyCrawl { .. }
+            | SpiderServiceError::InsufficientInferenceSample { .. }
+            | SpiderServiceError::EmptyClassificationSample { .. }
+            | SpiderServiceError::DiagnosticCrawlFailure { .. }
+            | SpiderServiceError::UrlPattern(UrlPatternServiceError::PendingReview { .. })
+            // Classification owns generated responses. Direct UrlPattern::Regex instead
+            // means an invalid persisted pattern and must remain operational.
+            | SpiderServiceError::UrlPattern(UrlPatternServiceError::Classification(
+                UrlClassificationError::Llm(_)
+                    | UrlClassificationError::Regex(_)
+                    | UrlClassificationError::NoProducts(_)
+            ))
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn spawn_spider_candidate(
-    join_set: &mut JoinSet<SpiderSlotOutcome>,
+    join_set: &mut JoinSet<Result<SpiderSlotOutcome, CrawlerRunError>>,
     candidate: SpiderCandidate,
     spider_candidates: Arc<dyn crate::spider::candidate_service::SpiderCandidateService>,
     spider_service: Arc<dyn SpiderService>,
     lock_manager: Arc<crate::spider::advisory_lock::LocalLockManager>,
     threshold: usize,
+    stop_tx: watch::Sender<bool>,
+    stop: watch::Receiver<bool>,
 ) {
     let crawl_root_url = if candidate.listing_source_domain.starts_with("http") {
         candidate.listing_source_domain.clone()
     } else {
         format!("https://{}", candidate.listing_source_domain)
     };
-    let domain_id = candidate.domain_id;
     let span = tracing::info_span!(
         "spider_candidate",
         listing_source_id = %candidate.listing_source_id,
-        domain_id = %candidate.domain_id,
-        crawl_root_url = %crawl_root_url
+        domain_id = %candidate.domain_id
     );
 
     join_set.spawn(
         async move {
+            if stop_requested(&stop) {
+                return Ok(SpiderSlotOutcome::Stopped);
+            }
             let Some(_lock) = DomainLock::try_acquire(&lock_manager, candidate.domain_id) else {
                 warn!(
                     listing_source_id = %candidate.listing_source_id,
                     domain_id = %candidate.domain_id,
                     "Skipping domain - lock held by another worker"
                 );
-                return SpiderSlotOutcome {
-                    domain_id,
-                    succeeded: false,
-                    skipped: true,
-                };
+                return Ok(SpiderSlotOutcome::Skipped);
             };
 
             match spider_service
-                .run(
+                .run_until(
                     &candidate.listing_source_id,
                     &candidate.domain_id,
                     &crawl_root_url,
                     threshold,
+                    stop.clone(),
                 )
                 .await
             {
                 Ok(_) => {
-                    if let Err(err) = spider_candidates
+                    // Finish an admitted write; cancelling it could hide its result.
+                    if spider_candidates
                         .reset_crawl_failure(&candidate.domain_id)
                         .await
+                        .is_err()
                     {
-                        warn!(
-                            error = ?err,
-                            domain = %candidate.listing_source_domain,
-                            "Failed to reset crawl failure metadata"
-                        );
+                        stop_tx.send_replace(true);
+                        return Err(CrawlerRunError::SpiderFailureResetFailed);
                     }
-                    SpiderSlotOutcome {
-                        domain_id,
-                        succeeded: true,
-                        skipped: false,
-                    }
+                    Ok(SpiderSlotOutcome::Succeeded)
+                }
+                Err(SpiderServiceError::Cancelled) if stop_requested(&stop) => {
+                    Ok(SpiderSlotOutcome::Stopped)
                 }
                 Err(e) => {
+                    let expected = expected_site_failure(&e);
+                    if !expected {
+                        stop_tx.send_replace(true);
+                    }
                     let error_kind = error_kind_for_spider_error(&e);
                     let failure_count = next_failure_count(&candidate, error_kind);
                     let cooldown = cooldown_for_spider_failure(error_kind, failure_count);
                     let next_crawl_at = time::OffsetDateTime::now_utc()
                         + time::Duration::seconds(cooldown.as_secs() as i64);
 
-                    if let Err(err) = spider_candidates
+                    if spider_candidates
                         .mark_crawl_failure(
                             &candidate.domain_id,
                             error_kind,
@@ -170,91 +225,21 @@ fn spawn_spider_candidate(
                             next_crawl_at,
                         )
                         .await
+                        .is_err()
                     {
-                        warn!(
-                            error = ?err,
-                            domain = %candidate.listing_source_domain,
-                            "Failed to persist crawl failure metadata"
-                        );
+                        stop_tx.send_replace(true);
+                        return Err(CrawlerRunError::SpiderFailureMarkFailed);
                     }
-                    match &e {
-                        crate::spider::service::SpiderServiceError::EmptyCrawl { .. } => warn!(
-                            domain = %candidate.listing_source_domain,
-                            error = %e,
-                            error_kind,
-                            failure_count,
-                            total_crawled = 0,
-                            min_required_links = 2,
-                            next_crawl_at = %next_crawl_at,
-                            cooldown_seconds = cooldown.as_secs(),
-                            "Spider run failed"
-                        ),
-                        crate::spider::service::SpiderServiceError::TinyCrawl {
-                            total_links,
-                            ..
-                        } => warn!(
-                            domain = %candidate.listing_source_domain,
-                            error = %e,
-                            error_kind,
-                            failure_count,
-                            total_crawled = *total_links,
-                            min_required_links = 2,
-                            next_crawl_at = %next_crawl_at,
-                            cooldown_seconds = cooldown.as_secs(),
-                            "Spider run failed"
-                        ),
-                        crate::spider::service::SpiderServiceError::InsufficientInferenceSample {
-                            stage,
-                            sample_size,
-                            min_sample_size,
-                            ..
-                        } => warn!(
-                            domain = %candidate.listing_source_domain,
-                            error = %e,
-                            error_kind,
-                            failure_count,
-                            stage,
-                            sample_size = *sample_size,
-                            min_sample_size = *min_sample_size,
-                            next_crawl_at = %next_crawl_at,
-                            cooldown_seconds = cooldown.as_secs(),
-                            "Spider run failed"
-                        ),
-                        crate::spider::service::SpiderServiceError::DiagnosticCrawlFailure {
-                            total_links,
-                            http_status,
-                            final_url,
-                            redirect_url,
-                            diagnostic_reason,
-                            ..
-                        } => warn!(
-                            domain = %candidate.listing_source_domain,
-                            error = %e,
-                            error_kind,
-                            failure_count,
-                            total_crawled = *total_links,
-                            http_status = ?http_status,
-                            final_url = ?final_url,
-                            redirect_url = ?redirect_url,
-                            diagnostic_reason = ?diagnostic_reason,
-                            next_crawl_at = %next_crawl_at,
-                            cooldown_seconds = cooldown.as_secs(),
-                            "Spider run failed"
-                        ),
-                        _ => warn!(
-                            domain = %candidate.listing_source_domain,
-                            error = %e,
-                            error_kind,
-                            failure_count,
-                            next_crawl_at = %next_crawl_at,
-                            cooldown_seconds = cooldown.as_secs(),
-                            "Spider run failed"
-                        ),
-                    }
-                    SpiderSlotOutcome {
-                        domain_id,
-                        succeeded: false,
-                        skipped: false,
+                    warn!(
+                        error_kind,
+                        failure_count,
+                        cooldown_seconds = cooldown.as_secs(),
+                        "Spider run failed"
+                    );
+                    if expected {
+                        Ok(SpiderSlotOutcome::SiteFailure)
+                    } else {
+                        Err(CrawlerRunError::SpiderServiceFailed)
                     }
                 }
             }
@@ -264,124 +249,168 @@ fn spawn_spider_candidate(
 }
 
 impl CrawlerCronJob {
-    #[tracing::instrument(name = "crawler_run_spider_once", skip(self))]
+    #[cfg(test)]
     pub(super) async fn run_spider_once(&self) {
+        let (keep_running, stop) = watch::channel(false);
+        let outcome = self.run_spider_pass_until(stop, &keep_running).await;
+        if let Err(error) = outcome.into_result() {
+            warn!(%error, "Spider scheduler pass incomplete");
+        }
+        drop(keep_running);
+    }
+
+    /// Stop candidate selection, signal admitted services, then inspect every join.
+    /// The receiver carries cancellation; the sender latches operational failure.
+    /// The job forwards failure to sibling stop and runtime before service joins finish.
+    /// Service cancellation owns discovery wrapper cleanup, not library process fencing.
+    #[tracing::instrument(name = "crawler_run_spider_pass_until", skip_all)]
+    pub(super) async fn run_spider_pass_until(
+        &self,
+        mut stop: watch::Receiver<bool>,
+        stop_tx: &watch::Sender<bool>,
+    ) -> SpiderPassOutcome {
+        let mut outcome = SpiderPassOutcome {
+            result: Ok(()),
+            admission_stopped: stop_requested(&stop),
+        };
+        if outcome.admission_stopped {
+            return outcome;
+        }
         let spider_concurrency = self.config.spider_concurrency;
         if spider_concurrency == 0 {
-            warn!(
-                spider_concurrency,
-                "spider_concurrency is 0, skipping spider scheduler pass"
-            );
-            return;
+            return outcome;
         }
-        if !self.admit_authoritative_scope_for_work("spider").await {
-            return;
-        }
-
         let pass_start = tokio::time::Instant::now();
-        let mut excluded_domain_ids: HashSet<CrawlerDomainId> = HashSet::new();
-        let mut join_set: JoinSet<SpiderSlotOutcome> = JoinSet::new();
+        let mut excluded_domain_ids = HashSet::new();
+        // Outside unwind isolation: a scheduler panic must not drop unjoined children.
+        let mut workers = JoinSet::new();
         let mut total = 0usize;
         let mut succeeded = 0usize;
-        let mut failed = 0usize;
+        let mut site_failed = 0usize;
         let mut skipped = 0usize;
-        let mut started = false;
-        let mut fetch_failed = false;
-
-        loop {
-            while join_set.len() < spider_concurrency && !fetch_failed {
-                let open_slots = spider_concurrency - join_set.len();
-                let limit = (open_slots as i64).max(1);
-                let excluded: Vec<CrawlerDomainId> = excluded_domain_ids.iter().copied().collect();
-                let candidates = match self
-                    .spider_candidates
-                    .get_candidates(limit, &excluded)
-                    .await
-                {
-                    Ok(candidates) => candidates,
-                    Err(e) => {
-                        warn!(error = %e, "Failed to retrieve spider candidates");
-                        fetch_failed = true;
+        let mut record = |joined, outcome: &mut SpiderPassOutcome| match joined {
+            Ok(Ok(SpiderSlotOutcome::Succeeded)) => succeeded += 1,
+            Ok(Ok(SpiderSlotOutcome::SiteFailure)) => site_failed += 1,
+            Ok(Ok(SpiderSlotOutcome::Skipped)) => skipped += 1,
+            Ok(Ok(SpiderSlotOutcome::Stopped)) => outcome.admission_stopped = true,
+            Ok(Err(error)) => outcome.fail(error, stop_tx),
+            Err(_) => outcome.fail(CrawlerRunError::SpiderTaskFailed, stop_tx),
+        };
+        let admission = AssertUnwindSafe(async {
+            match self.sync_until(&mut stop).await {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    outcome.fail(error, stop_tx);
+                    return;
+                }
+            }
+            'admission: loop {
+                while workers.len() < spider_concurrency {
+                    if stop_requested(&stop) {
+                        break 'admission;
+                    }
+                    let limit = (spider_concurrency - workers.len()) as i64;
+                    let excluded: Vec<_> = excluded_domain_ids.iter().copied().collect();
+                    let lookup = async {
+                        self.spider_candidates
+                            .get_candidates(limit, &excluded)
+                            .await
+                    };
+                    tokio::pin!(lookup);
+                    let candidates = loop {
+                        tokio::select! {
+                            biased;
+                            joined = workers.join_next(), if !workers.is_empty() => {
+                                if let Some(joined) = joined {
+                                    record(joined, &mut outcome);
+                                    if outcome.result.is_err() || outcome.admission_stopped {
+                                        break 'admission;
+                                    }
+                                }
+                            }
+                            _ = wait_for_stop(&mut stop) => break 'admission,
+                            result = &mut lookup => break result,
+                        }
+                    };
+                    let candidates = match candidates {
+                        Ok(candidates) => candidates,
+                        Err(_) => {
+                            outcome.fail(CrawlerRunError::SpiderCandidateLookupFailed, stop_tx);
+                            break 'admission;
+                        }
+                    };
+                    let mut scheduled_any = false;
+                    for candidate in candidates {
+                        if stop_requested(&stop) {
+                            break 'admission;
+                        }
+                        if workers.len() >= spider_concurrency {
+                            break;
+                        }
+                        if !excluded_domain_ids.insert(candidate.domain_id) {
+                            continue;
+                        }
+                        scheduled_any = true;
+                        total += 1;
+                        spawn_spider_candidate(
+                            &mut workers,
+                            candidate,
+                            Arc::clone(&self.spider_candidates),
+                            Arc::clone(&self.spider_service),
+                            Arc::clone(&self.lock_manager),
+                            self.config.spider_classify_threshold,
+                            stop_tx.clone(),
+                            stop.clone(),
+                        );
+                    }
+                    if !scheduled_any {
                         break;
                     }
-                };
-
-                if candidates.is_empty() {
-                    if !started && join_set.is_empty() {
-                        debug!("No spider candidates, skipping scheduler pass");
-                        return;
-                    }
+                }
+                if workers.is_empty() || stop_requested(&stop) {
                     break;
                 }
-
-                if !started {
-                    info!(
-                        concurrency = spider_concurrency,
-                        "Spider scheduler pass starting"
-                    );
-                    started = true;
-                }
-
-                let mut scheduled_any = false;
-                for candidate in candidates {
-                    if join_set.len() >= spider_concurrency {
-                        break;
+                tokio::select! {
+                    biased;
+                    joined = workers.join_next() => {
+                        if let Some(joined) = joined {
+                            record(joined, &mut outcome);
+                            if outcome.result.is_err() || outcome.admission_stopped {
+                                break;
+                            }
+                        }
                     }
-                    if !excluded_domain_ids.insert(candidate.domain_id) {
-                        continue;
-                    }
-                    scheduled_any = true;
-                    total += 1;
-                    spawn_spider_candidate(
-                        &mut join_set,
-                        candidate,
-                        Arc::clone(&self.spider_candidates),
-                        Arc::clone(&self.spider_service),
-                        Arc::clone(&self.lock_manager),
-                        self.config.spider_classify_threshold,
-                    );
-                }
-
-                if !scheduled_any {
-                    break;
+                    _ = wait_for_stop(&mut stop) => break,
                 }
             }
-
-            if join_set.is_empty() {
-                break;
-            }
-
-            match join_set.join_next().await {
-                Some(Ok(outcome)) => {
-                    excluded_domain_ids.insert(outcome.domain_id);
-                    if outcome.succeeded {
-                        succeeded += 1;
-                    } else if outcome.skipped {
-                        skipped += 1;
-                    } else {
-                        failed += 1;
-                    }
-                }
-                Some(Err(e)) => {
-                    error!(error = %e, "Spider worker task failed to join");
-                    failed += 1;
-                }
-                None => break,
-            }
+        })
+        .catch_unwind()
+        .await;
+        if admission.is_err() {
+            outcome.fail(CrawlerRunError::SpiderTaskFailed, stop_tx);
         }
-
+        // Never abort a service that still owes discovery joins or a metadata write result.
+        while let Some(joined) = workers.join_next().await {
+            record(joined, &mut outcome);
+        }
+        outcome.admission_stopped |= stop_requested(&stop);
         let duration_ms = pass_start.elapsed().as_millis() as u64;
         info!(
             total,
-            succeeded, failed, skipped, duration_ms, "Spider scheduler pass complete"
+            succeeded, site_failed, skipped, duration_ms, "Spider scheduler pass finished"
         );
-
         self.spider_perf.record(total as u64, duration_ms);
+        outcome
     }
 }
 
 #[cfg(test)]
 mod tests {
+    mod cancellation {
+        include!("spider_cancellation_tests.rs");
+    }
+
     use super::*;
     use crate::scraper::candidate_service::MockScraperCandidateService;
     use crate::scraper::scraper_service::MockScraperService;
@@ -565,9 +594,9 @@ mod tests {
 
         let mut spider_service = MockSpiderService::new();
         spider_service
-            .expect_run()
-            .withf(move |_, domain_id, _, _| *domain_id == expected_domain_id)
-            .returning(|_, _, _, _| {
+            .expect_run_until()
+            .withf(move |_, domain_id, _, _, _| *domain_id == expected_domain_id)
+            .returning(|_, _, _, _, _| {
                 Box::pin(async {
                     Ok(SpiderRunResult {
                         total_links: 10,
@@ -639,9 +668,9 @@ mod tests {
 
         let mut spider_service = MockSpiderService::new();
         spider_service
-            .expect_run()
+            .expect_run_until()
             .times(3)
-            .returning(move |_, domain_id, _, _| {
+            .returning(move |_, domain_id, _, _, _| {
                 let domain_id = *domain_id;
                 let release_slow = Arc::clone(&release_slow_for_mock);
                 let slow_running = Arc::clone(&slow_running_for_mock);
@@ -717,13 +746,15 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async {
-                Err(crate::spider::service::SpiderServiceError::Database(
-                    sqlx::Error::RowNotFound,
-                ))
-            })
-        });
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async {
+                    Err(crate::spider::service::SpiderServiceError::Database(
+                        sqlx::Error::RowNotFound,
+                    ))
+                })
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -766,14 +797,16 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async move {
-                Err(crate::spider::service::SpiderServiceError::TinyCrawl {
-                    crawl_root_url: "https://example.com/".to_string(),
-                    total_links: 1,
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(crate::spider::service::SpiderServiceError::TinyCrawl {
+                        crawl_root_url: "https://example.com/".to_string(),
+                        total_links: 1,
+                    })
                 })
-            })
-        });
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -816,13 +849,15 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async move {
-                Err(crate::spider::service::SpiderServiceError::EmptyCrawl {
-                    crawl_root_url: "https://example.com/".to_string(),
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(crate::spider::service::SpiderServiceError::EmptyCrawl {
+                        crawl_root_url: "https://example.com/".to_string(),
+                    })
                 })
-            })
-        });
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -865,18 +900,20 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async move {
-                Err(
-                    crate::spider::service::SpiderServiceError::InsufficientInferenceSample {
-                        crawl_root_url: "https://example.com/".to_string(),
-                        stage: "end_of_crawl",
-                        sample_size: 16,
-                        min_sample_size: 20,
-                    },
-                )
-            })
-        });
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(
+                        crate::spider::service::SpiderServiceError::InsufficientInferenceSample {
+                            crawl_root_url: "https://example.com/".to_string(),
+                            stage: "end_of_crawl",
+                            sample_size: 16,
+                            min_sample_size: 20,
+                        },
+                    )
+                })
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -924,13 +961,15 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async move {
-                Err(crate::spider::service::SpiderServiceError::EmptyCrawl {
-                    crawl_root_url: "https://example.com/".to_string(),
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(crate::spider::service::SpiderServiceError::EmptyCrawl {
+                        crawl_root_url: "https://example.com/".to_string(),
+                    })
                 })
-            })
-        });
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -979,18 +1018,20 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async move {
-                Err(
-                    crate::spider::service::SpiderServiceError::InsufficientInferenceSample {
-                        crawl_root_url: "https://example.com/".to_string(),
-                        stage: "end_of_crawl",
-                        sample_size: 16,
-                        min_sample_size: 20,
-                    },
-                )
-            })
-        });
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(
+                        crate::spider::service::SpiderServiceError::InsufficientInferenceSample {
+                            crawl_root_url: "https://example.com/".to_string(),
+                            stage: "end_of_crawl",
+                            sample_size: 16,
+                            min_sample_size: 20,
+                        },
+                    )
+                })
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -1035,21 +1076,23 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(move |_, _, _, _| {
-            Box::pin(async move {
-                Err(
-                    crate::spider::service::SpiderServiceError::DiagnosticCrawlFailure {
-                        crawl_root_url: "https://example.com/".to_string(),
-                        kind,
-                        total_links: 1,
-                        http_status: None,
-                        final_url: None,
-                        redirect_url: None,
-                        diagnostic_reason: Some("test_diagnostic".to_string()),
-                    },
-                )
-            })
-        });
+        spider_service
+            .expect_run_until()
+            .returning(move |_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(
+                        crate::spider::service::SpiderServiceError::DiagnosticCrawlFailure {
+                            crawl_root_url: "https://example.com/".to_string(),
+                            kind,
+                            total_links: 1,
+                            http_status: None,
+                            final_url: None,
+                            redirect_url: None,
+                            diagnostic_reason: Some("test_diagnostic".to_string()),
+                        },
+                    )
+                })
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -1116,21 +1159,23 @@ mod tests {
             .returning(|_, _, _, _| Box::pin(async { Ok(()) }));
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().returning(|_, _, _, _| {
-            Box::pin(async move {
-                Err(
-                    crate::spider::service::SpiderServiceError::DiagnosticCrawlFailure {
-                        crawl_root_url: "https://example.com/".to_string(),
-                        kind: CrawlFailureKind::RateLimited,
-                        total_links: 1,
-                        http_status: Some(429),
-                        final_url: Some("https://example.com/".to_string()),
-                        redirect_url: None,
-                        diagnostic_reason: Some("canonical_non_success_status".to_string()),
-                    },
-                )
-            })
-        });
+        spider_service
+            .expect_run_until()
+            .returning(|_, _, _, _, _| {
+                Box::pin(async move {
+                    Err(
+                        crate::spider::service::SpiderServiceError::DiagnosticCrawlFailure {
+                            crawl_root_url: "https://example.com/".to_string(),
+                            kind: CrawlFailureKind::RateLimited,
+                            total_links: 1,
+                            http_status: Some(429),
+                            final_url: Some("https://example.com/".to_string()),
+                            redirect_url: None,
+                            diagnostic_reason: Some("canonical_non_success_status".to_string()),
+                        },
+                    )
+                })
+            });
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates
@@ -1164,7 +1209,7 @@ mod tests {
             });
 
         let mut spider_service = MockSpiderService::new();
-        spider_service.expect_run().times(0);
+        spider_service.expect_run_until().times(0);
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates

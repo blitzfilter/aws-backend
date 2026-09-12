@@ -99,7 +99,7 @@ Remaining04 at foundation commit: crawler `server` lacks safe check-only/signal 
 
 ## Iteration 04 task-ownership slice
 
-Resumed clean at `655dfe440813a26e165893d0894d99e2351a6b4a`. No live changes or migration SQL. Scraper implementation `9c48d2cd-57db-4143-81e3-2ee5f6a36ee4`, independent acceptance `c6053de5-9e1f-404b-824c-0195170403e6`: monotonic watch stop, joined producers, in-task collector, accepted-capture drain and must-inspect outcome. Independently **58 tests pass** (25 cancellation cases also rerun). Whole-pass drop/abort remains failed/unknown, not graceful.
+Accepted commit `c7a46b9b434eb0dc02c26a4e91edc863cae34896`; resumed clean at `655dfe440813a26e165893d0894d99e2351a6b4a`. No live changes or migration SQL. Scraper implementation `9c48d2cd-57db-4143-81e3-2ee5f6a36ee4`, independent acceptance `c6053de5-9e1f-404b-824c-0195170403e6`: monotonic watch stop, joined producers, in-task collector, accepted-capture drain and must-inspect outcome. Independently **58 tests pass** (25 cancellation cases also rerun). Whole-pass drop/abort remains failed/unknown, not graceful.
 
 Review listener implementation `70fb42a2-18d1-4f83-a3b5-a503562385bd`, acceptance `a2009833-350a-4d0d-97c8-0812d98822a0`: bounded 32 retained connections, bind-before-readiness, absolute drain, abort-and-join. Reviewer found client reset could kill listener; real socket regression failed before repair and passes after. Routine peer I/O is request-local, task panic/cancellation fatal. Independently **33 tests pass**.
 
@@ -107,7 +107,17 @@ Initial spider session `9507f59f-661c-46ab-bc02-e7a26dcd0127` exhausted/interrup
 
 Commands: locked/offline crawler library test filters `service::cron::scraper::tests::`, `review::server::tests::`, `spider::discovery::website_spider::`, `spider::service::spider_service::`; each <240s. Integrated workspace all-target/all-feature locked/offline check, depgraph, full formatting and whitespace pass; crawler Clippy `--no-deps -D warnings` pass. No dependency/schema/config changes. Tests use fake futures/channels and loopback review sockets, not websites/providers/cloud/DB. Workspace library suite remains baseline timeout; not rerun. No new operator inputs; runtime must supply stop/deadline and await teardown. Removal must coordinate callers; no data cleanup.
 
-Remaining04: stop-aware spider service, checkpoint failure propagation, scheduler/server signals/read-only CLI, operational readiness and process/pool/runtime destruction proof. These inner slices are not full crawler or deployment acceptance.
+These inner slices are not full crawler or deployment acceptance. Subsequent service/scheduler changes below supersede their pending inner-service items.
+
+## Iteration 04 service/scheduler slice
+
+Baseline `c7a46b9b434eb0dc02c26a4e91edc863cae34896`. Spider implementation `087076c1-9707-4af9-a3a0-a04b4307c643`; independent acceptance `1aabed04-d1c1-4960-97d6-3d8406b475de`: stop-aware service, explicit wrapper cleanup on early error/panic, checked URL upsert counts, required checkpoint completion. Already-issued checkpoint awaits actual outcome. **50 service tests pass**, independently rerun.
+
+Scheduler implementation `6d5f2af1-c155-4b65-ae88-8ef7e7ee14f6` exhausted during repair; preserved untested work, repaired syntax, transferred to `8098c6f9-7589-4158-bd08-9c3a2a96c062`. Reviewer `56492ecb-3bc6-47ac-8f61-b16dc51affd0` caught ordinary site failures killing daemon, delayed fatal notification behind pending capture, and stop erasing admitted metadata outcomes. Repairs preserve retry/cooldown policy, use early sticky failure signals distinct from cancellation, retain admitted metadata writes/locks, and join producers without aborting collector. Final independent reviewer `a272baac-1209-4c65-845c-cbe79b85b4b8` accepted **123 scraper +34 job +41 spider =198 tests**. Forty new metadata barriers include both outcomes/release orders; sixteen direct-stop cases failed before repair. No claim of real transaction or process fencing from fakes.
+
+Integrated workspace all-target/all-feature locked/offline check, depgraph, full fmt/whitespace and crawler Clippy `--no-deps -D warnings` pass. Public integration fake updated for required `SpiderService::run_until`. No dependency, migration, data or live changes. No new operator inputs. Caller must retain futures/pools and inspect result; `run_until_with_failure` lets runtime start a drain deadline before accepted capture finishes. Removal requires coordinated service/scheduler callers; no data rollback.
+
+Remaining04: production daemon signals/deadlines/private readiness, pool/runtime destruction and real process handover. Search/library network descendants remain unproven joined; source process termination still required. Full workspace library suite remains baseline timeout, not rerun.
 
 ## Required external rollout gates
 

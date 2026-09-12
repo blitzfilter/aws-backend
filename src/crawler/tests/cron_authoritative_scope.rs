@@ -52,6 +52,23 @@ impl SpiderService for NoWorkSpider {
         self.started.store(true, Ordering::SeqCst);
         unreachable!("disabled crawler source must not start spider work")
     }
+
+    async fn run_until(
+        &self,
+        listing_source_id: &ListingSourceId,
+        domain_id: &CrawlerDomainId,
+        crawl_root_url: &str,
+        classify_threshold: usize,
+        _: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<SpiderRunResult, SpiderServiceError> {
+        self.run(
+            listing_source_id,
+            domain_id,
+            crawl_root_url,
+            classify_threshold,
+        )
+        .await
+    }
 }
 
 struct NoWorkScraper {
