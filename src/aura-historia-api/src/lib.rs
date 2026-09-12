@@ -29,10 +29,11 @@ use crate::auth::{
     UserAuthenticationAuthenticator,
 };
 use crate::state::{
-    AdminOverviewState, AppState, AuctionsState, BillingState, ListingSourcesState,
-    NewsletterState, NotificationsState, OAuthState, PartiesState, PartnerProductListingsState,
-    PartnershipApplicationsState, PartnershipsState, ProductListingsState, ReadinessCheck,
-    SearchFiltersState, UsersState, WatchlistState, WebhooksState,
+    AdminOverviewState, AdminProductListingAuctionsState, AppState, AuctionsState, BillingState,
+    ListingSourcesState, NewsletterState, NotificationsState, OAuthState, PartiesState,
+    PartnerProductListingsState, PartnershipApplicationsState, PartnershipsState,
+    ProductListingsState, ReadinessCheck, SearchFiltersState, UsersState, WatchlistState,
+    WebhooksState,
 };
 use crate::transport::with_transport_middleware;
 use admin_overview_postgres::SqlxAdminOverviewReaderFactory;
@@ -137,19 +138,21 @@ use product_listing_opensearch::{
 };
 use product_listing_postgres::{
     SqlxListingSourceSummaryReader, SqlxPartnerProductListingAuthorizerFactory,
-    SqlxProductListingContentAssessmentReader, SqlxProductListingDetailsBatchReader,
-    SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,
-    SqlxProductListingEventAppenderFactory, SqlxProductListingHistoryReaderFactory,
-    SqlxProductListingLifecycleGuardFactory, SqlxProductListingRawCaptureWriterFactory,
-    SqlxProductListingRepositoryFactory, SqlxProductListingUserStateReader,
-    SqlxProductListingWatchlistDetailsReaderFactory,
+    SqlxProductListingAuctionOverrideRepositoryFactory, SqlxProductListingContentAssessmentReader,
+    SqlxProductListingDetailsBatchReader, SqlxProductListingDetailsReaderFactory,
+    SqlxProductListingEmbeddingReaderFactory, SqlxProductListingEventAppenderFactory,
+    SqlxProductListingHistoryReaderFactory, SqlxProductListingLifecycleGuardFactory,
+    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRepositoryFactory,
+    SqlxProductListingUserStateReader, SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use product_listing_service::readers::{CachedListingSourceSummaryReader, SourceSearchCacheConfig};
 use product_listing_service::use_cases::commands::create_product_listing::AuctionMembershipResolver;
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
-    CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
-    GetSimilarProductListingsHandler, ProductListingSearchReadExecutionPolicy,
+    CorrectProductListingAuctionContextHandler, CreateProductListingHandler,
+    GetProductListingAuctionContextHandler, GetProductListingHandler,
+    GetProductListingHistoryHandler, GetSimilarProductListingsHandler,
+    ProductListingSearchReadExecutionPolicy, ReleaseProductListingAuctionOverrideHandler,
     SearchProductListingsHandler, UpdateProductListingHandler, UpsertProductListingHandler,
     WithdrawProductListingHandler,
 };
@@ -674,6 +677,25 @@ pub fn app(state: AppState) -> Router {
                         .patch(auctions::update_auction::update_auction),
                 )
                 .with_state(auctions),
+        );
+    }
+
+    if let Some(admin_product_listing_auctions) = state.admin_product_listing_auctions {
+        routes = routes.merge(
+            Router::new()
+                .route(
+                    "/api/v1/admin/product-listings/{product_listing_id}/auction-context",
+                    get(auctions::admin_product_listing_context::get_context),
+                )
+                .route(
+                    "/api/v1/admin/product-listings/{product_listing_id}/auction-corrections",
+                    post(auctions::admin_product_listing_context::correct_context),
+                )
+                .route(
+                    "/api/v1/admin/product-listings/{product_listing_id}/auction-override",
+                    delete(auctions::admin_product_listing_context::release_context),
+                )
+                .with_state(admin_product_listing_auctions),
         );
     }
 
@@ -1210,6 +1232,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             SqlxAuctionRepositoryFactory::new(),
             SqlxAuctionEventAppenderFactory::new(),
             SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            SqlxProductListingAuctionOverrideRepositoryFactory::new(),
         ),
     );
     let update_product = UpdateProductListingHandler::new_with_auction_resolver(
@@ -1221,6 +1244,7 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             SqlxAuctionRepositoryFactory::new(),
             SqlxAuctionEventAppenderFactory::new(),
             SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            SqlxProductListingAuctionOverrideRepositoryFactory::new(),
         ),
     );
     let upsert_product = UpsertProductListingHandler::new_with_auction_resolver(
@@ -1232,8 +1256,31 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             SqlxAuctionRepositoryFactory::new(),
             SqlxAuctionEventAppenderFactory::new(),
             SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            SqlxProductListingAuctionOverrideRepositoryFactory::new(),
         ),
     );
+    let get_admin_product_listing_auction_context = GetProductListingAuctionContextHandler::new(
+        unit_of_work.clone(),
+        SqlxProductListingRepositoryFactory::new(),
+        SqlxProductListingAuctionOverrideRepositoryFactory::new(),
+        CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+    );
+    let correct_admin_product_listing_auction_context =
+        CorrectProductListingAuctionContextHandler::new(
+            unit_of_work.clone(),
+            SqlxProductListingRepositoryFactory::new(),
+            SqlxProductListingEventAppenderFactory::new(),
+            SqlxProductListingAuctionOverrideRepositoryFactory::new(),
+            SqlxAuctionRepositoryFactory::new(),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+        );
+    let release_admin_product_listing_auction_override =
+        ReleaseProductListingAuctionOverrideHandler::new(
+            unit_of_work.clone(),
+            SqlxProductListingRepositoryFactory::new(),
+            SqlxProductListingAuctionOverrideRepositoryFactory::new(),
+            CheckUserAdminHandler::new(unit_of_work.clone(), SqlxUserAdminReaderFactory::new()),
+        );
     let withdraw_product = WithdrawProductListingHandler::new(
         unit_of_work.clone(),
         SqlxProductListingRepositoryFactory::new(),
@@ -1548,6 +1595,12 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
             Arc::new(create_auction),
             Arc::new(get_auction),
             Arc::new(update_auction),
+            Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
+        ))
+        .with_admin_product_listing_auctions(AdminProductListingAuctionsState::new(
+            Arc::new(get_admin_product_listing_auction_context),
+            Arc::new(correct_admin_product_listing_auction_context),
+            Arc::new(release_admin_product_listing_auction_override),
             Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
         ))
         .with_admin_overview(AdminOverviewState::new(

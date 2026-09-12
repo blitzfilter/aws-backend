@@ -1,6 +1,6 @@
 # Auctions
 
-**Status:** iterations 01–06 implement standalone Auction state/admin, current raw values, qualified listing timing, and source-key membership resolution. Iteration 06 adds no correction/override policy, crawler extraction, public Auction browsing, or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration records](auction-iterations/06-membership-resolution.md).
+**Status:** iterations 01–06 pass. Iteration 07 implements guarded administrative corrections, with its full worker process-durability verification pending. It adds no crawler extraction, public Auction browsing, or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration records](auction-iterations/07-auction-corrections.md).
 
 ## Scope
 
@@ -51,6 +51,10 @@ An asserted empty context never collapses to `None`. The context holds optional 
 
 Typed partner creation accepts omitted or `null` auction as no assertion. Partner and raw writes can supply `auction.sourceAuctionId`; the same source key resolves/creates one Auction and embedded metadata can fill absent shared fields. Existing membership plus a different reliable key fails with `MEMBERSHIP_CHANGE_REQUIRES_CORRECTION`; no second Auction is created for that rejected reassignment. Typed update/upsert omits auction to preserve it and rejects `null`; raw `auction: CLEAR` also preserves existing context. No key is inferred from name, URL, or timing.
 
+Iteration 07 adds an administrator-only complete-context correction. It checks both the ProductListing version and an independent auction-policy version; absent policy is version `0`. A correction may remove the outer assertion, leave it unresolved, or assign a same-source Auction. It requires a trimmed nonblank restricted reason (1–1,024 bytes), rejects withdrawn listings, retains unrelated listing state, and activates a listing-owned override barrier even when the final context is unchanged. The reason, actor/audit data, raw evidence, and policy state are never public Listing history or discovery data.
+
+While active, raw auction patches are preserved with `MANUAL_AUCTION_OVERRIDE_PRESERVED`; unrelated normalized facts still apply. Typed partner create/update/upsert attempts to alter an existing listing's Auction context conflict atomically. An administrator can release the barrier only with matching listing/policy versions. Release changes policy only: it appends no ProductListing event and does not alter listing facts. It records the global immutable raw-capture generation and currently linked stream revision floors, so observations captured at or before release cannot replay Auction context after release. Later captures use ordinary membership policy.
+
 ## Time semantics
 
 Auction times in `auction-core` retain either an exact instant or a source calendar date, with a validated IANA source timezone when supplied. Date-only values never become midnight instants. Exact comparisons and future exact-time filters use only instants; date-only values remain visible but do not match them.
@@ -75,4 +79,4 @@ The directory, catalogue, and existing listing reads preserve current visibility
 
 This is a direct development-only rewrite. It will replace raw/API/event/index contracts in their owning iterations; it will not introduce a successor contract version, compatibility reader, dual write, aliases, backfill, or migration bridge. Existing correctness counters—aggregate versions, raw stream revisions, event IDs, policy CAS, and projection fences—remain.
 
-Current immutable raw observations will not be rewritten during normal operation. Incompatible disposable development data must be reset and recaptured only under explicit authorization. The exact affected records and approved tooling are recorded per iteration.
+Current immutable raw observations will not be rewritten during normal operation. Incompatible disposable development data must be reset and recaptured only under explicit authorization. Iteration 07 extends the initial business schema; no reset was run. The exact affected records and approved tooling are recorded per iteration.

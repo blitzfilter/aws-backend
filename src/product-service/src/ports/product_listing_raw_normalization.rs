@@ -13,6 +13,8 @@ pub struct ProductListingRawRevision {
     pub product_listing_raw_revision_id: ProductListingRawRevisionId,
     pub product_listing_raw_stream_id: ProductListingRawStreamId,
     pub revision: u64,
+    /// Global immutable capture order, distinct from per-stream `revision`.
+    pub capture_generation: u64,
     pub input: ProductListingNormalizationInput,
 }
 

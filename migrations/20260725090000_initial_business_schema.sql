@@ -613,6 +613,67 @@ CREATE TABLE product_listing_lot_auction_timings (
 CREATE INDEX product_listing_auction_contexts_auction_catalogue_idx
     ON product_listing_auction_contexts (auction_id, catalogue_position, product_listing_id);
 
+-- Listing-owned correction policy. It is deliberately independent from ProductListing's
+-- aggregate version: policy-only changes append restricted audit records but no domain event.
+CREATE TABLE product_listing_auction_overrides (
+    product_listing_id uuid PRIMARY KEY
+        REFERENCES product_listings(product_listing_id) ON DELETE CASCADE,
+    policy_version bigint NOT NULL DEFAULT 1,
+    active boolean NOT NULL,
+    release_capture_generation bigint,
+    correction_audit_id uuid,
+    released_audit_id uuid,
+    updated timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT product_listing_auction_overrides_policy_version_positive_check
+        CHECK (policy_version >= 1),
+    CONSTRAINT product_listing_auction_overrides_release_generation_nonnegative_check
+        CHECK (release_capture_generation IS NULL OR release_capture_generation >= 0)
+);
+
+-- Floors retain both stream-local and global immutable capture order. A released override
+-- cannot be undone by work captured before its release, even when delivery is delayed.
+CREATE TABLE product_listing_auction_override_floors (
+    product_listing_id uuid NOT NULL
+        REFERENCES product_listings(product_listing_id) ON DELETE CASCADE,
+    product_listing_raw_stream_id uuid NOT NULL
+        REFERENCES product_listing_raw_streams(product_listing_raw_stream_id) ON DELETE CASCADE,
+    last_capture_revision bigint NOT NULL,
+    last_capture_generation bigint NOT NULL,
+    PRIMARY KEY (product_listing_id, product_listing_raw_stream_id),
+    CONSTRAINT product_listing_auction_override_floors_revision_positive_check
+        CHECK (last_capture_revision >= 1),
+    CONSTRAINT product_listing_auction_override_floors_generation_nonnegative_check
+        CHECK (last_capture_generation >= 0)
+);
+
+CREATE TABLE product_listing_auction_corrections (
+    audit_id uuid PRIMARY KEY,
+    product_listing_id uuid NOT NULL
+        REFERENCES product_listings(product_listing_id) ON DELETE CASCADE,
+    actor_label text NOT NULL,
+    reason text NOT NULL,
+    previous_auction_id uuid,
+    current_auction_id uuid,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT product_listing_auction_corrections_actor_label_nonblank_check
+        CHECK (octet_length(actor_label) BETWEEN 1 AND 1024),
+    CONSTRAINT product_listing_auction_corrections_reason_nonblank_check
+        CHECK (octet_length(reason) BETWEEN 1 AND 1024)
+);
+
+CREATE TABLE product_listing_auction_override_releases (
+    audit_id uuid PRIMARY KEY,
+    product_listing_id uuid NOT NULL
+        REFERENCES product_listings(product_listing_id) ON DELETE CASCADE,
+    actor_label text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    capture_generation bigint NOT NULL,
+    CONSTRAINT product_listing_auction_override_releases_actor_label_nonblank_check
+        CHECK (octet_length(actor_label) BETWEEN 1 AND 1024),
+    CONSTRAINT product_listing_auction_override_releases_generation_nonnegative_check
+        CHECK (capture_generation >= 0)
+);
+
 CREATE INDEX product_listings_listing_source_id_idx ON product_listings (listing_source_id);
 CREATE INDEX product_listings_lifecycle_updated_idx ON product_listings (lifecycle, updated DESC);
 CREATE INDEX product_listings_sale_observation_fx_rate_id_idx ON product_listings (sale_observation_fx_rate_id);

@@ -53,9 +53,11 @@ use party_service::use_cases::queries::get_party::GetPartyError;
 use party_service::use_cases::queries::search_parties::SearchPartiesError;
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureError, CaptureProductListingRawObservationError,
-    CreateProductListingError, GetProductListingError, GetProductListingHistoryError,
-    GetSimilarProductListingsError, SearchProductListingsError, UpdateProductListingError,
-    UpsertProductListingError, WithdrawProductListingError,
+    CorrectProductListingAuctionContextError, CreateProductListingError,
+    GetProductListingAuctionContextError, GetProductListingError, GetProductListingHistoryError,
+    GetSimilarProductListingsError, ReleaseProductListingAuctionOverrideError,
+    SearchProductListingsError, UpdateProductListingError, UpsertProductListingError,
+    WithdrawProductListingError,
 };
 use search_filter_service::use_cases::{
     CreateSearchFilterError, DeleteOwnedSearchFilterError, GetOwnedSearchFilterError,
@@ -422,6 +424,90 @@ impl From<GetAdminOverviewError> for ApiError {
             | GetAdminOverviewError::ReaderInternal { .. } => {
                 ApiError::internal_server_error(ADMIN_OVERVIEW_INTERNAL_ERROR)
                     .with_detail("Admin overview failed internally.")
+            }
+        }
+    }
+}
+
+impl From<GetProductListingAuctionContextError> for ApiError {
+    fn from(error: GetProductListingAuctionContextError) -> Self {
+        match error {
+            GetProductListingAuctionContextError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS).with_header_field("Authorization")
+            }
+            GetProductListingAuctionContextError::Forbidden => ApiError::forbidden(FORBIDDEN),
+            GetProductListingAuctionContextError::NotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+            }
+            GetProductListingAuctionContextError::TemporarilyUnavailable { .. }
+            | GetProductListingAuctionContextError::BeginTransactionFailed
+            | GetProductListingAuctionContextError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
+            }
+            GetProductListingAuctionContextError::InvalidPersistedState { .. }
+            | GetProductListingAuctionContextError::Internal { .. } => {
+                ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
+            }
+        }
+    }
+}
+
+impl From<CorrectProductListingAuctionContextError> for ApiError {
+    fn from(error: CorrectProductListingAuctionContextError) -> Self {
+        match error {
+            CorrectProductListingAuctionContextError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS).with_header_field("Authorization")
+            }
+            CorrectProductListingAuctionContextError::Forbidden => ApiError::forbidden(FORBIDDEN),
+            CorrectProductListingAuctionContextError::NotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+            }
+            CorrectProductListingAuctionContextError::ConcurrencyConflict
+            | CorrectProductListingAuctionContextError::CurrentMembershipConflict
+            | CorrectProductListingAuctionContextError::ListingWithdrawn
+            | CorrectProductListingAuctionContextError::AuctionSourceMismatch
+            | CorrectProductListingAuctionContextError::AuctionNotFound
+            | CorrectProductListingAuctionContextError::ReofferRequiresOfferingModel => {
+                ApiError::conflict(CONFLICT)
+            }
+            CorrectProductListingAuctionContextError::InvalidReason => {
+                ApiError::bad_request(BAD_BODY_VALUE)
+            }
+            CorrectProductListingAuctionContextError::TemporarilyUnavailable { .. }
+            | CorrectProductListingAuctionContextError::BeginTransactionFailed
+            | CorrectProductListingAuctionContextError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
+            }
+            CorrectProductListingAuctionContextError::InvalidPersistedState { .. }
+            | CorrectProductListingAuctionContextError::Internal { .. } => {
+                ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
+            }
+        }
+    }
+}
+
+impl From<ReleaseProductListingAuctionOverrideError> for ApiError {
+    fn from(error: ReleaseProductListingAuctionOverrideError) -> Self {
+        match error {
+            ReleaseProductListingAuctionOverrideError::AuthenticatedActorRequired => {
+                ApiError::unauthorized(INVALID_CREDENTIALS).with_header_field("Authorization")
+            }
+            ReleaseProductListingAuctionOverrideError::Forbidden => ApiError::forbidden(FORBIDDEN),
+            ReleaseProductListingAuctionOverrideError::NotFound => {
+                ApiError::not_found(PRODUCT_LISTING_NOT_FOUND)
+            }
+            ReleaseProductListingAuctionOverrideError::ConcurrencyConflict
+            | ReleaseProductListingAuctionOverrideError::UnsafeRelease => {
+                ApiError::conflict(CONFLICT)
+            }
+            ReleaseProductListingAuctionOverrideError::TemporarilyUnavailable { .. }
+            | ReleaseProductListingAuctionOverrideError::BeginTransactionFailed
+            | ReleaseProductListingAuctionOverrideError::CommitTransactionFailed => {
+                ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
+            }
+            ReleaseProductListingAuctionOverrideError::InvalidPersistedState { .. }
+            | ReleaseProductListingAuctionOverrideError::Internal { .. } => {
+                ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
             }
         }
     }

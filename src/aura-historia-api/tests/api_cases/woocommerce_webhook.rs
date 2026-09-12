@@ -14,8 +14,9 @@ use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_normalization::SourcePayload;
 use product_listing_postgres::{
-    SqlxPendingProductListingRawStreamReader, SqlxProductListingEventAppenderFactory,
-    SqlxProductListingRawNormalizationWriterFactory, SqlxProductListingRepositoryFactory,
+    SqlxPendingProductListingRawStreamReader, SqlxProductListingAuctionOverrideRepositoryFactory,
+    SqlxProductListingEventAppenderFactory, SqlxProductListingRawNormalizationWriterFactory,
+    SqlxProductListingRepositoryFactory,
 };
 use product_service::use_cases::{
     NormalizeProductListingRawRevisionCommand, NormalizeProductListingRawRevisionHandler,
@@ -1201,6 +1202,7 @@ async fn normalize_pending_woocommerce_revisions(
         SqlxAuctionRepositoryFactory::new(),
         SqlxAuctionEventAppenderFactory::new(),
         SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        SqlxProductListingAuctionOverrideRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool),
     );
     let result = normalizer

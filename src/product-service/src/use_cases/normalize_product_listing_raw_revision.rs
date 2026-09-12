@@ -24,8 +24,8 @@ use product_listing_service::canonical_product_listing_write::{
     CanonicalProductListingWriter, CanonicalProductListingWriterDependencies,
 };
 use product_listing_service::ports::{
-    ProductListingEventAppenderFactory, ProductListingRawRevisionId, ProductListingRawStreamId,
-    ProductListingRepositoryFactory,
+    ProductListingAuctionOverrideRepositoryFactory, ProductListingEventAppenderFactory,
+    ProductListingRawRevisionId, ProductListingRawStreamId, ProductListingRepositoryFactory,
 };
 use std::time::Instant;
 use time::OffsetDateTime;
@@ -170,7 +170,7 @@ pub trait NormalizeProductListingRawRevisionUseCase: Send + Sync {
     ) -> Result<NormalizeProductListingRawRevisionResult, NormalizeProductListingRawRevisionError>;
 }
 
-pub struct NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P> {
+pub struct NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, AO, P> {
     unit_of_work: U,
     raw_normalizations: W,
     products: R,
@@ -178,12 +178,13 @@ pub struct NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P> 
     auctions: AR,
     auction_events: AE,
     auction_policies: AP,
+    auction_overrides: AO,
     pending_streams: P,
     normalizer: ProductListingRawValuesNormalizer,
 }
 
-impl<U, W, R, E, AR, AE, AP, P>
-    NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
+impl<U, W, R, E, AR, AE, AP, AO, P>
+    NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, AO, P>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -194,6 +195,7 @@ impl<U, W, R, E, AR, AE, AP, P>
         auctions: AR,
         auction_events: AE,
         auction_policies: AP,
+        auction_overrides: AO,
         pending_streams: P,
     ) -> Self {
         Self {
@@ -204,13 +206,15 @@ impl<U, W, R, E, AR, AE, AP, P>
             auctions,
             auction_events,
             auction_policies,
+            auction_overrides,
             pending_streams,
             normalizer: ProductListingRawValuesNormalizer::new(),
         }
     }
 }
 
-impl<U, W, R, E, AR, AE, AP, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
+impl<U, W, R, E, AR, AE, AP, AO, P>
+    NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, AO, P>
 where
     U: UnitOfWork,
     W: ProductListingRawNormalizationWriterFactory<U::Tx>,
@@ -219,6 +223,7 @@ where
     AR: AuctionRepositoryFactory<U::Tx>,
     AE: AuctionEventAppenderFactory<U::Tx>,
     AP: AuctionMetadataPolicyRepositoryFactory<U::Tx>,
+    AO: ProductListingAuctionOverrideRepositoryFactory<U::Tx>,
     P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader,
 {
     async fn drain_stream(
@@ -386,7 +391,8 @@ where
                         Some("SOURCE_LISTING_ID_MISMATCH"),
                     ));
                 }
-                let command = canonical_upsert(head.listing_source_id, resolved.as_ref());
+                let mut command = canonical_upsert(head.listing_source_id, resolved.as_ref());
+                command.raw_auction_capture_generation = Some(revision.capture_generation);
                 let write = match CanonicalProductListingWriter::upsert_in_transaction(
                     tx,
                     CanonicalProductListingWriterDependencies {
@@ -395,6 +401,7 @@ where
                         auctions: &self.auctions,
                         auction_events: &self.auction_events,
                         auction_policies: &self.auction_policies,
+                        auction_overrides: &self.auction_overrides,
                     },
                     head.product_listing_id,
                     command,
@@ -430,9 +437,13 @@ where
                     },
                     Some(write.product_listing_id),
                     write.product_listing_event_id,
-                    resolved
-                        .diagnostic
-                        .map(ProductListingRawValuesNormalizationDiagnostic::as_str),
+                    if write.auction_context_override_preserved {
+                        Some("MANUAL_AUCTION_OVERRIDE_PRESERVED")
+                    } else {
+                        resolved
+                            .diagnostic
+                            .map(ProductListingRawValuesNormalizationDiagnostic::as_str)
+                    },
                 );
                 completion.next_product_listing_id = Some(write.product_listing_id);
                 completion.next_source_listing_id = Some(resolved.source_listing_id.clone());
@@ -442,7 +453,8 @@ where
     }
 }
 
-impl<U, W, R, E, AR, AE, AP, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
+impl<U, W, R, E, AR, AE, AP, AO, P>
+    NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, AO, P>
 where
     U: UnitOfWork,
     W: ProductListingRawNormalizationWriterFactory<U::Tx>,
@@ -451,6 +463,7 @@ where
     AR: AuctionRepositoryFactory<U::Tx>,
     AE: AuctionEventAppenderFactory<U::Tx>,
     AP: AuctionMetadataPolicyRepositoryFactory<U::Tx>,
+    AO: ProductListingAuctionOverrideRepositoryFactory<U::Tx>,
     P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader,
 {
     async fn execute_inner(
@@ -570,8 +583,8 @@ where
 }
 
 #[async_trait::async_trait]
-impl<U, W, R, E, AR, AE, AP, P> NormalizeProductListingRawRevisionUseCase
-    for NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
+impl<U, W, R, E, AR, AE, AP, AO, P> NormalizeProductListingRawRevisionUseCase
+    for NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, AO, P>
 where
     U: UnitOfWork + Send + Sync,
     W: ProductListingRawNormalizationWriterFactory<U::Tx> + Send + Sync,
@@ -580,6 +593,7 @@ where
     AR: AuctionRepositoryFactory<U::Tx> + Send + Sync,
     AE: AuctionEventAppenderFactory<U::Tx> + Send + Sync,
     AP: AuctionMetadataPolicyRepositoryFactory<U::Tx> + Send + Sync,
+    AO: ProductListingAuctionOverrideRepositoryFactory<U::Tx> + Send + Sync,
     P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader + Send + Sync,
 {
     #[tracing::instrument(name = "normalize_product_listing_raw_revision", skip_all)]
@@ -701,6 +715,7 @@ fn canonical_upsert(
         auction: to_patch(&resolved.auction),
         auction_source_id: resolved.auction_source_id.clone(),
         auction_metadata: auction_service::EmbeddedAuctionMetadata::default(),
+        raw_auction_capture_generation: None,
     }
 }
 
@@ -834,14 +849,18 @@ mod tests {
         AuctionRepository, AuctionRepositoryError, AuctionRepositoryFactory, StoredAuction,
     };
     use listing_source_core::ListingSourceId;
+    use product_listing_core::product_listing_id::ProductListingId;
     use product_listing_normalization::{
         NormalizationContext, ProductListingNormalizationInput, RawProductListingOperation,
         RawProductListingPayloadFormat, RawProductListingValues, SourcePayload,
     };
     use product_listing_service::ports::product_listing_event_appender::ProductListingEvent;
     use product_listing_service::ports::{
-        ProductListingEventAppendError, ProductListingEventAppender, ProductListingRawRevisionId,
-        ProductListingRepository, ProductListingRepositoryError,
+        ProductListingAuctionOverride, ProductListingAuctionOverrideAudit,
+        ProductListingAuctionOverrideError, ProductListingAuctionOverrideRepository,
+        ProductListingAuctionOverrideRepositoryFactory, ProductListingEventAppendError,
+        ProductListingEventAppender, ProductListingRawRevisionId, ProductListingRepository,
+        ProductListingRepositoryError,
     };
     use std::sync::{Arc, Mutex};
 
@@ -863,6 +882,8 @@ mod tests {
     struct TestAuctionEventAppender;
     struct TestAuctionPolicies;
     struct TestAuctionPolicyRepository;
+    struct TestAuctionOverrides;
+    struct TestAuctionOverrideRepository;
     struct TestRevisionReader(Arc<Mutex<TestRawState>>);
     struct FailingFirstPendingReader {
         state: Arc<Mutex<TestRawState>>,
@@ -1079,6 +1100,55 @@ mod tests {
             _: &AuctionMetadataPolicyAudit,
         ) -> Result<(), AuctionMetadataPolicyRepositoryError> {
             Ok(())
+        }
+    }
+
+    impl ProductListingAuctionOverrideRepositoryFactory<TestTx> for TestAuctionOverrides {
+        fn in_transaction<'tx>(
+            &'tx self,
+            _: &'tx mut TestTx,
+        ) -> impl ProductListingAuctionOverrideRepository + 'tx {
+            TestAuctionOverrideRepository
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ProductListingAuctionOverrideRepository for TestAuctionOverrideRepository {
+        async fn find(
+            &mut self,
+            _: ProductListingId,
+        ) -> Result<Option<ProductListingAuctionOverride>, ProductListingAuctionOverrideError>
+        {
+            Ok(None)
+        }
+
+        async fn activate(
+            &mut self,
+            _: &ProductListingAuctionOverrideAudit,
+            _: product_listing_service::ports::ProductListingAuctionPolicyVersion,
+        ) -> Result<ProductListingAuctionOverride, ProductListingAuctionOverrideError> {
+            Ok(ProductListingAuctionOverride {
+                version:
+                    product_listing_service::ports::ProductListingAuctionPolicyVersion::default(),
+                active: false,
+                release_capture_generation: None,
+            })
+        }
+
+        async fn release(
+            &mut self,
+            _: ProductListingId,
+            _: product_listing_service::ports::ProductListingAuctionPolicyVersion,
+            _: domain_primitives::event_id::EventId,
+            _: String,
+            _: time::OffsetDateTime,
+        ) -> Result<ProductListingAuctionOverride, ProductListingAuctionOverrideError> {
+            Ok(ProductListingAuctionOverride {
+                version:
+                    product_listing_service::ports::ProductListingAuctionPolicyVersion::default(),
+                active: false,
+                release_capture_generation: None,
+            })
         }
     }
 
@@ -1391,6 +1461,7 @@ mod tests {
                 product_listing_raw_revision_id: state.product_listing_raw_revision_id,
                 product_listing_raw_stream_id: state.product_listing_raw_stream_id,
                 revision: state.next_revision,
+                capture_generation: state.next_revision,
                 input: state.input.clone(),
             }
         })
@@ -1475,6 +1546,7 @@ mod tests {
                     product_listing_raw_revision_id: revision_id,
                     product_listing_raw_stream_id: stream_id,
                     revision: 1,
+                    capture_generation: 1,
                     input,
                 }),
             }),
@@ -1489,6 +1561,7 @@ mod tests {
             TestAuctions,
             TestAuctionEvents,
             TestAuctionPolicies,
+            TestAuctionOverrides,
             TestRevisionReader(Arc::clone(&state)),
         );
 
@@ -1543,6 +1616,7 @@ mod tests {
                     product_listing_raw_revision_id: healthy_revision_id,
                     product_listing_raw_stream_id: healthy_stream_id,
                     revision: 1,
+                    capture_generation: 1,
                     input,
                 }),
             }),
@@ -1557,6 +1631,7 @@ mod tests {
             TestAuctions,
             TestAuctionEvents,
             TestAuctionPolicies,
+            TestAuctionOverrides,
             FailingFirstPendingReader {
                 state: Arc::clone(&state),
                 blocked_stream_id,
@@ -1635,6 +1710,7 @@ mod tests {
             TestAuctions,
             TestAuctionEvents,
             TestAuctionPolicies,
+            TestAuctionOverrides,
             CappedContinuationReader(Arc::clone(&state)),
         );
 
@@ -1700,6 +1776,7 @@ mod tests {
             TestAuctions,
             TestAuctionEvents,
             TestAuctionPolicies,
+            TestAuctionOverrides,
             FailingPendingListReader,
         );
 
@@ -1760,6 +1837,7 @@ mod tests {
             product_listing_raw_revision_id: ProductListingRawRevisionId::new(),
             product_listing_raw_stream_id: stream_id,
             revision: 1,
+            capture_generation: 1,
             input: invalid_timing_input,
         };
         let head = ProductListingRawNormalizationHead {

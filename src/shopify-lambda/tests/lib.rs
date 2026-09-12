@@ -11,8 +11,9 @@ use platform_postgres::SqlxUnitOfWork;
 use product_listing_normalization::SourcePayload;
 use product_listing_postgres::{
     SqlxPartnerProductListingAuthorizerFactory, SqlxPendingProductListingRawStreamReader,
-    SqlxProductListingEventAppenderFactory, SqlxProductListingRawCaptureWriterFactory,
-    SqlxProductListingRawNormalizationWriterFactory, SqlxProductListingRepositoryFactory,
+    SqlxProductListingAuctionOverrideRepositoryFactory, SqlxProductListingEventAppenderFactory,
+    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRawNormalizationWriterFactory,
+    SqlxProductListingRepositoryFactory,
 };
 use product_listing_service::use_cases::CaptureProductListingRawObservationHandler;
 use product_service::use_cases::{
@@ -1024,6 +1025,7 @@ async fn normalize_pending_shopify_revisions(pool: sqlx::PgPool) -> usize {
         SqlxAuctionRepositoryFactory::new(),
         SqlxAuctionEventAppenderFactory::new(),
         SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        SqlxProductListingAuctionOverrideRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool),
     );
     normalizer

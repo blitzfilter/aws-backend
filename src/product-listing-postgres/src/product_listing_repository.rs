@@ -125,7 +125,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         let row = sqlx::query_as::<_, ProductListingRow>(
             r#"
             SELECT
-                product_listings.product_listing_id, product_listing_title_slug_id, version, current_event_id, listing_source_id, source_listing_id,
+                product_listings.product_listing_id, product_listing_title_slug_id, version, current_event_id, product_listings.listing_source_id, source_listing_id,
                 title_text, title_language, description_text, description_language,
                 price_kind, price_amount, price_currency, price_estimate_min_amount,
                 price_estimate_min_currency, price_estimate_max_amount,
@@ -169,7 +169,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         let row = sqlx::query_as::<_, ProductListingRow>(
             r#"
             SELECT
-                product_listings.product_listing_id, product_listing_title_slug_id, version, current_event_id, listing_source_id, source_listing_id,
+                product_listings.product_listing_id, product_listing_title_slug_id, version, current_event_id, product_listings.listing_source_id, source_listing_id,
                 title_text, title_language, description_text, description_language,
                 price_kind, price_amount, price_currency, price_estimate_min_amount,
                 price_estimate_min_currency, price_estimate_max_amount,

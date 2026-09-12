@@ -54,9 +54,11 @@ use party_service::use_cases::commands::update_party::UpdatePartyUseCase;
 use party_service::use_cases::queries::get_party::GetPartyUseCase;
 use party_service::use_cases::queries::search_parties::SearchPartiesUseCase;
 use product_listing_service::use_cases::{
-    CreateProductListingUseCase, GetProductListingHistoryUseCase, GetProductListingUseCase,
-    GetSimilarProductListingsUseCase, SearchProductListingsUseCase, UpdateProductListingUseCase,
-    UpsertProductListingUseCase, WithdrawProductListingUseCase,
+    CorrectProductListingAuctionContextUseCase, CreateProductListingUseCase,
+    GetProductListingAuctionContextUseCase, GetProductListingHistoryUseCase,
+    GetProductListingUseCase, GetSimilarProductListingsUseCase,
+    ReleaseProductListingAuctionOverrideUseCase, SearchProductListingsUseCase,
+    UpdateProductListingUseCase, UpsertProductListingUseCase, WithdrawProductListingUseCase,
 };
 use search_filter_service::use_cases::{
     CreateSearchFilterUseCase, DeleteOwnedSearchFilterUseCase, GetOwnedSearchFilterUseCase,
@@ -123,6 +125,7 @@ pub struct AppState {
     pub(crate) notifications: Option<NotificationsState>,
     pub(crate) webhooks: Option<WebhooksState>,
     pub(crate) auctions: Option<AuctionsState>,
+    pub(crate) admin_product_listing_auctions: Option<AdminProductListingAuctionsState>,
 }
 
 impl Default for AppState {
@@ -151,6 +154,7 @@ impl AppState {
             notifications: None,
             webhooks: None,
             auctions: None,
+            admin_product_listing_auctions: None,
         }
     }
 
@@ -244,6 +248,14 @@ impl AppState {
         self.auctions = Some(auctions);
         self
     }
+
+    pub fn with_admin_product_listing_auctions(
+        mut self,
+        admin_product_listing_auctions: AdminProductListingAuctionsState,
+    ) -> Self {
+        self.admin_product_listing_auctions = Some(admin_product_listing_auctions);
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -265,6 +277,30 @@ impl AuctionsState {
             create,
             get,
             update,
+            authenticator,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct AdminProductListingAuctionsState {
+    pub(crate) get: Arc<dyn GetProductListingAuctionContextUseCase>,
+    pub(crate) correct: Arc<dyn CorrectProductListingAuctionContextUseCase>,
+    pub(crate) release: Arc<dyn ReleaseProductListingAuctionOverrideUseCase>,
+    pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
+}
+
+impl AdminProductListingAuctionsState {
+    pub fn new(
+        get: Arc<dyn GetProductListingAuctionContextUseCase>,
+        correct: Arc<dyn CorrectProductListingAuctionContextUseCase>,
+        release: Arc<dyn ReleaseProductListingAuctionOverrideUseCase>,
+        authenticator: Arc<dyn TokenAuthenticator>,
+    ) -> Self {
+        Self {
+            get,
+            correct,
+            release,
             authenticator,
         }
     }

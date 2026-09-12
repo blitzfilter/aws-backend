@@ -335,6 +335,7 @@ async fn run_product_listing_raw_normalization(
             SqlxAuctionRepositoryFactory::new(),
             SqlxAuctionEventAppenderFactory::new(),
             SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            product_listing_postgres::SqlxProductListingAuctionOverrideRepositoryFactory::new(),
             SqlxPendingProductListingRawStreamReader::new(pool),
         ));
     let (runtime, receiver) = composition.into_parts();

@@ -1,5 +1,6 @@
 mod object_id;
 mod product_listing_auction;
+mod product_listing_auction_override;
 pub mod product_listing_event_appender;
 mod product_listing_event_codec;
 
@@ -17,6 +18,7 @@ pub mod readers;
 mod url;
 
 pub use partner_product_listing_authorizer::SqlxPartnerProductListingAuthorizerFactory;
+pub use product_listing_auction_override::SqlxProductListingAuctionOverrideRepositoryFactory;
 pub use product_listing_content_assessment_source_reader::SqlxProductListingContentAssessmentSourceReader;
 pub use product_listing_content_assessment_writer::SqlxProductListingContentAssessmentWriterFactory;
 pub use product_listing_embedding_source_reader::SqlxProductListingEmbeddingSourceReader;

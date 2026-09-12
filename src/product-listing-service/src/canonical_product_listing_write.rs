@@ -1,4 +1,5 @@
 use crate::ports::{
+    ProductListingAuctionOverrideRepository, ProductListingAuctionOverrideRepositoryFactory,
     ProductListingEventAppender, ProductListingEventAppenderFactory, ProductListingRepository,
     ProductListingRepositoryError, ProductListingRepositoryFactory, ProductListingWriteEffects,
     stamp_product_listing_event,
@@ -58,6 +59,8 @@ pub struct CanonicalProductListingUpsert {
     /// Reliable source identity for the asserted auction context, if the source supplied one.
     pub auction_source_id: Option<SourceAuctionId>,
     pub auction_metadata: EmbeddedAuctionMetadata,
+    /// Present only for immutable raw normalization. Direct partner writes do not use a raw floor.
+    pub raw_auction_capture_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +68,9 @@ pub struct CanonicalProductListingWriteResult {
     pub product_listing_id: ProductListingId,
     pub product_listing_event_id: Option<EventId>,
     pub outcome: ChangeOutcome,
+    /// The listing's override policy preserved its existing context; unrelated facts may still
+    /// have been written in the same canonical transaction.
+    pub auction_context_override_preserved: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,20 +103,21 @@ pub enum CanonicalProductListingWriteError {
     },
 }
 
-pub struct CanonicalProductListingWriterDependencies<'a, R, E, AR, AE, AP> {
+pub struct CanonicalProductListingWriterDependencies<'a, R, E, AR, AE, AP, AO> {
     pub products: &'a R,
     pub events: &'a E,
     pub auctions: &'a AR,
     pub auction_events: &'a AE,
     pub auction_policies: &'a AP,
+    pub auction_overrides: &'a AO,
 }
 
 pub struct CanonicalProductListingWriter;
 
 impl CanonicalProductListingWriter {
-    pub async fn upsert_in_transaction<'a, Tx, R, E, AR, AE, AP>(
+    pub async fn upsert_in_transaction<'a, Tx, R, E, AR, AE, AP, AO>(
         tx: &mut Tx,
-        dependencies: CanonicalProductListingWriterDependencies<'a, R, E, AR, AE, AP>,
+        dependencies: CanonicalProductListingWriterDependencies<'a, R, E, AR, AE, AP, AO>,
         bound_product_listing_id: Option<ProductListingId>,
         command: CanonicalProductListingUpsert,
     ) -> Result<CanonicalProductListingWriteResult, CanonicalProductListingWriteError>
@@ -120,6 +127,7 @@ impl CanonicalProductListingWriter {
         AR: AuctionRepositoryFactory<Tx>,
         AE: AuctionEventAppenderFactory<Tx>,
         AP: AuctionMetadataPolicyRepositoryFactory<Tx>,
+        AO: ProductListingAuctionOverrideRepositoryFactory<Tx>,
     {
         let CanonicalProductListingWriterDependencies {
             products,
@@ -127,6 +135,7 @@ impl CanonicalProductListingWriter {
             auctions,
             auction_events,
             auction_policies,
+            auction_overrides,
         } = dependencies;
         let existing = match bound_product_listing_id {
             Some(product_listing_id) => products
@@ -153,6 +162,7 @@ impl CanonicalProductListingWriter {
                         auctions,
                         auction_events,
                         auction_policies,
+                        auction_overrides,
                         command,
                     )
                     .await;
@@ -173,6 +183,9 @@ impl CanonicalProductListingWriter {
             .map_err(|error| CanonicalProductListingWriteError::InvalidInput {
                 source: box_error(error),
             })?;
+        let (command, auction_context_override_preserved) =
+            preserve_overridden_auction_context(tx, auction_overrides, product.id(), command)
+                .await?;
         let command = resolve_auction_context(
             tx,
             auctions,
@@ -211,6 +224,7 @@ impl CanonicalProductListingWriter {
             } else {
                 ChangeOutcome::Unchanged
             },
+            auction_context_override_preserved,
         })
     }
 
@@ -260,16 +274,19 @@ impl CanonicalProductListingWriter {
             } else {
                 ChangeOutcome::Unchanged
             },
+            auction_context_override_preserved: false,
         })
     }
 
-    async fn create<Tx, R, E, AR, AE, AP>(
+    #[allow(clippy::too_many_arguments)]
+    async fn create<Tx, R, E, AR, AE, AP, AO>(
         tx: &mut Tx,
         products: &R,
         events: &E,
         auctions: &AR,
         auction_events: &AE,
         auction_policies: &AP,
+        _auction_overrides: &AO,
         command: CanonicalProductListingUpsert,
     ) -> Result<CanonicalProductListingWriteResult, CanonicalProductListingWriteError>
     where
@@ -278,6 +295,7 @@ impl CanonicalProductListingWriter {
         AR: AuctionRepositoryFactory<Tx>,
         AE: AuctionEventAppenderFactory<Tx>,
         AP: AuctionMetadataPolicyRepositoryFactory<Tx>,
+        AO: ProductListingAuctionOverrideRepositoryFactory<Tx>,
     {
         let command = resolve_auction_context(
             tx,
@@ -355,8 +373,44 @@ impl CanonicalProductListingWriter {
             product_listing_id: product.id(),
             product_listing_event_id: Some(event.event_id),
             outcome: ChangeOutcome::Changed,
+            auction_context_override_preserved: false,
         })
     }
+}
+
+async fn preserve_overridden_auction_context<Tx, AO>(
+    tx: &mut Tx,
+    overrides: &AO,
+    product_listing_id: ProductListingId,
+    mut command: CanonicalProductListingUpsert,
+) -> Result<(CanonicalProductListingUpsert, bool), CanonicalProductListingWriteError>
+where
+    AO: ProductListingAuctionOverrideRepositoryFactory<Tx>,
+{
+    if matches!(command.auction, PatchField::Unchanged) {
+        return Ok((command, false));
+    }
+    let policy = overrides
+        .in_transaction(tx)
+        .find(product_listing_id)
+        .await
+        .map_err(|error| CanonicalProductListingWriteError::Persistence {
+            source: box_error(error),
+        })?;
+    let preserve = policy.is_some_and(|policy| {
+        policy.active
+            || policy.release_capture_generation.is_some_and(|floor| {
+                command
+                    .raw_auction_capture_generation
+                    .is_some_and(|generation| generation <= floor)
+            })
+    });
+    if preserve {
+        command.auction = PatchField::Unchanged;
+        command.auction_source_id = None;
+        command.auction_metadata = EmbeddedAuctionMetadata::default();
+    }
+    Ok((command, preserve))
 }
 
 async fn resolve_auction_context<Tx, AR, AE, AP>(

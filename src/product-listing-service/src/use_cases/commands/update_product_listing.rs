@@ -223,6 +223,7 @@ where
         let command = resolve_auction_context(
             &self.auction_resolver,
             &mut tx,
+            product.id(),
             product.listing_source_id(),
             product.auction(),
             command,
@@ -293,6 +294,7 @@ where
 async fn resolve_auction_context<Tx, AR>(
     resolver: &AR,
     tx: &mut Tx,
+    product_listing_id: ProductListingId,
     listing_source_id: listing_source_core::ListingSourceId,
     existing: Option<&product_listing_core::product_listing_auction::ProductListingAuction>,
     mut command: UpdateProductListingCommand,
@@ -306,6 +308,7 @@ where
     let membership = resolver
         .resolve(
             tx,
+            Some(product_listing_id),
             listing_source_id,
             existing.and_then(
                 product_listing_core::product_listing_auction::ProductListingAuction::membership,
@@ -394,6 +397,9 @@ fn partner_actor(principal: &Principal) -> Option<UserId> {
 impl From<PartnerProductListingAuctionResolutionError> for UpdateProductListingError {
     fn from(error: PartnerProductListingAuctionResolutionError) -> Self {
         match error {
+            PartnerProductListingAuctionResolutionError::ManualAuctionOverridePreserved => {
+                Self::AuctionMembershipCorrectionRequired
+            }
             PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired => {
                 Self::AuctionMembershipCorrectionRequired
             }

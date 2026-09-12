@@ -1,6 +1,7 @@
 pub mod listing_source_summary;
 pub mod listing_source_summary_reader;
 pub mod partner_product_listing_authorizer;
+pub mod product_listing_auction_override;
 pub mod product_listing_content_assessment_reader;
 pub mod product_listing_content_assessment_snapshot_reader;
 pub mod product_listing_content_assessment_source_reader;
@@ -37,6 +38,11 @@ pub use listing_source_summary_reader::{
 pub use partner_product_listing_authorizer::{
     PartnerProductListingAuthorizationError, PartnerProductListingAuthorizer,
     PartnerProductListingAuthorizerFactory,
+};
+pub use product_listing_auction_override::{
+    ProductListingAuctionOverride, ProductListingAuctionOverrideAudit,
+    ProductListingAuctionOverrideError, ProductListingAuctionOverrideRepository,
+    ProductListingAuctionOverrideRepositoryFactory, ProductListingAuctionPolicyVersion,
 };
 pub use product_listing_content_assessment_reader::{
     ProductListingContentAssessment, ProductListingContentAssessmentReadError,

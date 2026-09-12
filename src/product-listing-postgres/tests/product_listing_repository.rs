@@ -247,12 +247,12 @@ async fn should_round_trip_listing_owned_auction_context_and_timing_without_auct
     );
 
     let auction_membership_columns: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM information_schema.columns WHERE table_name IN ('product_listing_auction_contexts', 'product_listing_lot_auction_timings') AND column_name = 'auction_id'",
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'product_listing_auction_contexts' AND column_name = 'auction_id'",
     )
     .fetch_one(&pool)
     .await
-    .unwrap_or_else(|error| panic!("inspect auction ownership columns: {error}"));
-    assert_eq!(0, auction_membership_columns);
+    .unwrap_or_else(|error| panic!("inspect auction membership column: {error}"));
+    assert_eq!(1, auction_membership_columns);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]

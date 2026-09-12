@@ -49,6 +49,7 @@ struct RawRevisionRow {
     product_listing_raw_revision_id: uuid::Uuid,
     product_listing_raw_stream_id: uuid::Uuid,
     revision: i64,
+    generation: i64,
     operation: String,
     payload_format: String,
     payload_schema_version: i16,
@@ -134,6 +135,7 @@ impl ProductListingRawNormalizationWriter for SqlxProductListingRawNormalization
                 product_listing_raw_revision_id,
                 product_listing_raw_stream_id,
                 revision,
+                generation,
                 operation,
                 payload_format,
                 payload_schema_version,
@@ -243,6 +245,7 @@ impl ProductListingRawRevisionReader for SqlxPendingProductListingRawStreamReade
                 revision.product_listing_raw_revision_id,
                 revision.product_listing_raw_stream_id,
                 revision.revision,
+                revision.generation,
                 revision.operation,
                 revision.payload_format,
                 revision.payload_schema_version,
@@ -389,6 +392,8 @@ fn revision_from_row(
     .map_err(invalid_state_error)?;
     let revision =
         u64::try_from(row.revision).map_err(|_| invalid_state("raw revision number is invalid"))?;
+    let capture_generation = u64::try_from(row.generation)
+        .map_err(|_| invalid_state("raw revision capture generation is invalid"))?;
     Ok(ProductListingRawRevision {
         product_listing_raw_revision_id: try_from_uuid(
             row.product_listing_raw_revision_id,
@@ -401,6 +406,7 @@ fn revision_from_row(
         )
         .map_err(invalid_state_error)?,
         revision,
+        capture_generation,
         input,
     })
 }

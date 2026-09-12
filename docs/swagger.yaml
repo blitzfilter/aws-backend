@@ -179,6 +179,142 @@ paths:
           {
             description: Temporary Auction persistence failure (`AUCTION_TEMPORARILY_UNAVAILABLE`).,
           }
+  /api/v1/admin/product-listings/{productListingId}/auction-context:
+    get:
+      summary: Get ProductListing Auction context administration state
+      operationId: getAdminProductListingAuctionContext
+      tags: [Auctions]
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductListingIdPath"
+      responses:
+        "200":
+          description: Current context and policy versions.
+          headers:
+            ETag:
+              description: Strong `"plv-{listing}-apv-{policy}"` validator for correction/release.
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "#/components/schemas/AdminProductListingAuctionContextData",
+                }
+        "400": { description: Invalid ProductListing ID (`INVALID_OBJECT_ID`). }
+        "401":
+          {
+            description: Missing or invalid credentials (`INVALID_CREDENTIALS`).,
+          }
+        "403": { description: Administrator authority required (`FORBIDDEN`). }
+        "404":
+          { description: ProductListing missing (`PRODUCT_LISTING_NOT_FOUND`). }
+        "503":
+          {
+            description: Temporary persistence failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).,
+          }
+  /api/v1/admin/product-listings/{productListingId}/auction-corrections:
+    post:
+      summary: Correct ProductListing Auction context
+      operationId: correctAdminProductListingAuctionContext
+      tags: [Auctions]
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductListingIdPath"
+        - $ref: "#/components/parameters/ProductListingAuctionContextIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "#/components/schemas/CorrectProductListingAuctionContextData",
+              }
+      responses:
+        "200":
+          description: Context corrected. Policy is active even when facts were already equal.
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "#/components/schemas/AdminProductListingAuctionContextWriteResultData",
+                }
+        "400":
+          {
+            description: Invalid body/header (`BAD_BODY_VALUE` or `BAD_HEADER_VALUE`).,
+          }
+        "401":
+          {
+            description: Missing or invalid credentials (`INVALID_CREDENTIALS`).,
+          }
+        "403": { description: Administrator authority required (`FORBIDDEN`). }
+        "404":
+          { description: ProductListing missing (`PRODUCT_LISTING_NOT_FOUND`). }
+        "409":
+          {
+            description: Stale state,
+            withdrawn listing,
+            invalid current membership,
+            or source mismatch (`CONFLICT`).,
+          }
+        "503":
+          {
+            description: Temporary persistence failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).,
+          }
+  /api/v1/admin/product-listings/{productListingId}/auction-override:
+    delete:
+      summary: Release ProductListing Auction override
+      operationId: releaseAdminProductListingAuctionOverride
+      tags: [Auctions]
+      security:
+        - BearerAuth: []
+        - AccessTokenAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductListingIdPath"
+        - $ref: "#/components/parameters/ProductListingAuctionContextIfMatch"
+      responses:
+        "200":
+          description: Override released without changing ProductListing facts.
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "#/components/schemas/AdminProductListingAuctionContextWriteResultData",
+                }
+        "400":
+          {
+            description: Invalid ProductListing ID or If-Match (`INVALID_OBJECT_ID` or `BAD_HEADER_VALUE`).,
+          }
+        "401":
+          {
+            description: Missing or invalid credentials (`INVALID_CREDENTIALS`).,
+          }
+        "403": { description: Administrator authority required (`FORBIDDEN`). }
+        "404":
+          { description: ProductListing missing (`PRODUCT_LISTING_NOT_FOUND`). }
+        "409":
+          {
+            description: Stale state or unavailable safe capture floor (`CONFLICT`).,
+          }
+        "503":
+          {
+            description: Temporary persistence failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).,
+          }
   /api/v1/listing-sources/{listingSourceId}/product-listings:
     post:
       summary: Batch create product-listings (Partner API)
@@ -11782,6 +11918,19 @@ components:
         Selected partner routes accept this scheme instead of the removed partner API-key flow.
 
         "
+  parameters:
+    ProductListingIdPath:
+      name: productListingId
+      in: path
+      required: true
+      description: Strict `pl_` UUIDv7 ProductListing TypeID.
+      schema: { type: string }
+    ProductListingAuctionContextIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: 'Strong validator from the admin Auction-context GET response: "plv-{listing}-apv-{policy}". Weak, wildcard, or malformed values are rejected.'
+      schema: { type: string }
   schemas:
     ActorData:
       oneOf:
@@ -12575,6 +12724,87 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionTimingData"
           nullable: true
+    AdminProductListingAuctionContextData:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          productListingId,
+          listingSourceId,
+          auction,
+          expectedVersion,
+          expectedAuctionPolicyVersion,
+          auctionContextOverrideActive,
+        ]
+      properties:
+        productListingId: { type: string }
+        listingSourceId: { type: string }
+        auction:
+          allOf:
+            [
+              {
+                $ref: "#/components/schemas/AdminProductListingAuctionContextValueData",
+              },
+            ]
+          nullable: true
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        expectedAuctionPolicyVersion:
+          { type: integer, format: int64, minimum: 0 }
+        auctionContextOverrideActive: { type: boolean }
+    AdminProductListingAuctionContextValueData:
+      type: object
+      additionalProperties: false
+      required: [auctionId, lotNumber, cataloguePosition, timing]
+      properties:
+        auctionId:
+          {
+            type: string,
+            nullable: true,
+            description: Resolved Aura Auction TypeID; null means unresolved membership.,
+          }
+        lotNumber: { type: string, nullable: true }
+        cataloguePosition:
+          { type: integer, format: int32, minimum: 1, nullable: true }
+        timing:
+          allOf:
+            [{ $ref: "#/components/schemas/ProductListingAuctionTimingData" }]
+    CorrectProductListingAuctionContextData:
+      type: object
+      additionalProperties: false
+      required: [expectedCurrentAuctionId, replacement, reason]
+      properties:
+        expectedCurrentAuctionId:
+          {
+            type: string,
+            nullable: true,
+            description: Expected current resolved Auction TypeID; null expects no resolved membership.,
+          }
+        replacement:
+          allOf:
+            [
+              {
+                $ref: "#/components/schemas/AdminProductListingAuctionContextValueData",
+              },
+            ]
+          nullable: true
+          description: Complete replacement; null retracts the Auction assertion.
+        reason:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            description: Restricted audit reason. Never returned by this API.,
+          }
+    AdminProductListingAuctionContextWriteResultData:
+      type: object
+      additionalProperties: false
+      required:
+        [productListingId, expectedVersion, expectedAuctionPolicyVersion]
+      properties:
+        productListingId: { type: string }
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        expectedAuctionPolicyVersion:
+          { type: integer, format: int64, minimum: 0 }
     EmbeddedAuctionMetadataData:
       type: object
       additionalProperties: false

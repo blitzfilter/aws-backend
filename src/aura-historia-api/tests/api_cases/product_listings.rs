@@ -1872,8 +1872,6 @@ fn search_document_with_source(
             "url": "https://listing-source.example/product",
             "images": [],
             "embedding": null,
-            "lotBiddingOpens": null,
-            "lotScheduledCloses": null,
             "created": created,
             "updated": created
         }),

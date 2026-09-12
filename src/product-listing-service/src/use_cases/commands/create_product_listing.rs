@@ -1,6 +1,7 @@
 use crate::ports::{
     PartnerProductListingAuthorizationError, PartnerProductListingAuthorizer,
-    PartnerProductListingAuthorizerFactory, ProductListingEventAppendError,
+    PartnerProductListingAuthorizerFactory, ProductListingAuctionOverrideRepository,
+    ProductListingAuctionOverrideRepositoryFactory, ProductListingEventAppendError,
     ProductListingEventAppender, ProductListingEventAppenderFactory, ProductListingRepository,
     ProductListingRepositoryError, ProductListingRepositoryFactory, stamp_product_listing_event,
 };
@@ -253,6 +254,7 @@ where
                 self.auction_resolver
                     .resolve(
                         &mut tx,
+                        None,
                         command.listing_source_id,
                         None,
                         command.auction_source_id.clone(),
@@ -390,8 +392,11 @@ impl CreateProductListingCommand {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartnerProductListingAuctionResolutionError {
+    #[error("manual auction override preserves the corrected context")]
+    ManualAuctionOverridePreserved,
     #[error("auction membership requires an explicit correction")]
     MembershipCorrectionRequired,
+
     #[error("auction resolution is temporarily unavailable")]
     TemporarilyUnavailable {
         #[source]
@@ -409,6 +414,7 @@ pub trait PartnerProductListingAuctionResolver<Tx>: Send + Sync {
     async fn resolve(
         &self,
         tx: &mut Tx,
+        product_listing_id: Option<ProductListingId>,
         listing_source_id: ListingSourceId,
         current: Option<product_listing_core::product_listing::AuctionMembership>,
         source_auction_id: Option<SourceAuctionId>,
@@ -419,33 +425,38 @@ pub trait PartnerProductListingAuctionResolver<Tx>: Send + Sync {
     >;
 }
 
-pub struct AuctionMembershipResolver<R, E, P> {
+pub struct AuctionMembershipResolver<R, E, P, O> {
     auctions: R,
     events: E,
     policies: P,
+    overrides: O,
 }
 
-impl<R, E, P> AuctionMembershipResolver<R, E, P> {
-    pub fn new(auctions: R, events: E, policies: P) -> Self {
+impl<R, E, P, O> AuctionMembershipResolver<R, E, P, O> {
+    pub fn new(auctions: R, events: E, policies: P, overrides: O) -> Self {
         Self {
             auctions,
             events,
             policies,
+            overrides,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<Tx, R, E, P> PartnerProductListingAuctionResolver<Tx> for AuctionMembershipResolver<R, E, P>
+impl<Tx, R, E, P, O> PartnerProductListingAuctionResolver<Tx>
+    for AuctionMembershipResolver<R, E, P, O>
 where
     Tx: Send,
     R: AuctionRepositoryFactory<Tx> + Send + Sync,
     E: AuctionEventAppenderFactory<Tx> + Send + Sync,
     P: AuctionMetadataPolicyRepositoryFactory<Tx> + Send + Sync,
+    O: ProductListingAuctionOverrideRepositoryFactory<Tx> + Send + Sync,
 {
     async fn resolve(
         &self,
         tx: &mut Tx,
+        product_listing_id: Option<ProductListingId>,
         listing_source_id: ListingSourceId,
         current: Option<product_listing_core::product_listing::AuctionMembership>,
         source_auction_id: Option<SourceAuctionId>,
@@ -454,6 +465,23 @@ where
         Option<product_listing_core::product_listing::AuctionMembership>,
         PartnerProductListingAuctionResolutionError,
     > {
+        if let Some(product_listing_id) = product_listing_id {
+            let override_state = self
+                .overrides
+                .in_transaction(tx)
+                .find(product_listing_id)
+                .await
+                .map_err(
+                    |error| PartnerProductListingAuctionResolutionError::Internal {
+                        source: box_error(error),
+                    },
+                )?;
+            if override_state.is_some_and(|state| state.active) {
+                return Err(
+                    PartnerProductListingAuctionResolutionError::ManualAuctionOverridePreserved,
+                );
+            }
+        }
         let Some(source_auction_id) = source_auction_id else {
             return Ok(current);
         };
@@ -489,6 +517,7 @@ where
     async fn resolve(
         &self,
         _: &mut Tx,
+        _: Option<ProductListingId>,
         _: ListingSourceId,
         current: Option<product_listing_core::product_listing::AuctionMembership>,
         source_auction_id: Option<SourceAuctionId>,
@@ -537,6 +566,9 @@ fn partner_actor(principal: &Principal) -> Option<UserId> {
 impl From<PartnerProductListingAuctionResolutionError> for CreateProductListingError {
     fn from(error: PartnerProductListingAuctionResolutionError) -> Self {
         match error {
+            PartnerProductListingAuctionResolutionError::ManualAuctionOverridePreserved => {
+                Self::AuctionMembershipCorrectionRequired
+            }
             PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired => {
                 Self::AuctionMembershipCorrectionRequired
             }

@@ -16,9 +16,9 @@ use product_listing_normalization::{
     SourcePayload,
 };
 use product_listing_postgres::{
-    SqlxPendingProductListingRawStreamReader, SqlxProductListingEventAppenderFactory,
-    SqlxProductListingRawCaptureWriterFactory, SqlxProductListingRawNormalizationWriterFactory,
-    SqlxProductListingRepositoryFactory,
+    SqlxPendingProductListingRawStreamReader, SqlxProductListingAuctionOverrideRepositoryFactory,
+    SqlxProductListingEventAppenderFactory, SqlxProductListingRawCaptureWriterFactory,
+    SqlxProductListingRawNormalizationWriterFactory, SqlxProductListingRepositoryFactory,
 };
 use product_listing_service::ports::{
     ProductListingRawCaptureWrite, ProductListingRawCaptureWriteOutcome,
@@ -324,6 +324,7 @@ impl RawNormalizationWorker {
                 SqlxAuctionRepositoryFactory::new(),
                 SqlxAuctionEventAppenderFactory::new(),
                 SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+                SqlxProductListingAuctionOverrideRepositoryFactory::new(),
                 SqlxPendingProductListingRawStreamReader::new(pool),
             ));
         let (runtime, receiver) = support::composition(SCOPE).await?.into_parts();
