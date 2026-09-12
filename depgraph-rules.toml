@@ -39,8 +39,8 @@ fxrate-fxratesapi = ["application", "fxrate-core", "fxrate-service", "money", "r
 fxrate-lambda = ["application", "platform-observability", "platform-postgres", "fxrate-fxratesapi", "fxrate-postgres", "fxrate-service"]
 oauth-core = ["credential-core", "domain-primitives", "user-core"]
 
-product-listing-core = ["domain-primitives", "fxrate-core", "listing-source-core", "localization", "money", "strum", "strum_macros"]
-product-listing-normalization = ["lingua", "localization", "money", "product-listing-core", "regex", "serde", "serde_json", "sha2", "strum", "strum_macros", "time", "url"]
+product-listing-core = ["auction-core", "domain-primitives", "fxrate-core", "listing-source-core", "localization", "money", "strum", "strum_macros"]
+product-listing-normalization = ["auction-core", "lingua", "localization", "money", "product-listing-core", "regex", "serde", "serde_json", "sha2", "strum", "strum_macros", "time", "url"]
 product-service = ["application", "domain-primitives", "indexmap", "listing-source-core", "product-listing-core", "product-listing-normalization", "product-listing-service"]
 
 user-service = ["application", "domain-primitives", "geo", "localization", "money", "user-core"]
@@ -65,7 +65,7 @@ notification-email-aws = ["application", "domain-primitives", "localization", "m
 notification-postgres = ["application", "domain-primitives", "listing-source-core", "localization", "money", "notification-core", "notification-email", "notification-service", "party-core", "partnership-core", "platform-postgres", "product-listing-core", "search-filter-core", "user-core"]
 oauth-postgres = ["application", "credential-core", "domain-primitives", "oauth-core", "oauth-service", "platform-postgres", "user-core"]
 product-listing-opensearch = ["application", "domain-primitives", "fxrate-core", "geo", "listing-source-core", "localization", "money", "platform-opensearch", "product-listing-core", "product-listing-service"]
-product-listing-postgres = ["application", "domain-primitives", "fxrate-core", "listing-source-core", "localization", "money", "notification-core", "platform-postgres", "product-listing-core", "product-listing-normalization", "product-listing-service", "product-service", "search-filter-core", "user-core"]
+product-listing-postgres = ["application", "auction-core", "domain-primitives", "fxrate-core", "listing-source-core", "localization", "money", "notification-core", "platform-postgres", "product-listing-core", "product-listing-normalization", "product-listing-service", "product-service", "search-filter-core", "user-core"]
 product-listing-translation-llm = ["application", "large-language-model", "localization", "product-listing-core", "product-listing-service"]
 
 search-filter-service = ["application", "domain-primitives", "embedding", "fxrate-core", "fxrate-service", "geo", "large-language-model", "listing-source-core", "localization", "money", "notification-core", "notification-service", "product-listing-core", "product-listing-service", "search-filter-core", "user-core", "user-service"]

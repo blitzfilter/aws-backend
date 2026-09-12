@@ -8,7 +8,7 @@ use notification_core::notification_id::NotificationId;
 use platform_postgres::{SqlxTransaction, SqlxUnitOfWork};
 use product_listing_core::description::Description;
 use product_listing_core::product_listing::{
-    NewProductListing, ProductListing, ProductListingAuction, ProductListingPricing,
+    NewProductListing, ProductListing, ProductListingPricing,
 };
 use product_listing_core::product_listing_image::ProductListingImage;
 use product_listing_core::title::Title;
@@ -870,7 +870,7 @@ fn sample_product(
         availability: Some(ListingAvailability::Available),
         url: url(&format!("https://example.com/{slug}")),
         images,
-        auction: ProductListingAuction::default(),
+        auction: None,
     }) {
         Ok(product) => product,
         Err(error) => panic!("failed to create product: {error}"),

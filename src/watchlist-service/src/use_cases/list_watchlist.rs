@@ -348,9 +348,7 @@ mod tests {
     use product_listing_core::source_listing_id::SourceListingId;
 
     use product_listing_core::description::Description;
-    use product_listing_core::product_listing::{
-        ListingSaleObservation, ProductListingAuction, ProductListingPricing,
-    };
+    use product_listing_core::product_listing::{ListingSaleObservation, ProductListingPricing};
     use product_listing_core::title::Title;
     use product_listing_service::ports::{
         ListingSourceSummary, PersonalizedProductListingDetailsReadModel,
@@ -638,7 +636,7 @@ mod tests {
                 view_url: url,
                 images: Default::default(),
                 content_policy: None,
-                auction: ProductListingAuction::default(),
+                auction: None,
                 created: OffsetDateTime::UNIX_EPOCH,
                 updated: OffsetDateTime::UNIX_EPOCH,
             },

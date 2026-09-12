@@ -202,14 +202,6 @@ async fn should_try_next_cached_schema_after_description_language_failure() {
 }
 
 #[tokio::test]
-async fn should_try_next_cached_schema_after_auction_start_failure() {
-    assert_tries_next_cached_schema_after(NormalizationError::DateTimeParseError {
-        field: product_listing_normalization::DateTimeField::AuctionStart,
-    })
-    .await;
-}
-
-#[tokio::test]
 async fn should_try_next_cached_schema_after_price_failure() {
     assert_tries_next_cached_schema_after(NormalizationError::PriceParseError {
         field: product_listing_normalization::PriceField::Price,
@@ -589,8 +581,6 @@ async fn should_generate_single_schema_without_failed_schema_context() {
         price_estimate_max: None,
         state: text_rule("non-existent-state"),
         images: attr_rule_all("img", "src"),
-        auction_start: None,
-        auction_end: None,
         raw_attributes: Default::default(),
     };
 

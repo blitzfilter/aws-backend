@@ -385,7 +385,7 @@ paths:
 
         The request body is an array of `UpdateProductListingData` objects. Omitted fields are unchanged;
 
-        `null` clears availability, price, and auction fields. `null` for `url` or `images` returns
+        `null` clears availability, price, and the whole auction context. `null` for `url` or `images` returns
 
         `400 BAD_BODY_VALUE`; send `[]` to remove all images. The complete batch contract is
 
@@ -557,9 +557,9 @@ paths:
         \ Historia access tokens on this endpoint must include the `product-listings:write` scope.\nAllowed callers are Aura\
         \ Historia admins and users partnered with the target listing source.\n\nThe request body is an array of `UpsertProductListingData`\
         \ objects. Each entry is upserted\nsynchronously in its own PostgreSQL transaction. For each entry:\n- **New listing**\
-        \ — omitted or `null` availability, price, estimates, and auction timestamps\n  create no value; a concrete value\
-        \ sets it.\n- **Existing listing** — availability, price, each price estimate, and each auction timestamp\n  are tri-state:\
-        \ omitted preserves, `null` clears, and a concrete value sets. A withdrawn\n  listing is restored before current facts\
+        \ — omitted or `null` availability, price, estimates, and auction context\n  create no value; a concrete value\
+        \ asserts the complete context.\n- **Existing listing** — availability, price, each price estimate, and auction context\n  are tri-state:\
+        \ omitted preserves, `null` clears, and a concrete value replaces the complete context. A withdrawn\n  listing is restored before current facts\
         \ apply.\n- `title` and `description` apply only on creation. For an\n  existing\
         \ listing they preserve current state and emit no current-state history event.\n- `images` is separate: omit to preserve,\
         \ send `[]` to clear, or send an array to replace.\n  `null` is invalid. `url` is non-clearable: omit or send `null`\
@@ -624,7 +624,18 @@ paths:
                     images:
                       - https://my-listing-source.com/images/violin-1.jpg
                       - https://my-listing-source.com/images/violin-detail.jpg
-                    auctionEnd: "2025-05-10T12:30:00Z"
+                    auction:
+                      lotNumber: "42A"
+                      cataloguePosition: 7
+                      timing:
+                        biddingOpens:
+                          precision: DATE
+                          on: "2025-05-01"
+                          sourceTimezone: Europe/Berlin
+                        scheduledCloses:
+                          precision: INSTANT
+                          at: "2025-05-10T12:30:00Z"
+                        reportedClosedAt: "2025-05-10T12:45:00Z"
               clear_images:
                 summary: Clear an existing product's images
                 value:
@@ -1464,8 +1475,17 @@ paths:
                         url: https://listing-source.example/product-listings/6ba7b810
                         imageCount: 3
                         auction:
-                          start: null
-                          end: null
+                          lotNumber: "42A"
+                          cataloguePosition: 7
+                          timing:
+                            biddingOpens:
+                              precision: DATE
+                              on: "2026-09-01"
+                              sourceTimezone: Europe/Berlin
+                            scheduledCloses:
+                              precision: INSTANT
+                              at: "2026-09-01T10:00:00Z"
+                            reportedClosedAt: "2026-09-01T10:15:00Z"
                       timestamp: "2026-09-01T10:00:00Z"
                     - eventType: PRODUCT_LISTING_CHANGED
                       productListingId: pl_5xdb465tg1enarx2knf04mxbxj
@@ -1784,15 +1804,15 @@ paths:
                 format: date-time
                 description: Maximum last-updated datetime (inclusive, RFC3339 format)
                 example: "2024-12-31T23:59:59Z"
-        - name: auctionStart
+        - name: lotBiddingOpens
           in: query
           required: false
           description:
-            "Optional filter by auction start datetime range (RFC3339 format).
+            "Optional exact lot-bidding-open range (RFC3339 instants).
 
-            Use `auctionStart[min]` and/or `auctionStart[max]` to specify the bounds.
+            Use `lotBiddingOpens[min]` and/or `lotBiddingOpens[max]` for `[min, max)` bounds.
 
-            Only matches product-listings that have an auction start time set.
+            Date-only and absent lot times never match this filter.
 
             "
           style: deepObject
@@ -1803,22 +1823,22 @@ paths:
               min:
                 type: string
                 format: date-time
-                description: Minimum auction start datetime (inclusive, RFC3339 format)
+                description: Inclusive minimum exact lot bidding-open instant (RFC3339)
                 example: "2025-05-01T00:00:00Z"
               max:
                 type: string
                 format: date-time
-                description: Maximum auction start datetime (inclusive, RFC3339 format)
+                description: Exclusive maximum exact lot bidding-open instant (RFC3339)
                 example: "2025-05-31T23:59:59Z"
-        - name: auctionEnd
+        - name: lotScheduledCloses
           in: query
           required: false
           description:
-            "Optional filter by auction end datetime range (RFC3339 format).
+            "Optional exact lot-scheduled-close range (RFC3339 instants).
 
-            Use `auctionEnd[min]` and/or `auctionEnd[max]` to specify the bounds.
+            Use `lotScheduledCloses[min]` and/or `lotScheduledCloses[max]` for `[min, max)` bounds.
 
-            Only matches product-listings that have an auction end time set.
+            Date-only and absent lot times never match this filter.
 
             "
           style: deepObject
@@ -1829,12 +1849,12 @@ paths:
               min:
                 type: string
                 format: date-time
-                description: Minimum auction end datetime (inclusive, RFC3339 format)
+                description: Inclusive minimum exact lot scheduled-close instant (RFC3339)
                 example: "2025-05-01T00:00:00Z"
               max:
                 type: string
                 format: date-time
-                description: Maximum auction end datetime (inclusive, RFC3339 format)
+                description: Exclusive maximum exact lot scheduled-close instant (RFC3339)
                 example: "2025-05-31T23:59:59Z"
         - name: sort
           in: query
@@ -11954,19 +11974,10 @@ components:
             - $ref: "#/components/schemas/ContentPolicyData"
           nullable: true
         auction:
-          type: object
-          required:
-            - start
-            - end
-          properties:
-            start:
-              type: string
-              format: date-time
-              nullable: true
-            end:
-              type: string
-              format: date-time
-              nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
+          nullable: true
+          description: Optional source-asserted auction context; it does not identify Auction membership.
         created:
           type: string
           format: date-time
@@ -12529,43 +12540,47 @@ components:
 
         "
       example: ACTIVE
-    AuctionData:
+    ProductListingAuctionData:
       type: object
-      description:
-        "Auction time window information for product-listings from auction houses.
-
-        Contains optional start and end timestamps for scheduled auctions.
-
-        At least one of the fields (start or end) must be present when this object is included.
-
-        "
+      additionalProperties: false
+      description: Source-asserted lot context. It does not identify or join an Auction aggregate.
       properties:
-        start:
+        lotNumber:
+          type: string
+          maxLength: 128
+          nullable: true
+          description: Optional source-assigned lot label.
+          example: "42A"
+        cataloguePosition:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 4294967295
+          nullable: true
+          description: Optional one-based source catalogue position.
+          example: 7
+        timing:
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionTimingData"
+          nullable: true
+    ProductListingAuctionTimingData:
+      type: object
+      additionalProperties: false
+      description: Optional lot timing assertions. Scheduled values preserve source precision; reported close is an exact observed fact.
+      properties:
+        biddingOpens:
+          allOf:
+            - $ref: "#/components/schemas/AuctionTimeData"
+          nullable: true
+        scheduledCloses:
+          allOf:
+            - $ref: "#/components/schemas/AuctionTimeData"
+          nullable: true
+        reportedClosedAt:
           type: string
           format: date-time
           nullable: true
-          description:
-            "Start datetime of the auction window for this product (RFC3339 format).
-
-            Only present for product-listings from auction houses with scheduled auction start times.
-
-            Used to indicate when bidding begins or when the item will be auctioned.
-
-            "
-          example: "2025-05-01T12:00:00Z"
-        end:
-          type: string
-          format: date-time
-          nullable: true
-          description:
-            "End datetime of the auction window for this product (RFC3339 format).
-
-            Only present for product-listings from auction houses with scheduled auction end times.
-
-            Used to indicate when bidding ends or when the auction session concludes.
-
-            "
-          example: "2025-05-10T12:00:00Z"
+          description: Exact source-reported close time.
     PriceEstimateData:
       type: object
       description: "Price estimate range for a product.
@@ -12708,7 +12723,9 @@ components:
           format: int64
           minimum: 0
         auction:
-          $ref: "#/components/schemas/AuctionData"
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
+          nullable: true
     ProductListingChangedHistoryPayloadData:
       type: object
       required:
@@ -12838,9 +12855,13 @@ components:
           enum:
             - AUCTION_CHANGED
         previous:
-          $ref: "#/components/schemas/AuctionData"
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
+          nullable: true
         current:
-          $ref: "#/components/schemas/AuctionData"
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
+          nullable: trueുവനന്തപുരം】【：】【“】【assistant to=functions.edit_file  天天彩 ＿老司机՞ւ 天天买彩票】【。】【”】【 北京赛车怎么 _一本道  大发快三怎么看json->functions.edit_file code  天天中彩票开奖】【。】【”】【json_payload】【：】【“】【{
     ProductListingWithdrawalHistoryChangeData:
       type: object
       required:
@@ -12995,11 +13016,11 @@ components:
           allOf: &id008
             - $ref: "#/components/schemas/RangeQueryDateTime"
           nullable: true
-        auctionStart:
+        lotBiddingOpens:
           allOf: &id009
             - $ref: "#/components/schemas/RangeQueryDateTime"
           nullable: true
-        auctionEnd:
+        lotScheduledCloses:
           allOf: &id010
             - $ref: "#/components/schemas/RangeQueryDateTime"
           nullable: true
@@ -13139,10 +13160,10 @@ components:
         updated:
           allOf: *id008
           nullable: true
-        auctionStart:
+        lotBiddingOpens:
           allOf: *id009
           nullable: true
-        auctionEnd:
+        lotScheduledCloses:
           allOf: *id010
           nullable: true
     UserSearchFilterData:
@@ -14884,6 +14905,7 @@ components:
             page exists.
     CreateProductListingData:
       type: object
+      additionalProperties: false
       description:
         "Data for creating a single product via the partner batch-create endpoint.
 
@@ -14937,18 +14959,11 @@ components:
           example:
             - https://my-listing-source.com/images/violin-1.jpg
             - https://my-listing-source.com/images/violin-2.jpg
-        auctionStart:
-          type: string
-          format: date-time
+        auction:
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
           nullable: true
-          description: Optional RFC3339 auction timestamp.
-          example: "2025-05-01T12:00:00Z"
-        auctionEnd:
-          type: string
-          format: date-time
-          nullable: true
-          description: Optional RFC3339 auction timestamp.
-          example: "2025-05-10T12:00:00Z"
+          description: Optional complete source-asserted lot context. It does not identify Auction membership.
     PartnerProductListingBatchFailuresResponse:
       type: array
       description:
@@ -14989,10 +15004,11 @@ components:
           example: baroque-violin-001
     UpdateProductListingData:
       type: object
+      additionalProperties: false
       description:
         "Data for synchronously updating one ProductListing. Omitted fields remain unchanged.
 
-        `availability: null` clears the current assertion. `null` clears price and auction fields;
+        `availability: null` clears the current assertion. `null` clears price and the whole auction context;
 
         `url` and `images` reject null. Send `images: []` to remove all images.
 
@@ -15037,28 +15053,21 @@ components:
           description: Omit to leave unchanged. Send [] to remove all images; null is invalid.
           example:
             - https://my-listing-source.com/images/violin-1.jpg
-        auctionStart:
-          type: string
-          format: date-time
-          nullable: true
-          description: Omit to leave unchanged. Send null to clear the auction start.
-          example: "2026-04-10T10:00:00Z"
-        auctionEnd:
-          type: string
-          format: date-time
-          nullable: true
-          description: Omit to leave unchanged. Send null to clear the auction end.
-          example: "2026-04-10T12:00:00Z"
+        auction:
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
+          description: Omit to leave unchanged. Send an object to replace the whole auction context. `null` is invalid; a later correction operation owns retraction.
     UpsertProductListingData:
       type: object
+      additionalProperties: false
       description:
         "Data for synchronously upserting one ProductListing. Only `sourceListingId` is required.
 
-        Availability, price, each price estimate, and each auction timestamp are tri-state: omitted
+        Availability, price, and each price estimate are tri-state: omitted preserves an existing
 
-        preserves an existing value, `null` clears it, and a concrete value sets it. On creation,
+        value, `null` clears it, and a concrete value replaces it. The auction context is omitted
 
-        omitted and `null` both mean no value. Upsert restores a withdrawn listing before current
+        to preserve it or supplied as a complete replacement; `null` is invalid. Upsert restores a withdrawn listing before current
 
         facts apply. Images and URL use the field-specific rules documented below.
 
@@ -15125,18 +15134,10 @@ components:
           example:
             - https://my-listing-source.com/images/violin-1.jpg
             - https://my-listing-source.com/images/violin-2.jpg
-        auctionStart:
-          type: string
-          format: date-time
-          nullable: true
-          description: Optional RFC3339 auction timestamp.
-          example: "2025-05-01T12:00:00Z"
-        auctionEnd:
-          type: string
-          format: date-time
-          nullable: true
-          description: Optional RFC3339 auction timestamp.
-          example: "2025-05-10T12:00:00Z"
+        auction:
+          allOf:
+            - $ref: "#/components/schemas/ProductListingAuctionData"
+          description: Omit to preserve the current context or send an object to replace it. `null` is invalid; a later correction operation owns retraction.
     WoocommerceProductWebhookImageData:
       type: object
       description: Image object extracted from a WooCommerce product payload.

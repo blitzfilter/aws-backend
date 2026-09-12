@@ -59,8 +59,8 @@ enum RestrictedFeature {
     ExcludeListingSourceIdQuery,
     CreatedQuery,
     UpdatedQuery,
-    AuctionStartQuery,
-    AuctionEndQuery,
+    LotBiddingOpensQuery,
+    LotScheduledClosesQuery,
 }
 
 const PRO_RESTRICTED_FEATURES: [RestrictedFeature; 1] =
@@ -71,8 +71,8 @@ const FREE_RESTRICTED_FEATURES: [RestrictedFeature; 7] = [
     RestrictedFeature::ExcludeListingSourceIdQuery,
     RestrictedFeature::CreatedQuery,
     RestrictedFeature::UpdatedQuery,
-    RestrictedFeature::AuctionStartQuery,
-    RestrictedFeature::AuctionEndQuery,
+    RestrictedFeature::LotBiddingOpensQuery,
+    RestrictedFeature::LotScheduledClosesQuery,
 ];
 
 impl RestrictedFeature {
@@ -83,8 +83,8 @@ impl RestrictedFeature {
             Self::ExcludeListingSourceIdQuery => "excludeListingSourceIdQuery",
             Self::CreatedQuery => "createdQuery",
             Self::UpdatedQuery => "updatedQuery",
-            Self::AuctionStartQuery => "auctionStartQuery",
-            Self::AuctionEndQuery => "auctionEndQuery",
+            Self::LotBiddingOpensQuery => "lotBiddingOpensQuery",
+            Self::LotScheduledClosesQuery => "lotScheduledClosesQuery",
         }
     }
 
@@ -95,8 +95,8 @@ impl RestrictedFeature {
             Self::ExcludeListingSourceIdQuery => !search.exclude_listing_source_id_query.is_empty(),
             Self::CreatedQuery => search.created_query.is_some(),
             Self::UpdatedQuery => search.updated_query.is_some(),
-            Self::AuctionStartQuery => search.auction_start_query.is_some(),
-            Self::AuctionEndQuery => search.auction_end_query.is_some(),
+            Self::LotBiddingOpensQuery => search.lot_bidding_opens_query.is_some(),
+            Self::LotScheduledClosesQuery => search.lot_scheduled_closes_query.is_some(),
         }
     }
 }

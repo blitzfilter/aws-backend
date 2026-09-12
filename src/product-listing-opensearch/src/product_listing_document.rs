@@ -264,23 +264,23 @@ pub(crate) enum ProductListingDocumentValidationError {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SerdeField)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProductListingDocument {
-    pub product_listing_id: ProductListingId,
-    pub product_listing_title_slug_id: ProductListingSlugId,
-    pub listing_source_id: ListingSourceId,
+    pub(crate) product_listing_id: ProductListingId,
+    pub(crate) product_listing_title_slug_id: ProductListingSlugId,
+    pub(crate) listing_source_id: ListingSourceId,
     #[serde(with = "source_listing_id")]
-    pub source_listing_id: SourceListingId,
-    pub event_id: EventId,
-    pub title: TextDocument,
+    pub(crate) source_listing_id: SourceListingId,
+    pub(crate) event_id: EventId,
+    pub(crate) title: TextDocument,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title_de: Option<String>,
+    pub(crate) title_de: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title_en: Option<String>,
+    pub(crate) title_en: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title_fr: Option<String>,
+    pub(crate) title_fr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title_es: Option<String>,
+    pub(crate) title_es: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub title_it: Option<String>,
+    pub(crate) title_it: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub(crate) source_price: Option<SourcePriceDocument>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -300,28 +300,38 @@ pub(crate) struct ProductListingDocument {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub availability: Option<ListingAvailability>,
-    pub url: Url,
+    pub(crate) availability: Option<ListingAvailability>,
+    pub(crate) url: Url,
     #[serde(skip_serializing_if = "IndexSet::is_empty", default)]
-    pub images: IndexSet<ProductListingImageDocument>,
+    pub(crate) images: IndexSet<ProductListingImageDocument>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub embedding: Option<Vec<f32>>,
+    pub(crate) embedding: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub(crate) lot_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub(crate) lot_position: Option<u32>,
     #[serde(
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub auction_start: Option<OffsetDateTime>,
+    pub(crate) lot_bidding_opens_at: Option<OffsetDateTime>,
     #[serde(
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub auction_end: Option<OffsetDateTime>,
+    pub(crate) lot_scheduled_closes_at: Option<OffsetDateTime>,
+    #[serde(
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub(crate) lot_reported_closed_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
-    pub created: OffsetDateTime,
+    pub(crate) created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
-    pub updated: OffsetDateTime,
+    pub(crate) updated: OffsetDateTime,
 }
 
 impl ProductListingDocument {
@@ -406,8 +416,11 @@ mod tests {
             url: Url::parse("https://shop.example/product_listings/sku-1")?,
             images: IndexSet::new(),
             embedding: None,
-            auction_start: None,
-            auction_end: None,
+            lot_label: None,
+            lot_position: None,
+            lot_bidding_opens_at: None,
+            lot_scheduled_closes_at: None,
+            lot_reported_closed_at: None,
             created: datetime!(2025-01-01 0:00 UTC),
             updated: datetime!(2025-01-02 0:00 UTC),
         })

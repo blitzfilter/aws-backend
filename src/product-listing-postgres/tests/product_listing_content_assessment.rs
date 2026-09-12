@@ -247,7 +247,7 @@ async fn insert_product_with_created_event(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }),
     )
     .await?;

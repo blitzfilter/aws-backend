@@ -41,8 +41,6 @@ fn valid_schema(schema: &ProductCssSelectorSchema) -> bool {
         schema.price_estimate_max.as_ref(),
         Some(&schema.state),
         Some(&schema.images),
-        schema.auction_start.as_ref(),
-        schema.auction_end.as_ref(),
     ];
 
     rules
@@ -114,8 +112,6 @@ fn update_schema_rule(
         "price" => schema.price = rule,
         "price_estimate_min" => schema.price_estimate_min = rule,
         "price_estimate_max" => schema.price_estimate_max = rule,
-        "auction_start" => schema.auction_start = rule,
-        "auction_end" => schema.auction_end = rule,
         other => return Err(ReviewRepositoryError::InvalidSchemaField(other.into())),
     }
     Ok(())
@@ -177,8 +173,6 @@ mod tests {
             price_estimate_max: None,
             state: text_rule("#state"),
             images: image_rule("img"),
-            auction_start: None,
-            auction_end: None,
             raw_attributes: Default::default(),
         }
     }

@@ -430,9 +430,7 @@ mod tests {
     };
     use indexmap::IndexSet;
     use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
-    use product_listing_core::product_listing::{
-        ListingSaleObservation, ProductListingAuction, ProductListingPricing,
-    };
+    use product_listing_core::product_listing::{ListingSaleObservation, ProductListingPricing};
     use product_listing_core::{
         listing_availability::ListingAvailability, listing_lifecycle::ListingLifecycle,
         product_listing_slug_id::ProductListingSlugId, source_listing_id::SourceListingId,
@@ -621,7 +619,7 @@ mod tests {
                 url: url.clone(),
                 view_url: url,
                 images: IndexSet::new(),
-                auction: ProductListingAuction::default(),
+                auction: None,
                 created: OffsetDateTime::UNIX_EPOCH,
                 updated: OffsetDateTime::UNIX_EPOCH,
             },

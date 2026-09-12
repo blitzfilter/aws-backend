@@ -28,6 +28,7 @@ url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
+auction-core = { workspace = true }
 rstest = { workspace = true }
 serial_test = { workspace = true }
 test-api = { workspace = true, features = ["opensearch"] }

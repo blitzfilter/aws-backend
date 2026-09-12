@@ -10,7 +10,7 @@ use product_listing_core::description::Description;
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
 use product_listing_core::product_listing::{
-    NewProductListing, ProductListing, ProductListingAuction, ProductListingPricing,
+    NewProductListing, ProductListing, ProductListingPricing,
 };
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::product_listing_image::ProductListingImage;
@@ -460,7 +460,7 @@ fn sample_product(
         availability: Some(ListingAvailability::Available),
         url: url(&format!("https://example.com/{slug}")),
         images,
-        auction: ProductListingAuction::default(),
+        auction: None,
     }) {
         Ok(product) => product,
         Err(error) => panic!("failed to create product: {error}"),

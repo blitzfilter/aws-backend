@@ -3,10 +3,10 @@ pub use super::error::NormalizationError;
 use crate::scraper::css_selector::product_schema::RawExtractedProduct;
 use money::Currency;
 use product_listing_normalization::{
-    AvailabilityNormalizationError, DateTimeField, DateTimeNormalizationError,
-    ImageUrlNormalizationError, PriceField, PriceNormalizationError, normalize_date_time,
-    normalize_description, normalize_image_urls, normalize_price, normalize_product_listing_price,
-    normalize_source_listing_id_with_url_sha_fallback, normalize_title, quick_check_availability,
+    AvailabilityNormalizationError, ImageUrlNormalizationError, PriceField,
+    PriceNormalizationError, normalize_description, normalize_image_urls, normalize_price,
+    normalize_product_listing_price, normalize_source_listing_id_with_url_sha_fallback,
+    normalize_title, quick_check_availability,
 };
 use tracing::warn;
 use url::Url;
@@ -58,8 +58,6 @@ pub struct PreparedProduct {
     pub price_estimate_min: Option<money::Price>,
     pub price_estimate_max: Option<money::Price>,
     pub images: Vec<product_listing_core::product_listing_image::ProductListingImage>,
-    pub auction_start: Option<time::OffsetDateTime>,
-    pub auction_end: Option<time::OffsetDateTime>,
     pub raw_attributes: std::collections::BTreeMap<String, Vec<String>>,
     pub raw_state: String,
     pub url: Url,
@@ -101,10 +99,6 @@ pub fn prepare_product(
         PriceField::EstimateMax,
     )?;
     let images = normalize_image_urls(raw.images, &url).map_err(map_image_error)?;
-    let auction_start = normalize_date_time(raw.auction_start.as_deref())
-        .map_err(|error| map_date_time_error(error, DateTimeField::AuctionStart))?;
-    let auction_end = normalize_date_time(raw.auction_end.as_deref())
-        .map_err(|error| map_date_time_error(error, DateTimeField::AuctionEnd))?;
 
     Ok(PreparedProduct {
         availability,
@@ -115,8 +109,6 @@ pub fn prepare_product(
         price_estimate_min,
         price_estimate_max,
         images,
-        auction_start,
-        auction_end,
         raw_attributes: raw.raw_attributes,
         raw_state: raw.state,
         url,
@@ -210,10 +202,6 @@ fn map_image_error(error: ImageUrlNormalizationError) -> NormalizationError {
     }
 }
 
-fn map_date_time_error(_: DateTimeNormalizationError, field: DateTimeField) -> NormalizationError {
-    NormalizationError::DateTimeParseError { field }
-}
-
 fn map_availability_error(error: AvailabilityNormalizationError) -> NormalizationError {
     match error {
         AvailabilityNormalizationError::InputTooLong { len, max } => {
@@ -243,8 +231,6 @@ mod tests {
             price_estimate_max: None,
             state: "sold out".into(),
             images: vec![],
-            auction_start: None,
-            auction_end: None,
             raw_attributes: Default::default(),
         }
     }

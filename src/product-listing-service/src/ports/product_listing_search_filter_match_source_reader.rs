@@ -72,7 +72,7 @@ pub struct ProductListingSearchFilterMatchSource {
     pub images: IndexSet<ProductListingImage>,
     /// Authoritative embedding, when enrichment completed.
     pub embedding: Option<Vec<f32>>,
-    pub auction: ProductListingAuction,
+    pub auction: Option<ProductListingAuction>,
     pub created: OffsetDateTime,
     pub updated: OffsetDateTime,
 }

@@ -437,8 +437,6 @@ mod tests {
                 extract: ExtractionKind::Attribute { name: "src".into() },
                 cardinality: ExtractionCardinality::All,
             },
-            auction_start: None,
-            auction_end: None,
             raw_attributes: Default::default(),
         }
     }

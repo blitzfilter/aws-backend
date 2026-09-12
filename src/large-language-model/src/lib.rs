@@ -1754,8 +1754,8 @@ mod tests {
                         "description": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
                         "price": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
                         "source_listing_id": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
-                        "auction_start": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
-                        "auction_end": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
+                        "lot_bidding_opens": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
+                        "lot_scheduled_closes": {"anyOf": [{"$ref": "#/$defs/ExtractionRule"}, {"type": "null"}]},
                         "raw_attributes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/ExtractionRule"}}
                     },
                     "required": ["title", "state", "images"]
@@ -1789,8 +1789,8 @@ mod tests {
             "description",
             "price",
             "source_listing_id",
-            "auction_start",
-            "auction_end",
+            "lot_bidding_opens",
+            "lot_scheduled_closes",
         ] {
             assert!(!required.iter().any(|value| value == optional));
         }

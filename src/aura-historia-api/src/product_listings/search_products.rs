@@ -84,12 +84,12 @@ struct ProductListingSearchData {
         with = "domain_primitives::query::range_query::range_rfc3339::option",
         default
     )]
-    auction_start: Option<RangeQuery<OffsetDateTime>>,
+    lot_bidding_opens: Option<RangeQuery<OffsetDateTime>>,
     #[serde(
         with = "domain_primitives::query::range_query::range_rfc3339::option",
         default
     )]
-    auction_end: Option<RangeQuery<OffsetDateTime>>,
+    lot_scheduled_closes: Option<RangeQuery<OffsetDateTime>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -165,8 +165,8 @@ impl TryFrom<ProductListingSearchData> for ProductListingSearch {
             ),
             created_query: data.created,
             updated_query: data.updated,
-            auction_start_query: data.auction_start,
-            auction_end_query: data.auction_end,
+            lot_bidding_opens_query: data.lot_bidding_opens,
+            lot_scheduled_closes_query: data.lot_scheduled_closes,
         })
     }
 }

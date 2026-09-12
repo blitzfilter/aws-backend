@@ -179,12 +179,9 @@ mod tests {
     use indexmap::IndexSet;
     use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
     use product_listing_core::{
-        listing_availability::ListingAvailability,
-        listing_lifecycle::ListingLifecycle,
-        product_listing::{ProductListingAuction, ProductListingPricing},
-        product_listing_image::ProductListingImage,
-        product_listing_slug_id::ProductListingSlugId,
-        source_listing_id::SourceListingId,
+        listing_availability::ListingAvailability, listing_lifecycle::ListingLifecycle,
+        product_listing::ProductListingPricing, product_listing_image::ProductListingImage,
+        product_listing_slug_id::ProductListingSlugId, source_listing_id::SourceListingId,
     };
     use product_listing_service::ports::{
         ListingSourceSummary, ProductListingSearchFilterMatchSourceEventKind,
@@ -225,7 +222,7 @@ mod tests {
             image: None,
             images: IndexSet::new(),
             embedding: None,
-            auction: ProductListingAuction::default(),
+            auction: None,
             created: time::OffsetDateTime::UNIX_EPOCH,
             updated: time::OffsetDateTime::UNIX_EPOCH,
         })

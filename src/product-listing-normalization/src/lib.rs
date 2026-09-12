@@ -18,7 +18,7 @@ pub use availability::{
     AvailabilityNormalizationError, ListingAvailabilityQuickCheck, quick_check_availability,
 };
 pub use date_time::{DateTimeNormalizationError, normalize_date_time};
-pub use error::{DateTimeField, NormalizationError, PriceField};
+pub use error::{NormalizationError, PriceField};
 pub use image_url::{ImageUrlNormalizationError, normalize_image_urls};
 pub use language::detect_language;
 pub use normalization_input::{
@@ -31,11 +31,13 @@ pub use normalization_input::{
 };
 pub use price::{PriceNormalizationError, normalize_price, normalize_product_listing_price};
 pub use raw_values_normalizer::{
-    PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION, ProductListingNormalizationContextV1,
-    ProductListingRawValues, ProductListingRawValuesNormalizationError,
-    ProductListingRawValuesNormalizationOutcome, ProductListingRawValuesNormalizer,
-    ProductListingRawValuesPatch, ProductListingRawValuesPriceFormat,
-    ProductListingRawValuesResolved,
+    LotAuctionTimingField, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
+    ProductListingNormalizationContextV1, ProductListingRawValues, ProductListingRawValuesAuction,
+    ProductListingRawValuesAuctionNormalizationError, ProductListingRawValuesAuctionTime,
+    ProductListingRawValuesLotAuctionTiming, ProductListingRawValuesNormalizationDiagnostic,
+    ProductListingRawValuesNormalizationError, ProductListingRawValuesNormalizationOutcome,
+    ProductListingRawValuesNormalizer, ProductListingRawValuesPatch,
+    ProductListingRawValuesPriceFormat, ProductListingRawValuesResolved,
 };
 pub use source_listing_id::{
     SourceListingIdNormalizationError, normalize_source_listing_id_with_url_sha_fallback,

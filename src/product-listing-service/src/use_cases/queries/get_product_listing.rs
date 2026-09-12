@@ -177,7 +177,7 @@ pub struct ProductListingDetailsView {
     pub view_url: Url,
     pub images: Vec<ProductListingImageView>,
     pub content_policy: Option<ContentPolicyDecision>,
-    pub auction: ProductListingAuction,
+    pub auction: Option<ProductListingAuction>,
     pub created: OffsetDateTime,
     pub updated: OffsetDateTime,
 }
@@ -462,7 +462,7 @@ pub fn redact_hidden_product(
     details.url = hidden_url.clone();
     details.view_url = hidden_url;
     details.images.clear();
-    details.auction = ProductListingAuction::default();
+    details.auction = None;
     details.created = OffsetDateTime::UNIX_EPOCH;
     details.updated = OffsetDateTime::UNIX_EPOCH;
 
@@ -837,7 +837,7 @@ mod tests {
                 view_url: url("https://aura.example/products/cabinet-abcdef")?,
                 images: IndexSet::<ProductListingImage>::new(),
                 content_policy: None,
-                auction: ProductListingAuction::default(),
+                auction: None,
                 created: OffsetDateTime::UNIX_EPOCH,
                 updated: OffsetDateTime::UNIX_EPOCH,
             },

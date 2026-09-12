@@ -110,8 +110,6 @@ fn normalized_from_json(data: NormalizedExpectationJson) -> NormalizedExpectatio
         availability: parse_availability(data.availability.as_deref()),
         url: data.url,
         images: data.images,
-        auction_start: parse_optional_rfc3339(data.auction_start.as_deref()),
-        auction_end: parse_optional_rfc3339(data.auction_end.as_deref()),
     }
 }
 
@@ -165,12 +163,5 @@ fn parse_availability(value: Option<&str>) -> Option<ListingAvailability> {
         ListingAvailability::from_code(code).unwrap_or_else(|| {
             panic!("unsupported normalized availability '{code}' in fixtures.json")
         })
-    })
-}
-
-fn parse_optional_rfc3339(value: Option<&str>) -> Option<time::OffsetDateTime> {
-    value.map(|v| {
-        time::OffsetDateTime::parse(v, &time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|e| panic!("invalid RFC3339 datetime '{v}' in fixtures.json: {e}"))
     })
 }

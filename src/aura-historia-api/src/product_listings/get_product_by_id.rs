@@ -91,7 +91,7 @@ mod tests {
     use notification_core::notification_id::NotificationId;
     use product_listing_core::listing_availability::ListingAvailability;
     use product_listing_core::listing_lifecycle::ListingLifecycle;
-    use product_listing_core::product_listing::{ProductListingAuction, ProductListingPricing};
+    use product_listing_core::product_listing::ProductListingPricing;
     use product_listing_core::product_listing_slug_id::ProductListingSlugId;
     use product_listing_core::source_listing_id::SourceListingId;
     use product_listing_core::title::Title;
@@ -534,7 +534,7 @@ mod tests {
                 view_url: Url::parse("https://aura.example/product-listings/cabinet-abcdef")?,
                 images: Default::default(),
                 content_policy: None,
-                auction: ProductListingAuction::default(),
+                auction: None,
                 created: OffsetDateTime::UNIX_EPOCH,
                 updated: OffsetDateTime::UNIX_EPOCH,
             },

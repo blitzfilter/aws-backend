@@ -7,9 +7,7 @@ use platform_postgres::SqlxUnitOfWork;
 use product_listing_core::{
     description::Description,
     listing_availability::ListingAvailability,
-    product_listing::{
-        NewProductListing, ProductListing, ProductListingAuction, ProductListingPricing,
-    },
+    product_listing::{NewProductListing, ProductListing, ProductListingPricing},
     product_listing_id::ProductListingId,
     product_listing_image::ProductListingImage,
     product_listing_slug_id::ProductListingSlugId,
@@ -99,7 +97,7 @@ fn sample_product(listing_source_id: ListingSourceId) -> ProductListing {
         availability: Some(ListingAvailability::Available),
         url: url("https://example.com/event-appender"),
         images,
-        auction: ProductListingAuction::default(),
+        auction: None,
     })
     .unwrap_or_else(|error| panic!("create product: {error}"))
 }

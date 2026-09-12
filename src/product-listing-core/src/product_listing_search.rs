@@ -102,8 +102,8 @@ pub struct ProductListingSearch {
     pub availability_query: Option<ListingAvailabilityQuery>,
     pub created_query: Option<RangeQuery<OffsetDateTime>>,
     pub updated_query: Option<RangeQuery<OffsetDateTime>>,
-    pub auction_start_query: Option<RangeQuery<OffsetDateTime>>,
-    pub auction_end_query: Option<RangeQuery<OffsetDateTime>>,
+    pub lot_bidding_opens_query: Option<RangeQuery<OffsetDateTime>>,
+    pub lot_scheduled_closes_query: Option<RangeQuery<OffsetDateTime>>,
 }
 
 impl ProductListingSearch {
@@ -120,8 +120,8 @@ impl ProductListingSearch {
             availability_query: None,
             created_query: None,
             updated_query: None,
-            auction_start_query: None,
-            auction_end_query: None,
+            lot_bidding_opens_query: None,
+            lot_scheduled_closes_query: None,
         }
     }
 
@@ -182,16 +182,19 @@ impl ProductListingSearch {
         self
     }
 
-    pub fn with_auction_start_query(
+    pub fn with_lot_bidding_opens_query(
         mut self,
-        auction_start_query: RangeQuery<OffsetDateTime>,
+        lot_bidding_opens_query: RangeQuery<OffsetDateTime>,
     ) -> Self {
-        self.auction_start_query = Some(auction_start_query);
+        self.lot_bidding_opens_query = Some(lot_bidding_opens_query);
         self
     }
 
-    pub fn with_auction_end_query(mut self, auction_end_query: RangeQuery<OffsetDateTime>) -> Self {
-        self.auction_end_query = Some(auction_end_query);
+    pub fn with_lot_scheduled_closes_query(
+        mut self,
+        lot_scheduled_closes_query: RangeQuery<OffsetDateTime>,
+    ) -> Self {
+        self.lot_scheduled_closes_query = Some(lot_scheduled_closes_query);
         self
     }
 }
@@ -297,8 +300,8 @@ pub mod faker {
                 availability_query: None,
                 created_query: fake_range_query_datetime(config, rng),
                 updated_query: fake_range_query_datetime(config, rng),
-                auction_start_query: fake_range_query_datetime(config, rng),
-                auction_end_query: fake_range_query_datetime(config, rng),
+                lot_bidding_opens_query: fake_range_query_datetime(config, rng),
+                lot_scheduled_closes_query: fake_range_query_datetime(config, rng),
             }
         }
     }

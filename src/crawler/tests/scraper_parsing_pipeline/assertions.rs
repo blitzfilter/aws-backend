@@ -49,16 +49,6 @@ pub fn assert_extraction(
     );
     assert_eq!(result.state, expected.state, "state");
     assert_eq!(result.images, expected.images, "images");
-    assert_eq!(
-        result.auction_start.as_deref(),
-        expected.auction_start.as_deref(),
-        "auction_start"
-    );
-    assert_eq!(
-        result.auction_end.as_deref(),
-        expected.auction_end.as_deref(),
-        "auction_end"
-    );
 }
 
 pub async fn assert_normalized(
@@ -111,9 +101,4 @@ pub async fn assert_normalized(
     let result_image_urls: Vec<&str> = result.images.iter().map(|i| i.url().as_str()).collect();
     let expected_images: Vec<&str> = expected.images.iter().map(|i| i.as_str()).collect();
     assert_eq!(result_image_urls, expected_images, "images");
-    assert_eq!(
-        result.auction_start, expected.auction_start,
-        "auction_start"
-    );
-    assert_eq!(result.auction_end, expected.auction_end, "auction_end");
 }

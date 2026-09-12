@@ -1,5 +1,6 @@
 use crate::{
     object_id::{PersistedObjectIdError, try_from_uuid},
+    product_listing_auction::{ProductListingAuctionParts, auction_from_parts},
     url::referral_configuration,
 };
 use application::{
@@ -17,9 +18,7 @@ use product_listing_core::content_policy::{ContentPolicyDecision, SensitiveConte
 use product_listing_core::description::Description;
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
-use product_listing_core::product_listing::{
-    ListingSaleObservation, ProductListingAuction, ProductListingPricing,
-};
+use product_listing_core::product_listing::{ListingSaleObservation, ProductListingPricing};
 
 use product_listing_core::product_listing_image::ProductListingImage;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
@@ -85,8 +84,19 @@ struct ProductListingDetailsRow {
     product_images: serde_json::Value,
     content_policy_decision: Option<String>,
     content_policy_category: Option<String>,
-    auction_start: Option<OffsetDateTime>,
-    auction_end: Option<OffsetDateTime>,
+    auction_context_product_listing_id: Option<uuid::Uuid>,
+    auction_lot_number: Option<String>,
+    auction_catalogue_position: Option<i64>,
+    auction_timing_product_listing_id: Option<uuid::Uuid>,
+    auction_bidding_opens_precision: Option<String>,
+    auction_bidding_opens_instant_at: Option<OffsetDateTime>,
+    auction_bidding_opens_date_on: Option<time::Date>,
+    auction_bidding_opens_source_timezone: Option<String>,
+    auction_scheduled_closes_precision: Option<String>,
+    auction_scheduled_closes_instant_at: Option<OffsetDateTime>,
+    auction_scheduled_closes_date_on: Option<time::Date>,
+    auction_scheduled_closes_source_timezone: Option<String>,
+    auction_reported_closed_at: Option<OffsetDateTime>,
     created: OffsetDateTime,
     updated: OffsetDateTime,
     personalization_user_id: Option<uuid::Uuid>,
@@ -273,7 +283,20 @@ const SELECT_PRODUCT_WATCHLIST_DETAILS: &str = r#"
         p.product_images,
         assessment.decision AS content_policy_decision,
         assessment.category AS content_policy_category,
-        p.auction_start, p.auction_end, p.created, p.updated,
+        auction_context.product_listing_id AS auction_context_product_listing_id,
+        auction_context.lot_number AS auction_lot_number,
+        auction_context.catalogue_position AS auction_catalogue_position,
+        auction_timing.product_listing_id AS auction_timing_product_listing_id,
+        auction_timing.bidding_opens_precision AS auction_bidding_opens_precision,
+        auction_timing.bidding_opens_instant_at AS auction_bidding_opens_instant_at,
+        auction_timing.bidding_opens_date_on AS auction_bidding_opens_date_on,
+        auction_timing.bidding_opens_source_timezone AS auction_bidding_opens_source_timezone,
+        auction_timing.scheduled_closes_precision AS auction_scheduled_closes_precision,
+        auction_timing.scheduled_closes_instant_at AS auction_scheduled_closes_instant_at,
+        auction_timing.scheduled_closes_date_on AS auction_scheduled_closes_date_on,
+        auction_timing.scheduled_closes_source_timezone AS auction_scheduled_closes_source_timezone,
+        auction_timing.reported_closed_at AS auction_reported_closed_at,
+        p.created, p.updated,
         $2::uuid AS personalization_user_id,
         authenticated_user.show_unassessed_or_sensitive_content AS user_show_unassessed_or_sensitive_content,
         authenticated_user.tier AS user_tier,
@@ -291,6 +314,10 @@ const SELECT_PRODUCT_WATCHLIST_DETAILS: &str = r#"
     FROM product_listings p
     JOIN listing_sources listing_source
         ON listing_source.listing_source_id = p.listing_source_id
+    LEFT JOIN product_listing_auction_contexts auction_context
+        ON auction_context.product_listing_id = p.product_listing_id
+    LEFT JOIN product_listing_lot_auction_timings auction_timing
+        ON auction_timing.product_listing_id = auction_context.product_listing_id
     LEFT JOIN product_listing_content_assessments assessment
         ON assessment.product_listing_id = p.product_listing_id
         AND assessment.source_event_id = p.content_source_event_id
@@ -417,6 +444,22 @@ impl TryFrom<ProductListingDetailsRow> for PersonalizedProductListingDetailsRead
             row.content_policy_decision.as_deref(),
             row.content_policy_category.as_deref(),
         )?;
+        let auction = auction_from_parts(ProductListingAuctionParts {
+            context_product_listing_id: row.auction_context_product_listing_id,
+            lot_number: row.auction_lot_number,
+            catalogue_position: row.auction_catalogue_position,
+            timing_product_listing_id: row.auction_timing_product_listing_id,
+            bidding_opens_precision: row.auction_bidding_opens_precision,
+            bidding_opens_instant_at: row.auction_bidding_opens_instant_at,
+            bidding_opens_date_on: row.auction_bidding_opens_date_on,
+            bidding_opens_source_timezone: row.auction_bidding_opens_source_timezone,
+            scheduled_closes_precision: row.auction_scheduled_closes_precision,
+            scheduled_closes_instant_at: row.auction_scheduled_closes_instant_at,
+            scheduled_closes_date_on: row.auction_scheduled_closes_date_on,
+            scheduled_closes_source_timezone: row.auction_scheduled_closes_source_timezone,
+            reported_closed_at: row.auction_reported_closed_at,
+        })
+        .map_err(|_| ())?;
         let product_title = localized_title(row.product_title_text, row.product_title_language)?;
         let product_description = localized_description(
             row.product_description_text,
@@ -477,10 +520,7 @@ impl TryFrom<ProductListingDetailsRow> for PersonalizedProductListingDetailsRead
                 url,
                 images: parsed_images,
                 content_policy,
-                auction: ProductListingAuction {
-                    start: row.auction_start,
-                    end: row.auction_end,
-                },
+                auction,
                 created: row.created,
                 updated: row.updated,
             },

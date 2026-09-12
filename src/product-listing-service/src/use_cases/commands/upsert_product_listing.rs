@@ -50,8 +50,9 @@ pub struct UpsertProductListingCommand {
     pub availability: PatchField<ListingAvailability>,
     pub url: Option<Url>,
     pub images: PatchField<IndexSet<ProductListingImage>>,
-    pub auction_start: PatchField<time::OffsetDateTime>,
-    pub auction_end: PatchField<time::OffsetDateTime>,
+    /// The outer context is asserted as one validated replacement. `Clear` preserves an
+    /// existing context; a dedicated correction use case owns retraction.
+    pub auction: PatchField<ProductListingAuction>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpsertProductListingResult {
@@ -419,10 +420,7 @@ impl UpsertProductListingCommand {
             },
             url,
             images: collection_patch_into_value(self.images),
-            auction: ProductListingAuction {
-                start: optional_patch_into_value(self.auction_start),
-                end: optional_patch_into_value(self.auction_end),
-            },
+            auction: optional_patch_into_value(self.auction),
         })
     }
 }
@@ -462,10 +460,9 @@ fn apply_update(
             product.replace_images(IndexSet::new())?;
         }
     }
-    let mut auction = product.auction();
-    apply_optional_patch(&mut auction.start, command.auction_start.clone());
-    apply_optional_patch(&mut auction.end, command.auction_end.clone());
-    product.replace_auction(auction)?;
+    if let PatchField::Set(auction) = command.auction.clone() {
+        product.replace_auction(Some(auction))?;
+    }
     Ok(())
 }
 
@@ -587,14 +584,24 @@ mod tests {
             availability: PatchField::Unchanged,
             url: None,
             images: PatchField::Unchanged,
-            auction_start: PatchField::Unchanged,
-            auction_end: PatchField::Unchanged,
+            auction: PatchField::Unchanged,
         }
     }
 
     fn test_title_slug() -> ProductListingSlugId {
         ProductListingSlugId::raw("listing-a1b2c3")
             .unwrap_or_else(|error| panic!("valid product listing title slug: {error}"))
+    }
+
+    fn auction(lot_number: &str) -> ProductListingAuction {
+        ProductListingAuction::new(
+            Some(
+                product_listing_core::product_listing_auction::LotNumber::try_from(lot_number)
+                    .unwrap_or_else(|error| panic!("valid lot number: {error}")),
+            ),
+            None,
+            None,
+        )
     }
 
     fn listing_with_price(value: Option<ProductListingPrice>) -> ProductListing {
@@ -604,14 +611,14 @@ mod tests {
                 ..Default::default()
             },
             IndexSet::new(),
-            ProductListingAuction::default(),
+            None,
         )
     }
 
     fn listing_with_state(
         pricing: ProductListingPricing,
         images: IndexSet<ProductListingImage>,
-        auction: ProductListingAuction,
+        auction: Option<ProductListingAuction>,
     ) -> ProductListing {
         ProductListing::create(NewProductListing {
             id: ProductListingId::new(),
@@ -673,7 +680,7 @@ mod tests {
                     ..Default::default()
                 },
                 IndexSet::new(),
-                ProductListingAuction::default(),
+                None,
             );
             listing.take_pending_event_payload();
             let mut update = command(PatchField::Unchanged);
@@ -696,11 +703,8 @@ mod tests {
 
     #[test]
     fn should_not_emit_price_event_when_clearing_absent_estimate() {
-        let mut listing = listing_with_state(
-            ProductListingPricing::default(),
-            IndexSet::new(),
-            ProductListingAuction::default(),
-        );
+        let mut listing =
+            listing_with_state(ProductListingPricing::default(), IndexSet::new(), None);
         listing.take_pending_event_payload();
         let mut update = command(PatchField::Unchanged);
         update.price_estimate_min = PatchField::Clear;
@@ -722,11 +726,7 @@ mod tests {
             price_estimate_min: Some(price(210)),
             price_estimate_max: Some(price(220)),
         };
-        let mut listing = listing_with_state(
-            old_pricing,
-            IndexSet::new(),
-            ProductListingAuction::default(),
-        );
+        let mut listing = listing_with_state(old_pricing, IndexSet::new(), None);
         listing.take_pending_event_payload();
         let mut update = command(PatchField::Set(ProductListingPrice::from(price(200))));
         update.price_estimate_min = PatchField::Set(price(210));
@@ -780,7 +780,7 @@ mod tests {
             let mut listing = listing_with_state(
                 ProductListingPricing::default(),
                 IndexSet::from([image.clone()]),
-                ProductListingAuction::default(),
+                None,
             );
             listing.take_pending_event_payload();
             let mut update = command(PatchField::Unchanged);
@@ -798,32 +798,52 @@ mod tests {
     }
 
     #[test]
-    fn should_apply_auction_patches_atomically() {
-        let old = ProductListingAuction {
-            start: Some(time::macros::datetime!(2026-01-01 0:00 UTC)),
-            end: Some(time::macros::datetime!(2026-01-02 0:00 UTC)),
-        };
-        let new = ProductListingAuction {
-            start: Some(time::macros::datetime!(2026-02-01 0:00 UTC)),
-            end: Some(time::macros::datetime!(2026-02-02 0:00 UTC)),
-        };
-        let mut listing =
-            listing_with_state(ProductListingPricing::default(), IndexSet::new(), old);
+    fn should_replace_auction_context_for_existing_listing() {
+        let old = auction("1");
+        let new = auction("2");
+        let mut listing = listing_with_state(
+            ProductListingPricing::default(),
+            IndexSet::new(),
+            Some(old.clone()),
+        );
         listing.take_pending_event_payload();
         let mut update = command(PatchField::Unchanged);
-        update.auction_start = PatchField::Set(new.start.unwrap_or_else(|| panic!("start")));
-        update.auction_end = PatchField::Set(new.end.unwrap_or_else(|| panic!("end")));
+        update.auction = PatchField::Set(new.clone());
 
         apply_update(&mut listing, &update).unwrap_or_else(|error| panic!("update: {error}"));
 
-        assert_eq!(listing.auction(), new);
+        assert_eq!(Some(&new), listing.auction());
         let Some(ProductListingEventPayload::Changed(change)) =
             listing.take_pending_event_payload()
         else {
             panic!("expected changed payload");
         };
-        assert_eq!(Some(&old), change.auction().map(|value| value.previous()));
-        assert_eq!(Some(&new), change.auction().map(|value| value.current()));
+        assert_eq!(
+            Some(Some(old)),
+            change.auction().map(|value| value.previous().clone())
+        );
+        assert_eq!(
+            Some(Some(new)),
+            change.auction().map(|value| value.current().clone())
+        );
+    }
+
+    #[test]
+    fn should_preserve_auction_context_when_outer_patch_is_clear() {
+        let auction = auction("1");
+        let mut listing = listing_with_state(
+            ProductListingPricing::default(),
+            IndexSet::new(),
+            Some(auction.clone()),
+        );
+        listing.take_pending_event_payload();
+        let mut update = command(PatchField::Unchanged);
+        update.auction = PatchField::Clear;
+
+        apply_update(&mut listing, &update).unwrap_or_else(|error| panic!("update: {error}"));
+
+        assert_eq!(Some(&auction), listing.auction());
+        assert!(listing.take_pending_event_payload().is_none());
     }
 
     #[test]
@@ -859,49 +879,30 @@ mod tests {
             Url::parse("https://example.com/image.jpg")
                 .unwrap_or_else(|error| panic!("image URL: {error}")),
         );
-        for (
-            estimate_min,
-            estimate_max,
-            images,
-            auction_start,
-            auction_end,
-            expected_min,
-            expected_max,
-            expected_images,
-            expected_auction,
-        ) in [
+        for (estimate_min, estimate_max, images, auction_patch, expected_auction) in [
             (
                 PatchField::Set(price(110)),
                 PatchField::Set(price(120)),
                 PatchField::Set(IndexSet::from([image.clone()])),
-                PatchField::Set(time::OffsetDateTime::UNIX_EPOCH),
-                PatchField::Set(time::OffsetDateTime::UNIX_EPOCH),
-                Some(price(110)),
-                Some(price(120)),
-                IndexSet::from([image.clone()]),
-                ProductListingAuction {
-                    start: Some(time::OffsetDateTime::UNIX_EPOCH),
-                    end: Some(time::OffsetDateTime::UNIX_EPOCH),
-                },
+                PatchField::Set(auction("1")),
+                Some(auction("1")),
             ),
             (
                 PatchField::Clear,
                 PatchField::Unchanged,
                 PatchField::Clear,
                 PatchField::Clear,
-                PatchField::Unchanged,
                 None,
-                None,
-                IndexSet::new(),
-                ProductListingAuction::default(),
             ),
         ] {
+            let expected_min = optional_patch_into_value(estimate_min.clone());
+            let expected_max = optional_patch_into_value(estimate_max.clone());
+            let expected_images = collection_patch_into_value(images.clone());
             let mut upsert = command(PatchField::Unchanged);
             upsert.price_estimate_min = estimate_min;
             upsert.price_estimate_max = estimate_max;
             upsert.images = images;
-            upsert.auction_start = auction_start;
-            upsert.auction_end = auction_end;
+            upsert.auction = auction_patch;
 
             let new_listing = upsert
                 .into_new_product(ProductListingId::new(), test_title_slug())

@@ -41,7 +41,7 @@ pub struct CreateProductListingCommand {
     pub availability: Option<ListingAvailability>,
     pub url: Url,
     pub images: IndexSet<ProductListingImage>,
-    pub auction: ProductListingAuction,
+    pub auction: Option<ProductListingAuction>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -544,7 +544,7 @@ mod tests {
             url: Url::parse("https://example.com/listing")
                 .unwrap_or_else(|error| panic!("url: {error}")),
             images: IndexSet::new(),
-            auction: ProductListingAuction::default(),
+            auction: None,
         }
     }
     fn handler(

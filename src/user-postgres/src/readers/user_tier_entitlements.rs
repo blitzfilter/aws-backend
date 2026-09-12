@@ -56,8 +56,8 @@ WITH candidates AS (
                 AND coalesce(jsonb_array_length(search -> 'exclude_listing_source_id_query'), 0) = 0
                 AND search ->> 'created_query' IS NULL
                 AND search ->> 'updated_query' IS NULL
-                AND search ->> 'auction_start_query' IS NULL
-                AND search ->> 'auction_end_query' IS NULL
+                AND search ->> 'lot_bidding_opens_query' IS NULL
+                AND search ->> 'lot_scheduled_closes_query' IS NULL
             ELSE false
         END AS feature_allowed
     FROM search_filters

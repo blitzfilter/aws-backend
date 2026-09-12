@@ -52,8 +52,6 @@ fn schema(title_selector: &str) -> ProductCssSelectorSchema {
         price_estimate_max: None,
         state: rule("span.state"),
         images: image_rule("img.product"),
-        auction_start: None,
-        auction_end: None,
         raw_attributes: Default::default(),
     }
 }

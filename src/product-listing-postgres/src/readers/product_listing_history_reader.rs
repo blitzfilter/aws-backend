@@ -200,7 +200,7 @@ fn history_kind(
                 availability: discovered.availability(),
                 url: discovered.url().clone(),
                 image_count: discovered.image_count().value(),
-                auction: discovered.auction(),
+                auction: discovered.auction().cloned(),
             })),
         ),
         ProductListingEventPayload::Changed(changed) => {
@@ -244,8 +244,8 @@ fn history_kind(
             }
             if let Some(change) = changed.auction() {
                 changes.push(ProductListingHistoryChange::AuctionChanged {
-                    previous: *change.previous(),
-                    current: *change.current(),
+                    previous: change.previous().clone(),
+                    current: change.current().clone(),
                 });
             }
             if let Some(change) = changed.lifecycle() {

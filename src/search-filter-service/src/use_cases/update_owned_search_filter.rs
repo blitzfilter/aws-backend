@@ -44,8 +44,8 @@ pub struct ProductListingSearchPatch {
     pub availability_query: PatchField<ListingAvailabilityQuery>,
     pub created_query: PatchField<RangeQuery<OffsetDateTime>>,
     pub updated_query: PatchField<RangeQuery<OffsetDateTime>>,
-    pub auction_start_query: PatchField<RangeQuery<OffsetDateTime>>,
-    pub auction_end_query: PatchField<RangeQuery<OffsetDateTime>>,
+    pub lot_bidding_opens_query: PatchField<RangeQuery<OffsetDateTime>>,
+    pub lot_scheduled_closes_query: PatchField<RangeQuery<OffsetDateTime>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -356,8 +356,14 @@ fn apply_product_search_patch(
     changed |= apply_optional_patch(&patch.availability_query, &mut search.availability_query);
     changed |= apply_optional_patch(&patch.created_query, &mut search.created_query);
     changed |= apply_optional_patch(&patch.updated_query, &mut search.updated_query);
-    changed |= apply_optional_patch(&patch.auction_start_query, &mut search.auction_start_query);
-    changed |= apply_optional_patch(&patch.auction_end_query, &mut search.auction_end_query);
+    changed |= apply_optional_patch(
+        &patch.lot_bidding_opens_query,
+        &mut search.lot_bidding_opens_query,
+    );
+    changed |= apply_optional_patch(
+        &patch.lot_scheduled_closes_query,
+        &mut search.lot_scheduled_closes_query,
+    );
     Ok(changed)
 }
 

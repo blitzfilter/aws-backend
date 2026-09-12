@@ -609,12 +609,12 @@ pub(crate) fn build_common_filter_clauses(
             ProductListingDocumentSerdeField::Updated,
         ),
         (
-            &search.auction_start_query,
-            ProductListingDocumentSerdeField::AuctionStart,
+            &search.lot_bidding_opens_query,
+            ProductListingDocumentSerdeField::LotBiddingOpensAt,
         ),
         (
-            &search.auction_end_query,
-            ProductListingDocumentSerdeField::AuctionEnd,
+            &search.lot_scheduled_closes_query,
+            ProductListingDocumentSerdeField::LotScheduledClosesAt,
         ),
     ] {
         if let Some(min) = query.and_then(|query| query.min) {
@@ -627,7 +627,7 @@ pub(crate) fn build_common_filter_clauses(
             let value = max
                 .format(&well_known::Rfc3339)
                 .map_err(serde_json::Error::custom)?;
-            filter.push(json!({ "range": { field.as_str(): { "lte": value } } }));
+            filter.push(json!({ "range": { field.as_str(): { "lt": value } } }));
         }
     }
 
@@ -927,8 +927,11 @@ mod tests {
             url: Url::parse("https://shop.example/product_listings/sku-1")?,
             images: IndexSet::new(),
             embedding: None,
-            auction_start: None,
-            auction_end: None,
+            lot_label: None,
+            lot_position: None,
+            lot_bidding_opens_at: None,
+            lot_scheduled_closes_at: None,
+            lot_reported_closed_at: None,
             created: datetime!(2025-01-01 0:00 UTC),
             updated: datetime!(2025-01-02 0:00 UTC),
         })
@@ -968,6 +971,32 @@ mod tests {
                 || filter.to_string().contains("seller")
                 || filter.to_string().contains("geo")
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn should_render_half_open_exact_lot_time_ranges() -> Result<(), Box<dyn std::error::Error>> {
+        let search = ProductListingSearch::new(Language::En, Currency::Eur)
+            .with_lot_bidding_opens_query(domain_primitives::query::range_query::RangeQuery {
+                min: Some(datetime!(2026-01-03 00:00:00 UTC)),
+                max: Some(datetime!(2026-01-04 00:00:00 UTC)),
+            });
+
+        let (_, filters) = build_common_filter_clauses(&search)?;
+
+        assert_eq!(
+            Some(&json!("2026-01-03T00:00:00Z")),
+            filters[0].pointer("/range/lotBiddingOpensAt/gte")
+        );
+        assert_eq!(
+            Some(&json!("2026-01-04T00:00:00Z")),
+            filters[1].pointer("/range/lotBiddingOpensAt/lt")
+        );
+        assert!(
+            filters
+                .iter()
+                .all(|filter| !filter.to_string().contains("lte"))
+        );
         Ok(())
     }
 

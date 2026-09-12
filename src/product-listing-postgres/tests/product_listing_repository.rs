@@ -1,4 +1,5 @@
 use application::transaction::{Transaction, UnitOfWork};
+use auction_core::{AuctionTime, AuctionTimeZone};
 use domain_primitives::event_id::EventId;
 use domain_primitives::versioned::Versioned;
 use fxrate_core::FxRateId;
@@ -13,8 +14,10 @@ use product_listing_core::description::Description;
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
 use product_listing_core::product_listing::{
-    ListingSaleObservation, NewProductListing, ProductListing, ProductListingAuction,
-    ProductListingPricing,
+    ListingSaleObservation, NewProductListing, ProductListing, ProductListingPricing,
+};
+use product_listing_core::product_listing_auction::{
+    CataloguePosition, LotAuctionTiming, LotNumber, ProductListingAuction,
 };
 use product_listing_core::product_listing_id::{ProductListingId, ProductListingKey};
 use product_listing_core::product_listing_image::ProductListingImage;
@@ -152,6 +155,103 @@ async fn should_insert_append_find_and_update_product_by_id_in_postgres() {
     assert_eq!(product.source_listing_id().as_ref(), persisted_identity.2);
     assert_eq!(update_event.event_id.into_uuid(), persisted_identity.3);
     assert_eq!(2, persisted_identity.4);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_round_trip_listing_owned_auction_context_and_timing_without_auction_membership() {
+    let pool = get_postgres_client().await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let product_listings = SqlxProductListingRepositoryFactory::new();
+    let events = SqlxProductListingEventAppenderFactory::new();
+    let listing_source_id =
+        seed_listing_source(&pool, "product-listing-postgres-auction-context").await;
+    let timezone = AuctionTimeZone::try_from("Europe/Berlin")
+        .unwrap_or_else(|error| panic!("timezone: {error}"));
+    let opening_date = time::Date::from_calendar_date(2026, time::Month::May, 14)
+        .unwrap_or_else(|error| panic!("opening date: {error}"));
+    let auction = ProductListingAuction::new(
+        Some(LotNumber::try_from("Lot 42").unwrap_or_else(|error| panic!("lot: {error}"))),
+        Some(CataloguePosition::new(7).unwrap_or_else(|error| panic!("position: {error}"))),
+        Some(
+            LotAuctionTiming::new(
+                Some(AuctionTime::date(opening_date, Some(timezone.clone()))),
+                Some(AuctionTime::instant(
+                    OffsetDateTime::UNIX_EPOCH,
+                    Some(timezone),
+                )),
+                Some(OffsetDateTime::UNIX_EPOCH + time::Duration::hours(1)),
+            )
+            .unwrap_or_else(|error| panic!("timing: {error}")),
+        ),
+    );
+    let mut input = sample_new_product_listing(
+        "postgres-product-auction-context",
+        listing_source_id,
+        SourceListingId::try_from("postgres-product-auction-context")
+            .unwrap_or_else(|error| panic!("source listing ID: {error}")),
+        ProductListingId::new(),
+    );
+    input.auction = Some(auction.clone());
+    let product = ProductListing::create(input)
+        .unwrap_or_else(|error| panic!("create product with auction context: {error}"));
+
+    insert_product_with_event(&unit_of_work, &product_listings, &events, &product).await;
+
+    let mut tx = begin(&unit_of_work).await;
+    let loaded = product_listings
+        .in_transaction(&mut tx)
+        .find_by_id(product.id())
+        .await
+        .unwrap_or_else(|error| panic!("load auction context: {error:?}"))
+        .unwrap_or_else(|| panic!("persisted auction context is missing"));
+    commit(tx).await;
+    assert_eq!(Some(&auction), loaded.value.auction());
+
+    type PersistedAuctionContext = (
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<time::Date>,
+        Option<String>,
+        Option<OffsetDateTime>,
+    );
+    let (lot_number, catalogue_position, precision, date_on, timezone, reported_closed_at):
+        PersistedAuctionContext = sqlx::query_as(
+        r#"
+        SELECT
+            context.lot_number,
+            context.catalogue_position,
+            timing.bidding_opens_precision,
+            timing.bidding_opens_date_on,
+            timing.bidding_opens_source_timezone,
+            timing.reported_closed_at
+        FROM product_listing_auction_contexts context
+        JOIN product_listing_lot_auction_timings timing
+            ON timing.product_listing_id = context.product_listing_id
+        WHERE context.product_listing_id = $1
+        "#,
+    )
+    .bind(product.id().into_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("read persisted auction context: {error}"));
+    assert_eq!(Some("Lot 42".to_owned()), lot_number);
+    assert_eq!(Some(7), catalogue_position);
+    assert_eq!(Some("DATE".to_owned()), precision);
+    assert_eq!(Some(opening_date), date_on);
+    assert_eq!(Some("Europe/Berlin".to_owned()), timezone);
+    assert_eq!(
+        Some(OffsetDateTime::UNIX_EPOCH + time::Duration::hours(1)),
+        reported_closed_at
+    );
+
+    let auction_membership_columns: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_name IN ('product_listing_auction_contexts', 'product_listing_lot_auction_timings') AND column_name = 'auction_id'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("inspect auction ownership columns: {error}"));
+    assert_eq!(0, auction_membership_columns);
 }
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
@@ -776,7 +876,7 @@ async fn insert_product_row(
         "availability": null,
         "url": "https://example.test/product",
         "imageCount": 0,
-        "auction": {"start": null, "end": null}
+        "auction": null
     }))
     .execute(&mut *tx)
     .await?;
@@ -931,7 +1031,7 @@ fn sample_new_product_listing(
         availability: None,
         url: url(&format!("https://example.com/{slug}")),
         images,
-        auction: ProductListingAuction::default(),
+        auction: None,
     }
 }
 

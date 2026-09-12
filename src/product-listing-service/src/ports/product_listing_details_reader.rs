@@ -52,7 +52,7 @@ pub struct ProductListingDetailsReadModel {
     pub view_url: Url,
     pub images: IndexSet<ProductListingImage>,
     pub content_policy: Option<ContentPolicyDecision>,
-    pub auction: ProductListingAuction,
+    pub auction: Option<ProductListingAuction>,
     pub created: OffsetDateTime,
     pub updated: OffsetDateTime,
 }

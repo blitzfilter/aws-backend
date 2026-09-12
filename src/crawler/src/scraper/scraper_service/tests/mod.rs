@@ -102,8 +102,6 @@ pub(super) fn minimal_schema() -> ProductCssSelectorSchema {
         price_estimate_max: None,
         state: text_rule("#state"),
         images: attr_rule_all("img", "src"),
-        auction_start: None,
-        auction_end: None,
         raw_attributes: Default::default(),
     }
 }
@@ -178,8 +176,6 @@ pub(super) fn prepared_product(url: Url) -> PreparedProduct {
         price_estimate_max: None,
         url,
         images: vec![],
-        auction_start: None,
-        auction_end: None,
         raw_attributes: Default::default(),
     }
 }

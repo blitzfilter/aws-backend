@@ -2454,9 +2454,9 @@ mod tests {
             pricing.remove("price");
         }
 
-        let mut omitted_auction_start =
+        let mut omitted_lot_bidding_opens =
             product_event_change("PRODUCT_LISTING_DISCOVERED", "DOMAIN");
-        if let Some(payload) = omitted_auction_start
+        if let Some(payload) = omitted_lot_bidding_opens
             .record
             .as_mut()
             .and_then(|record| record.get_mut("payload"))
@@ -2470,7 +2470,7 @@ mod tests {
             ("unknown discovery field", unknown_discovery),
             ("omitted nullable discovery field", omitted_title),
             ("omitted pricing field", omitted_price),
-            ("omitted auction field", omitted_auction_start),
+            ("omitted auction field", omitted_lot_bidding_opens),
             (
                 "unknown localized field",
                 product_event_change_with_payload(

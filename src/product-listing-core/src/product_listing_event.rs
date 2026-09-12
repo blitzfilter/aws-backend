@@ -45,7 +45,6 @@ impl ProductListingEventPayload {
     pub fn rehydrate_discovered(
         state: RehydratedProductListingDiscovered,
     ) -> Result<Self, RehydrateProductListingEventError> {
-        validate_auction(state.auction)?;
         Ok(Self::Discovered(ProductListingDiscovered {
             listing_source_id: state.listing_source_id,
             source_listing_id: state.source_listing_id,
@@ -76,19 +75,7 @@ impl ProductListingEventPayload {
                     previous_count: previous,
                     current_count: current,
                 }),
-            auction: state
-                .auction
-                .map(|(previous, current)| {
-                    validate_auction(previous)?;
-                    validate_auction(current)?;
-                    if previous == current {
-                        return Err(RehydrateProductListingEventError::EqualValues {
-                            field: "auction",
-                        });
-                    }
-                    Ok(ValueChange::new(previous, current))
-                })
-                .transpose()?,
+            auction: value_change(state.auction, "auction")?.map(Box::new),
             lifecycle: state.lifecycle,
             sale_observation: sale_observation_change(state.sale_observation)?,
         };
@@ -130,7 +117,7 @@ pub struct RehydratedProductListingDiscovered {
     pub availability: Option<ListingAvailability>,
     pub url: Url,
     pub image_count: ProductListingImageCount,
-    pub auction: ProductListingAuction,
+    pub auction: Option<ProductListingAuction>,
 }
 
 /// Adapter inputs for rebuilding an immutable changed payload.
@@ -143,7 +130,7 @@ pub struct RehydratedProductListingChanged {
     pub availability: Option<(Option<ListingAvailability>, Option<ListingAvailability>)>,
     pub url: Option<(Url, Url)>,
     pub images: Option<(ProductListingImageCount, ProductListingImageCount)>,
-    pub auction: Option<(ProductListingAuction, ProductListingAuction)>,
+    pub auction: Option<(Option<ProductListingAuction>, Option<ProductListingAuction>)>,
     pub lifecycle: Option<ProductListingLifecycleChange>,
     pub sale_observation: Option<(
         Option<ListingSaleObservation>,
@@ -187,8 +174,7 @@ pub enum RehydrateProductListingEventError {
     EmptyChanged,
     #[error("ProductListing event {field} has equal previous and current values")]
     EqualValues { field: &'static str },
-    #[error("ProductListing event auction start is after its end")]
-    AuctionStartAfterEnd,
+
     #[error("withdrawal event has current availability")]
     WithdrawnEventHasCurrentAvailability,
     #[error("restoration event has previous availability")]
@@ -207,7 +193,7 @@ pub struct ProductListingDiscovered {
     availability: Option<ListingAvailability>,
     url: Url,
     image_count: ProductListingImageCount,
-    auction: ProductListingAuction,
+    auction: Option<ProductListingAuction>,
 }
 
 impl ProductListingDiscovered {
@@ -221,7 +207,7 @@ impl ProductListingDiscovered {
         availability: Option<ListingAvailability>,
         url: Url,
         image_count: ProductListingImageCount,
-        auction: ProductListingAuction,
+        auction: Option<ProductListingAuction>,
     ) -> Self {
         Self {
             listing_source_id,
@@ -268,8 +254,8 @@ impl ProductListingDiscovered {
         self.image_count
     }
 
-    pub const fn auction(&self) -> ProductListingAuction {
-        self.auction
+    pub fn auction(&self) -> Option<&ProductListingAuction> {
+        self.auction.as_ref()
     }
 }
 
@@ -325,7 +311,7 @@ pub struct ProductListingChanged {
     availability: Option<ValueChange<Option<ListingAvailability>>>,
     url: Option<ValueChange<Url>>,
     image_count: Option<ProductListingImagesChanged>,
-    auction: Option<ValueChange<ProductListingAuction>>,
+    auction: Option<Box<ValueChange<Option<ProductListingAuction>>>>,
     lifecycle: Option<ProductListingLifecycleChange>,
     sale_observation: Option<ValueChange<Option<ListingSaleObservation>>>,
 }
@@ -398,10 +384,12 @@ impl ProductListingChanged {
 
     pub(crate) fn change_auction(
         &mut self,
-        previous: ProductListingAuction,
-        current: ProductListingAuction,
+        previous: Option<ProductListingAuction>,
+        current: Option<ProductListingAuction>,
     ) {
-        coalesce_value_change(&mut self.auction, previous, current);
+        let mut auction = self.auction.take().map(|change| *change);
+        coalesce_value_change(&mut auction, previous, current);
+        self.auction = auction.map(Box::new);
     }
 
     pub(crate) fn change_lifecycle(&mut self, change: ProductListingLifecycleChange) {
@@ -484,8 +472,8 @@ impl ProductListingChanged {
         self.image_count.as_ref()
     }
 
-    pub const fn auction(&self) -> Option<&ValueChange<ProductListingAuction>> {
-        self.auction.as_ref()
+    pub fn auction(&self) -> Option<&ValueChange<Option<ProductListingAuction>>> {
+        self.auction.as_deref()
     }
 
     pub const fn lifecycle(&self) -> Option<&ProductListingLifecycleChange> {
@@ -535,19 +523,6 @@ fn sale_observation_change(
         return Err(RehydrateProductListingEventError::SaleObservationCorrectionUnsupported);
     }
     Ok(Some(ValueChange::new(previous, current)))
-}
-
-fn validate_auction(
-    auction: ProductListingAuction,
-) -> Result<(), RehydrateProductListingEventError> {
-    if auction
-        .start
-        .zip(auction.end)
-        .is_some_and(|(start, end)| start > end)
-    {
-        return Err(RehydrateProductListingEventError::AuctionStartAfterEnd);
-    }
-    Ok(())
 }
 
 fn coalesce_value_change<T: Clone + PartialEq>(

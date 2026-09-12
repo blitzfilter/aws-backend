@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 application = { workspace = true }
+auction-core = { workspace = true }
 search-filter-core = { workspace = true }
 user-core = { workspace = true }
 async-trait = { workspace = true }

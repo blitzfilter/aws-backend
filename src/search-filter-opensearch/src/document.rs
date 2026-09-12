@@ -35,8 +35,8 @@ const PRODUCT_SEARCH_FIELDS: [&str; 13] = [
     "availability",
     "created",
     "updated",
-    "auctionStart",
-    "auctionEnd",
+    "lotBiddingOpensAt",
+    "lotScheduledClosesAt",
 ];
 
 fn serialize_code<T, S>(
@@ -289,10 +289,10 @@ struct ProductListingSearchDocument {
     created_query: Option<TimeRangeDocument>,
     #[serde(rename = "updated")]
     updated_query: Option<TimeRangeDocument>,
-    #[serde(rename = "auctionStart")]
-    auction_start_query: Option<TimeRangeDocument>,
-    #[serde(rename = "auctionEnd")]
-    auction_end_query: Option<TimeRangeDocument>,
+    #[serde(rename = "lotBiddingOpensAt")]
+    lot_bidding_opens_query: Option<TimeRangeDocument>,
+    #[serde(rename = "lotScheduledClosesAt")]
+    lot_scheduled_closes_query: Option<TimeRangeDocument>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -383,12 +383,12 @@ impl TryFrom<&ProductListingSearch> for ProductListingSearchDocument {
             }),
             created_query: search.created_query.map(TryInto::try_into).transpose()?,
             updated_query: search.updated_query.map(TryInto::try_into).transpose()?,
-            auction_start_query: search
-                .auction_start_query
+            lot_bidding_opens_query: search
+                .lot_bidding_opens_query
                 .map(TryInto::try_into)
                 .transpose()?,
-            auction_end_query: search
-                .auction_end_query
+            lot_scheduled_closes_query: search
+                .lot_scheduled_closes_query
                 .map(TryInto::try_into)
                 .transpose()?,
         })
@@ -427,12 +427,12 @@ impl TryFrom<ProductListingSearchDocument> for ProductListingSearch {
                 }),
             created_query: document.created_query.map(parse_time_range).transpose()?,
             updated_query: document.updated_query.map(parse_time_range).transpose()?,
-            auction_start_query: document
-                .auction_start_query
+            lot_bidding_opens_query: document
+                .lot_bidding_opens_query
                 .map(parse_time_range)
                 .transpose()?,
-            auction_end_query: document
-                .auction_end_query
+            lot_scheduled_closes_query: document
+                .lot_scheduled_closes_query
                 .map(parse_time_range)
                 .transpose()?,
         })
@@ -832,11 +832,11 @@ mod tests {
                 min: Some(datetime!(2026-01-03 00:00:00 UTC)),
                 max: Some(datetime!(2026-01-04 00:00:00 UTC)),
             })
-            .with_auction_start_query(RangeQuery {
+            .with_lot_bidding_opens_query(RangeQuery {
                 min: Some(datetime!(2026-01-05 00:00:00 UTC)),
                 max: Some(datetime!(2026-01-06 00:00:00 UTC)),
             })
-            .with_auction_end_query(RangeQuery {
+            .with_lot_scheduled_closes_query(RangeQuery {
                 min: Some(datetime!(2026-01-07 00:00:00 UTC)),
                 max: Some(datetime!(2026-01-08 00:00:00 UTC)),
             }))

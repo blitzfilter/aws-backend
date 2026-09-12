@@ -13,9 +13,7 @@ use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 
 use listing_source_core::{ListingSourceId, ListingSourceName, ListingSourceSlugId};
 use product_listing_core::{
-    product_listing::{ProductListingAuction, ProductListingPricing},
-    source_listing_id::SourceListingId,
-    title::Title,
+    product_listing::ProductListingPricing, source_listing_id::SourceListingId, title::Title,
 };
 use product_listing_service::ports::{
     ListingSourceSummary, ProductListingPercolationInput, ProductListingSearchFilterMatchSource,
@@ -555,7 +553,7 @@ fn product_source(
         image: None,
         images: indexmap::IndexSet::new(),
         embedding: None,
-        auction: ProductListingAuction::default(),
+        auction: None,
         created: time::OffsetDateTime::UNIX_EPOCH,
         updated: time::OffsetDateTime::UNIX_EPOCH,
     })

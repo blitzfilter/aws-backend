@@ -210,8 +210,7 @@ mod tests {
                         &command.availability,
                         &command.url,
                         &command.images,
-                        &command.auction_start,
-                        &command.auction_end,
+                        &command.auction,
                     ),
                     (
                         application::patch_field::PatchField::Set(_),
@@ -220,9 +219,15 @@ mod tests {
                         application::patch_field::PatchField::Set(_),
                         application::patch_field::PatchField::Set(_),
                         application::patch_field::PatchField::Set(images),
-                        application::patch_field::PatchField::Set(Some(_)),
-                        application::patch_field::PatchField::Set(Some(_)),
+                        application::patch_field::PatchField::Set(auction),
                     ) if images.len() == 1
+                        && auction.lot_number().is_some_and(|number| number.as_str() == "42")
+                        && auction.catalogue_position().is_some_and(|position| position.value() == 7)
+                        && auction.timing().is_some_and(|timing| {
+                            timing.bidding_opens().is_some()
+                                && timing.scheduled_closes().is_some()
+                                && timing.reported_closed_at().is_some()
+                        })
                 )
             })
             .returning(|_, _, _| Ok(updated()));
@@ -240,8 +245,15 @@ mod tests {
                 "availability":"AVAILABLE",
                 "url":"https://example.com/listings/leaf-fields",
                 "images":["https://example.com/images/leaf-fields.jpg"],
-                "auctionStart":"2026-08-23T12:00:00Z",
-                "auctionEnd":"2026-08-24T12:00:00Z"
+                "auction":{
+                    "lotNumber":"42",
+                    "cataloguePosition":7,
+                    "timing":{
+                        "biddingOpens":{"precision":"DATE","on":"2026-08-23","sourceTimezone":"Europe/Berlin"},
+                        "scheduledCloses":{"precision":"INSTANT","at":"2026-08-24T12:00:00Z"},
+                        "reportedClosedAt":"2026-08-24T12:30:00Z"
+                    }
+                }
             }]"#,
             true,
         )
@@ -269,12 +281,10 @@ mod tests {
                         &command.availability,
                         &command.url,
                         &command.images,
-                        &command.auction_start,
-                        &command.auction_end,
+                        &command.auction,
                     ),
                     (
                         "omitted",
-                        application::patch_field::PatchField::Unchanged,
                         application::patch_field::PatchField::Unchanged,
                         application::patch_field::PatchField::Unchanged,
                         application::patch_field::PatchField::Unchanged,
@@ -290,8 +300,7 @@ mod tests {
                         application::patch_field::PatchField::Clear,
                         application::patch_field::PatchField::Unchanged,
                         application::patch_field::PatchField::Unchanged,
-                        application::patch_field::PatchField::Clear,
-                        application::patch_field::PatchField::Clear,
+                        application::patch_field::PatchField::Unchanged,
                     )
                 )
             })
@@ -309,9 +318,7 @@ mod tests {
                     "price":null,
                     "priceEstimateMin":null,
                     "priceEstimateMax":null,
-                    "availability":null,
-                    "auctionStart":null,
-                    "auctionEnd":null
+                    "availability":null
                 }
             ]"#,
             true,

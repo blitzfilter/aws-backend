@@ -26,11 +26,10 @@ let previewUrlOverride = '';
 
 const selectorFields = [
     'source_listing_id', 'title', 'description', 'price', 'price_estimate_min',
-    'price_estimate_max', 'state', 'images', 'auction_start', 'auction_end'
+    'price_estimate_max', 'state', 'images'
 ];
 const optionalFields = new Set([
-    'description', 'price', 'price_estimate_min', 'price_estimate_max',
-    'auction_start', 'auction_end'
+    'description', 'price', 'price_estimate_min', 'price_estimate_max'
 ]);
 const schemaHighlightColors = {
     source_listing_id: '#2563eb',
@@ -40,9 +39,7 @@ const schemaHighlightColors = {
     price_estimate_min: '#65a30d',
     price_estimate_max: '#0d9488',
     state: '#f97316',
-    images: '#db2777',
-    auction_start: '#9333ea',
-    auction_end: '#dc2626'
+    images: '#db2777'
 };
 const rawAttributeHighlightColor = '#64748b';
 
@@ -827,8 +824,6 @@ function defaultSchema() {
         price_estimate_max: null,
         state: defaultRuleFor('state'),
         images: defaultRuleFor('images'),
-        auction_start: null,
-        auction_end: null,
         raw_attributes: {}
     };
 }

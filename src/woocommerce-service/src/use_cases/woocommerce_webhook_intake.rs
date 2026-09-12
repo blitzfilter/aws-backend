@@ -422,8 +422,7 @@ fn upsert_raw_values(
                 .map(|image| image.src.clone())
                 .collect(),
         ),
-        auction_start: ProductListingRawValuesPatch::Unchanged,
-        auction_end: ProductListingRawValuesPatch::Unchanged,
+        auction: ProductListingRawValuesPatch::Unchanged,
         attributes: Default::default(),
     };
     serde_json::to_value(values)

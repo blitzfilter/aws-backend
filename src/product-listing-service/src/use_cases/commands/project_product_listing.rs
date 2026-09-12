@@ -251,7 +251,7 @@ mod tests {
         description::Description,
         listing_availability::ListingAvailability,
         listing_lifecycle::ListingLifecycle,
-        product_listing::{ListingSaleObservation, ProductListingAuction, ProductListingPricing},
+        product_listing::{ListingSaleObservation, ProductListingPricing},
         product_listing_slug_id::ProductListingSlugId,
         source_listing_id::SourceListingId,
         title::Title,
@@ -561,7 +561,7 @@ mod tests {
             image: None,
             images: IndexSet::new(),
             embedding: None,
-            auction: ProductListingAuction::default(),
+            auction: None,
             created: time::OffsetDateTime::UNIX_EPOCH,
             updated: time::OffsetDateTime::UNIX_EPOCH,
         })

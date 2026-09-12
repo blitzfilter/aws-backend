@@ -312,13 +312,7 @@ mod tests {
         for field in ["title", "state", "images"] {
             assert!(required.contains(&field), "{field} should be required");
         }
-        for field in [
-            "description",
-            "price",
-            "source_listing_id",
-            "auction_start",
-            "auction_end",
-        ] {
+        for field in ["description", "price", "source_listing_id"] {
             assert!(!required.contains(&field), "{field} should be optional");
         }
 

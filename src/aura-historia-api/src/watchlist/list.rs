@@ -178,7 +178,7 @@ mod tests {
     use money::Currency;
     use product_listing_core::listing_availability::ListingAvailability;
     use product_listing_core::listing_lifecycle::ListingLifecycle;
-    use product_listing_core::product_listing::{ProductListingAuction, ProductListingPricing};
+    use product_listing_core::product_listing::ProductListingPricing;
     use product_listing_core::product_listing_id::ProductListingId;
     use product_listing_core::product_listing_slug_id::ProductListingSlugId;
     use product_listing_core::source_listing_id::SourceListingId;
@@ -338,7 +338,7 @@ mod tests {
                 view_url: url,
                 images: Default::default(),
                 content_policy: None,
-                auction: ProductListingAuction::default(),
+                auction: None,
                 created: OffsetDateTime::UNIX_EPOCH,
                 updated: OffsetDateTime::UNIX_EPOCH,
             },

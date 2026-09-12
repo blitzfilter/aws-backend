@@ -230,8 +230,11 @@
                     "url": {"type": "keyword"}
                 }
             },
-            "auctionStart": {"type": "date", "format": "strict_date_time"},
-            "auctionEnd": {"type": "date", "format": "strict_date_time"},
+            "lotLabel": {"type": "keyword"},
+            "lotPosition": {"type": "unsigned_long"},
+            "lotBiddingOpensAt": {"type": "date", "format": "strict_date_time"},
+            "lotScheduledClosesAt": {"type": "date", "format": "strict_date_time"},
+            "lotReportedClosedAt": {"type": "date", "format": "strict_date_time"},
             "embedding": {
                 "type": "knn_vector",
                 "dimension": 768,
@@ -289,14 +292,14 @@
                             "max": {"type": "date", "format": "strict_date_time"}
                         }
                     },
-                    "auctionStart": {
+                    "lotBiddingOpensAt": {
                         "type": "object",
                         "properties": {
                             "min": {"type": "date", "format": "strict_date_time"},
                             "max": {"type": "date", "format": "strict_date_time"}
                         }
                     },
-                    "auctionEnd": {
+                    "lotScheduledClosesAt": {
                         "type": "object",
                         "properties": {
                             "min": {"type": "date", "format": "strict_date_time"},

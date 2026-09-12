@@ -438,7 +438,7 @@ async fn seed_product(pool: &sqlx::PgPool) -> ProductListingId {
         "availability": "AVAILABLE",
         "url": "https://example.test/product",
         "imageCount": 0,
-        "auction": {"start": null, "end": null}
+        "auction": null
     }))
     .bind(OffsetDateTime::UNIX_EPOCH)
     .execute(&mut *transaction)

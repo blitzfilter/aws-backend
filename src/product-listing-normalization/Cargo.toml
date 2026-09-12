@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+auction-core = { workspace = true }
 localization = { workspace = true }
 money = { workspace = true }
 product-listing-core = { workspace = true }

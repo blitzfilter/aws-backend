@@ -37,6 +37,117 @@ use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_post
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_apply_other_facts_and_preserve_lot_context_when_timing_is_invalid() {
+    let pool = get_postgres_client().await;
+    let listing_source_id = seed_listing_source(&pool, "raw-normalization-auction-timing").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let capture_writer = SqlxProductListingRawCaptureWriterFactory::new();
+    let mut initial = upsert_values("EUR 100");
+    initial["auction"] = json!({"action": "SET", "value": {
+        "lotNumber": "42A",
+        "cataloguePosition": 7,
+        "timing": {
+            "biddingOpens": {"precision": "INSTANT", "value": "2026-01-01T10:00:00Z"},
+            "scheduledCloses": {"precision": "INSTANT", "value": "2026-01-01T12:00:00Z"}
+        }
+    }});
+    let first = capture(
+        &unit_of_work,
+        &capture_writer,
+        raw_write(
+            listing_source_id,
+            RawProductListingOperation::Upsert,
+            initial.clone(),
+            normalization_context(),
+            "auction-timing-first",
+        ),
+    )
+    .await;
+    let mut invalid_timing = initial;
+    invalid_timing["price"] = json!({"action": "SET", "value": "EUR 120"});
+    invalid_timing["auction"]["value"]["timing"]["scheduledCloses"] =
+        json!({"precision": "INSTANT", "value": "2026-01-01T09:00:00Z"});
+    let second = capture(
+        &unit_of_work,
+        &capture_writer,
+        raw_write(
+            listing_source_id,
+            RawProductListingOperation::Upsert,
+            invalid_timing,
+            normalization_context(),
+            "auction-timing-invalid",
+        ),
+    )
+    .await;
+    let (product_listing_raw_stream_id, product_listing_raw_revision_id, revision) =
+        changed_parts(second);
+    assert!(matches!(
+        first,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
+    ));
+
+    let result = NormalizeProductListingRawRevisionHandler::new(
+        unit_of_work,
+        SqlxProductListingRawNormalizationWriterFactory::new(),
+        SqlxProductListingRepositoryFactory::new(),
+        SqlxProductListingEventAppenderFactory::new(),
+        SqlxPendingProductListingRawStreamReader::new(pool.clone()),
+    )
+    .execute(NormalizeProductListingRawRevisionCommand {
+        mode: NormalizeProductListingRawRevisionMode::RawRevision {
+            product_listing_raw_stream_id,
+            product_listing_raw_revision_id,
+            revision,
+        },
+        max_revisions_per_stream: 2,
+        pending_stream_limit: 1,
+    })
+    .await
+    .unwrap_or_else(|error| panic!("normalize auction timing stream: {error}"));
+    assert_eq!(
+        vec![
+            ProductListingRawNormalizationOutcome::Applied,
+            ProductListingRawNormalizationOutcome::Applied,
+        ],
+        result
+            .revisions
+            .into_iter()
+            .map(|revision| revision.outcome)
+            .collect::<Vec<_>>()
+    );
+
+    let (price_amount, lot_number, scheduled_closes_at): (i64, String, Option<time::OffsetDateTime>) =
+        sqlx::query_as(
+            "SELECT listing.price_amount, context.lot_number, timing.scheduled_closes_instant_at \
+             FROM product_listings listing \
+             JOIN product_listing_auction_contexts context ON context.product_listing_id = listing.product_listing_id \
+             JOIN product_listing_lot_auction_timings timing ON timing.product_listing_id = listing.product_listing_id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("load normalized auction context: {error}"));
+    assert_eq!(12_000, price_amount);
+    assert_eq!("42A", lot_number);
+    assert_eq!(
+        Some(
+            time::OffsetDateTime::parse(
+                "2026-01-01T12:00:00Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap_or_else(|error| panic!("expected timestamp: {error}"))
+        ),
+        scheduled_closes_at
+    );
+    let diagnostic: Option<String> = sqlx::query_scalar(
+        "SELECT error_code FROM product_listing_raw_normalizations WHERE revision = 2",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("load timing diagnostic: {error}"));
+    assert_eq!(Some("AUCTION_TIMING_INVALID".to_owned()), diagnostic);
+}
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_process_stream_in_order_and_ignore_duplicate_late_wakeup() {
     let pool = get_postgres_client().await;
     let listing_source_id = seed_listing_source(&pool, "raw-normalization-source").await;
@@ -1234,8 +1345,7 @@ fn upsert_values(price: &str) -> Value {
         "availability": {"action": "SET", "value": "in stock"},
         "url": {"action": "SET", "value": "https://example.test/listings/source-123"},
         "images": {"action": "SET", "value": ["/images/source-123.jpg"]},
-        "auctionStart": {"action": "UNCHANGED"},
-        "auctionEnd": {"action": "UNCHANGED"},
+        "auction": {"action": "UNCHANGED"},
         "attributes": {"material": {"action": "SET", "value": ["ceramic"]}}
     })
 }

@@ -500,8 +500,8 @@ struct ProductListingSearchJson {
     availability_query: Option<ListingAvailabilityQueryJson>,
     created_query: Option<TimeRangeJson>,
     updated_query: Option<TimeRangeJson>,
-    auction_start_query: Option<TimeRangeJson>,
-    auction_end_query: Option<TimeRangeJson>,
+    lot_bidding_opens_query: Option<TimeRangeJson>,
+    lot_scheduled_closes_query: Option<TimeRangeJson>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -594,12 +594,12 @@ impl TryFrom<&ProductListingSearch> for ProductListingSearchJson {
             }),
             created_query: v.created_query.map(TimeRangeJson::try_from).transpose()?,
             updated_query: v.updated_query.map(TimeRangeJson::try_from).transpose()?,
-            auction_start_query: v
-                .auction_start_query
+            lot_bidding_opens_query: v
+                .lot_bidding_opens_query
                 .map(TimeRangeJson::try_from)
                 .transpose()?,
-            auction_end_query: v
-                .auction_end_query
+            lot_scheduled_closes_query: v
+                .lot_scheduled_closes_query
                 .map(TimeRangeJson::try_from)
                 .transpose()?,
         })
@@ -648,8 +648,14 @@ pub(crate) fn product_search_from_json(
         }),
         created_query: j.created_query.map(TryInto::try_into).transpose()?,
         updated_query: j.updated_query.map(TryInto::try_into).transpose()?,
-        auction_start_query: j.auction_start_query.map(TryInto::try_into).transpose()?,
-        auction_end_query: j.auction_end_query.map(TryInto::try_into).transpose()?,
+        lot_bidding_opens_query: j
+            .lot_bidding_opens_query
+            .map(TryInto::try_into)
+            .transpose()?,
+        lot_scheduled_closes_query: j
+            .lot_scheduled_closes_query
+            .map(TryInto::try_into)
+            .transpose()?,
     })
 }
 pub(crate) fn product_search_to_json(
@@ -1031,7 +1037,7 @@ mod tests {
         };
 
         assert_eq!(13, object.len());
-        assert!(object.contains_key("auction_end_query"));
+        assert!(object.contains_key("lot_scheduled_closes_query"));
         assert!(object.contains_key("listing_source_id_query"));
         assert!(object.contains_key("exclude_listing_source_id_query"));
         assert!(

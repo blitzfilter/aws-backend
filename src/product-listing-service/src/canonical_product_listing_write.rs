@@ -43,8 +43,9 @@ pub struct CanonicalProductListingUpsert {
     pub availability: PatchField<ListingAvailability>,
     pub url: PatchField<Url>,
     pub images: PatchField<IndexSet<ProductListingImage>>,
-    pub auction_start: PatchField<OffsetDateTime>,
-    pub auction_end: PatchField<OffsetDateTime>,
+    /// Outer auction-context patch. `CLEAR` is non-destructive for existing listings;
+    /// explicit correction owns retraction in a later iteration.
+    pub auction: PatchField<ProductListingAuction>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,10 +253,7 @@ impl CanonicalProductListingWriter {
                 PatchField::Set(images) => images,
                 PatchField::Unchanged | PatchField::Clear => IndexSet::new(),
             },
-            auction: ProductListingAuction {
-                start: patch_value(command.auction_start),
-                end: patch_value(command.auction_end),
-            },
+            auction: patch_value(command.auction),
         })
         .map_err(|error| CanonicalProductListingWriteError::InvalidInput {
             source: box_error(error),
@@ -340,10 +338,11 @@ fn apply_update(
         }
         PatchField::Unchanged => {}
     };
-    let mut auction = product.auction();
-    apply_option_patch(&mut auction.start, command.auction_start.clone());
-    apply_option_patch(&mut auction.end, command.auction_end.clone());
-    product.replace_auction(auction).map_err(invalid_input)?;
+    if let PatchField::Set(auction) = command.auction.clone() {
+        product
+            .replace_auction(Some(auction))
+            .map_err(invalid_input)?;
+    }
     Ok(())
 }
 

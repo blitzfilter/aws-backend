@@ -288,10 +288,7 @@ mod tests {
     use money::Currency;
     use product_listing_core::{
         listing_lifecycle::ListingLifecycle,
-        product_listing::{
-            ProductListing, ProductListingAuction, ProductListingPricing,
-            RehydratedProductListingState,
-        },
+        product_listing::{ProductListing, ProductListingPricing, RehydratedProductListingState},
         product_listing_slug_id::ProductListingSlugId,
         source_listing_id::SourceListingId,
     };
@@ -530,7 +527,7 @@ mod tests {
             lifecycle: ListingLifecycle::Active,
             url: Url::parse("https://shop.example/listing")?,
             images: IndexSet::new(),
-            auction: ProductListingAuction::default(),
+            auction: None,
         })?)
     }
 

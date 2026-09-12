@@ -1,5 +1,6 @@
 use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use application::operation_context::Principal;
+use auction_core::AuctionTime;
 use axum::Json;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
@@ -13,7 +14,9 @@ use notification_core::{
 };
 use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
-use product_listing_core::product_listing::ProductListingPricing;
+use product_listing_core::product_listing::{
+    LotAuctionTiming, ProductListingAuction, ProductListingPricing,
+};
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
 
@@ -72,7 +75,7 @@ pub(crate) struct ProductListingDetailsData {
     view_url: Url,
     images: Vec<ProductListingImageData>,
     content_policy: Option<ContentPolicyData>,
-    auction: ProductListingAuctionData,
+    auction: Option<ProductListingAuctionData>,
     #[serde(with = "time::serde::rfc3339")]
     created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -248,11 +251,35 @@ impl From<ContentPolicyDecision> for ContentPolicyData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProductListingAuctionData {
+pub(crate) struct ProductListingAuctionData {
+    lot_number: Option<String>,
+    catalogue_position: Option<u32>,
+    timing: Option<LotAuctionTimingData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LotAuctionTimingData {
+    bidding_opens: Option<AuctionTimeData>,
+    scheduled_closes: Option<AuctionTimeData>,
     #[serde(with = "time::serde::rfc3339::option")]
-    start: Option<OffsetDateTime>,
-    #[serde(with = "time::serde::rfc3339::option")]
-    end: Option<OffsetDateTime>,
+    reported_closed_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "precision", rename_all = "SCREAMING_SNAKE_CASE")]
+enum AuctionTimeData {
+    Instant {
+        #[serde(with = "time::serde::rfc3339")]
+        at: OffsetDateTime,
+        #[serde(rename = "sourceTimezone", skip_serializing_if = "Option::is_none")]
+        source_timezone: Option<String>,
+    },
+    Date {
+        on: String,
+        #[serde(rename = "sourceTimezone", skip_serializing_if = "Option::is_none")]
+        source_timezone: Option<String>,
+    },
 }
 
 impl ProductListingDetailsData {
@@ -274,10 +301,7 @@ impl ProductListingDetailsData {
             view_url: view.view_url,
             images: view.images.into_iter().map(Into::into).collect(),
             content_policy: view.content_policy.map(Into::into),
-            auction: ProductListingAuctionData {
-                start: view.auction.start,
-                end: view.auction.end,
-            },
+            auction: view.auction.map(Into::into),
             created: view.created,
             updated: view.updated,
         }
@@ -287,6 +311,49 @@ impl ProductListingDetailsData {
 impl From<ProductListingDetailsView> for ProductListingDetailsData {
     fn from(view: ProductListingDetailsView) -> Self {
         Self::from_view(view)
+    }
+}
+
+impl From<ProductListingAuction> for ProductListingAuctionData {
+    fn from(auction: ProductListingAuction) -> Self {
+        Self {
+            lot_number: auction.lot_number().map(ToString::to_string),
+            catalogue_position: auction
+                .catalogue_position()
+                .map(|position| position.value()),
+            timing: auction.timing().cloned().map(Into::into),
+        }
+    }
+}
+
+impl From<LotAuctionTiming> for LotAuctionTimingData {
+    fn from(timing: LotAuctionTiming) -> Self {
+        Self {
+            bidding_opens: timing.bidding_opens().cloned().map(Into::into),
+            scheduled_closes: timing.scheduled_closes().cloned().map(Into::into),
+            reported_closed_at: timing.reported_closed_at(),
+        }
+    }
+}
+
+impl From<AuctionTime> for AuctionTimeData {
+    fn from(value: AuctionTime) -> Self {
+        match value {
+            AuctionTime::Instant {
+                at,
+                source_timezone,
+            } => Self::Instant {
+                at,
+                source_timezone: source_timezone.map(String::from),
+            },
+            AuctionTime::Date {
+                on,
+                source_timezone,
+            } => Self::Date {
+                on: on.to_string(),
+                source_timezone: source_timezone.map(String::from),
+            },
+        }
     }
 }
 

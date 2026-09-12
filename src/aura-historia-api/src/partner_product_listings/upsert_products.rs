@@ -179,9 +179,18 @@ mod tests {
             .withf(|_, command| {
                 matches!(&command.price_estimate_min, PatchField::Set(_))
                     && matches!(&command.price_estimate_max, PatchField::Set(_))
-                    && matches!(&command.auction_start, PatchField::Set(_))
-                    && matches!(&command.auction_end, PatchField::Set(_))
                     && matches!(&command.images, PatchField::Set(images) if images.len() == 1)
+                    && matches!(
+                        &command.auction,
+                        PatchField::Set(auction)
+                            if auction.lot_number().is_some_and(|number| number.as_str() == "42")
+                                && auction.catalogue_position().is_some_and(|position| position.value() == 7)
+                                && auction.timing().is_some_and(|timing| {
+                                    timing.bidding_opens().is_some()
+                                        && timing.scheduled_closes().is_some()
+                                        && timing.reported_closed_at().is_some()
+                                })
+                    )
             })
             .returning(|_, _| Ok(created()));
         let app = app(upsert);
@@ -195,8 +204,15 @@ mod tests {
                 "priceEstimateMin":{"amount":10000,"currency":"EUR"},
                 "priceEstimateMax":{"amount":20000,"currency":"EUR"},
                 "images":["https://example.com/image.jpg"],
-                "auctionStart":"2026-08-23T12:00:00Z",
-                "auctionEnd":"2026-08-24T12:00:00Z"
+                "auction":{
+                    "lotNumber":"42",
+                    "cataloguePosition":7,
+                    "timing":{
+                        "biddingOpens":{"precision":"DATE","on":"2026-08-23","sourceTimezone":"Europe/Berlin"},
+                        "scheduledCloses":{"precision":"INSTANT","at":"2026-08-24T12:00:00Z"},
+                        "reportedClosedAt":"2026-08-24T12:30:00Z"
+                    }
+                }
             }]"#,
             true,
         )
@@ -248,12 +264,10 @@ mod tests {
                         &command.price_estimate_min,
                         &command.price_estimate_max,
                         &command.images,
-                        &command.auction_start,
-                        &command.auction_end,
+                        &command.auction,
                     ),
                     (
                         "omitted",
-                        PatchField::Unchanged,
                         PatchField::Unchanged,
                         PatchField::Unchanged,
                         PatchField::Unchanged,
@@ -263,8 +277,7 @@ mod tests {
                         PatchField::Clear,
                         PatchField::Clear,
                         PatchField::Unchanged,
-                        PatchField::Clear,
-                        PatchField::Clear,
+                        PatchField::Unchanged,
                     )
                 )
             })
@@ -280,9 +293,7 @@ mod tests {
                 {
                     "sourceListingId":"clear",
                     "priceEstimateMin":null,
-                    "priceEstimateMax":null,
-                    "auctionStart":null,
-                    "auctionEnd":null
+                    "priceEstimateMax":null
                 }
             ]"#,
             true,

@@ -1,6 +1,9 @@
-use crate::object_id::try_from_uuid;
 use crate::product_listing_event_codec;
 use crate::url::referral_configuration;
+use crate::{
+    object_id::try_from_uuid,
+    product_listing_auction::{ProductListingAuctionParts, auction_from_parts},
+};
 use application::error::{BoxError, box_error, static_error};
 use domain_primitives::event_id::EventId;
 
@@ -13,7 +16,7 @@ use product_listing_core::{
     description::Description,
     listing_availability::ListingAvailability,
     listing_lifecycle::ListingLifecycle,
-    product_listing::{ListingSaleObservation, ProductListingAuction, ProductListingPricing},
+    product_listing::{ListingSaleObservation, ProductListingPricing},
     product_listing_id::ProductListingId,
     product_listing_image::ProductListingImage,
     product_listing_slug_id::ProductListingSlugId,
@@ -74,8 +77,19 @@ struct SourceRow {
     url: String,
     product_images: serde_json::Value,
     embedding: Option<Vec<f32>>,
-    auction_start: Option<OffsetDateTime>,
-    auction_end: Option<OffsetDateTime>,
+    auction_context_product_listing_id: Option<uuid::Uuid>,
+    auction_lot_number: Option<String>,
+    auction_catalogue_position: Option<i64>,
+    auction_timing_product_listing_id: Option<uuid::Uuid>,
+    auction_bidding_opens_precision: Option<String>,
+    auction_bidding_opens_instant_at: Option<OffsetDateTime>,
+    auction_bidding_opens_date_on: Option<time::Date>,
+    auction_bidding_opens_source_timezone: Option<String>,
+    auction_scheduled_closes_precision: Option<String>,
+    auction_scheduled_closes_instant_at: Option<OffsetDateTime>,
+    auction_scheduled_closes_date_on: Option<time::Date>,
+    auction_scheduled_closes_source_timezone: Option<String>,
+    auction_reported_closed_at: Option<OffsetDateTime>,
     created: OffsetDateTime,
     updated: OffsetDateTime,
     translation_language: Option<String>,
@@ -221,8 +235,19 @@ impl ProductListingSearchFilterMatchSourceReader
                 product.url,
                 product.product_images,
                 product.embedding,
-                product.auction_start,
-                product.auction_end,
+                auction_context.product_listing_id AS auction_context_product_listing_id,
+                auction_context.lot_number AS auction_lot_number,
+                auction_context.catalogue_position AS auction_catalogue_position,
+                auction_timing.product_listing_id AS auction_timing_product_listing_id,
+                auction_timing.bidding_opens_precision AS auction_bidding_opens_precision,
+                auction_timing.bidding_opens_instant_at AS auction_bidding_opens_instant_at,
+                auction_timing.bidding_opens_date_on AS auction_bidding_opens_date_on,
+                auction_timing.bidding_opens_source_timezone AS auction_bidding_opens_source_timezone,
+                auction_timing.scheduled_closes_precision AS auction_scheduled_closes_precision,
+                auction_timing.scheduled_closes_instant_at AS auction_scheduled_closes_instant_at,
+                auction_timing.scheduled_closes_date_on AS auction_scheduled_closes_date_on,
+                auction_timing.scheduled_closes_source_timezone AS auction_scheduled_closes_source_timezone,
+                auction_timing.reported_closed_at AS auction_reported_closed_at,
                 product.created,
                 product.updated,
                 translation.language AS translation_language,
@@ -235,6 +260,10 @@ impl ProductListingSearchFilterMatchSourceReader
             JOIN product_listings product ON product.product_listing_id = event.product_listing_id
             JOIN listing_sources listing_source
               ON listing_source.listing_source_id = product.listing_source_id
+            LEFT JOIN product_listing_auction_contexts auction_context
+              ON auction_context.product_listing_id = product.product_listing_id
+            LEFT JOIN product_listing_lot_auction_timings auction_timing
+              ON auction_timing.product_listing_id = auction_context.product_listing_id
             LEFT JOIN product_listing_translations translation ON translation.product_listing_id = product.product_listing_id
             ORDER BY event.product_listing_id ASC, event.event_id ASC, translation.language ASC
             FOR SHARE OF product
@@ -341,6 +370,22 @@ fn source_from_rows(
     })?;
 
     let event_kind = event_kind_from_row(row)?;
+    let auction = auction_from_parts(ProductListingAuctionParts {
+        context_product_listing_id: row.auction_context_product_listing_id,
+        lot_number: row.auction_lot_number.clone(),
+        catalogue_position: row.auction_catalogue_position,
+        timing_product_listing_id: row.auction_timing_product_listing_id,
+        bidding_opens_precision: row.auction_bidding_opens_precision.clone(),
+        bidding_opens_instant_at: row.auction_bidding_opens_instant_at,
+        bidding_opens_date_on: row.auction_bidding_opens_date_on,
+        bidding_opens_source_timezone: row.auction_bidding_opens_source_timezone.clone(),
+        scheduled_closes_precision: row.auction_scheduled_closes_precision.clone(),
+        scheduled_closes_instant_at: row.auction_scheduled_closes_instant_at,
+        scheduled_closes_date_on: row.auction_scheduled_closes_date_on,
+        scheduled_closes_source_timezone: row.auction_scheduled_closes_source_timezone.clone(),
+        reported_closed_at: row.auction_reported_closed_at,
+    })
+    .map_err(SourceRowMappingError::with_source)?;
     Ok(Some(ProductListingSearchFilterMatchSource {
         event_id: try_from_uuid(row.event_id, "event ID")
             .map_err(SourceRowMappingError::with_source)?,
@@ -387,10 +432,7 @@ fn source_from_rows(
         image: images.iter().next().cloned(),
         images,
         embedding: row.embedding.clone(),
-        auction: ProductListingAuction {
-            start: row.auction_start,
-            end: row.auction_end,
-        },
+        auction,
         created: row.created,
         updated: row.updated,
     }))

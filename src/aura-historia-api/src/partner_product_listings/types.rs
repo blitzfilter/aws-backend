@@ -2,12 +2,15 @@ use crate::error::{ApiError, ApiErrorCode, BAD_BODY_VALUE};
 use crate::patch_value::{PatchValue, clearable, non_nullable_patch};
 use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use crate::wire::parse_path_object_id;
-
+use application::patch_field::PatchField;
+use auction_core::{AuctionTime, AuctionTimeZone};
 use listing_source_core::ListingSourceId;
 use money::Price;
 use product_listing_core::description::Description;
 use product_listing_core::listing_availability::ListingAvailability;
-use product_listing_core::product_listing::{ProductListingAuction, ProductListingPricing};
+use product_listing_core::product_listing::{
+    CataloguePosition, LotAuctionTiming, LotNumber, ProductListingAuction, ProductListingPricing,
+};
 use product_listing_core::product_listing_id::ProductListingKey;
 use product_listing_core::product_listing_image::ProductListingImage;
 use product_listing_core::source_listing_id::SourceListingId;
@@ -16,13 +19,13 @@ use product_listing_service::use_cases::{
     CreateProductListingCommand, UpdateProductListingCommand, UpsertProductListingCommand,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use time::OffsetDateTime;
+use time::{Date, OffsetDateTime, format_description::well_known::Iso8601};
 use url::Url;
 
 pub(super) const MAX_PARTNER_PRODUCT_LISTING_BATCH_SIZE: usize = 100;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CreateProductListingData {
     pub(super) source_listing_id: String,
     pub(super) title: LocalizedTextData,
@@ -37,14 +40,12 @@ pub(super) struct CreateProductListingData {
     pub(super) availability: Option<ListingAvailability>,
     pub(super) url: Url,
     pub(super) images: Vec<Url>,
-    #[serde(default, with = "time::serde::rfc3339::option")]
-    pub(super) auction_start: Option<OffsetDateTime>,
-    #[serde(default, with = "time::serde::rfc3339::option")]
-    pub(super) auction_end: Option<OffsetDateTime>,
+    #[serde(default)]
+    auction: Option<ProductListingAuctionData>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct UpdateProductListingData {
     pub(super) source_listing_id: String,
     #[serde(default)]
@@ -60,14 +61,12 @@ pub(super) struct UpdateProductListingData {
     pub(super) url: PatchValue<Url>,
     #[serde(default)]
     pub(super) images: PatchValue<Vec<Url>>,
-    #[serde(default, deserialize_with = "crate::patch_value::rfc3339::deserialize")]
-    pub(super) auction_start: PatchValue<OffsetDateTime>,
-    #[serde(default, deserialize_with = "crate::patch_value::rfc3339::deserialize")]
-    pub(super) auction_end: PatchValue<OffsetDateTime>,
+    #[serde(default)]
+    auction: PatchValue<ProductListingAuctionData>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct UpsertProductListingData {
     pub(super) source_listing_id: String,
     #[serde(default)]
@@ -87,10 +86,50 @@ pub(super) struct UpsertProductListingData {
     pub(super) url: Option<Url>,
     #[serde(default)]
     pub(super) images: PatchValue<Vec<Url>>,
-    #[serde(default, deserialize_with = "crate::patch_value::rfc3339::deserialize")]
-    pub(super) auction_start: PatchValue<OffsetDateTime>,
-    #[serde(default, deserialize_with = "crate::patch_value::rfc3339::deserialize")]
-    pub(super) auction_end: PatchValue<OffsetDateTime>,
+    #[serde(default)]
+    auction: PatchValue<ProductListingAuctionData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProductListingAuctionData {
+    #[serde(default)]
+    lot_number: Option<String>,
+    #[serde(default)]
+    catalogue_position: Option<u64>,
+    #[serde(default)]
+    timing: Option<LotAuctionTimingData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LotAuctionTimingData {
+    #[serde(default)]
+    bidding_opens: Option<AuctionTimeData>,
+    #[serde(default)]
+    scheduled_closes: Option<AuctionTimeData>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    reported_closed_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(
+    tag = "precision",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+enum AuctionTimeData {
+    Instant {
+        #[serde(with = "time::serde::rfc3339")]
+        at: OffsetDateTime,
+        #[serde(default, rename = "sourceTimezone")]
+        source_timezone: Option<String>,
+    },
+    Date {
+        on: String,
+        #[serde(default, rename = "sourceTimezone")]
+        source_timezone: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,10 +186,10 @@ impl CreateProductListingData {
             availability: self.availability,
             url: self.url,
             images: product_images(self.images),
-            auction: ProductListingAuction {
-                start: self.auction_start,
-                end: self.auction_end,
-            },
+            auction: self
+                .auction
+                .map(ProductListingAuctionData::into_core)
+                .transpose()?,
         })
     }
 }
@@ -171,8 +210,7 @@ impl UpdateProductListingData {
             availability: clearable(self.availability),
             url: non_nullable_patch(self.url, "url")?,
             images: non_nullable_patch(self.images.map(product_images), "images")?,
-            auction_start: clearable(self.auction_start.map(Some)),
-            auction_end: clearable(self.auction_end.map(Some)),
+            auction: auction_patch(self.auction)?,
         };
         Ok((product_key, command))
     }
@@ -194,9 +232,86 @@ impl UpsertProductListingData {
             availability: clearable(self.availability),
             url: self.url,
             images: non_nullable_patch(self.images.map(product_images), "images")?,
-            auction_start: clearable(self.auction_start),
-            auction_end: clearable(self.auction_end),
+            auction: auction_patch(self.auction)?,
         })
+    }
+}
+
+impl ProductListingAuctionData {
+    fn into_core(self) -> Result<ProductListingAuction, ApiError> {
+        let lot_number = self
+            .lot_number
+            .map(|value| {
+                LotNumber::try_from(value).map_err(|_| {
+                    ApiError::bad_request(BAD_BODY_VALUE)
+                        .with_detail("auction.lotNumber must be nonblank, NUL-free, and at most 128 UTF-8 bytes.")
+                })
+            })
+            .transpose()?;
+        let catalogue_position = self
+            .catalogue_position
+            .map(|value| {
+                CataloguePosition::try_from(value).map_err(|_| {
+                    ApiError::bad_request(BAD_BODY_VALUE)
+                        .with_detail("auction.cataloguePosition must be a positive 32-bit integer.")
+                })
+            })
+            .transpose()?;
+        let timing = self
+            .timing
+            .map(LotAuctionTimingData::into_core)
+            .transpose()?;
+
+        Ok(ProductListingAuction::new(
+            lot_number,
+            catalogue_position,
+            timing,
+        ))
+    }
+}
+
+impl LotAuctionTimingData {
+    fn into_core(self) -> Result<LotAuctionTiming, ApiError> {
+        LotAuctionTiming::new(
+            self.bidding_opens
+                .map(AuctionTimeData::into_core)
+                .transpose()?,
+            self.scheduled_closes
+                .map(AuctionTimeData::into_core)
+                .transpose()?,
+            self.reported_closed_at,
+        )
+        .map_err(|_| {
+            ApiError::bad_request(BAD_BODY_VALUE)
+                .with_detail("auction.timing has invalid comparable bounds.")
+        })
+    }
+}
+
+impl AuctionTimeData {
+    fn into_core(self) -> Result<AuctionTime, ApiError> {
+        match self {
+            Self::Instant {
+                at,
+                source_timezone,
+            } => Ok(AuctionTime::instant(
+                at,
+                source_timezone.map(timezone).transpose()?,
+            )),
+            Self::Date {
+                on,
+                source_timezone,
+            } => {
+                let on = Date::parse(&on, &Iso8601::DATE).map_err(|_| {
+                    ApiError::bad_request(BAD_BODY_VALUE)
+                        .with_detail("auction timing date must use YYYY-MM-DD.")
+                })?;
+                Ok(AuctionTime::date(
+                    on,
+                    source_timezone.map(timezone).transpose()?,
+                ))
+            }
+        }
     }
 }
 
@@ -250,6 +365,25 @@ fn product_images(values: Vec<Url>) -> indexmap::IndexSet<ProductListingImage> {
     values.into_iter().map(ProductListingImage::new).collect()
 }
 
+fn auction_patch(
+    value: PatchValue<ProductListingAuctionData>,
+) -> Result<PatchField<ProductListingAuction>, ApiError> {
+    match value {
+        PatchValue::Omitted => Ok(PatchField::Unchanged),
+        PatchValue::Null => Err(ApiError::bad_request(BAD_BODY_VALUE).with_detail(
+            "auction cannot be null in an ordinary update; use the dedicated correction operation.",
+        )),
+        PatchValue::Value(value) => value.into_core().map(PatchField::Set),
+    }
+}
+
+fn timezone(value: String) -> Result<AuctionTimeZone, ApiError> {
+    AuctionTimeZone::try_from(value).map_err(|_| {
+        ApiError::bad_request(BAD_BODY_VALUE)
+            .with_detail("auction timing sourceTimezone must be a valid IANA timezone identifier.")
+    })
+}
+
 fn source_listing_id(value: String) -> Result<SourceListingId, ApiError> {
     SourceListingId::try_from(value)
         .map_err(|error| ApiError::bad_request(BAD_BODY_VALUE).with_detail(error.to_string()))
@@ -257,10 +391,41 @@ fn source_listing_id(value: String) -> Result<SourceListingId, ApiError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{WithdrawProductListingData, parse_listing_source_id, source_listing_id};
+    use super::{
+        UpdateProductListingData, UpsertProductListingData, WithdrawProductListingData,
+        parse_listing_source_id, source_listing_id,
+    };
     use crate::error::{BAD_BODY_VALUE, INVALID_OBJECT_ID};
     use listing_source_core::ListingSourceId;
     use product_listing_core::product_listing_id::ProductListingId;
+
+    #[test]
+    fn should_reject_null_auction_in_ordinary_partner_updates() {
+        let listing_source_id = ListingSourceId::new();
+        let update: UpdateProductListingData =
+            serde_json::from_str(r#"{"sourceListingId":"SKU-1","auction":null}"#)
+                .unwrap_or_else(|error| panic!("valid update JSON: {error}"));
+        let upsert: UpsertProductListingData =
+            serde_json::from_str(r#"{"sourceListingId":"SKU-1","auction":null}"#)
+                .unwrap_or_else(|error| panic!("valid upsert JSON: {error}"));
+
+        assert_eq!(
+            BAD_BODY_VALUE,
+            update
+                .into_key_and_command(listing_source_id)
+                .err()
+                .unwrap_or_else(|| panic!("null auction must fail"))
+                .code()
+        );
+        assert_eq!(
+            BAD_BODY_VALUE,
+            upsert
+                .into_command(listing_source_id)
+                .err()
+                .unwrap_or_else(|| panic!("null auction must fail"))
+                .code()
+        );
+    }
 
     #[test]
     fn should_parse_source_listing_id_without_slugifying_it() {

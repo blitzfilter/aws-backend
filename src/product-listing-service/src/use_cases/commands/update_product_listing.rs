@@ -32,8 +32,9 @@ pub struct UpdateProductListingCommand {
     pub availability: PatchField<ListingAvailability>,
     pub url: PatchField<Url>,
     pub images: PatchField<IndexSet<ProductListingImage>>,
-    pub auction_start: PatchField<Option<time::OffsetDateTime>>,
-    pub auction_end: PatchField<Option<time::OffsetDateTime>>,
+    /// An asserted context is replace-only in ordinary writes. `Clear` preserves an existing
+    /// context; a dedicated correction use case owns removal.
+    pub auction: PatchField<product_listing_core::product_listing_auction::ProductListingAuction>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -280,11 +281,8 @@ fn apply_command(
             product.replace_images(Default::default())?;
         }
     }
-    let mut auction = product.auction();
-    let auction_start_changed = apply_auction_patch(&mut auction.start, command.auction_start);
-    let auction_end_changed = apply_auction_patch(&mut auction.end, command.auction_end);
-    if auction_start_changed || auction_end_changed {
-        product.replace_auction(auction)?;
+    if let PatchField::Set(auction) = command.auction {
+        product.replace_auction(Some(auction))?;
     }
     Ok(())
 }
@@ -303,22 +301,6 @@ fn apply_price_patch<T>(field: &mut Option<T>, patch: PatchField<T>) -> bool {
     }
 }
 
-fn apply_auction_patch(
-    field: &mut Option<time::OffsetDateTime>,
-    patch: PatchField<Option<time::OffsetDateTime>>,
-) -> bool {
-    match patch {
-        PatchField::Unchanged => false,
-        PatchField::Set(value) => {
-            *field = value;
-            true
-        }
-        PatchField::Clear => {
-            *field = None;
-            true
-        }
-    }
-}
 fn partner_actor(principal: &Principal) -> Option<UserId> {
     match principal {
         Principal::User(id) | Principal::DelegatedUser { user_id: id, .. } => Some(*id),
@@ -334,8 +316,7 @@ impl From<ChangeProductListingError> for UpdateProductListingError {
     fn from(error: ChangeProductListingError) -> Self {
         match error {
             ChangeProductListingError::ListingWithdrawn => Self::ListingWithdrawn,
-            ChangeProductListingError::AuctionStartAfterEnd
-            | ChangeProductListingError::ImageCountOverflow
+            ChangeProductListingError::ImageCountOverflow
             | ChangeProductListingError::InitialDiscoveryLifecycleChange
             | ChangeProductListingError::ConflictingPendingObservation => {
                 Self::InvalidProductListing
@@ -391,6 +372,7 @@ mod tests {
     use money::{Currency, MonetaryAmount};
     use product_listing_core::{
         product_listing::{NewProductListing, ProductListingAuction, ProductListingPricing},
+        product_listing_auction::LotNumber,
         product_listing_event::ProductListingEventPayload,
         product_listing_id::ProductListingId,
         product_listing_slug_id::ProductListingSlugId,
@@ -402,11 +384,22 @@ mod tests {
         Price::new(MonetaryAmount::from(amount), Currency::Eur)
     }
 
-    #[test]
-    fn should_reject_clearing_required_url_without_mutating_listing() {
-        let url = Url::parse("https://shop.example/listing")
-            .unwrap_or_else(|error| panic!("invalid URL: {error}"));
-        let mut listing = ProductListing::create(NewProductListing {
+    fn auction(lot_number: &str) -> ProductListingAuction {
+        ProductListingAuction::new(
+            Some(
+                LotNumber::try_from(lot_number)
+                    .unwrap_or_else(|error| panic!("valid lot number: {error}")),
+            ),
+            None,
+            None,
+        )
+    }
+
+    fn listing(
+        pricing: ProductListingPricing,
+        auction: Option<ProductListingAuction>,
+    ) -> ProductListing {
+        ProductListing::create(NewProductListing {
             id: ProductListingId::new(),
             title_slug_id: ProductListingSlugId::raw("listing-a1b2c3")
                 .unwrap_or_else(|error| panic!("valid product listing title slug: {error}")),
@@ -415,13 +408,20 @@ mod tests {
                 .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
             title: Some(Localized::new(Language::En, Title::from("Listing"))),
             description: None,
-            pricing: ProductListingPricing::default(),
+            pricing,
             availability: None,
-            url: url.clone(),
+            url: Url::parse("https://shop.example/listing")
+                .unwrap_or_else(|error| panic!("invalid URL: {error}")),
             images: IndexSet::new(),
-            auction: ProductListingAuction::default(),
+            auction,
         })
-        .unwrap_or_else(|error| panic!("valid listing should be created: {error}"));
+        .unwrap_or_else(|error| panic!("valid listing should be created: {error}"))
+    }
+
+    #[test]
+    fn should_reject_clearing_required_url_without_mutating_listing() {
+        let mut listing = listing(ProductListingPricing::default(), None);
+        let url = listing.url().clone();
 
         let result = apply_command(
             &mut listing,
@@ -450,23 +450,7 @@ mod tests {
             price_estimate_min: Some(price(210)),
             price_estimate_max: Some(price(220)),
         };
-        let mut listing = ProductListing::create(NewProductListing {
-            id: ProductListingId::new(),
-            title_slug_id: ProductListingSlugId::raw("listing-a1b2c3")
-                .unwrap_or_else(|error| panic!("valid product listing title slug: {error}")),
-            listing_source_id: ListingSourceId::new(),
-            source_listing_id: SourceListingId::try_from("listing")
-                .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
-            title: None,
-            description: None,
-            pricing: old_pricing,
-            availability: None,
-            url: Url::parse("https://shop.example/listing")
-                .unwrap_or_else(|error| panic!("invalid URL: {error}")),
-            images: IndexSet::new(),
-            auction: ProductListingAuction::default(),
-        })
-        .unwrap_or_else(|error| panic!("valid listing should be created: {error}"));
+        let mut listing = listing(old_pricing, None);
         listing.take_pending_event_payload();
 
         apply_command(
@@ -513,109 +497,53 @@ mod tests {
     }
 
     #[test]
-    fn should_emit_one_auction_event_with_final_auction_for_combined_leaf_patches() {
-        let old_auction = ProductListingAuction {
-            start: Some(time::macros::datetime!(2026-01-01 0:00 UTC)),
-            end: Some(time::macros::datetime!(2026-01-02 0:00 UTC)),
-        };
-        let new_auction = ProductListingAuction {
-            start: Some(time::macros::datetime!(2026-02-01 0:00 UTC)),
-            end: Some(time::macros::datetime!(2026-02-02 0:00 UTC)),
-        };
-        let mut listing = ProductListing::create(NewProductListing {
-            id: ProductListingId::new(),
-            title_slug_id: ProductListingSlugId::raw("listing-a1b2c3")
-                .unwrap_or_else(|error| panic!("valid product listing title slug: {error}")),
-            listing_source_id: ListingSourceId::new(),
-            source_listing_id: SourceListingId::try_from("listing")
-                .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
-            title: None,
-            description: None,
-            pricing: ProductListingPricing::default(),
-            availability: None,
-            url: Url::parse("https://shop.example/listing")
-                .unwrap_or_else(|error| panic!("invalid URL: {error}")),
-            images: IndexSet::new(),
-            auction: old_auction,
-        })
-        .unwrap_or_else(|error| panic!("valid listing should be created: {error}"));
+    fn should_replace_auction_context_when_outer_patch_is_set() {
+        let old = auction("1");
+        let new = auction("2");
+        let mut listing = listing(ProductListingPricing::default(), Some(old.clone()));
         listing.take_pending_event_payload();
 
         apply_command(
             &mut listing,
             UpdateProductListingCommand {
-                auction_start: PatchField::Set(new_auction.start),
-                auction_end: PatchField::Set(new_auction.end),
+                auction: PatchField::Set(new.clone()),
                 ..Default::default()
             },
         )
         .unwrap_or_else(|error| panic!("valid auction update: {error}"));
 
-        assert_eq!(listing.auction(), new_auction);
+        assert_eq!(Some(&new), listing.auction());
         let Some(ProductListingEventPayload::Changed(change)) =
             listing.take_pending_event_payload()
         else {
             panic!("expected changed payload");
         };
         assert_eq!(
-            Some(&old_auction),
-            change.auction().map(|value| value.previous())
+            Some(Some(old)),
+            change.auction().map(|value| value.previous().clone())
         );
         assert_eq!(
-            Some(&new_auction),
-            change.auction().map(|value| value.current())
+            Some(Some(new)),
+            change.auction().map(|value| value.current().clone())
         );
     }
 
     #[test]
-    fn should_retain_state_and_pending_events_when_final_auction_is_invalid() {
-        let auction = ProductListingAuction {
-            start: Some(time::macros::datetime!(2026-01-01 0:00 UTC)),
-            end: Some(time::macros::datetime!(2026-01-02 0:00 UTC)),
-        };
-        let mut listing = ProductListing::create(NewProductListing {
-            id: ProductListingId::new(),
-            title_slug_id: ProductListingSlugId::raw("listing-a1b2c3")
-                .unwrap_or_else(|error| panic!("valid product listing title slug: {error}")),
-            listing_source_id: ListingSourceId::new(),
-            source_listing_id: SourceListingId::try_from("listing")
-                .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
-            title: None,
-            description: None,
-            pricing: ProductListingPricing::default(),
-            availability: None,
-            url: Url::parse("https://shop.example/listing")
-                .unwrap_or_else(|error| panic!("invalid URL: {error}")),
-            images: IndexSet::new(),
-            auction,
-        })
-        .unwrap_or_else(|error| panic!("valid listing should be created: {error}"));
+    fn should_preserve_auction_context_when_outer_patch_is_clear() {
+        let auction = auction("1");
+        let mut listing = listing(ProductListingPricing::default(), Some(auction.clone()));
         listing.take_pending_event_payload();
-        listing
-            .change_url(
-                Url::parse("https://shop.example/updated-listing")
-                    .unwrap_or_else(|error| panic!("invalid URL: {error}")),
-            )
-            .unwrap_or_else(|error| panic!("valid URL update: {error}"));
 
-        let result = apply_command(
+        apply_command(
             &mut listing,
             UpdateProductListingCommand {
-                auction_start: PatchField::Set(Some(time::macros::datetime!(2026-01-03 0:00 UTC))),
+                auction: PatchField::Clear,
                 ..Default::default()
             },
-        );
+        )
+        .unwrap_or_else(|error| panic!("clear outer auction context is a no-op: {error}"));
 
-        assert!(matches!(
-            result,
-            Err(UpdateProductListingError::InvalidProductListing)
-        ));
-        assert_eq!(listing.auction(), auction);
-        let Some(ProductListingEventPayload::Changed(change)) =
-            listing.take_pending_event_payload()
-        else {
-            panic!("expected changed payload");
-        };
-        assert!(change.url().is_some());
+        assert_eq!(Some(&auction), listing.auction());
+        assert!(listing.take_pending_event_payload().is_none());
     }
 }

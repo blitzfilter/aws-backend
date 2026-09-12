@@ -13,12 +13,6 @@ pub enum PriceField {
     EstimateMax,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DateTimeField {
-    AuctionStart,
-    AuctionEnd,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum NormalizationError {
     #[error("source listing ID is empty after trimming")]
@@ -39,8 +33,7 @@ pub enum NormalizationError {
     InvalidImageUrl(#[source] url::ParseError),
     #[error("no valid images remained after validating candidates")]
     NoValidImages { candidates: usize },
-    #[error("auction date-time could not be parsed")]
-    DateTimeParseError { field: DateTimeField },
+
     #[error("availability input exceeds the maximum length")]
     AvailabilityTextTooLong { len: usize, max: usize },
     #[error("availability input contains an embedded NUL")]
@@ -77,12 +70,7 @@ impl NormalizationError {
             } => "price_estimate_max_parse_error",
             Self::InvalidImageUrl(_) => "invalid_image_url",
             Self::NoValidImages { .. } => "no_valid_images",
-            Self::DateTimeParseError {
-                field: DateTimeField::AuctionStart,
-            } => "auction_start_parse_error",
-            Self::DateTimeParseError {
-                field: DateTimeField::AuctionEnd,
-            } => "auction_end_parse_error",
+
             Self::AvailabilityTextTooLong { .. } => "state_text_too_long",
             Self::AvailabilityTextEmbeddedNul => "state_text_embedded_nul",
             Self::AvailabilityRegexSetCompilationFailed => {

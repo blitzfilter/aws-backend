@@ -60,12 +60,10 @@ pub(crate) fn score_raw_product(raw: &RawExtractedProduct) -> ExtractionComplete
         .count();
 
     // Optional `Option<String>` fields: populated when `Some` and trimmed-non-empty.
-    let optional_strings: [Option<&str>; 5] = [
+    let optional_strings: [Option<&str>; 3] = [
         raw.price.as_deref(),
         raw.price_estimate_min.as_deref(),
         raw.price_estimate_max.as_deref(),
-        raw.auction_start.as_deref(),
-        raw.auction_end.as_deref(),
     ];
     let populated_optionals = optional_strings
         .iter()
@@ -103,9 +101,7 @@ pub(crate) fn score_prepared_product(
     let description = usize::from(prepared.description.is_some());
     let optional = usize::from(prepared.price.is_some())
         + usize::from(prepared.price_estimate_min.is_some())
-        + usize::from(prepared.price_estimate_max.is_some())
-        + usize::from(prepared.auction_start.is_some())
-        + usize::from(prepared.auction_end.is_some());
+        + usize::from(prepared.price_estimate_max.is_some());
     let images = usize::from(!prepared.images.is_empty());
     let raw_attributes = raw
         .raw_attributes
@@ -297,8 +293,6 @@ mod tests {
             price_estimate_max: None,
             state: String::new(),
             images: vec![],
-            auction_start: None,
-            auction_end: None,
             raw_attributes: BTreeMap::new(),
         }
     }
@@ -371,11 +365,8 @@ mod tests {
         raw.price = Some("120 EUR".to_string());
         raw.price_estimate_min = None;
         raw.price_estimate_max = Some("".to_string());
-        raw.auction_start = Some("2024-01-01".to_string());
-        raw.auction_end = None;
-        // populated: price, auction_start
-        // empty string / None: price_estimate_max, price_estimate_min, auction_end
-        assert_eq!(score_raw_product(&raw).as_usize(), 2);
+        // Populated: price. Empty strings and absent optional values do not count.
+        assert_eq!(score_raw_product(&raw).as_usize(), 1);
     }
 
     #[test]
@@ -438,8 +429,6 @@ mod tests {
                 extract: crate::scraper::css_selector::rule::ExtractionKind::ImageUrl,
                 cardinality: crate::scraper::css_selector::rule::ExtractionCardinality::All,
             },
-            auction_start: None,
-            auction_end: None,
             raw_attributes: BTreeMap::new(),
         };
 
@@ -492,8 +481,6 @@ mod tests {
                 extract: crate::scraper::css_selector::rule::ExtractionKind::ImageUrl,
                 cardinality: crate::scraper::css_selector::rule::ExtractionCardinality::All,
             },
-            auction_start: None,
-            auction_end: None,
             raw_attributes: BTreeMap::new(),
         };
 

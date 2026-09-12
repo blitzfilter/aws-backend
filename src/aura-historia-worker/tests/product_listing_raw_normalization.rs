@@ -465,8 +465,7 @@ fn raw_write(
             "availability": {"action": "SET", "value": "in stock"},
             "url": {"action": "SET", "value": "https://example.test/listings/worker-source-123"},
             "images": {"action": "SET", "value": ["/images/worker-source-123.jpg"]},
-            "auctionStart": {"action": "UNCHANGED"},
-            "auctionEnd": {"action": "UNCHANGED"},
+            "auction": {"action": "UNCHANGED"},
             "attributes": {}
         }))
         .unwrap_or_else(|error| panic!("raw values: {error}")),

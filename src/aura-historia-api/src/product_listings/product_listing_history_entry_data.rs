@@ -1,10 +1,11 @@
+use crate::product_listings::product_data::ProductListingAuctionData;
 use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use domain_primitives::event_id::EventId;
 use fxrate_core::FxRateId;
 use listing_source_core::ListingSourceId;
 use product_listing_core::{
     listing_availability::ListingAvailability,
-    product_listing::{ListingSaleObservation, ProductListingAuction, ProductListingPricing},
+    product_listing::{ListingSaleObservation, ProductListingPricing},
     product_listing_id::ProductListingId,
     source_listing_id::SourceListingId,
 };
@@ -49,7 +50,7 @@ struct ProductListingDiscoveryHistoryData {
     availability: Option<ListingAvailability>,
     url: Url,
     image_count: u64,
-    auction: ProductListingAuctionData,
+    auction: Option<ProductListingAuctionData>,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,8 +93,8 @@ enum ProductListingHistoryChangeData {
         current_count: u64,
     },
     AuctionChanged {
-        previous: ProductListingAuctionData,
-        current: ProductListingAuctionData,
+        previous: Option<ProductListingAuctionData>,
+        current: Option<ProductListingAuctionData>,
     },
     Withdrawn {
         #[serde(with = "crate::wire::listing_availability::option")]
@@ -125,15 +126,6 @@ struct ListingSaleObservationHistoryData {
     #[serde(with = "time::serde::rfc3339")]
     observed_at: OffsetDateTime,
     fx_rate_id: FxRateId,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProductListingAuctionData {
-    #[serde(with = "time::serde::rfc3339::option")]
-    start: Option<OffsetDateTime>,
-    #[serde(with = "time::serde::rfc3339::option")]
-    end: Option<OffsetDateTime>,
 }
 
 impl From<ProductListingHistoryEntry> for ProductListingHistoryEntryData {
@@ -174,7 +166,7 @@ impl From<ProductListingDiscoveryHistory> for ProductListingDiscoveryHistoryData
             availability: value.availability,
             url: value.url,
             image_count: value.image_count,
-            auction: value.auction.into(),
+            auction: value.auction.map(Into::into),
         }
     }
 }
@@ -215,8 +207,8 @@ impl From<ProductListingHistoryChange> for ProductListingHistoryChangeData {
             },
             ProductListingHistoryChange::AuctionChanged { previous, current } => {
                 Self::AuctionChanged {
-                    previous: previous.into(),
-                    current: current.into(),
+                    previous: previous.map(Into::into),
+                    current: current.map(Into::into),
                 }
             }
             ProductListingHistoryChange::Withdrawn {
@@ -252,15 +244,6 @@ impl From<ListingSaleObservation> for ListingSaleObservationHistoryData {
         Self {
             observed_at: observation.observed_at(),
             fx_rate_id: observation.fx_rate_id(),
-        }
-    }
-}
-
-impl From<ProductListingAuction> for ProductListingAuctionData {
-    fn from(auction: ProductListingAuction) -> Self {
-        Self {
-            start: auction.start,
-            end: auction.end,
         }
     }
 }

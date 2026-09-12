@@ -74,7 +74,7 @@ pub struct ProductListingDiscoveryHistory {
     pub availability: Option<ListingAvailability>,
     pub url: Url,
     pub image_count: u64,
-    pub auction: ProductListingAuction,
+    pub auction: Option<ProductListingAuction>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -133,8 +133,8 @@ pub enum ProductListingHistoryChange {
         current_count: u64,
     },
     AuctionChanged {
-        previous: ProductListingAuction,
-        current: ProductListingAuction,
+        previous: Option<ProductListingAuction>,
+        current: Option<ProductListingAuction>,
     },
     Withdrawn {
         previous_availability: Option<ListingAvailability>,

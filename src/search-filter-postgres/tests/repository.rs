@@ -586,7 +586,7 @@ async fn seed_product(pool: &sqlx::PgPool, source_listing_id: &str) -> ProductLi
         "availability": null,
         "url": "https://example.com/product",
         "imageCount": 0,
-        "auction": { "start": null, "end": null }
+        "auction": null
     });
     let mut tx = pool
         .begin()

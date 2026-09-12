@@ -1,8 +1,6 @@
 # Auctions
 
-**Status:** iterations 01–03 implement the pure model, authoritative PostgreSQL state/journal/policy, and administrator HTTP create/detail/update. Iteration 04 replaces ProductListing raw values with one current strict schema; it adds no auction fields or listing membership. Public Auction reads, auction raw fields, listing membership, crawler auction extraction, and search behavior are not implemented. Current ProductListing auction timestamps remain the shipped baseline until their owning iteration replaces them.
-
-See [implementation plan](auction-implementation.md) and the [iteration records](auction-iterations/04-current-raw-contract.md).
+**Status:** iterations 01–04 implement standalone Auction state/admin and the one current raw-values schema. Iteration 05 replaces ambiguous ProductListing auction timestamps with an optional listing-owned lot context and qualified timing. It adds no Auction membership, source auction reference, shared Auction metadata, crawler extraction, public Auction read, or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration records](auction-iterations/05-qualified-lot-timing.md).
 
 ## Scope
 
@@ -39,19 +37,18 @@ A retained Auction blocks ListingSource deletion, including ID-only, ended, and 
 
 The initial business schema changed directly. Local disposable PostgreSQL state must be recreated through the established test harness or an explicitly authorized local reset before running a checkout with this schema; no shared database, queue, or remote environment was reset here.
 
-## Target ProductListing context
+## Current ProductListing context
 
-The final listing-owned context has three distinct states:
+Iteration 05 has two distinct listing values:
 
 | Stored value | Meaning |
 | --- | --- |
 | `None` | No reliable auction-participation assertion. |
-| Context with no membership | Auction participation is asserted, but membership is unresolved. |
-| Context with membership | The listing belongs to exactly one same-source Auction. |
+| `Some(ProductListingAuction)` | Auction participation is asserted; the context may be empty. |
 
-An asserted empty context is valid and must not collapse to `None`. The context will hold optional opaque `LotNumber`, optional one-based `CataloguePosition`, and qualified lot timing. A lot remains one ProductListing even if it describes multiple physical objects.
+An asserted empty context never collapses to `None`. The context holds optional opaque `LotNumber`, optional one-based `CataloguePosition`, and qualified lot timing. It has **no Auction membership or source auction reference** yet. A lot remains one ProductListing even if it describes multiple physical objects.
 
-Ordinary source and partner writes may attach an unresolved listing or a listing with no context to a reliable same-source key. They preserve a current membership when evidence is sparse, and reject/diagnose A-to-B membership changes. They never infer a key from a name. Administrative correction is the only reassignment or retraction path; it replaces the entire context with a required restricted reason. A listing-owned override barrier then blocks ordinary source/partner auction changes until an explicitly safe release establishes raw-stream revision floors.
+Typed partner creation accepts omitted or `null` auction as no assertion. Typed update/upsert omits auction to preserve it and accepts an object as a full replacement; `null` is rejected because a later explicit correction owns retraction. Raw `auction: CLEAR` likewise preserves an existing context. No key is inferred from name, URL, or timing.
 
 ## Time semantics
 
@@ -59,7 +56,7 @@ Auction times in `auction-core` retain either an exact instant or a source calen
 
 Auction schedule roles are `BIDDING_OPENS`, `LIVE_STARTS`, `LOTS_BEGIN_CLOSING`, and `SCHEDULED_END`. Lot roles are `bidding_opens`, `scheduled_closes`, and exact `reported_closed_at`. Auction-level milestones are never copied into lot deadlines. Passing a scheduled time never changes status, availability, sale observation, or result.
 
-The eventual public contracts use half-open `[from, to)` exact-instant filters with role-bearing names. They distinguish auction milestones from lot milestones.
+Current listing search and saved filters expose half-open `[min, max)` exact-instant filters named `lotBiddingOpens` and `lotScheduledCloses`. They exclude absent/date-only values and never represent auction-level milestones. `lotReportedClosedAt` is projected for current listing facts but is not a filter in this iteration.
 
 ## Target metadata policy
 

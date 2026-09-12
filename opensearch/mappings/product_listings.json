@@ -284,11 +284,21 @@
                     }
                 }
             },
-            "auctionStart": {
+            "lotLabel": {
+                "type": "keyword"
+            },
+            "lotPosition": {
+                "type": "unsigned_long"
+            },
+            "lotBiddingOpensAt": {
                 "type": "date",
                 "format": "strict_date_time"
             },
-            "auctionEnd": {
+            "lotScheduledClosesAt": {
+                "type": "date",
+                "format": "strict_date_time"
+            },
+            "lotReportedClosedAt": {
                 "type": "date",
                 "format": "strict_date_time"
             },

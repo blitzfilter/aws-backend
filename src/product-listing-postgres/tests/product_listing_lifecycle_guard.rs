@@ -132,7 +132,7 @@ async fn seed_product(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }))
         .execute(&mut *transaction)
         .await?;

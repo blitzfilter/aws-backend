@@ -14,8 +14,6 @@ pub struct RawExpectation {
     pub price_estimate_max: Option<String>,
     pub state: String,
     pub images: Vec<String>,
-    pub auction_start: Option<String>,
-    pub auction_end: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,8 +27,6 @@ pub struct NormalizedExpectation {
     pub availability: Option<ListingAvailability>,
     pub url: String,
     pub images: Vec<String>,
-    pub auction_start: Option<time::OffsetDateTime>,
-    pub auction_end: Option<time::OffsetDateTime>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -47,6 +43,4 @@ pub struct NormalizedExpectationJson {
     pub availability: Option<String>,
     pub url: String,
     pub images: Vec<String>,
-    pub auction_start: Option<String>,
-    pub auction_end: Option<String>,
 }

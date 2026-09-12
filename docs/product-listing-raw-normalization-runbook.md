@@ -33,7 +33,7 @@ For Shopify intake, EventBridge uses its default target delivery policy (up to 2
 Structured log events are safe to count by their fixed fields; their `metric` names do not imply provisioned CloudWatch custom metrics or dashboards:
 
 - `product_listing_raw_capture`: `ingestion_method`, `outcome`, attempt/insert/unchanged counters, byte sizes, and latency.
-- `product_listing_raw_normalization`: terminal `outcome` (`APPLIED`, `NO_CHANGE`, `IGNORED`, `REJECTED`) and latency; retryable `failure` or `stream_failure` records carry a stable `error_code`.
+- `product_listing_raw_normalization`: terminal `outcome` (`APPLIED`, `NO_CHANGE`, `IGNORED`, `REJECTED`) and latency; retryable `failure` or `stream_failure` records carry a stable `error_code`. Successful `APPLIED`/`NO_CHANGE` records may also carry `AUCTION_TIMING_INVALID`: optional auction timing was discarded and the outer auction assertion was left unchanged; other resolved fields still applied.
 - `product_listing_raw_normalization_backlog`: bounded reconciliation-page count and oldest age.
 - `product_listing_raw_normalization_reconciliation`: reconciliation runs, processed revisions, failures, bounded page count, page kind, cursor presence, FIFO depth, deferred-continuation count, and suppressed-continuation count.
 - `crawler_disposition_transition`: successful transitions to `DORMANT_SOLD`.
@@ -85,6 +85,17 @@ FROM product_listing_raw_normalizations
 WHERE outcome = 'REJECTED'
 GROUP BY error_code
 ORDER BY rejected_count DESC, error_code;
+```
+
+### Accepted optional-timing diagnostics
+
+```sql
+SELECT outcome, count(*) AS normalization_count, min(created) AS first_seen_at, max(created) AS last_seen_at
+FROM product_listing_raw_normalizations
+WHERE error_code = 'AUCTION_TIMING_INVALID'
+  AND outcome IN ('APPLIED', 'NO_CHANGE')
+GROUP BY outcome
+ORDER BY outcome;
 ```
 
 ### Raw-table growth

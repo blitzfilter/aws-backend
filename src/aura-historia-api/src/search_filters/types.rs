@@ -240,17 +240,17 @@ pub(super) struct ProductListingSearchPatchData {
     )]
     updated_query: PatchValue<RangeQuery<OffsetDateTime>>,
     #[serde(
-        rename = "auctionStart",
+        rename = "lotBiddingOpens",
         default,
         deserialize_with = "crate::patch_value::rfc3339_range::deserialize"
     )]
-    auction_start_query: PatchValue<RangeQuery<OffsetDateTime>>,
+    lot_bidding_opens_query: PatchValue<RangeQuery<OffsetDateTime>>,
     #[serde(
-        rename = "auctionEnd",
+        rename = "lotScheduledCloses",
         default,
         deserialize_with = "crate::patch_value::rfc3339_range::deserialize"
     )]
-    auction_end_query: PatchValue<RangeQuery<OffsetDateTime>>,
+    lot_scheduled_closes_query: PatchValue<RangeQuery<OffsetDateTime>>,
 }
 
 impl ProductListingSearchPatchData {
@@ -301,8 +301,8 @@ impl ProductListingSearchPatchData {
             )?,
             created_query: clearable(self.created_query),
             updated_query: clearable(self.updated_query),
-            auction_start_query: clearable(self.auction_start_query),
-            auction_end_query: clearable(self.auction_end_query),
+            lot_bidding_opens_query: clearable(self.lot_bidding_opens_query),
+            lot_scheduled_closes_query: clearable(self.lot_scheduled_closes_query),
         })
     }
 }
@@ -471,19 +471,19 @@ pub(super) struct ProductListingSearchData<ProductId = String, SourceId = String
     )]
     updated_query: Option<RangeQuery<OffsetDateTime>>,
     #[serde(
-        rename = "auctionStart",
+        rename = "lotBiddingOpens",
         with = "domain_primitives::query::range_query::range_rfc3339::option",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    auction_start_query: Option<RangeQuery<OffsetDateTime>>,
+    lot_bidding_opens_query: Option<RangeQuery<OffsetDateTime>>,
     #[serde(
-        rename = "auctionEnd",
+        rename = "lotScheduledCloses",
         with = "domain_primitives::query::range_query::range_rfc3339::option",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    auction_end_query: Option<RangeQuery<OffsetDateTime>>,
+    lot_scheduled_closes_query: Option<RangeQuery<OffsetDateTime>>,
 }
 
 impl TryFrom<ProductListingSearchData<String, String>> for ProductListingSearch {
@@ -531,8 +531,8 @@ impl TryFrom<ProductListingSearchData<String, String>> for ProductListingSearch 
             ),
             created_query: data.created_query,
             updated_query: data.updated_query,
-            auction_start_query: data.auction_start_query,
-            auction_end_query: data.auction_end_query,
+            lot_bidding_opens_query: data.lot_bidding_opens_query,
+            lot_scheduled_closes_query: data.lot_scheduled_closes_query,
         })
     }
 }
@@ -562,8 +562,8 @@ impl From<ProductListingSearch> for ProductListingSearchData<ProductListingId, L
                 .map(|query| query.include_unspecified),
             created_query: search.created_query,
             updated_query: search.updated_query,
-            auction_start_query: search.auction_start_query,
-            auction_end_query: search.auction_end_query,
+            lot_bidding_opens_query: search.lot_bidding_opens_query,
+            lot_scheduled_closes_query: search.lot_scheduled_closes_query,
         }
     }
 }

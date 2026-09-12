@@ -43,8 +43,6 @@ fn minimal_css_schema() -> ProductCssSelectorSchema {
             extract: ExtractionKind::Attribute { name: "src".into() },
             cardinality: ExtractionCardinality::All,
         },
-        auction_start: None,
-        auction_end: None,
         raw_attributes: Default::default(),
     }
 }
@@ -99,22 +97,6 @@ fn full_css_schema() -> ProductCssSelectorSchema {
             extract: ExtractionKind::Attribute { name: "src".into() },
             cardinality: ExtractionCardinality::All,
         },
-        auction_start: Some(ExtractionRule {
-            selector: "time.auction-start".into(),
-            additional_selectors: vec![],
-            extract: ExtractionKind::Attribute {
-                name: "datetime".into(),
-            },
-            cardinality: ExtractionCardinality::First,
-        }),
-        auction_end: Some(ExtractionRule {
-            selector: "time.auction-end".into(),
-            additional_selectors: vec![],
-            extract: ExtractionKind::Attribute {
-                name: "datetime".into(),
-            },
-            cardinality: ExtractionCardinality::First,
-        }),
         raw_attributes: Default::default(),
     }
 }

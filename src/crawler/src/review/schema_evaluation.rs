@@ -178,12 +178,6 @@ fn evaluate_schema_fields(
     }
     fields.push(evaluate_rule("state", &schema.state, html));
     fields.push(evaluate_rule("images", &schema.images, html));
-    if let Some(rule) = &schema.auction_start {
-        fields.push(evaluate_rule("auction_start", rule, html));
-    }
-    if let Some(rule) = &schema.auction_end {
-        fields.push(evaluate_rule("auction_end", rule, html));
-    }
     for (field, rule) in &schema.raw_attributes {
         fields.push(evaluate_rule(field, rule, html));
     }
@@ -264,8 +258,6 @@ mod tests {
             price_estimate_max: None,
             state: text_rule("#state"),
             images: image_rule("img"),
-            auction_start: None,
-            auction_end: None,
             raw_attributes: Default::default(),
         }
     }

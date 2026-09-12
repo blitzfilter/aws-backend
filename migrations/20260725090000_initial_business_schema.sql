@@ -515,8 +515,6 @@ CREATE TABLE product_listings (
     product_images jsonb NOT NULL DEFAULT '[]',
     embedding real[],
     projection_version bigint NOT NULL DEFAULT 1,
-    auction_start timestamptz,
-    auction_end timestamptz,
     created timestamptz NOT NULL DEFAULT now(),
     updated timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT product_listings_listing_source_listing_unique UNIQUE (listing_source_id, source_listing_id),
@@ -556,8 +554,49 @@ CREATE TABLE product_listings (
     CONSTRAINT product_listings_images_array CHECK (jsonb_typeof(product_images) = 'array'),
     CONSTRAINT product_listings_embedding_dimension_check CHECK (embedding IS NULL OR (array_ndims(embedding) = 1 AND cardinality(embedding) = 768)),
     CONSTRAINT product_listings_version_positive CHECK (version >= 1),
-    CONSTRAINT product_listings_projection_version_positive CHECK (projection_version >= 1),
-    CONSTRAINT product_listings_auction_order_check CHECK (auction_start IS NULL OR auction_end IS NULL OR auction_start <= auction_end)
+    CONSTRAINT product_listings_projection_version_positive CHECK (projection_version >= 1)
+);
+
+-- Listing-owned source assertions. They deliberately do not identify or join an
+-- Auction aggregate: membership arrives in a later iteration.
+CREATE TABLE product_listing_auction_contexts (
+    product_listing_id uuid PRIMARY KEY
+        REFERENCES product_listings(product_listing_id) ON DELETE CASCADE,
+    lot_number text,
+    catalogue_position bigint,
+    CONSTRAINT product_listing_auction_contexts_lot_number_check CHECK (
+        lot_number IS NULL OR (
+            octet_length(lot_number) BETWEEN 1 AND 128
+            AND lot_number !~ '(^[[:space:]]|[[:space:]]$)'
+        )
+    ),
+    CONSTRAINT product_listing_auction_contexts_catalogue_position_check CHECK (
+        catalogue_position IS NULL OR catalogue_position BETWEEN 1 AND 4294967295
+    )
+);
+
+CREATE TABLE product_listing_lot_auction_timings (
+    product_listing_id uuid PRIMARY KEY
+        REFERENCES product_listing_auction_contexts(product_listing_id) ON DELETE CASCADE,
+    bidding_opens_precision text,
+    bidding_opens_instant_at timestamptz,
+    bidding_opens_date_on date,
+    bidding_opens_source_timezone text,
+    scheduled_closes_precision text,
+    scheduled_closes_instant_at timestamptz,
+    scheduled_closes_date_on date,
+    scheduled_closes_source_timezone text,
+    reported_closed_at timestamptz,
+    CONSTRAINT product_listing_lot_auction_timings_bidding_opens_shape_check CHECK (
+        (bidding_opens_precision IS NULL AND bidding_opens_instant_at IS NULL AND bidding_opens_date_on IS NULL AND bidding_opens_source_timezone IS NULL)
+        OR (bidding_opens_precision = 'INSTANT' AND bidding_opens_instant_at IS NOT NULL AND bidding_opens_date_on IS NULL)
+        OR (bidding_opens_precision = 'DATE' AND bidding_opens_instant_at IS NULL AND bidding_opens_date_on IS NOT NULL)
+    ),
+    CONSTRAINT product_listing_lot_auction_timings_scheduled_closes_shape_check CHECK (
+        (scheduled_closes_precision IS NULL AND scheduled_closes_instant_at IS NULL AND scheduled_closes_date_on IS NULL AND scheduled_closes_source_timezone IS NULL)
+        OR (scheduled_closes_precision = 'INSTANT' AND scheduled_closes_instant_at IS NOT NULL AND scheduled_closes_date_on IS NULL)
+        OR (scheduled_closes_precision = 'DATE' AND scheduled_closes_instant_at IS NULL AND scheduled_closes_date_on IS NOT NULL)
+    )
 );
 
 CREATE INDEX product_listings_listing_source_id_idx ON product_listings (listing_source_id);

@@ -12,9 +12,9 @@ use indexmap::IndexSet;
 use product_listing_normalization::error::NormalizationFailureScope;
 use product_listing_normalization::{
     ListingAvailabilityQuickCheck, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
-    ProductListingRawValuesNormalizationError, ProductListingRawValuesNormalizationOutcome,
-    ProductListingRawValuesNormalizer, ProductListingRawValuesPatch,
-    ProductListingRawValuesResolved,
+    ProductListingRawValuesNormalizationDiagnostic, ProductListingRawValuesNormalizationError,
+    ProductListingRawValuesNormalizationOutcome, ProductListingRawValuesNormalizer,
+    ProductListingRawValuesPatch, ProductListingRawValuesResolved,
 };
 use product_listing_service::canonical_product_listing_write::{
     CanonicalProductListingUpsert, CanonicalProductListingWriteError, CanonicalProductListingWriter,
@@ -26,7 +26,7 @@ use product_listing_service::ports::{
 use std::time::Instant;
 use time::OffsetDateTime;
 
-pub const NORMALIZER_VERSION: u16 = 2;
+pub const NORMALIZER_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizeProductListingRawRevisionMode {
@@ -406,7 +406,9 @@ where
                     },
                     Some(write.product_listing_id),
                     write.product_listing_event_id,
-                    None,
+                    resolved
+                        .diagnostic
+                        .map(ProductListingRawValuesNormalizationDiagnostic::as_str),
                 );
                 completion.next_product_listing_id = Some(write.product_listing_id);
                 completion.next_source_listing_id = Some(resolved.source_listing_id.clone());
@@ -666,8 +668,7 @@ fn canonical_upsert(
             ProductListingRawValuesPatch::Clear => PatchField::Clear,
             ProductListingRawValuesPatch::Unchanged => PatchField::Unchanged,
         },
-        auction_start: to_patch(&resolved.auction_start),
-        auction_end: to_patch(&resolved.auction_end),
+        auction: to_patch(&resolved.auction),
     }
 }
 
@@ -767,7 +768,7 @@ fn normalization_error_code(error: &ProductListingRawValuesNormalizationError) -
         ProductListingRawValuesNormalizationError::Text(_) => "TEXT_NORMALIZATION_INVALID",
         ProductListingRawValuesNormalizationError::Price(_) => "PRICE_NORMALIZATION_INVALID",
         ProductListingRawValuesNormalizationError::ImageUrl(_) => "IMAGE_URL_NORMALIZATION_INVALID",
-        ProductListingRawValuesNormalizationError::DateTime(_) => "DATE_TIME_NORMALIZATION_INVALID",
+        ProductListingRawValuesNormalizationError::Auction(_) => "AUCTION_TIMING_INVALID",
         ProductListingRawValuesNormalizationError::Availability(_) => {
             "AVAILABILITY_NORMALIZATION_INVALID"
         }
@@ -854,6 +855,39 @@ mod tests {
             SourcePayload::new(serde_json::json!({}))?,
             RawProductListingValues::new(serde_json::json!({}))?,
             NormalizationContext::new(serde_json::json!({}))?,
+        )
+    }
+
+    fn current_upsert_input(
+        auction: serde_json::Value,
+    ) -> Result<
+        ProductListingNormalizationInput,
+        product_listing_normalization::NormalizationInputError,
+    > {
+        ProductListingNormalizationInput::new(
+            RawProductListingOperation::Upsert,
+            RawProductListingPayloadFormat::CrawlerExtractedProduct,
+            1,
+            PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
+            SourcePayload::new(serde_json::json!({}))?,
+            RawProductListingValues::new(serde_json::json!({
+                "sourceListingId": "listing-123",
+                "title": {"action": "SET", "value": "An antique ceramic vase"},
+                "description": {"action": "CLEAR"},
+                "priceFormat": "DISPLAY_TEXT",
+                "price": {"action": "SET", "value": "EUR 100"},
+                "priceEstimateMin": {"action": "CLEAR"},
+                "priceEstimateMax": {"action": "CLEAR"},
+                "availability": {"action": "CLEAR"},
+                "url": {"action": "SET", "value": "listing/123"},
+                "images": {"action": "CLEAR"},
+                "auction": auction
+            }))?,
+            NormalizationContext::new(serde_json::json!({
+                "baseUrl": "https://example.test/catalogue/",
+                "fallbackCurrency": "EUR",
+                "fallbackLanguage": "en"
+            }))?,
         )
     }
 
@@ -1545,6 +1579,74 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_auction_clear_and_complete_invalid_timing_diagnostics_successfully()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clear_input = current_upsert_input(serde_json::json!({"action": "CLEAR"}))?;
+        let ProductListingRawValuesNormalizationOutcome::Resolved(clear_resolved) =
+            ProductListingRawValuesNormalizer::new().normalize(&clear_input)
+        else {
+            panic!("clear auction patch should resolve");
+        };
+        let listing_source_id = ListingSourceId::new();
+        assert_eq!(
+            PatchField::Clear,
+            canonical_upsert(listing_source_id, clear_resolved.as_ref()).auction
+        );
+
+        let invalid_timing_input = current_upsert_input(serde_json::json!({
+            "action": "SET",
+            "value": {
+                "timing": {
+                    "reportedClosedAt": {"precision": "DATE", "value": "2026-05-13"}
+                }
+            }
+        }))?;
+        let ProductListingRawValuesNormalizationOutcome::Resolved(invalid_timing_resolved) =
+            ProductListingRawValuesNormalizer::new().normalize(&invalid_timing_input)
+        else {
+            panic!("invalid optional timing should resolve");
+        };
+        assert_eq!(
+            PatchField::Unchanged,
+            canonical_upsert(listing_source_id, invalid_timing_resolved.as_ref()).auction
+        );
+
+        let stream_id = ProductListingRawStreamId::new();
+        let revision = crate::ports::ProductListingRawRevision {
+            product_listing_raw_revision_id: ProductListingRawRevisionId::new(),
+            product_listing_raw_stream_id: stream_id,
+            revision: 1,
+            input: invalid_timing_input,
+        };
+        let head = ProductListingRawNormalizationHead {
+            product_listing_raw_stream_id: stream_id,
+            listing_source_id,
+            last_processed_revision: 0,
+            product_listing_id: None,
+            source_listing_id: None,
+        };
+        for outcome in [
+            ProductListingRawNormalizationOutcome::Applied,
+            ProductListingRawNormalizationOutcome::NoChange,
+        ] {
+            let completed = completion(
+                &head,
+                &revision,
+                outcome,
+                None,
+                None,
+                invalid_timing_resolved
+                    .diagnostic
+                    .map(ProductListingRawValuesNormalizationDiagnostic::as_str),
+            );
+            assert_eq!(NORMALIZER_VERSION, completed.normalizer_version);
+            assert_eq!(outcome, completed.outcome);
+            assert_eq!(Some("AUCTION_TIMING_INVALID"), completed.error_code);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn should_accept_only_the_current_stored_raw_values_schema_version()
     -> Result<(), product_listing_normalization::NormalizationInputError> {
         let input = input_with_schema_versions(1, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION)?;
@@ -1558,7 +1660,7 @@ mod tests {
                 Err(NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion)
             ));
         }
-        assert_eq!(2, NORMALIZER_VERSION);
+        assert_eq!(3, NORMALIZER_VERSION);
         Ok(())
     }
 

@@ -49,8 +49,9 @@ pub(crate) fn crawler_raw_input(
         availability: ProductListingRawValuesPatch::Set(raw.state.clone()),
         url: ProductListingRawValuesPatch::Set(candidate_url.to_string()),
         images: ProductListingRawValuesPatch::Set(validated_image_urls.to_vec()),
-        auction_start: patch(raw.auction_start.clone()),
-        auction_end: patch(raw.auction_end.clone()),
+        // Existing selector fields are source evidence only until a provider rule
+        // qualifies their semantic roles; never invent a lot milestone here.
+        auction: ProductListingRawValuesPatch::Unchanged,
         attributes,
     };
     let raw_values = serde_json::to_value(raw_values)
@@ -134,8 +135,6 @@ mod tests {
             price_estimate_max: None,
             state: "In Stock".to_owned(),
             images: vec!["/chair.jpg".to_owned()],
-            auction_start: None,
-            auction_end: None,
             raw_attributes: BTreeMap::new(),
         }
     }
@@ -161,6 +160,10 @@ mod tests {
         assert_eq!(
             Some(&serde_json::json!({"action": "SET", "value": "100 EUR"})),
             input.raw_values().value().get("price")
+        );
+        assert_eq!(
+            Some(&serde_json::json!({"action": "UNCHANGED"})),
+            input.raw_values().value().get("auction")
         );
         assert_eq!(
             Some(&serde_json::json!(["/chair.jpg"])),

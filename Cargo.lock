@@ -5812,6 +5812,7 @@ dependencies = [
 name = "product-listing-core"
 version = "0.1.0"
 dependencies = [
+ "auction-core",
  "domain-primitives",
  "fake",
  "fxrate-core",
@@ -5838,6 +5839,7 @@ dependencies = [
 name = "product-listing-normalization"
 version = "0.1.0"
 dependencies = [
+ "auction-core",
  "lingua",
  "localization",
  "money",
@@ -5861,6 +5863,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
  "domain-primitives",
  "fxrate-core",
  "indexmap 2.14.2",
@@ -5893,6 +5896,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
  "domain-primitives",
  "fxrate-core",
  "indexmap 2.14.2",
@@ -6747,6 +6751,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
  "domain-primitives",
  "fxrate-core",
  "indexmap 2.14.2",

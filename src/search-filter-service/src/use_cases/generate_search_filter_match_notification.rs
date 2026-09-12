@@ -421,7 +421,7 @@ mod tests {
         content_policy::{ContentPolicyDecision, SensitiveContentCategory},
         listing_availability::ListingAvailability,
         listing_lifecycle::ListingLifecycle,
-        product_listing::{ProductListingAuction, ProductListingPricing},
+        product_listing::ProductListingPricing,
         product_listing_image::ProductListingImage,
         product_listing_slug_id::ProductListingSlugId,
         source_listing_id::SourceListingId,
@@ -784,7 +784,7 @@ mod tests {
             image: None,
             images: IndexSet::<ProductListingImage>::new(),
             embedding: None,
-            auction: ProductListingAuction::default(),
+            auction: None,
             created: OffsetDateTime::UNIX_EPOCH,
             updated: OffsetDateTime::UNIX_EPOCH,
         };
