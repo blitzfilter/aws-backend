@@ -1,10 +1,20 @@
+#![cfg_attr(
+    test,
+    expect(
+        clippy::duplicate_mod,
+        reason = "Schema and TLS tests reuse the private Docker guard without changing fixture ownership"
+    )
+)]
+
 use application::transaction::{Transaction, TransactionError, UnitOfWork};
 use sqlx::{PgConnection, PgPool, Postgres};
 
 mod config;
+mod schema;
 pub use config::{
     PostgresConnectError, PostgresPoolConfig, PostgresPoolConfigError, PostgresTlsConfig,
 };
+pub use schema::{PostgresSchemaError, verify_business_schema};
 
 #[derive(Debug, Clone)]
 pub struct SqlxUnitOfWork {

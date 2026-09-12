@@ -88,24 +88,19 @@ use watchlist_service::use_cases::{
     WatchProductListingUseCase,
 };
 
+#[derive(Clone)]
+pub(crate) struct OperationsState {
+    pub(crate) lifecycle: Arc<crate::runtime::Lifecycle>,
+    pub(crate) commit_sha: Arc<str>,
+}
+
 #[async_trait]
 pub(crate) trait ReadinessCheck: Send + Sync {
     async fn check(&self) -> Result<(), ()>;
 }
 
-#[derive(Clone, Copy)]
-struct AlwaysReady;
-
-#[async_trait]
-impl ReadinessCheck for AlwaysReady {
-    async fn check(&self) -> Result<(), ()> {
-        Ok(())
-    }
-}
-
 #[derive(Clone)]
 pub struct AppState {
-    pub(crate) readiness: Arc<dyn ReadinessCheck>,
     pub(crate) product_listings: Option<ProductListingsState>,
     pub(crate) partner_product_listings: Option<PartnerProductListingsState>,
     pub(crate) listing_sources: Option<ListingSourcesState>,
@@ -132,7 +127,6 @@ impl Default for AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            readiness: Arc::new(AlwaysReady),
             product_listings: None,
             partner_product_listings: None,
             listing_sources: None,
@@ -149,11 +143,6 @@ impl AppState {
             notifications: None,
             webhooks: None,
         }
-    }
-
-    pub(crate) fn with_readiness(mut self, readiness: Arc<dyn ReadinessCheck>) -> Self {
-        self.readiness = readiness;
-        self
     }
 
     pub fn with_products(mut self, product_listings: ProductListingsState) -> Self {

@@ -156,36 +156,10 @@
                         "type": "object",
                         "properties": {
                           "blue": {
-                            "type": "object",
-                            "properties": {
-                              "listener": {
-                                "$ref": "#/$defs/__schema7"
-                              },
-                              "endpoint": {
-                                "$ref": "#/$defs/__schema9"
-                              }
-                            },
-                            "required": [
-                              "listener",
-                              "endpoint"
-                            ],
-                            "additionalProperties": false
+                            "$ref": "#/$defs/__schema7"
                           },
                           "green": {
-                            "type": "object",
-                            "properties": {
-                              "listener": {
-                                "$ref": "#/$defs/__schema7"
-                              },
-                              "endpoint": {
-                                "$ref": "#/$defs/__schema9"
-                              }
-                            },
-                            "required": [
-                              "listener",
-                              "endpoint"
-                            ],
-                            "additionalProperties": false
+                            "$ref": "#/$defs/__schema7"
                           }
                         },
                         "required": [
@@ -198,16 +172,16 @@
                         "type": "object",
                         "properties": {
                           "business": {
-                            "$ref": "#/$defs/__schema11"
+                            "$ref": "#/$defs/__schema12"
                           },
                           "aws": {
-                            "$ref": "#/$defs/__schema13"
+                            "$ref": "#/$defs/__schema14"
                           },
                           "opensearch_ref": {
                             "$ref": "#/$defs/__schema6"
                           },
                           "vertex": {
-                            "$ref": "#/$defs/__schema14"
+                            "$ref": "#/$defs/__schema15"
                           },
                           "cognito_ref": {
                             "$ref": "#/$defs/__schema6"
@@ -254,34 +228,34 @@
                           "$ref": "#/$defs/__schema3"
                         },
                         "listener": {
-                          "$ref": "#/$defs/__schema7"
+                          "$ref": "#/$defs/__schema8"
                         },
                         "endpoint": {
-                          "$ref": "#/$defs/__schema9"
+                          "$ref": "#/$defs/__schema10"
                         },
                         "ca_ref": {
                           "$ref": "#/$defs/__schema6"
                         },
                         "scope": {
-                          "$ref": "#/$defs/__schema15"
+                          "$ref": "#/$defs/__schema16"
                         },
                         "credentials": {
                           "type": "object",
                           "properties": {
                             "business": {
-                              "$ref": "#/$defs/__schema11"
+                              "$ref": "#/$defs/__schema12"
                             },
                             "aws": {
-                              "$ref": "#/$defs/__schema13"
+                              "$ref": "#/$defs/__schema14"
                             },
                             "queue_scope": {
-                              "$ref": "#/$defs/__schema15"
+                              "$ref": "#/$defs/__schema16"
                             },
                             "opensearch_ref": {
                               "$ref": "#/$defs/__schema6"
                             },
                             "vertex": {
-                              "$ref": "#/$defs/__schema14"
+                              "$ref": "#/$defs/__schema15"
                             },
                             "email": {
                               "type": "object",
@@ -330,10 +304,10 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "listener": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema9"
+                        "$ref": "#/$defs/__schema10"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
@@ -346,16 +320,16 @@
                         "type": "object",
                         "properties": {
                           "business": {
-                            "$ref": "#/$defs/__schema11"
+                            "$ref": "#/$defs/__schema12"
                           },
                           "aws": {
-                            "$ref": "#/$defs/__schema13"
+                            "$ref": "#/$defs/__schema14"
                           },
                           "opensearch_ref": {
                             "$ref": "#/$defs/__schema6"
                           },
                           "vertex": {
-                            "$ref": "#/$defs/__schema14"
+                            "$ref": "#/$defs/__schema15"
                           }
                         },
                         "required": [
@@ -388,10 +362,10 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "listener": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema9"
+                        "$ref": "#/$defs/__schema10"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
@@ -404,16 +378,16 @@
                         "type": "object",
                         "properties": {
                           "business": {
-                            "$ref": "#/$defs/__schema11"
+                            "$ref": "#/$defs/__schema12"
                           },
                           "crawler": {
-                            "$ref": "#/$defs/__schema11"
+                            "$ref": "#/$defs/__schema12"
                           },
                           "aws": {
-                            "$ref": "#/$defs/__schema13"
+                            "$ref": "#/$defs/__schema14"
                           },
                           "vertex": {
-                            "$ref": "#/$defs/__schema14"
+                            "$ref": "#/$defs/__schema15"
                           },
                           "review_auth_ref": {
                             "$ref": "#/$defs/__schema6"
@@ -450,16 +424,16 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "listener": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema9"
+                        "$ref": "#/$defs/__schema10"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
                       },
                       "lambda_endpoint": {
-                        "$ref": "#/$defs/__schema16"
+                        "$ref": "#/$defs/__schema17"
                       },
                       "database": {
                         "type": "object",
@@ -471,7 +445,7 @@
                             ]
                           },
                           "name": {
-                            "$ref": "#/$defs/__schema17"
+                            "$ref": "#/$defs/__schema18"
                           },
                           "history_id": {
                             "$ref": "#/$defs/__schema1"
@@ -480,16 +454,16 @@
                             "$ref": "#/$defs/__schema4"
                           },
                           "migrator": {
-                            "$ref": "#/$defs/__schema18"
+                            "$ref": "#/$defs/__schema19"
                           },
                           "backup": {
-                            "$ref": "#/$defs/__schema18"
+                            "$ref": "#/$defs/__schema19"
                           },
                           "reserve_sessions": {
                             "$ref": "#/$defs/__schema4"
                           },
                           "sequin": {
-                            "$ref": "#/$defs/__schema18"
+                            "$ref": "#/$defs/__schema19"
                           }
                         },
                         "required": [
@@ -526,10 +500,10 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "listener": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema9"
+                        "$ref": "#/$defs/__schema10"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
@@ -544,7 +518,7 @@
                             ]
                           },
                           "name": {
-                            "$ref": "#/$defs/__schema17"
+                            "$ref": "#/$defs/__schema18"
                           },
                           "history_id": {
                             "$ref": "#/$defs/__schema1"
@@ -553,10 +527,10 @@
                             "$ref": "#/$defs/__schema4"
                           },
                           "migrator": {
-                            "$ref": "#/$defs/__schema18"
+                            "$ref": "#/$defs/__schema19"
                           },
                           "backup": {
-                            "$ref": "#/$defs/__schema18"
+                            "$ref": "#/$defs/__schema19"
                           },
                           "reserve_sessions": {
                             "$ref": "#/$defs/__schema4"
@@ -594,10 +568,10 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "listener": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema9"
+                        "$ref": "#/$defs/__schema10"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
@@ -627,10 +601,10 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "listener": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema9"
+                        "$ref": "#/$defs/__schema10"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
@@ -659,13 +633,13 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "http": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "https": {
-                        "$ref": "#/$defs/__schema7"
+                        "$ref": "#/$defs/__schema8"
                       },
                       "endpoint": {
-                        "$ref": "#/$defs/__schema16"
+                        "$ref": "#/$defs/__schema17"
                       },
                       "ca_ref": {
                         "$ref": "#/$defs/__schema6"
@@ -711,16 +685,16 @@
                 "type": "object",
                 "properties": {
                   "cognito_post_confirmation": {
-                    "$ref": "#/$defs/__schema19"
+                    "$ref": "#/$defs/__schema20"
                   },
                   "shopify": {
-                    "$ref": "#/$defs/__schema19"
+                    "$ref": "#/$defs/__schema20"
                   },
                   "stripe": {
-                    "$ref": "#/$defs/__schema19"
+                    "$ref": "#/$defs/__schema20"
                   },
                   "fxrate": {
-                    "$ref": "#/$defs/__schema19"
+                    "$ref": "#/$defs/__schema20"
                   }
                 },
                 "required": [
@@ -761,22 +735,22 @@
           "pattern": "^[0-9a-f]{40}$"
         },
         "manifest_digest": {
-          "$ref": "#/$defs/__schema20"
+          "$ref": "#/$defs/__schema21"
         },
         "images": {
           "type": "object",
           "properties": {
             "api": {
-              "$ref": "#/$defs/__schema20"
+              "$ref": "#/$defs/__schema21"
             },
             "worker": {
-              "$ref": "#/$defs/__schema20"
+              "$ref": "#/$defs/__schema21"
             },
             "cron": {
-              "$ref": "#/$defs/__schema20"
+              "$ref": "#/$defs/__schema21"
             },
             "crawler": {
-              "$ref": "#/$defs/__schema20"
+              "$ref": "#/$defs/__schema21"
             }
           },
           "required": [
@@ -799,13 +773,13 @@
       "type": "object",
       "properties": {
         "probe": {
-          "$ref": "#/$defs/__schema21"
+          "$ref": "#/$defs/__schema22"
         },
         "drain_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         },
         "stop_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         }
       },
       "required": [
@@ -823,19 +797,23 @@
         "type": "object",
         "properties": {
           "probe": {
-            "$ref": "#/$defs/__schema21"
+            "$ref": "#/$defs/__schema22"
           },
           "drain_seconds": {
-            "$ref": "#/$defs/__schema22"
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 3600
           },
           "stop_seconds": {
-            "$ref": "#/$defs/__schema22"
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 3600
           },
           "scope": {
-            "$ref": "#/$defs/__schema15"
+            "$ref": "#/$defs/__schema16"
           },
           "execution_seconds": {
-            "$ref": "#/$defs/__schema22"
+            "$ref": "#/$defs/__schema23"
           },
           "visibility_seconds": {
             "type": "integer",
@@ -846,10 +824,10 @@
             "type": "object",
             "properties": {
               "source": {
-                "$ref": "#/$defs/__schema23"
+                "$ref": "#/$defs/__schema24"
               },
               "dlq": {
-                "$ref": "#/$defs/__schema23"
+                "$ref": "#/$defs/__schema24"
               }
             },
             "required": [
@@ -875,20 +853,20 @@
       "type": "object",
       "properties": {
         "probe": {
-          "$ref": "#/$defs/__schema21"
+          "$ref": "#/$defs/__schema22"
         },
         "drain_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         },
         "stop_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         },
         "ownership_plan": {
           "type": "string",
           "const": "READ_ONLY_TARGET"
         },
         "execution_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         }
       },
       "required": [
@@ -904,13 +882,13 @@
       "type": "object",
       "properties": {
         "probe": {
-          "$ref": "#/$defs/__schema21"
+          "$ref": "#/$defs/__schema22"
         },
         "drain_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         },
         "stop_seconds": {
-          "$ref": "#/$defs/__schema22"
+          "$ref": "#/$defs/__schema23"
         },
         "ownership_plan": {
           "type": "string",
@@ -968,7 +946,7 @@
           "const": "localhost"
         },
         "port": {
-          "$ref": "#/$defs/__schema8"
+          "$ref": "#/$defs/__schema9"
         },
         "transport": {
           "type": "string",
@@ -1073,11 +1051,46 @@
       "additionalProperties": false
     },
     "__schema7": {
+      "description": "Business ingress and separate HTTP operational listener. Probe through an allowlisted slot-local execution, never publish/proxy operations. Ports conservatively reserve host-wide capacity, including shared network namespaces.",
+      "type": "object",
+      "properties": {
+        "listener": {
+          "$ref": "#/$defs/__schema8"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/__schema10"
+        },
+        "operations_listener": {
+          "type": "object",
+          "properties": {
+            "port": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "bind": {
+              "type": "string",
+              "const": "LOOPBACK"
+            }
+          },
+          "required": [
+            "port",
+            "bind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "listener",
+        "endpoint",
+        "operations_listener"
+      ],
+      "additionalProperties": false
+    },
+    "__schema8": {
       "description": "TCP reservation. One host port belongs to one listener, even across bind addresses.",
       "type": "object",
       "properties": {
         "port": {
-          "$ref": "#/$defs/__schema8"
+          "$ref": "#/$defs/__schema9"
         },
         "bind": {
           "type": "string",
@@ -1097,22 +1110,22 @@
       ],
       "additionalProperties": false
     },
-    "__schema8": {
+    "__schema9": {
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 65535
     },
-    "__schema9": {
+    "__schema10": {
       "type": "object",
       "properties": {
         "host": {
           "$ref": "#/$defs/__schema5"
         },
         "port": {
-          "$ref": "#/$defs/__schema8"
+          "$ref": "#/$defs/__schema9"
         },
         "tls": {
-          "$ref": "#/$defs/__schema10"
+          "$ref": "#/$defs/__schema11"
         },
         "routing": {
           "type": "object",
@@ -1144,7 +1157,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema10": {
+    "__schema11": {
       "anyOf": [
         {
           "type": "object",
@@ -1182,11 +1195,11 @@
         }
       ]
     },
-    "__schema11": {
+    "__schema12": {
       "type": "object",
       "properties": {
         "identity": {
-          "$ref": "#/$defs/__schema12"
+          "$ref": "#/$defs/__schema13"
         },
         "pool_max": {
           "$ref": "#/$defs/__schema4"
@@ -1198,7 +1211,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema12": {
+    "__schema13": {
       "type": "object",
       "properties": {
         "principal": {
@@ -1216,7 +1229,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema13": {
+    "__schema14": {
       "type": "object",
       "properties": {
         "method": {
@@ -1253,7 +1266,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema14": {
+    "__schema15": {
       "anyOf": [
         {
           "type": "object",
@@ -1313,7 +1326,7 @@
         }
       ]
     },
-    "__schema15": {
+    "__schema16": {
       "type": "string",
       "enum": [
         "product-listing-opensearch",
@@ -1328,17 +1341,17 @@
         "notification-delivery"
       ]
     },
-    "__schema16": {
+    "__schema17": {
       "type": "object",
       "properties": {
         "host": {
           "$ref": "#/$defs/__schema5"
         },
         "port": {
-          "$ref": "#/$defs/__schema8"
+          "$ref": "#/$defs/__schema9"
         },
         "tls": {
-          "$ref": "#/$defs/__schema10"
+          "$ref": "#/$defs/__schema11"
         },
         "routing": {
           "type": "object",
@@ -1366,16 +1379,16 @@
       ],
       "additionalProperties": false
     },
-    "__schema17": {
+    "__schema18": {
       "type": "string",
       "maxLength": 63,
       "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
     },
-    "__schema18": {
+    "__schema19": {
       "type": "object",
       "properties": {
         "identity": {
-          "$ref": "#/$defs/__schema12"
+          "$ref": "#/$defs/__schema13"
         },
         "sessions": {
           "$ref": "#/$defs/__schema4"
@@ -1387,11 +1400,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema19": {
+    "__schema20": {
       "type": "object",
       "properties": {
         "identity": {
-          "$ref": "#/$defs/__schema12"
+          "$ref": "#/$defs/__schema13"
         },
         "reserved_concurrency": {
           "type": "integer",
@@ -1409,11 +1422,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema20": {
+    "__schema21": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
-    "__schema21": {
+    "__schema22": {
       "type": "object",
       "properties": {
         "kind": {
@@ -1450,12 +1463,12 @@
       ],
       "additionalProperties": false
     },
-    "__schema22": {
+    "__schema23": {
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 86400
     },
-    "__schema23": {
+    "__schema24": {
       "type": "object",
       "properties": {
         "url": {

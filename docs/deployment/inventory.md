@@ -5,6 +5,14 @@ Clean checkout on `task/#1412-deployment`. Local and cached remote `develop` mat
 
 **Code evidence, not a live audit.** Running versions, queue contents, schemas, permissions, certificates and infrastructure remain unknown. Public issues #1549 and #1412 were read; immutable UTC CalVer promotion is the requested target, not current workflow behavior.
 
+## Accepted implementation deltas
+
+The sections below preserve iteration 00 **baseline observations**, not current runtime behavior. Current checks/SHAs: `implementation-status.md`.
+
+- 02: shared explicit PostgreSQL stage/TLS/password-file contract; all native/DB Lambda paths covered. Crawler now requires both database URLs and never bootstraps/migrates in `server`; `bootstrap-local` is a separate excluded tool. CA materialization remains a rollout gate.
+- 03: API/worker SIGINT/SIGTERM, bounded owned cleanup and non-consuming preflight; exact business SQLx history/extension/table startup gate. API private loopback probes replace public probes; worker `/admission` stays independent of consumer `/ready`. Default API drain/stop 45/60s; worker 270/300s, configured worker ceiling 3600s. Explicit per-slot operational ports join host budgets. Unknown future history still blocks until compatible-superset evidence is implemented.
+- Test PostgreSQL now uses a fixed local Docker socket and checked owned-ID cleanup. Raw-replay fixtures still do not create SQLx history; process fixtures apply genuine migrations. Real Sequin/SQS and deployment rehearsal remain unpassed.
+
 ## Processes
 
 All native target architectures remain operator inputs; local Rust target is x86_64 GNU. SQLx is 0.9.0 with Tokio/rustls/Postgres/migrate. Rust pin is 1.98.0. DB role grants below are requirements, not verified grants.

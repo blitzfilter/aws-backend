@@ -2,6 +2,7 @@ pub mod cdc;
 mod http;
 pub mod jobs;
 pub mod notification_delivery;
+mod operations;
 pub mod product_content_assessment;
 pub mod product_embedding;
 pub mod product_listing_opensearch;
@@ -34,6 +35,9 @@ use crate::cdc::{
 
 pub const WORKER_HEALTH_BIND_ADDR_ENV: &str = "AURA_HISTORIA_WORKER_HEALTH_BIND_ADDR";
 pub const WORKER_DRAIN_TIMEOUT_SECONDS_ENV: &str = "AURA_HISTORIA_WORKER_DRAIN_TIMEOUT_SECONDS";
+pub const WORKER_STOP_TIMEOUT_SECONDS_ENV: &str = "AURA_HISTORIA_WORKER_STOP_TIMEOUT_SECONDS";
+/// HTTP drain allowance shared with the binary's whole-runtime shutdown supervisor.
+pub const WORKER_HTTP_DRAIN_TIMEOUT: Duration = http::CONNECTION_TIMEOUT;
 pub const WORKER_SCOPE_ENV: &str = "AURA_HISTORIA_WORKER_SCOPE";
 pub const WORKER_STAGE_ENV: &str = "STAGE";
 pub const OPENSEARCH_ENDPOINT_URL_ENV: &str = "OPENSEARCH_ENDPOINT_URL";
@@ -48,7 +52,7 @@ pub const NOTIFICATION_EMAIL_REPLY_TO_ENV: &str = "NOTIFICATION_EMAIL_REPLY_TO";
 pub const COMMIT_SHA_ENV: &str = "COMMIT_SHA";
 
 const DEFAULT_WORKER_HEALTH_BIND_ADDR: &str = "0.0.0.0:8081";
-const DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS: u64 = 270;
+const DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS: u64 = operations::DEFAULT_DRAIN_SECONDS;
 const DEFAULT_LOCAL_WORKER_SCOPE: &str = "search-filter-projection";
 
 pub const SEQUIN_CDC_PATH: &str = "/cdc/sequin";
@@ -134,6 +138,8 @@ fn is_local_development_stage(stage: Option<&str>) -> bool {
 pub struct WorkerConfig {
     health_bind_addr: SocketAddr,
     drain_timeout: Duration,
+    stop_timeout: Duration,
+    operational: Option<operations::OperationalConfig>,
 }
 
 impl WorkerConfig {
@@ -166,9 +172,27 @@ impl WorkerConfig {
             None => Duration::from_secs(DEFAULT_WORKER_DRAIN_TIMEOUT_SECONDS),
         };
 
+        let stop_timeout = match get(WORKER_STOP_TIMEOUT_SECONDS_ENV) {
+            Some(value) => {
+                let seconds = value
+                    .parse::<u64>()
+                    .map_err(|_| WorkerConfigError::InvalidStopTimeout)?;
+                if seconds == 0 {
+                    return Err(WorkerConfigError::InvalidStopTimeout);
+                }
+                Duration::from_secs(seconds)
+            }
+            None => Duration::from_secs(operations::DEFAULT_STOP_SECONDS),
+        };
+        let maximum = Duration::from_secs(operations::MAX_SHUTDOWN_SECONDS);
+        if drain_timeout > maximum || stop_timeout > maximum {
+            return Err(WorkerConfigError::ShutdownBudgetTooLarge);
+        }
         Ok(Self {
             health_bind_addr,
             drain_timeout,
+            stop_timeout,
+            operational: None,
         })
     }
 
@@ -178,6 +202,11 @@ impl WorkerConfig {
 
     pub const fn drain_timeout(&self) -> Duration {
         self.drain_timeout
+    }
+
+    /// Declared external stop budget; the process cannot configure its own supervisor.
+    pub const fn stop_timeout(&self) -> Duration {
+        self.stop_timeout
     }
 }
 
@@ -195,6 +224,10 @@ pub enum WorkerConfigError {
     },
     #[error("{env_name} must be greater than zero", env_name = WORKER_DRAIN_TIMEOUT_SECONDS_ENV)]
     ZeroDrainTimeout,
+    #[error("worker external stop timeout must be positive whole seconds")]
+    InvalidStopTimeout,
+    #[error("worker drain/stop timeouts must not exceed {max}s", max = operations::MAX_SHUTDOWN_SECONDS)]
+    ShutdownBudgetTooLarge,
 }
 
 pub struct WorkerOpenSearchConfig {
@@ -297,9 +330,22 @@ impl WorkerStartupConfig {
     {
         let stage = get(WORKER_STAGE_ENV);
         let scope = WorkerScope::from_getter(&mut get)?;
-        let worker = WorkerConfig::from_getter(&mut get)?;
+        let mut worker = WorkerConfig::from_getter(&mut get)?;
         let queue = queue::SqsQueueConfig::from_getter(scope, &mut get)?;
         let postgres = postgres_config(&mut get)?;
+        let identity = operations::OperationalIdentity::parse(
+            scope,
+            stage.as_deref(),
+            get(COMMIT_SHA_ENV),
+            &worker,
+        )?;
+        let commit_sha = identity.source_sha.clone();
+        worker.operational = Some(operations::OperationalConfig {
+            identity,
+            drain: worker.drain_timeout(),
+            stop: worker.stop_timeout(),
+            execution: queue.execution_budget(),
+        });
         let (opensearch, vertex_ai, notification_delivery) = match scope {
             WorkerScope::SearchFilterProjection | WorkerScope::ProductListingOpenSearch => (
                 Some(opensearch_config(&mut get, stage.as_deref())?),
@@ -347,7 +393,10 @@ impl WorkerStartupConfig {
                         stage: stage.ok_or(WorkerStartupConfigError::MissingEnv {
                             name: WORKER_STAGE_ENV,
                         })?,
-                        commit_sha: required_env(&mut get, COMMIT_SHA_ENV)?,
+                        // EMAIL asset prefixes still require a release SHA, even in local tests.
+                        commit_sha: commit_sha.ok_or(WorkerStartupConfigError::MissingEnv {
+                            name: COMMIT_SHA_ENV,
+                        })?,
                     }),
                 }),
             ),
@@ -418,12 +467,18 @@ where
     F: FnMut(&'static str) -> Option<String>,
 {
     let endpoint = required_env(get, OPENSEARCH_ENDPOINT_URL_ENV)?;
-    let endpoint = url::Url::parse(&endpoint).map_err(|source| {
-        WorkerStartupConfigError::InvalidOpenSearchEndpoint {
-            value: endpoint,
-            source,
-        }
-    })?;
+    let endpoint = url::Url::parse(&endpoint)
+        .map_err(|source| WorkerStartupConfigError::InvalidOpenSearchEndpoint { source })?;
+    if endpoint.host_str().is_none()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.query().is_some()
+        || endpoint.fragment().is_some()
+        || !(endpoint.scheme() == "https"
+            || (is_local_development_stage(stage) && endpoint.scheme() == "http"))
+    {
+        return Err(WorkerStartupConfigError::UnsupportedOpenSearchEndpoint);
+    }
     let basic_auth = if is_local_development_stage(stage) {
         None
     } else {
@@ -467,11 +522,14 @@ pub enum WorkerStartupConfigError {
     MissingEnv { name: &'static str },
     #[error("invalid worker scope {value}")]
     InvalidScope { value: String },
-    #[error("invalid {env_name}: {value}", env_name = OPENSEARCH_ENDPOINT_URL_ENV)]
-    InvalidOpenSearchEndpoint {
-        value: String,
-        source: url::ParseError,
-    },
+    #[error("worker deployment needs drain >=270s, external stop >=300s and >=drain+30s")]
+    UnsafeDeploymentBudgets,
+    #[error("COMMIT_SHA must be a canonical non-placeholder 40-character lowercase release SHA")]
+    InvalidReleaseSha,
+    #[error("unsupported OpenSearch endpoint configuration")]
+    UnsupportedOpenSearchEndpoint,
+    #[error("invalid OpenSearch endpoint URL")]
+    InvalidOpenSearchEndpoint { source: url::ParseError },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -550,6 +608,7 @@ where
 pub struct WorkerRuntime {
     cdc_fanout: CdcFanout,
     control: queue::RuntimeControl,
+    operational: Option<operations::OperationalConfig>,
 }
 
 impl WorkerRuntime {
@@ -557,6 +616,7 @@ impl WorkerRuntime {
         Self {
             cdc_fanout,
             control: queue::RuntimeControl::new(true),
+            operational: None,
         }
     }
 
@@ -712,6 +772,16 @@ impl WorkerRuntime {
         self.control.shutdown();
     }
 
+    /// Join cancelled receive, handler and reconciliation children after joining the consumer.
+    /// The process supervisor must bound parent and child cancellation under one deadline.
+    pub async fn join_cancelled_tasks(&self) {
+        self.control.join_cancelled_tasks().await;
+    }
+
+    pub(crate) fn admitting(&self) -> bool {
+        self.cdc_fanout.has_destinations() && !self.control.stopping()
+    }
+
     pub async fn ingest_cdc_json(&self, body: &str) -> Result<usize, CdcIngestError> {
         if self.control.stopping() {
             return Err(cdc::CdcFanoutError::PublicationFailed.into());
@@ -744,6 +814,7 @@ impl WorkerRuntimeComposition {
         let runtime = WorkerRuntime {
             cdc_fanout: CdcFanout::for_scope(scope, registry),
             control,
+            operational: None,
         };
         Self { runtime, receiver }
     }
@@ -845,6 +916,8 @@ pub async fn run_until_shutdown_with_runtime<S>(
 where
     S: Future<Output = ()> + Send + 'static,
 {
+    let mut runtime = runtime;
+    runtime.operational = config.operational.clone();
     let listener = TcpListener::bind(config.health_bind_addr())
         .await
         .map_err(WorkerRunError::Bind)?;
@@ -901,6 +974,7 @@ mod tests {
     fn production_worker_env(scope: &str) -> HashMap<&'static str, String> {
         env(&[
             (WORKER_STAGE_ENV, "prod"),
+            (COMMIT_SHA_ENV, "d5bd9ca854e713b0c587528f02037211b2020fd4"),
             (WORKER_SCOPE_ENV, scope),
             (queue::AWS_REGION_ENV, "eu-central-1"),
             (
@@ -928,7 +1002,7 @@ mod tests {
             | WorkerScope::ProductListingOpenSearch => {
                 values.insert(
                     OPENSEARCH_ENDPOINT_URL_ENV,
-                    "http://opensearch:9200".to_owned(),
+                    "https://opensearch:9200".to_owned(),
                 );
                 values.insert(OPENSEARCH_USERNAME_ENV, "worker".to_owned());
                 values.insert(OPENSEARCH_PASSWORD_ENV, "not-a-real-secret".to_owned());
@@ -947,7 +1021,10 @@ mod tests {
                     NOTIFICATION_EMAIL_REPLY_TO_ENV,
                     "contact@example.test".to_owned(),
                 );
-                values.insert(COMMIT_SHA_ENV, "test-commit".to_owned());
+                values.insert(
+                    COMMIT_SHA_ENV,
+                    "d5bd9ca854e713b0c587528f02037211b2020fd4".to_owned(),
+                );
             }
             WorkerScope::ProductListingTranslation => {}
             WorkerScope::ProductListingEmbedding => {}

@@ -103,6 +103,9 @@ const missingInventory: Path[] = [
   rolePath('api'), rolePath('workers'), rolePath('cron'), rolePath('crawler'),
   rolePath('postgres_business'), rolePath('postgres_crawler'), rolePath('opensearch'), rolePath('sequin'), rolePath('edge'),
   rolePath('api', 'slots', 'green'), rolePath('api', 'resources_per_slot'),
+  rolePath('api', 'slots', 'blue', 'operations_listener'),
+  rolePath('api', 'slots', 'green', 'operations_listener', 'port'),
+  rolePath('api', 'slots', 'green', 'operations_listener', 'bind'),
   rolePath('api', 'credentials', 'business', 'pool_max'), rolePath('api', 'credentials', 'aws', 'profile_ref'),
   rolePath('crawler', 'credentials', 'crawler'), [...database, 'migrator'], [...database, 'backup'],
   [...database, 'sequin'], [...database, 'reserve_sessions'], [...database, 'history_id'],
@@ -256,6 +259,41 @@ test('PostgreSQL exact budgets include API overlap, cron lock, Lambdas and maint
   apiGrowth.stages[0]!.roles.postgres_business.database.max_connections = 70;
   assert.doesNotThrow(() => parseInventory(apiGrowth));
 });
+test('API operational listeners are loopback-only and reserve both slots across roles/stages', () => {
+  const inventory = inventoryFixture(['dev']);
+  assert.doesNotThrow(() => parseInventory(inventory));
+  for (const slot of ['blue', 'green']) {
+    const path = rolePath('api', 'slots', slot, 'operations_listener');
+    for (const bind of ['PRIVATE', 'PUBLIC', 'ALL_IPV4', 'ALL_IPV6', 'ALL_INTERFACES']) {
+      invalidInventory(changed(inventory, [...path, 'bind'], bind));
+    }
+    invalidInventory(changed(inventory, [...path, 'port'], 8080));
+    invalidInventory(changed(inventory, [...path, 'port'], 8100));
+    invalidInventory(changed(inventory, [...path, 'endpoint'], 'http://localhost:9080/ready'));
+  }
+  invalidInventory(changed(inventory, rolePath('api', 'slots', 'green', 'operations_listener', 'port'), 9080));
+  const shared = sharedHostFixture();
+  shared.stages[1]!.roles.api.slots.blue.operations_listener.port = shared.stages[0]!.roles.api.slots.blue.operations_listener.port;
+  invalidInventory(shared);
+});
+
+test('worker controller budgets match the runtime one-hour configuration ceiling', () => {
+  const runtime = runtimeFixture('dev');
+  const worker = runtime.workers[0]!;
+  worker.drain_seconds = 3570;
+  worker.stop_seconds = 3600;
+  assert.doesNotThrow(() => parseRuntimeConfiguration(runtime));
+  invalidRuntime(changed(runtime, ['workers', 0, 'stop_seconds'], 3601));
+  const fields = RuntimeConfiguration.shape.workers.element.shape;
+  for (const field of [fields.drain_seconds, fields.stop_seconds]) {
+    assert.equal(field.safeParse(3600).success, true);
+    assert.equal(field.safeParse(3601).success, false);
+  }
+  worker.drain_seconds = 3601;
+  worker.stop_seconds = 3631;
+  invalidRuntime(runtime);
+});
+
 test('connection multiplication cannot round or overflow into an accepted budget', () => {
   const inventory = inventoryFixture(['dev']);
   const stage = inventory.stages[0]!;

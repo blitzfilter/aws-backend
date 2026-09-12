@@ -97,8 +97,8 @@ export function inventoryFixture(
         api: {
           host_id: apiService.host_id, resources_per_slot: resources(), ca_ref: apiService.ca_ref,
           slots: {
-            blue: { listener: apiService.listener, endpoint: apiService.endpoint },
-            green: { listener: green.listener, endpoint: green.endpoint },
+            blue: { listener: apiService.listener, endpoint: apiService.endpoint, operations_listener: { port: 9080, bind: 'LOOPBACK' } },
+            green: { listener: green.listener, endpoint: green.endpoint, operations_listener: { port: 9084, bind: 'LOOPBACK' } },
           },
           credentials: {
             business: pool('api-business'), aws: aws('api'), vertex: vertex('api'),

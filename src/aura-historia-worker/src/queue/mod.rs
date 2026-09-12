@@ -2,6 +2,7 @@
 mod config;
 mod consumer;
 mod sqs;
+mod tasks;
 
 pub use config::{
     AWS_REGION_ENV, QueueError, SQS_ENDPOINT_ENV, SqsQueueConfig, WORKER_QUEUE_URL_ENV,

@@ -76,13 +76,18 @@ const Service = z.strictObject({
   endpoint: PrivateEndpoint,
   ca_ref: SecretReference,
 });
+const ApiSlot = z.strictObject({
+  listener: Listener,
+  endpoint: PrivateEndpoint,
+  operations_listener: z.strictObject({ port: PortNumber, bind: z.literal('LOOPBACK') }),
+}).describe('Business ingress and separate HTTP operational listener. Probe through an allowlisted slot-local execution, never publish/proxy operations. Ports conservatively reserve host-wide capacity, including shared network namespaces.');
 const Api = z.strictObject({
   host_id: Identifier,
   resources_per_slot: Resources,
   ca_ref: SecretReference,
   slots: z.strictObject({
-    blue: z.strictObject({ listener: Listener, endpoint: PrivateEndpoint }),
-    green: z.strictObject({ listener: Listener, endpoint: PrivateEndpoint }),
+    blue: ApiSlot,
+    green: ApiSlot,
   }),
   credentials: z.strictObject({
     business: Pool,
@@ -313,7 +318,7 @@ export const Inventory = z.strictObject({
       if (host) validateEndpoint(service.endpoint, host, service.host_id, service.listener, service.ca_ref, real, singleHost, ctx);
     }
     const apiHost = allocate(roles.api.host_id, stage.stage, roles.api.resources_per_slot,
-      [roles.api.slots.blue.listener, roles.api.slots.green.listener], 2);
+      Object.values(roles.api.slots).flatMap(slot => [slot.listener, slot.operations_listener]), 2);
     if (apiHost) {
       for (const slot of Object.values(roles.api.slots)) {
         validateEndpoint(slot.endpoint, apiHost, roles.api.host_id, slot.listener, roles.api.ca_ref, real, singleHost, ctx);
@@ -395,6 +400,8 @@ const Queue = z.strictObject({
   arn: z.string().regex(/^arn:aws(?:-us-gov|-cn)?:sqs:[a-z0-9-]+:[0-9]{12}:[a-z0-9-]{1,80}$/),
 });
 const RuntimeWorker = Lifecycle.extend({
+  drain_seconds: Seconds.max(3600),
+  stop_seconds: Seconds.max(3600),
   scope: WorkerScope,
   execution_seconds: Seconds,
   visibility_seconds: Positive.max(43200),

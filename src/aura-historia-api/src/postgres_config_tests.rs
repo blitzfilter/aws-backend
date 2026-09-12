@@ -48,69 +48,8 @@ fn assert_invalid(values: &BTreeMap<&'static str, String>, expected: ConfigError
     }
 }
 
-#[rstest::rstest]
-#[case::invalid_stage("unknown", "disable", ConfigError::InvalidStage)]
-#[case::dev_missing_ca("dev", "verify-full", ConfigError::RootCertificateRequired)]
-#[case::prod_missing_ca("prod", "verify-full", ConfigError::RootCertificateRequired)]
-#[tokio::test]
-async fn should_reject_invalid_postgres_config_before_cloud_startup(
-    #[case] stage: &str,
-    #[case] mode: &str,
-    #[case] expected: ConfigError,
-) -> TestResult {
-    let mut values = inputs();
-    values.insert("STAGE", stage.into());
-    values.insert("POSTGRES_SSL_MODE", mode.into());
-    let cloud_startup_calls = std::cell::Cell::new(0);
-    let result =
-        super::postgres_config_before_cloud_startup(&mut |key| values.get(key).cloned(), || {
-            cloud_startup_calls.set(cloud_startup_calls.get() + 1);
-            async {}
-        })
-        .await;
-
-    assert_eq!(cloud_startup_calls.get(), 0);
-    let error = result.err().ok_or("expected PostgreSQL config rejection")?;
-    assert!(matches!(
-        error,
-        super::ApiStateError::PostgresConfig(cause) if cause.to_string() == expected.to_string()
-    ));
-    Ok(())
-}
-
-#[tokio::test]
-async fn should_reuse_postgres_config_parsed_once_before_cloud_startup() -> TestResult {
-    let values = std::cell::RefCell::new(inputs());
-    let lookups = std::cell::RefCell::new(BTreeMap::new());
-    let cloud_startup_calls = std::cell::Cell::new(0);
-    let (postgres, cloud) = super::postgres_config_before_cloud_startup(
-        &mut |key| {
-            assert_eq!(
-                cloud_startup_calls.get(),
-                0,
-                "PG lookup after cloud startup"
-            );
-            *lookups.borrow_mut().entry(key).or_insert(0) += 1;
-            values.borrow().get(key).cloned()
-        },
-        || {
-            cloud_startup_calls.set(cloud_startup_calls.get() + 1);
-            values.borrow_mut().clear();
-            async { "cloud-config-spy" }
-        },
-    )
-    .await?;
-
-    assert_eq!(cloud_startup_calls.get(), 1);
-    assert_eq!(cloud, "cloud-config-spy");
-    assert!(lookups.into_inner().values().all(|count| *count == 1));
-    assert_eq!(postgres.host(), "postgres.example.test");
-    assert_eq!(postgres.database(), "database_canary");
-    assert_eq!(postgres.username(), "username_canary");
-    assert_eq!(postgres.port(), 5432);
-    assert_eq!(postgres.max_connections(), 2);
-    Ok(())
-}
+// Full startup/preflight ordering now uses the pure shared startup snapshot and
+// real CLI subprocess tests in runtime_tests.rs / tests/cli.rs. PG policy stays here.
 
 #[test]
 fn should_use_explicit_local_tls_and_shared_pool_defaults() -> TestResult {

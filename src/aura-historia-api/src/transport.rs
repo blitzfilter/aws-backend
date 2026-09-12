@@ -18,7 +18,7 @@ const WOOCOMMERCE_DELIVERY_ID_HEADER: HeaderName =
     HeaderName::from_static("x-wc-webhook-delivery-id");
 const MAX_CORRELATION_ID_LENGTH: usize = 128;
 const MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) fn with_transport_middleware(router: Router) -> Router {
     router

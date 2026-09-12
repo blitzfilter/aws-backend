@@ -262,6 +262,10 @@ enum CdcFanoutScope {
 }
 
 impl CdcFanout {
+    pub(crate) fn has_destinations(&self) -> bool {
+        !self.registry.queues.is_empty()
+    }
+
     pub fn for_scope(scope: crate::WorkerScope, registry: WorkerQueueRegistry) -> Self {
         use crate::WorkerScope;
         match scope {

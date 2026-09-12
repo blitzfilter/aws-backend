@@ -6,7 +6,7 @@
 
 ## Core Design
 
-- `config.rs` owns validated TLS/pool inputs, SQLx options, and redacted connect errors. `lib.rs` keeps SQLx transactions.
+- `config.rs` owns validated TLS/pool inputs, SQLx options, and redacted connect errors. `lib.rs` keeps SQLx transactions. `schema.rs` owns the shared read-only business startup gate.
 - Depends on `application` transaction contracts, SQLx 0.9.0, Tokio deadlines, rustls certificate validation, URL decoding, and Unix file flags.
 - No entity repository, row, mapping, direct environment read, or business port.
 - Composition root passes lookup closure. Production lookup must expose actual PG* settings too. No global environment mutation.
@@ -42,6 +42,19 @@
 - `PostgresPoolConfig` remains Clone, not Eq/PartialEq; options snapshot is opaque. `port()` is no longer const.
 - Old `PostgresConnectError::Connect(sqlx_error)` call sites must use returned connect error or `PostgresConnectError::from(sqlx_error)`.
 
+## Business Schema Gate
+
+- Production export: `verify_business_schema(&PgPool) -> Result<(), PostgresSchemaError>`. API/worker call once before accepting work; wiring belongs to runtime owners. No config/TLS changes.
+- Checks exact up-migration versions/success/SHA-384 checksums from `sqlx::migrate!("../../migrations")` against `public._sqlx_migrations`. Missing, dirty, changed, extra/unknown history fails closed. A table without history never authorizes stamping. History descriptions/timings are not schema identity.
+- Requires installed `pg_trgm`, `unaccent`, `pg_ttl_index` in `public` and all 33 baseline business tables as persistent ordinary/partitioned tables. Ledger must be a persistent ordinary table without RLS; views/RLS cannot hide history. No business rows read.
+- One read-only repeatable-read transaction makes catalog/history checks coherent. No DDL, migration lock, `run`, `ensure_migrations_table`, repair, stamp, or business/history mutation. Five-second total deadline, two-second statements, 500ms lock waits, five-second idle-transaction timeout. Fixed catalog search path; ledger always schema-qualified.
+- One pool connection is checked out and closed, not returned, even on failure/cancellation. SQLx close-on-drop cleanup is asynchronous with its own five-second bound; server statement/idle deadlines also bound abandoned work. Successful verification commits the read-only transaction and awaits close within the total deadline.
+- Operator supplies an existing shared-config pool for the business database, public-schema USAGE, catalog access and ledger SELECT. No business SELECT or write/DDL grants needed for the gate. Catalog owners and database administrators remain trusted.
+- `PostgresSchemaError::code()` exposes `SCHEMA_HISTORY_MISSING`, `SCHEMA_HISTORY_DIRTY`, `SCHEMA_HISTORY_MISMATCH`, `SCHEMA_HISTORY_UNKNOWN`, `SCHEMA_HISTORY_INVALID`, `SCHEMA_EXTENSION_MISSING`, `SCHEMA_BASELINE_MISSING`, `SCHEMA_PERMISSION_DENIED`, `SCHEMA_TIMEOUT`, `SCHEMA_DEPENDENCY_UNAVAILABLE`, or `SCHEMA_EXPECTATION_INVALID`. Technical causes retained privately; all exposed Debug/Display/source members redact provider data.
+- Deliberate task03 limit: unknown future migrations block old binaries, even claimed additive ones. Task05 must review an explicit compatible-superset protocol; never infer compatibility from SQL/history alone. This is point-in-time history/availability verification, not full schema drift, extension-version/preload/worker-health proof, or serialization with a concurrent migrator.
+- `schema_tests.rs`/`schema_fixture.rs` stay private. Reuse `docker_fixture.rs` unchanged, cached `test-api/postgres/image-ref.txt`, isolated tmpfs/loopback fixtures, ID-only cleanup and redacted output. Test fixture alone provisions extensions/runs migrations; the shared test-api replay fixture does not create SQLx history.
+- Task05 pinned-source evidence and implementation limits: `SCHEMA_GATE_05.md`.
+
 ## Integration Handoff
 
 - Runtime/CDK constructor migration belongs to integrator; this crate change alone does not complete task02. Remove legacy implicit/insecure startup paths there; do not enable deployment as part of this slice.
@@ -60,6 +73,7 @@
 - `cargo test --locked --offline -p platform-postgres --all-features --lib`
 - `cargo clippy --locked --offline -p platform-postgres --all-targets --all-features -- -D warnings`
 - TLS transport: `cargo test --locked --offline -p platform-postgres --lib tls_tests::should_ -- --ignored --test-threads=1`
+- Schema gate + read-only SQLx lock probe: `cargo test --locked --offline -p platform-postgres --all-features --lib schema::tests::should_ -- --ignored --test-threads=1`. Requires cached image named by `src/test-api/postgres/image-ref.txt`; no pull/override. Every successful test requires owned-ID cleanup. Guard's fake tests compile twice deliberately; test-only `duplicate_mod` expectation preserves existing fixture ownership.
 - Bound each targeted invocation to 120 seconds. No workspace full-suite retry.
 - Unit CA tests need `openssl` and `timeout`; Unix FIFO test also needs `mkfifo`. Keys generated under crate `target/` and removed, never committed.
 - TLS tests are opt-in; require `/usr/bin/docker`, `/usr/bin/timeout`, local Unix socket `/var/run/docker.sock`, and cached `postgres:17`. No image pulls. CLI forces this Unix endpoint and isolated config directory; child environment cleared, so inherited Docker host/context/TLS settings cannot select remote Docker.

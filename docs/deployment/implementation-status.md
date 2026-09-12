@@ -10,8 +10,9 @@ Models: orchestrator GPT-6-Astra; delegation has no model selector. Runtime inve
 |---|---|---|
 | 00 | Accepted | `303f50b8de5c603f2c11498979cb2867634c620e`; reviewer `5d2424e8-0e8b-4dd9-b0cc-d3507ead76ac` accepted after two P2 inventory omissions fixed; no runtime change |
 | 01 | Accepted default-off contracts | `f96206473b1fc0395089008b799306c67251f6da`; independent reviewers `c6ac1bf8-98c5-4451-a690-0e1df1d045b5` (release/topology/catalog) and `b37687e6-7f20-44dd-8cae-96c3fb29216d` (state/hash/CLI/bootstrap) accepted after fixes |
-| 02 | Accepted local TLS/configuration slice | Local commit follows; reviewers `08d567dc-f8ac-48b9-9740-801995410d99` (shared/TLS) and `96c8525b-bafa-4807-ad71-b3c0bfce2263` (callers/crawler/CDK) accepted; no runtime activation |
-| 03–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
+| 02 | Accepted local TLS/configuration slice | `d5bd9ca854e713b0c587528f02037211b2020fd4`; reviewers `08d567dc-f8ac-48b9-9740-801995410d99` (shared/TLS) and `96c8525b-bafa-4807-ad71-b3c0bfce2263` (callers/crawler/CDK) accepted; no runtime activation |
+| 03 | Accepted local lifecycle/preflight slice | Local commit follows; API/worker/shared-schema/fixture/controller independent reviews accepted after repairs. No deployment activation; real Sequin/SQS rehearsal unpassed |
+| 04–14 | Not started | 05 pinned-SQLx investigation only; dependency gates in `architecture-decisions.md`; no functionality claimed |
 
 ## Baseline checks
 
@@ -57,6 +58,24 @@ Caller config checks: seven-package all-target/all-feature check pass; native/La
 New required runtime inputs: `STAGE`, `POSTGRES_SSL_MODE`, real-stage readable `POSTGRES_SSL_ROOT_CERT`; one password source; crawler both URLs and pre-provisioned histories. Crawler acquire timeout changed 30s→5s. Credential/CA rotation requires pool/process recycle; Lambda current-config delivery remains 09/10 gate. Editing `infra/examples/worker.env.example` was blocked by a tool security rule (not bypassed); updated contract is in `infra/README.md` and crate docs instead.
 
 Review fixes cover every error-source formatter, invalid-Unicode rejection, API validation before AWS discovery, owned-ID Docker cleanup and explicit SQLx ambient exception. No live account/host/firewall/secret changes. Reverting 02 would remove TLS enforcement and restore unsafe old startup; do not deploy such a rollback. Full workspace library test still has baseline timeout; no longer rerun authorized. No data migrations changed.
+
+## Iteration 03 evidence
+
+API implementation `296cac99-0309-4a2b-8527-930d459980ce`, repair `767441b4-5041-4df1-92b4-4e38af2363c3`, active-write proof `6b9d1490-b13b-4222-a217-c91ff072198d`; independent reviewer `ce8fc257-9751-485b-b3ef-8d75a145a574` accepted. Worker implementation `eb13ad40-f695-4910-8d4a-f9e24bb01f2f`, repairs `5acd95e5-0dad-4f33-bb95-24ec66d68e0a`; original reviewer `ca3c416f-2e56-4004-8de7-f281aa5c59b4` found gaps; fresh final reviewer `29b12549-0e8b-4254-9e5d-0561713816fe` accepted. Initial implementers exhausted context; preserved edits and obtained explicit handoffs, not invented success. Available GPT-6-Astra only.
+
+Shared schema gate `7b12f3b2-18cd-4710-8110-a8498f7a2897`, accepted reviewer `0c530914-4792-4c60-a6bb-5f58b36d77c7`. Exact compiled SQLx checksums/history, installed extensions and 33 baseline tables; read-only snapshot, 5s overall/2s statement/500ms lock limits. Rejects unknown future history; not complete DDL drift proof. Pinned migration-source findings: `src/platform-postgres/SCHEMA_GATE_05.md`; no migration writer implemented.
+
+Review repairs: API accept-error retry/backoff and drain-response transport headers; retained worker receive/reconciliation/handler joins; whole-HTTP-plus-consumer OS watchdog and bounded runtime destruction; checked worker budget ceilings. No receipt policy/wire/tombstone change. Shared Postgres fixture safety repair `35fb36af-918e-4460-8577-5ca75d7d385b`, independently accepted/rerun by `7dd57256-43d2-416d-a5b8-b13910e28574`: fixed local Docker, no pulls/predelete, only acquired full IDs, checked cleanup. Preserved raw replay; actual process fixtures apply SQLx migrations, never inferred stamps. Gateway-compatible test port remains public-bound: isolated test host only.
+
+Validation: integrated `cargo test --locked --offline -p aura-historia-api -p aura-historia-worker --lib --bins --all-features` pass; four-crate all-target/all-feature Clippy `--no-deps -D warnings` pass. Workspace all-target/all-feature locked/offline check, depgraph, full fmt, whitespace pass. Shared schema ordinary **145 pass**/19 ignored; opt-in PG **12 pass**. Fixture safety **26 pass**/3 direct helpers ignored plus separately executed **1 real gate**, four children/five containers, independently rerun and cleaned.
+
+API real-binary CLI **5 pass including opt-in**; reviewer independently reran actual binary + real PG: authenticated account-write barrier reached before SIGINT/SIGTERM, drain readiness503, released write200/one committed version increment survives exit0. Separate PG query cancellation proves rollback and same-request retry, not signal-forced rollback. FD-exhaustion subprocesses prove recovery and both-signal exit; accepted request/body deadline tests prove abort/join. Worker final reviewer **53 focused pass**, including **7 actual process** cases with real PG + loopback SQS/search spies, **69.77s**: heartbeat/drain/terminal-only delete/lost receipt/fatal deadline and all ten preflights without custody operations. Not real SQS durability evidence.
+
+Controller Node26.8.2 fresh build/schema generation/**576 tests**/catalog pass. Catalog still blocks absent migrator. Required draft-only API operation-port fields and worker3600s caps align configuration; no persisted/live v1 records. Contract reviewer `29467df3-8d64-401e-bf59-a1fae137ca78` requested explicit draft-break notice and independent cap assertions; both repaired and accepted; fresh Node26 build/**216 inventory tests** pass. Swagger YAML parse/description check pass. Root lock adds only existing Hyper/Hyper-util API edges; no dependency versions upgraded. Public probe removal documented in Swagger/changelog; no enabled workflow change.
+
+New inputs: canonical `COMMIT_SHA`; API loopback operation ports and declared45/60s drain/stop; worker270/300s with at most3600s; runtime ledger SELECT/public USAGE. Slot-local probes must not be published. `--check-config` on historical worker binaries could start consumption (old CLI ignored arguments): future tooling must verify capability before invocation. No runtime grants/ports/credentials applied.
+
+Remaining acceptance: real Sequin/SQS/retention/native-redelivery suites compiled only (current fixture requires LocalStack Pro with external licensing behavior; not run). Full API business suite, full workspace library timeout, container/edge/external-supervisor rehearsal remain unpassed. No schema supersets, platform ownership transfer, host/cloud adapter, backup, approvals or deploy/rollback success claimed. Removal must coordinate callers/probes/preflight; never downgrade schemas or purge queues. Deployment readiness remains false.
 
 ## Required external rollout gates
 

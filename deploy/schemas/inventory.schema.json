@@ -147,36 +147,10 @@
                     "type": "object",
                     "properties": {
                       "blue": {
-                        "type": "object",
-                        "properties": {
-                          "listener": {
-                            "$ref": "#/$defs/__schema6"
-                          },
-                          "endpoint": {
-                            "$ref": "#/$defs/__schema8"
-                          }
-                        },
-                        "required": [
-                          "listener",
-                          "endpoint"
-                        ],
-                        "additionalProperties": false
+                        "$ref": "#/$defs/__schema6"
                       },
                       "green": {
-                        "type": "object",
-                        "properties": {
-                          "listener": {
-                            "$ref": "#/$defs/__schema6"
-                          },
-                          "endpoint": {
-                            "$ref": "#/$defs/__schema8"
-                          }
-                        },
-                        "required": [
-                          "listener",
-                          "endpoint"
-                        ],
-                        "additionalProperties": false
+                        "$ref": "#/$defs/__schema6"
                       }
                     },
                     "required": [
@@ -189,16 +163,16 @@
                     "type": "object",
                     "properties": {
                       "business": {
-                        "$ref": "#/$defs/__schema10"
+                        "$ref": "#/$defs/__schema11"
                       },
                       "aws": {
-                        "$ref": "#/$defs/__schema12"
+                        "$ref": "#/$defs/__schema13"
                       },
                       "opensearch_ref": {
                         "$ref": "#/$defs/__schema5"
                       },
                       "vertex": {
-                        "$ref": "#/$defs/__schema13"
+                        "$ref": "#/$defs/__schema14"
                       },
                       "cognito_ref": {
                         "$ref": "#/$defs/__schema5"
@@ -245,34 +219,34 @@
                       "$ref": "#/$defs/__schema2"
                     },
                     "listener": {
-                      "$ref": "#/$defs/__schema6"
+                      "$ref": "#/$defs/__schema7"
                     },
                     "endpoint": {
-                      "$ref": "#/$defs/__schema8"
+                      "$ref": "#/$defs/__schema9"
                     },
                     "ca_ref": {
                       "$ref": "#/$defs/__schema5"
                     },
                     "scope": {
-                      "$ref": "#/$defs/__schema14"
+                      "$ref": "#/$defs/__schema15"
                     },
                     "credentials": {
                       "type": "object",
                       "properties": {
                         "business": {
-                          "$ref": "#/$defs/__schema10"
+                          "$ref": "#/$defs/__schema11"
                         },
                         "aws": {
-                          "$ref": "#/$defs/__schema12"
+                          "$ref": "#/$defs/__schema13"
                         },
                         "queue_scope": {
-                          "$ref": "#/$defs/__schema14"
+                          "$ref": "#/$defs/__schema15"
                         },
                         "opensearch_ref": {
                           "$ref": "#/$defs/__schema5"
                         },
                         "vertex": {
-                          "$ref": "#/$defs/__schema13"
+                          "$ref": "#/$defs/__schema14"
                         },
                         "email": {
                           "type": "object",
@@ -321,10 +295,10 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "listener": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema8"
+                    "$ref": "#/$defs/__schema9"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
@@ -337,16 +311,16 @@
                     "type": "object",
                     "properties": {
                       "business": {
-                        "$ref": "#/$defs/__schema10"
+                        "$ref": "#/$defs/__schema11"
                       },
                       "aws": {
-                        "$ref": "#/$defs/__schema12"
+                        "$ref": "#/$defs/__schema13"
                       },
                       "opensearch_ref": {
                         "$ref": "#/$defs/__schema5"
                       },
                       "vertex": {
-                        "$ref": "#/$defs/__schema13"
+                        "$ref": "#/$defs/__schema14"
                       }
                     },
                     "required": [
@@ -379,10 +353,10 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "listener": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema8"
+                    "$ref": "#/$defs/__schema9"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
@@ -395,16 +369,16 @@
                     "type": "object",
                     "properties": {
                       "business": {
-                        "$ref": "#/$defs/__schema10"
+                        "$ref": "#/$defs/__schema11"
                       },
                       "crawler": {
-                        "$ref": "#/$defs/__schema10"
+                        "$ref": "#/$defs/__schema11"
                       },
                       "aws": {
-                        "$ref": "#/$defs/__schema12"
+                        "$ref": "#/$defs/__schema13"
                       },
                       "vertex": {
-                        "$ref": "#/$defs/__schema13"
+                        "$ref": "#/$defs/__schema14"
                       },
                       "review_auth_ref": {
                         "$ref": "#/$defs/__schema5"
@@ -441,16 +415,16 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "listener": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema8"
+                    "$ref": "#/$defs/__schema9"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
                   },
                   "lambda_endpoint": {
-                    "$ref": "#/$defs/__schema15"
+                    "$ref": "#/$defs/__schema16"
                   },
                   "database": {
                     "type": "object",
@@ -462,7 +436,7 @@
                         ]
                       },
                       "name": {
-                        "$ref": "#/$defs/__schema16"
+                        "$ref": "#/$defs/__schema17"
                       },
                       "history_id": {
                         "$ref": "#/$defs/__schema0"
@@ -471,16 +445,16 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "migrator": {
-                        "$ref": "#/$defs/__schema17"
+                        "$ref": "#/$defs/__schema18"
                       },
                       "backup": {
-                        "$ref": "#/$defs/__schema17"
+                        "$ref": "#/$defs/__schema18"
                       },
                       "reserve_sessions": {
                         "$ref": "#/$defs/__schema3"
                       },
                       "sequin": {
-                        "$ref": "#/$defs/__schema17"
+                        "$ref": "#/$defs/__schema18"
                       }
                     },
                     "required": [
@@ -517,10 +491,10 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "listener": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema8"
+                    "$ref": "#/$defs/__schema9"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
@@ -535,7 +509,7 @@
                         ]
                       },
                       "name": {
-                        "$ref": "#/$defs/__schema16"
+                        "$ref": "#/$defs/__schema17"
                       },
                       "history_id": {
                         "$ref": "#/$defs/__schema0"
@@ -544,10 +518,10 @@
                         "$ref": "#/$defs/__schema3"
                       },
                       "migrator": {
-                        "$ref": "#/$defs/__schema17"
+                        "$ref": "#/$defs/__schema18"
                       },
                       "backup": {
-                        "$ref": "#/$defs/__schema17"
+                        "$ref": "#/$defs/__schema18"
                       },
                       "reserve_sessions": {
                         "$ref": "#/$defs/__schema3"
@@ -585,10 +559,10 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "listener": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema8"
+                    "$ref": "#/$defs/__schema9"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
@@ -618,10 +592,10 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "listener": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema8"
+                    "$ref": "#/$defs/__schema9"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
@@ -650,13 +624,13 @@
                     "$ref": "#/$defs/__schema2"
                   },
                   "http": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "https": {
-                    "$ref": "#/$defs/__schema6"
+                    "$ref": "#/$defs/__schema7"
                   },
                   "endpoint": {
-                    "$ref": "#/$defs/__schema15"
+                    "$ref": "#/$defs/__schema16"
                   },
                   "ca_ref": {
                     "$ref": "#/$defs/__schema5"
@@ -702,16 +676,16 @@
             "type": "object",
             "properties": {
               "cognito_post_confirmation": {
-                "$ref": "#/$defs/__schema18"
+                "$ref": "#/$defs/__schema19"
               },
               "shopify": {
-                "$ref": "#/$defs/__schema18"
+                "$ref": "#/$defs/__schema19"
               },
               "stripe": {
-                "$ref": "#/$defs/__schema18"
+                "$ref": "#/$defs/__schema19"
               },
               "fxrate": {
-                "$ref": "#/$defs/__schema18"
+                "$ref": "#/$defs/__schema19"
               }
             },
             "required": [
@@ -812,11 +786,46 @@
       "additionalProperties": false
     },
     "__schema6": {
+      "description": "Business ingress and separate HTTP operational listener. Probe through an allowlisted slot-local execution, never publish/proxy operations. Ports conservatively reserve host-wide capacity, including shared network namespaces.",
+      "type": "object",
+      "properties": {
+        "listener": {
+          "$ref": "#/$defs/__schema7"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/__schema9"
+        },
+        "operations_listener": {
+          "type": "object",
+          "properties": {
+            "port": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "bind": {
+              "type": "string",
+              "const": "LOOPBACK"
+            }
+          },
+          "required": [
+            "port",
+            "bind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "listener",
+        "endpoint",
+        "operations_listener"
+      ],
+      "additionalProperties": false
+    },
+    "__schema7": {
       "description": "TCP reservation. One host port belongs to one listener, even across bind addresses.",
       "type": "object",
       "properties": {
         "port": {
-          "$ref": "#/$defs/__schema7"
+          "$ref": "#/$defs/__schema8"
         },
         "bind": {
           "type": "string",
@@ -836,22 +845,22 @@
       ],
       "additionalProperties": false
     },
-    "__schema7": {
+    "__schema8": {
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 65535
     },
-    "__schema8": {
+    "__schema9": {
       "type": "object",
       "properties": {
         "host": {
           "$ref": "#/$defs/__schema4"
         },
         "port": {
-          "$ref": "#/$defs/__schema7"
+          "$ref": "#/$defs/__schema8"
         },
         "tls": {
-          "$ref": "#/$defs/__schema9"
+          "$ref": "#/$defs/__schema10"
         },
         "routing": {
           "type": "object",
@@ -883,7 +892,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema9": {
+    "__schema10": {
       "anyOf": [
         {
           "type": "object",
@@ -921,11 +930,11 @@
         }
       ]
     },
-    "__schema10": {
+    "__schema11": {
       "type": "object",
       "properties": {
         "identity": {
-          "$ref": "#/$defs/__schema11"
+          "$ref": "#/$defs/__schema12"
         },
         "pool_max": {
           "$ref": "#/$defs/__schema3"
@@ -937,7 +946,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema11": {
+    "__schema12": {
       "type": "object",
       "properties": {
         "principal": {
@@ -955,7 +964,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema12": {
+    "__schema13": {
       "type": "object",
       "properties": {
         "method": {
@@ -992,7 +1001,7 @@
       ],
       "additionalProperties": false
     },
-    "__schema13": {
+    "__schema14": {
       "anyOf": [
         {
           "type": "object",
@@ -1052,7 +1061,7 @@
         }
       ]
     },
-    "__schema14": {
+    "__schema15": {
       "type": "string",
       "enum": [
         "product-listing-opensearch",
@@ -1067,17 +1076,17 @@
         "notification-delivery"
       ]
     },
-    "__schema15": {
+    "__schema16": {
       "type": "object",
       "properties": {
         "host": {
           "$ref": "#/$defs/__schema4"
         },
         "port": {
-          "$ref": "#/$defs/__schema7"
+          "$ref": "#/$defs/__schema8"
         },
         "tls": {
-          "$ref": "#/$defs/__schema9"
+          "$ref": "#/$defs/__schema10"
         },
         "routing": {
           "type": "object",
@@ -1105,16 +1114,16 @@
       ],
       "additionalProperties": false
     },
-    "__schema16": {
+    "__schema17": {
       "type": "string",
       "maxLength": 63,
       "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
     },
-    "__schema17": {
+    "__schema18": {
       "type": "object",
       "properties": {
         "identity": {
-          "$ref": "#/$defs/__schema11"
+          "$ref": "#/$defs/__schema12"
         },
         "sessions": {
           "$ref": "#/$defs/__schema3"
@@ -1126,11 +1135,11 @@
       ],
       "additionalProperties": false
     },
-    "__schema18": {
+    "__schema19": {
       "type": "object",
       "properties": {
         "identity": {
-          "$ref": "#/$defs/__schema11"
+          "$ref": "#/$defs/__schema12"
         },
         "reserved_concurrency": {
           "type": "integer",
