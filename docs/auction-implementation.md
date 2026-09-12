@@ -1,11 +1,11 @@
 # Auction implementation plan
 
-**Status:** iterations 00–05 are complete. Iteration 05 directly replaces ambiguous ProductListing timing with listing-owned qualified lot context. It adds no Auction membership, source-key resolution, shared metadata, public Auction reads, or Auction-ID search.
+**Status:** iterations 00–06 are complete. Iteration 06 adds source-key Auction membership resolution in caller-owned listing transactions. It adds no correction/override policy, crawler extraction, public Auction browsing, or Auction-ID search.
 
 - Target issue: #1465; reliable identifier path of #1464.
 - Baseline: `c10ea0f44e63f249d398c10a7211933a3c48868f`.
 - Development policy: direct replacement; no successor raw/API/event/index version, compatibility reader, aliases, dual writes, backfill, or transition migration.
-- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md), [05 qualified lot timing](auction-iterations/05-qualified-lot-timing.md). Later records are added only after their own passing gates.
+- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md), [05 qualified lot timing](auction-iterations/05-qualified-lot-timing.md), [06 membership resolution](auction-iterations/06-membership-resolution.md). Later records are added only after their own passing gates.
 
 ## Observed baseline
 
@@ -32,7 +32,7 @@ The original broad inventory scan requested `rg`, but this checkout does not hav
 | 03 | Admin Auction HTTP | **PASS.** `aura-historia-api`, service wiring/DTOs, OpenAPI, changelog, black-box API tests. |
 | 04 | One raw-values shape | **PASS.** Full workspace library tests, check, dependency graph, clippy, format, and focused integration suites passed; details are in [the iteration 04 handoff](auction-iterations/04-current-raw-contract.md). `product-listing-normalization`, capture/hash/dispatch, crawler, Shopify, WooCommerce, and raw fixtures/runbook use one schema `1` shape requiring `priceFormat`; both price formats remain. |
 | 05 | Qualified listing auction context and lot timing | **PASS.** Listing core/service/PostgreSQL/OpenSearch, current raw and partner inputs, events/history, saved filters/percolation, API and affected listing consumers. Generic crawler timing extraction is removed rather than inferred; fixture-backed source extraction belongs to iteration 08. |
-| 06 | Source-key membership and transactional resolution | `auction-*`, listing context persistence/events, canonical writer, `product-service`, raw diagnostics/evidence, direct partner path, projection membership mapping. |
+| 06 | Source-key membership and transactional resolution | **PASS.** `auction-*`, listing context persistence/events, canonical writer, `product-service`, direct partner path, and projection membership mapping. Correction barriers, crawler extraction, public Auction reads, and Auction-ID filters remain later iterations. |
 | 07 | Corrections, override barrier, and safe release | Listing-owned policy/audit/floors, canonical/raw/partner guards, admin context/correction/release endpoints and concurrency tests. |
 | 08 | Fixture-backed crawler auction extraction | `crawler` selector generation/evaluation/review, raw producer mapping, provider fixtures, capture-to-resolution integration. |
 | 09 | Batched Auction summaries on listing reads | Auction summary reader plus ProductListing detail/search/similar/watchlist presentation, API DTOs/OpenAPI, bounded-query tests. |

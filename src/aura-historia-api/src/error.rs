@@ -1105,8 +1105,11 @@ impl From<CreateProductListingError> for ApiError {
                 ApiError::not_found(LISTING_SOURCE_NOT_FOUND)
                     .with_detail("Listing source was not found.")
             }
-            CreateProductListingError::SourceListingAlreadyExists => ApiError::conflict(CONFLICT)
-                .with_detail("ProductListing conflicts with current state."),
+            CreateProductListingError::SourceListingAlreadyExists
+            | CreateProductListingError::AuctionMembershipCorrectionRequired => {
+                ApiError::conflict(CONFLICT)
+                    .with_detail("ProductListing conflicts with current state.")
+            }
             CreateProductListingError::ProductListingTitleSlugAlreadyExists
             | CreateProductListingError::ProductListingTitleSlugGenerationExhausted => {
                 ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
@@ -1117,6 +1120,7 @@ impl From<CreateProductListingError> for ApiError {
                     .with_detail("ProductListing create is invalid.")
             }
             CreateProductListingError::PartnerAuthorizationTemporarilyUnavailable { .. }
+            | CreateProductListingError::AuctionResolutionTemporarilyUnavailable { .. }
             | CreateProductListingError::PersistenceFailed
             | CreateProductListingError::EventAppenderFailed { .. }
             | CreateProductListingError::BeginTransactionFailed
@@ -1125,6 +1129,7 @@ impl From<CreateProductListingError> for ApiError {
                     .with_detail("ProductListing create is temporarily unavailable.")
             }
             CreateProductListingError::PartnerAuthorizationInternal { .. }
+            | CreateProductListingError::AuctionResolutionInternal { .. }
             | CreateProductListingError::CreatedEventMissing => {
                 ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
                     .with_detail("ProductListing create failed internally.")
@@ -1153,6 +1158,10 @@ impl From<UpdateProductListingError> for ApiError {
             UpdateProductListingError::ListingWithdrawn => {
                 ApiError::conflict(CONFLICT).with_detail("ProductListing has been withdrawn.")
             }
+            UpdateProductListingError::AuctionMembershipCorrectionRequired => ApiError::conflict(
+                CONFLICT,
+            )
+            .with_detail("ProductListing auction membership requires an explicit correction."),
             UpdateProductListingError::UrlRequired => {
                 ApiError::bad_request(BAD_BODY_VALUE).with_detail("ProductListing URL is required.")
             }
@@ -1161,6 +1170,7 @@ impl From<UpdateProductListingError> for ApiError {
                     .with_detail("ProductListing update is invalid.")
             }
             UpdateProductListingError::PartnerAuthorizationTemporarilyUnavailable { .. }
+            | UpdateProductListingError::AuctionResolutionTemporarilyUnavailable { .. }
             | UpdateProductListingError::PersistenceFailed
             | UpdateProductListingError::EventAppenderFailed { .. }
             | UpdateProductListingError::BeginTransactionFailed
@@ -1168,7 +1178,8 @@ impl From<UpdateProductListingError> for ApiError {
                 ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
                     .with_detail("ProductListing update is temporarily unavailable.")
             }
-            UpdateProductListingError::PartnerAuthorizationInternal { .. } => {
+            UpdateProductListingError::PartnerAuthorizationInternal { .. }
+            | UpdateProductListingError::AuctionResolutionInternal { .. } => {
                 ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
                     .with_detail("ProductListing update failed internally.")
             }
@@ -1363,11 +1374,16 @@ impl From<UpsertProductListingError> for ApiError {
             UpsertProductListingError::ListingWithdrawn => {
                 ApiError::conflict(CONFLICT).with_detail("ProductListing has been withdrawn.")
             }
+            UpsertProductListingError::AuctionMembershipCorrectionRequired => ApiError::conflict(
+                CONFLICT,
+            )
+            .with_detail("ProductListing auction membership requires an explicit correction."),
             UpsertProductListingError::InvalidProductListing { .. } => {
                 ApiError::bad_request(BAD_BODY_VALUE)
                     .with_detail("ProductListing upsert is invalid.")
             }
             UpsertProductListingError::PartnerAuthorizationTemporarilyUnavailable { .. }
+            | UpsertProductListingError::AuctionResolutionTemporarilyUnavailable { .. }
             | UpsertProductListingError::ProductListingTitleSlugGenerationExhausted
             | UpsertProductListingError::PersistenceFailed
             | UpsertProductListingError::EventAppenderFailed { .. }
@@ -1376,7 +1392,8 @@ impl From<UpsertProductListingError> for ApiError {
                 ApiError::service_unavailable(PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE)
                     .with_detail("ProductListing upsert is temporarily unavailable.")
             }
-            UpsertProductListingError::PartnerAuthorizationInternal { .. } => {
+            UpsertProductListingError::PartnerAuthorizationInternal { .. }
+            | UpsertProductListingError::AuctionResolutionInternal { .. } => {
                 ApiError::internal_server_error(PRODUCT_LISTING_INTERNAL_ERROR)
                     .with_detail("ProductListing upsert failed internally.")
             }

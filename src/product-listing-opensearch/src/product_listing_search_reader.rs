@@ -190,6 +190,8 @@ fn map_summary_fields(
         event_id: document.event_id,
         listing_source_id: document.listing_source_id,
         source_listing_id: document.source_listing_id,
+        auction_id: document.auction_id,
+        has_auction_context: document.has_auction_context,
         title,
         display_price,
         price_valuation,
@@ -910,6 +912,8 @@ mod tests {
             source_listing_id: SourceListingId::try_from("sku-1")
                 .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
             event_id: EventId::new(),
+            auction_id: None,
+            has_auction_context: false,
             title: TextDocument::new("Vase", Language::En),
             title_de: None,
             title_en: Some("Vase".to_owned()),

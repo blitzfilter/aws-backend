@@ -475,6 +475,8 @@ mod tests {
                 },
                 source_listing_id: SourceListingId::try_from("source-listing-id")
                     .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
+                auction_id: None,
+                has_auction_context: false,
                 title: Some(Localized {
                     localization: Language::En,
                     payload: Title::from("Cabinet"),

@@ -74,6 +74,7 @@ struct ProductListingRow {
     product_images: serde_json::Value,
     embedding: Option<Vec<f32>>,
     auction_context_product_listing_id: Option<uuid::Uuid>,
+    auction_id: Option<uuid::Uuid>,
     auction_lot_number: Option<String>,
     auction_catalogue_position: Option<i64>,
     auction_timing_product_listing_id: Option<uuid::Uuid>,
@@ -131,6 +132,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
                 price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url,
                 product_images, embedding,
                 auction_context.product_listing_id AS auction_context_product_listing_id,
+                auction_context.auction_id AS auction_id,
                 auction_context.lot_number AS auction_lot_number,
                 auction_context.catalogue_position AS auction_catalogue_position,
                 auction_timing.product_listing_id AS auction_timing_product_listing_id,
@@ -174,6 +176,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
                 price_estimate_max_currency, sale_observation_fx_rate_id, sale_observed_at, availability, lifecycle, url,
                 product_images, embedding,
                 auction_context.product_listing_id AS auction_context_product_listing_id,
+                auction_context.auction_id AS auction_id,
                 auction_context.lot_number AS auction_lot_number,
                 auction_context.catalogue_position AS auction_catalogue_position,
                 auction_timing.product_listing_id AS auction_timing_product_listing_id,
@@ -282,7 +285,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .await
         .map_err(ProductListingInsertSqlxError)?;
 
-        self.replace_auction_context(product.id(), product.auction())
+        self.replace_auction_context(product.id(), product.listing_source_id(), product.auction())
             .await
             .map_err(ProductListingInsertSqlxError)?;
 
@@ -387,7 +390,7 @@ impl ProductListingRepository for SqlxProductListingRepository<'_> {
         .map_err(ProductListingUpdateSqlxError)?
         .ok_or(ProductListingRepositoryError::ConcurrencyConflict)?;
 
-        self.replace_auction_context(product.id(), product.auction())
+        self.replace_auction_context(product.id(), product.listing_source_id(), product.auction())
             .await
             .map_err(ProductListingUpdateSqlxError)?;
 
@@ -401,6 +404,7 @@ impl SqlxProductListingRepository<'_> {
     async fn replace_auction_context(
         &mut self,
         product_listing_id: ProductListingId,
+        listing_source_id: listing_source_core::ListingSourceId,
         auction: Option<&ProductListingAuction>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM product_listing_auction_contexts WHERE product_listing_id = $1")
@@ -415,11 +419,13 @@ impl SqlxProductListingRepository<'_> {
         sqlx::query(
             r#"
             INSERT INTO product_listing_auction_contexts (
-                product_listing_id, lot_number, catalogue_position
-            ) VALUES ($1, $2, $3)
+                product_listing_id, listing_source_id, auction_id, lot_number, catalogue_position
+            ) VALUES ($1, $2, $3, $4, $5)
             "#,
         )
         .bind(product_listing_id.as_uuid())
+        .bind(listing_source_id.as_uuid())
+        .bind(parts.auction_id)
         .bind(parts.lot_number)
         .bind(parts.catalogue_position)
         .execute(&mut *self.connection)
@@ -467,6 +473,7 @@ impl TryFrom<ProductListingRow> for VersionedProductListing {
             .map_err(|_| ProductListingRepositoryError::InvalidSourceListingIdPersisted)?;
         let auction = auction_from_parts(ProductListingAuctionParts {
             context_product_listing_id: row.auction_context_product_listing_id,
+            auction_id: row.auction_id,
             lot_number: row.auction_lot_number,
             catalogue_position: row.auction_catalogue_position,
             timing_product_listing_id: row.auction_timing_product_listing_id,
@@ -1049,6 +1056,7 @@ mod tests {
             product_images: json!([{ "url": "https://example.com/unit-product.jpg" }]),
             embedding: None,
             auction_context_product_listing_id: None,
+            auction_id: None,
             auction_lot_number: None,
             auction_catalogue_position: None,
             auction_timing_product_listing_id: None,

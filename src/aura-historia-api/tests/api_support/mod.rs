@@ -130,6 +130,7 @@ use user_core::stripe_customer_id::StripeCustomerId;
 use user_core::user_id::UserId;
 use woocommerce_service::WoocommerceWebhookIntake;
 
+use product_listing_service::use_cases::commands::create_product_listing::AuctionMembershipResolver;
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
@@ -1374,23 +1375,38 @@ async fn test_state(
     )));
 
     let partner_product_listings_state = PartnerProductListingsState::new(
-        Arc::new(CreateProductListingHandler::new(
+        Arc::new(CreateProductListingHandler::new_with_auction_resolver(
             unit_of_work.clone(),
             SqlxProductListingRepositoryFactory::new(),
             SqlxProductListingEventAppenderFactory::new(),
             SqlxPartnerProductListingAuthorizerFactory::new(),
+            AuctionMembershipResolver::new(
+                SqlxAuctionRepositoryFactory::new(),
+                SqlxAuctionEventAppenderFactory::new(),
+                SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            ),
         )),
-        Arc::new(UpdateProductListingHandler::new(
+        Arc::new(UpdateProductListingHandler::new_with_auction_resolver(
             unit_of_work.clone(),
             SqlxProductListingRepositoryFactory::new(),
             SqlxProductListingEventAppenderFactory::new(),
             SqlxPartnerProductListingAuthorizerFactory::new(),
+            AuctionMembershipResolver::new(
+                SqlxAuctionRepositoryFactory::new(),
+                SqlxAuctionEventAppenderFactory::new(),
+                SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            ),
         )),
-        Arc::new(UpsertProductListingHandler::new(
+        Arc::new(UpsertProductListingHandler::new_with_auction_resolver(
             unit_of_work.clone(),
             SqlxProductListingRepositoryFactory::new(),
             SqlxProductListingEventAppenderFactory::new(),
             SqlxPartnerProductListingAuthorizerFactory::new(),
+            AuctionMembershipResolver::new(
+                SqlxAuctionRepositoryFactory::new(),
+                SqlxAuctionEventAppenderFactory::new(),
+                SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+            ),
         )),
         Arc::new(WithdrawProductListingHandler::new(
             unit_of_work.clone(),

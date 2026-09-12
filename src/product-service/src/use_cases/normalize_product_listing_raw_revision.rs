@@ -7,6 +7,9 @@ use crate::ports::{
 };
 use application::patch_field::PatchField;
 use application::transaction::{Transaction, TransactionError, UnitOfWork};
+use auction_service::ports::{
+    AuctionEventAppenderFactory, AuctionMetadataPolicyRepositoryFactory, AuctionRepositoryFactory,
+};
 use domain_primitives::change_outcome::ChangeOutcome;
 use indexmap::IndexSet;
 use product_listing_normalization::error::NormalizationFailureScope;
@@ -17,7 +20,8 @@ use product_listing_normalization::{
     ProductListingRawValuesPatch, ProductListingRawValuesResolved,
 };
 use product_listing_service::canonical_product_listing_write::{
-    CanonicalProductListingUpsert, CanonicalProductListingWriteError, CanonicalProductListingWriter,
+    CanonicalProductListingUpsert, CanonicalProductListingWriteError,
+    CanonicalProductListingWriter, CanonicalProductListingWriterDependencies,
 };
 use product_listing_service::ports::{
     ProductListingEventAppenderFactory, ProductListingRawRevisionId, ProductListingRawStreamId,
@@ -166,21 +170,30 @@ pub trait NormalizeProductListingRawRevisionUseCase: Send + Sync {
     ) -> Result<NormalizeProductListingRawRevisionResult, NormalizeProductListingRawRevisionError>;
 }
 
-pub struct NormalizeProductListingRawRevisionHandler<U, W, R, E, P> {
+pub struct NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P> {
     unit_of_work: U,
     raw_normalizations: W,
     products: R,
     events: E,
+    auctions: AR,
+    auction_events: AE,
+    auction_policies: AP,
     pending_streams: P,
     normalizer: ProductListingRawValuesNormalizer,
 }
 
-impl<U, W, R, E, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, P> {
+impl<U, W, R, E, AR, AE, AP, P>
+    NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
+{
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         unit_of_work: U,
         raw_normalizations: W,
         products: R,
         events: E,
+        auctions: AR,
+        auction_events: AE,
+        auction_policies: AP,
         pending_streams: P,
     ) -> Self {
         Self {
@@ -188,18 +201,24 @@ impl<U, W, R, E, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, P> {
             raw_normalizations,
             products,
             events,
+            auctions,
+            auction_events,
+            auction_policies,
             pending_streams,
             normalizer: ProductListingRawValuesNormalizer::new(),
         }
     }
 }
 
-impl<U, W, R, E, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, P>
+impl<U, W, R, E, AR, AE, AP, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
 where
     U: UnitOfWork,
     W: ProductListingRawNormalizationWriterFactory<U::Tx>,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
+    AR: AuctionRepositoryFactory<U::Tx>,
+    AE: AuctionEventAppenderFactory<U::Tx>,
+    AP: AuctionMetadataPolicyRepositoryFactory<U::Tx>,
     P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader,
 {
     async fn drain_stream(
@@ -370,8 +389,13 @@ where
                 let command = canonical_upsert(head.listing_source_id, resolved.as_ref());
                 let write = match CanonicalProductListingWriter::upsert_in_transaction(
                     tx,
-                    &self.products,
-                    &self.events,
+                    CanonicalProductListingWriterDependencies {
+                        products: &self.products,
+                        events: &self.events,
+                        auctions: &self.auctions,
+                        auction_events: &self.auction_events,
+                        auction_policies: &self.auction_policies,
+                    },
                     head.product_listing_id,
                     command,
                 )
@@ -418,12 +442,15 @@ where
     }
 }
 
-impl<U, W, R, E, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, P>
+impl<U, W, R, E, AR, AE, AP, P> NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
 where
     U: UnitOfWork,
     W: ProductListingRawNormalizationWriterFactory<U::Tx>,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
+    AR: AuctionRepositoryFactory<U::Tx>,
+    AE: AuctionEventAppenderFactory<U::Tx>,
+    AP: AuctionMetadataPolicyRepositoryFactory<U::Tx>,
     P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader,
 {
     async fn execute_inner(
@@ -543,13 +570,16 @@ where
 }
 
 #[async_trait::async_trait]
-impl<U, W, R, E, P> NormalizeProductListingRawRevisionUseCase
-    for NormalizeProductListingRawRevisionHandler<U, W, R, E, P>
+impl<U, W, R, E, AR, AE, AP, P> NormalizeProductListingRawRevisionUseCase
+    for NormalizeProductListingRawRevisionHandler<U, W, R, E, AR, AE, AP, P>
 where
     U: UnitOfWork + Send + Sync,
     W: ProductListingRawNormalizationWriterFactory<U::Tx> + Send + Sync,
     R: ProductListingRepositoryFactory<U::Tx> + Send + Sync,
     E: ProductListingEventAppenderFactory<U::Tx> + Send + Sync,
+    AR: AuctionRepositoryFactory<U::Tx> + Send + Sync,
+    AE: AuctionEventAppenderFactory<U::Tx> + Send + Sync,
+    AP: AuctionMetadataPolicyRepositoryFactory<U::Tx> + Send + Sync,
     P: PendingProductListingRawStreamReader + ProductListingRawRevisionReader + Send + Sync,
 {
     #[tracing::instrument(name = "normalize_product_listing_raw_revision", skip_all)]
@@ -669,6 +699,8 @@ fn canonical_upsert(
             ProductListingRawValuesPatch::Unchanged => PatchField::Unchanged,
         },
         auction: to_patch(&resolved.auction),
+        auction_source_id: resolved.auction_source_id.clone(),
+        auction_metadata: auction_service::EmbeddedAuctionMetadata::default(),
     }
 }
 
@@ -795,6 +827,12 @@ fn map_port_error(
 mod tests {
     use super::*;
     use application::transaction::TransactionError;
+    use auction_service::ports::{
+        AuctionEvent, AuctionEventAppendError, AuctionEventAppender, AuctionEventAppenderFactory,
+        AuctionMetadataField, AuctionMetadataPolicyAudit, AuctionMetadataPolicyRepository,
+        AuctionMetadataPolicyRepositoryError, AuctionMetadataPolicyRepositoryFactory,
+        AuctionRepository, AuctionRepositoryError, AuctionRepositoryFactory, StoredAuction,
+    };
     use listing_source_core::ListingSourceId;
     use product_listing_normalization::{
         NormalizationContext, ProductListingNormalizationInput, RawProductListingOperation,
@@ -819,6 +857,12 @@ mod tests {
     struct TestProductRepository;
     struct TestEvents;
     struct TestEventAppender;
+    struct TestAuctions;
+    struct TestAuctionRepository;
+    struct TestAuctionEvents;
+    struct TestAuctionEventAppender;
+    struct TestAuctionPolicies;
+    struct TestAuctionPolicyRepository;
     struct TestRevisionReader(Arc<Mutex<TestRawState>>);
     struct FailingFirstPendingReader {
         state: Arc<Mutex<TestRawState>>,
@@ -946,6 +990,94 @@ mod tests {
                 }
             })?;
             state.completions.push(completion);
+            Ok(())
+        }
+    }
+
+    impl AuctionRepositoryFactory<TestTx> for TestAuctions {
+        fn in_transaction<'tx>(&'tx self, _: &'tx mut TestTx) -> impl AuctionRepository + 'tx {
+            TestAuctionRepository
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AuctionRepository for TestAuctionRepository {
+        async fn find_by_id(
+            &mut self,
+            _: auction_core::AuctionId,
+        ) -> Result<Option<StoredAuction>, AuctionRepositoryError> {
+            Ok(None)
+        }
+
+        async fn find_by_key(
+            &mut self,
+            _: &auction_core::AuctionKey,
+        ) -> Result<Option<StoredAuction>, AuctionRepositoryError> {
+            Ok(None)
+        }
+
+        async fn insert(
+            &mut self,
+            _: &auction_core::Auction,
+        ) -> Result<StoredAuction, AuctionRepositoryError> {
+            Err(AuctionRepositoryError::Internal {
+                source: application::error::box_error(std::io::Error::other(
+                    "unexpected auction insert in test",
+                )),
+            })
+        }
+
+        async fn update(
+            &mut self,
+            _: &auction_core::Auction,
+            _: auction_service::ports::AuctionStorageVersion,
+        ) -> Result<StoredAuction, AuctionRepositoryError> {
+            Err(AuctionRepositoryError::Internal {
+                source: application::error::box_error(std::io::Error::other(
+                    "unexpected auction update in test",
+                )),
+            })
+        }
+    }
+
+    impl AuctionEventAppenderFactory<TestTx> for TestAuctionEvents {
+        fn in_transaction<'tx>(&'tx self, _: &'tx mut TestTx) -> impl AuctionEventAppender + 'tx {
+            TestAuctionEventAppender
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AuctionEventAppender for TestAuctionEventAppender {
+        async fn append(&mut self, _: &AuctionEvent) -> Result<(), AuctionEventAppendError> {
+            Ok(())
+        }
+    }
+
+    impl AuctionMetadataPolicyRepositoryFactory<TestTx> for TestAuctionPolicies {
+        fn in_transaction<'tx>(
+            &'tx self,
+            _: &'tx mut TestTx,
+        ) -> impl AuctionMetadataPolicyRepository + 'tx {
+            TestAuctionPolicyRepository
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AuctionMetadataPolicyRepository for TestAuctionPolicyRepository {
+        async fn find_protected_fields(
+            &mut self,
+            _: auction_core::AuctionId,
+        ) -> Result<
+            std::collections::BTreeSet<AuctionMetadataField>,
+            AuctionMetadataPolicyRepositoryError,
+        > {
+            Ok(std::collections::BTreeSet::new())
+        }
+
+        async fn protect(
+            &mut self,
+            _: &AuctionMetadataPolicyAudit,
+        ) -> Result<(), AuctionMetadataPolicyRepositoryError> {
             Ok(())
         }
     }
@@ -1354,6 +1486,9 @@ mod tests {
             TestRawFactory(Arc::clone(&state)),
             TestProducts,
             TestEvents,
+            TestAuctions,
+            TestAuctionEvents,
+            TestAuctionPolicies,
             TestRevisionReader(Arc::clone(&state)),
         );
 
@@ -1419,6 +1554,9 @@ mod tests {
             TestRawFactory(Arc::clone(&state)),
             TestProducts,
             TestEvents,
+            TestAuctions,
+            TestAuctionEvents,
+            TestAuctionPolicies,
             FailingFirstPendingReader {
                 state: Arc::clone(&state),
                 blocked_stream_id,
@@ -1494,6 +1632,9 @@ mod tests {
             CappedContinuationRawFactory(Arc::clone(&state)),
             TestProducts,
             TestEvents,
+            TestAuctions,
+            TestAuctionEvents,
+            TestAuctionPolicies,
             CappedContinuationReader(Arc::clone(&state)),
         );
 
@@ -1556,6 +1697,9 @@ mod tests {
             TestRawFactory(state),
             TestProducts,
             TestEvents,
+            TestAuctions,
+            TestAuctionEvents,
+            TestAuctionPolicies,
             FailingPendingListReader,
         );
 

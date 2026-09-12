@@ -78,6 +78,7 @@ struct SourceRow {
     product_images: serde_json::Value,
     embedding: Option<Vec<f32>>,
     auction_context_product_listing_id: Option<uuid::Uuid>,
+    auction_id: Option<uuid::Uuid>,
     auction_lot_number: Option<String>,
     auction_catalogue_position: Option<i64>,
     auction_timing_product_listing_id: Option<uuid::Uuid>,
@@ -236,6 +237,7 @@ impl ProductListingSearchFilterMatchSourceReader
                 product.product_images,
                 product.embedding,
                 auction_context.product_listing_id AS auction_context_product_listing_id,
+                auction_context.auction_id AS auction_id,
                 auction_context.lot_number AS auction_lot_number,
                 auction_context.catalogue_position AS auction_catalogue_position,
                 auction_timing.product_listing_id AS auction_timing_product_listing_id,
@@ -372,6 +374,7 @@ fn source_from_rows(
     let event_kind = event_kind_from_row(row)?;
     let auction = auction_from_parts(ProductListingAuctionParts {
         context_product_listing_id: row.auction_context_product_listing_id,
+        auction_id: row.auction_id,
         lot_number: row.auction_lot_number.clone(),
         catalogue_position: row.auction_catalogue_position,
         timing_product_listing_id: row.auction_timing_product_listing_id,

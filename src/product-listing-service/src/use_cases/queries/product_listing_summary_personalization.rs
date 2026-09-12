@@ -323,6 +323,8 @@ mod tests {
             listing_source_id,
             source_listing_id: SourceListingId::try_from("cabinet-1")
                 .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
+            auction_id: None,
+            has_auction_context: false,
             title: Some(Localized::new(Language::En, Title::from("Cabinet"))),
             display_price: Some(
                 product_listing_core::product_listing_price::ProductListingPrice::from(Price::new(

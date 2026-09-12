@@ -1,3 +1,7 @@
+use auction_postgres::{
+    SqlxAuctionEventAppenderFactory, SqlxAuctionMetadataPolicyRepositoryFactory,
+    SqlxAuctionRepositoryFactory,
+};
 use aura_historia_worker::notification_delivery::consume_notification_delivery_queue;
 use aura_historia_worker::product_content_assessment::consume_product_content_assessment_queue;
 use aura_historia_worker::product_embedding::consume_product_embedding_queue;
@@ -328,6 +332,9 @@ async fn run_product_listing_raw_normalization(
             SqlxProductListingRawNormalizationWriterFactory::new(),
             SqlxProductListingRepositoryFactory::new(),
             SqlxProductListingEventAppenderFactory::new(),
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
             SqlxPendingProductListingRawStreamReader::new(pool),
         ));
     let (runtime, receiver) = composition.into_parts();

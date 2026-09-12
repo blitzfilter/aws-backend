@@ -5,6 +5,7 @@ use crate::{
     },
     product_listing_image_document::ProductListingImageDocument,
 };
+use auction_core::AuctionId;
 use domain_primitives::event_id::EventId;
 use fxrate_core::{FxRateId, FxRateSnapshot, FxRateSnapshotError, RoundingMode};
 use indexmap::IndexSet;
@@ -64,6 +65,9 @@ struct ProductListingPercolationDocument {
     #[serde(with = "crate::product_listing_document::source_listing_id")]
     source_listing_id: SourceListingId,
     event_id: EventId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auction_id: Option<AuctionId>,
+    has_auction_context: bool,
     title: TextDocument,
     #[serde(skip_serializing_if = "Option::is_none")]
     title_de: Option<String>,
@@ -156,6 +160,12 @@ fn build_product_listing_percolation_document(
         listing_source_id: product.source.listing_source_id,
         source_listing_id: product.source_listing_id.clone(),
         event_id: product.current_event_id,
+        auction_id: product
+            .auction
+            .as_ref()
+            .and_then(|auction| auction.membership())
+            .map(|membership| membership.auction_id()),
+        has_auction_context: product.auction.is_some(),
         title: TextDocument::new(title, language),
         title_de: translated_title(product, Language::De),
         title_en: translated_title(product, Language::En),
@@ -266,6 +276,12 @@ pub(crate) fn product_listing_document(
         listing_source_id: product.source.listing_source_id,
         source_listing_id: product.source_listing_id.clone(),
         event_id: product.current_event_id,
+        auction_id: product
+            .auction
+            .as_ref()
+            .and_then(|auction| auction.membership())
+            .map(|membership| membership.auction_id()),
+        has_auction_context: product.auction.is_some(),
         title: TextDocument::new(title, language),
         title_de: translated_title(product, Language::De),
         title_en: translated_title(product, Language::En),
@@ -621,6 +637,7 @@ mod tests {
             "https://shop.example.test/product_listings/blue-vase/image.jpg",
         )?)]);
         product.auction = Some(ProductListingAuction::new(
+            None,
             Some(LotNumber::try_from("Lot 12")?),
             Some(CataloguePosition::new(12)?),
             Some(LotAuctionTiming::new(
@@ -669,6 +686,7 @@ mod tests {
         let scheduled_closes_at = OffsetDateTime::UNIX_EPOCH + time::Duration::hours(2);
         let reported_closed_at = OffsetDateTime::UNIX_EPOCH + time::Duration::hours(3);
         product.auction = Some(ProductListingAuction::new(
+            None,
             Some(LotNumber::try_from("Lot 12A")?),
             Some(CataloguePosition::new(12)?),
             Some(LotAuctionTiming::new(
@@ -768,6 +786,7 @@ mod tests {
         match mapping.get("type").and_then(Value::as_str) {
             Some("keyword" | "text" | "date") => value.is_string(),
             Some("unsigned_long") => value.is_number(),
+            Some("boolean") => value.is_boolean(),
             _ => false,
         }
     }

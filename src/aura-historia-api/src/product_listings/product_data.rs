@@ -1,6 +1,6 @@
 use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use application::operation_context::Principal;
-use auction_core::AuctionTime;
+use auction_core::{AuctionId, AuctionTime};
 use axum::Json;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
@@ -154,6 +154,9 @@ pub(crate) struct ProductListingSummaryData {
     #[serde(serialize_with = "crate::wire::source_listing_id::serialize")]
     source_listing_id: SourceListingId,
     #[serde(skip_serializing_if = "Option::is_none")]
+    auction_id: Option<AuctionId>,
+    has_auction_context: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<LocalizedTextData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     display_price: Option<ProductListingPriceData>,
@@ -252,6 +255,8 @@ impl From<ContentPolicyDecision> for ContentPolicyData {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProductListingAuctionData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auction_id: Option<AuctionId>,
     lot_number: Option<String>,
     catalogue_position: Option<u32>,
     timing: Option<LotAuctionTimingData>,
@@ -317,6 +322,9 @@ impl From<ProductListingDetailsView> for ProductListingDetailsData {
 impl From<ProductListingAuction> for ProductListingAuctionData {
     fn from(auction: ProductListingAuction) -> Self {
         Self {
+            auction_id: auction
+                .membership()
+                .map(|membership| membership.auction_id()),
             lot_number: auction.lot_number().map(ToString::to_string),
             catalogue_position: auction
                 .catalogue_position()
@@ -488,6 +496,8 @@ impl ProductListingSummaryData {
             event_id: summary.event_id,
             source: summary.source.into(),
             source_listing_id: summary.source_listing_id,
+            auction_id: summary.auction_id,
+            has_auction_context: summary.has_auction_context,
             title: summary.title.map(Into::into),
             display_price: summary.display_price.map(Into::into),
             price_valuation: summary.price_valuation.into(),

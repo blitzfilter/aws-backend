@@ -1501,6 +1501,8 @@ mod tests {
             event_id: EventId::new(),
             listing_source_id: ListingSourceId::new(),
             source_listing_id: SourceListingId::try_from("withdrawn-1")?,
+            auction_id: None,
+            has_auction_context: false,
             title: None,
             display_price: None,
             price_valuation: ProductListingSummaryPriceValuation::Current {

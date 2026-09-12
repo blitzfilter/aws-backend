@@ -1,3 +1,7 @@
+use super::create_product_listing::{
+    NoopPartnerProductListingAuctionResolver, PartnerProductListingAuctionResolutionError,
+    PartnerProductListingAuctionResolver,
+};
 use crate::ports::{
     PartnerProductListingAuthorizationError, PartnerProductListingAuthorizer,
     PartnerProductListingAuthorizerFactory, ProductListingEventAppendError,
@@ -11,6 +15,8 @@ use application::operation_context::{
 };
 use application::patch_field::PatchField;
 use application::transaction::{Transaction, UnitOfWork};
+use auction_core::SourceAuctionId;
+use auction_service::EmbeddedAuctionMetadata;
 use domain_primitives::change_outcome::ChangeOutcome;
 use indexmap::IndexSet;
 use money::Price;
@@ -35,6 +41,8 @@ pub struct UpdateProductListingCommand {
     /// An asserted context is replace-only in ordinary writes. `Clear` preserves an existing
     /// context; a dedicated correction use case owns removal.
     pub auction: PatchField<product_listing_core::product_listing_auction::ProductListingAuction>,
+    pub auction_source_id: Option<SourceAuctionId>,
+    pub auction_metadata: EmbeddedAuctionMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +66,18 @@ pub enum UpdateProductListingError {
     },
     #[error("partner product listing authorization failed internally")]
     PartnerAuthorizationInternal {
+        #[source]
+        source: BoxError,
+    },
+    #[error("product listing auction membership requires an explicit correction")]
+    AuctionMembershipCorrectionRequired,
+    #[error("product listing auction resolution is temporarily unavailable")]
+    AuctionResolutionTemporarilyUnavailable {
+        #[source]
+        source: BoxError,
+    },
+    #[error("product listing auction resolution failed internally")]
+    AuctionResolutionInternal {
         #[source]
         source: BoxError,
     },
@@ -98,19 +118,38 @@ pub trait UpdateProductListingUseCase: Send + Sync {
     ) -> Result<UpdateProductListingResult, UpdateProductListingError>;
 }
 
-pub struct UpdateProductListingHandler<U, R, E, A> {
+pub struct UpdateProductListingHandler<U, R, E, A, AR = NoopPartnerProductListingAuctionResolver> {
     unit_of_work: U,
     products: R,
     events: E,
     authorizer: A,
+    auction_resolver: AR,
 }
-impl<U, R, E, A> UpdateProductListingHandler<U, R, E, A> {
+impl<U, R, E, A> UpdateProductListingHandler<U, R, E, A, NoopPartnerProductListingAuctionResolver> {
     pub fn new(unit_of_work: U, products: R, events: E, authorizer: A) -> Self {
+        Self::new_with_auction_resolver(
+            unit_of_work,
+            products,
+            events,
+            authorizer,
+            NoopPartnerProductListingAuctionResolver,
+        )
+    }
+}
+impl<U, R, E, A, AR> UpdateProductListingHandler<U, R, E, A, AR> {
+    pub fn new_with_auction_resolver(
+        unit_of_work: U,
+        products: R,
+        events: E,
+        authorizer: A,
+        auction_resolver: AR,
+    ) -> Self {
         Self {
             unit_of_work,
             products,
             events,
             authorizer,
+            auction_resolver,
         }
     }
 }
@@ -119,12 +158,13 @@ enum UpdateTarget {
     Key(ProductListingKey),
 }
 
-impl<U, R, E, A> UpdateProductListingHandler<U, R, E, A>
+impl<U, R, E, A, AR> UpdateProductListingHandler<U, R, E, A, AR>
 where
     U: UnitOfWork,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
     A: PartnerProductListingAuthorizerFactory<U::Tx>,
+    AR: PartnerProductListingAuctionResolver<U::Tx>,
 {
     async fn update(
         &self,
@@ -180,6 +220,14 @@ where
         };
         let expected_version = loaded.version;
         let mut product = loaded.value;
+        let command = resolve_auction_context(
+            &self.auction_resolver,
+            &mut tx,
+            product.listing_source_id(),
+            product.auction(),
+            command,
+        )
+        .await?;
         apply_command(&mut product, command)?;
         let event = product.take_pending_event_payload().map(|payload| {
             stamp_product_listing_event(product.id(), time::OffsetDateTime::now_utc(), payload)
@@ -212,12 +260,13 @@ where
 }
 
 #[async_trait::async_trait]
-impl<U, R, E, A> UpdateProductListingUseCase for UpdateProductListingHandler<U, R, E, A>
+impl<U, R, E, A, AR> UpdateProductListingUseCase for UpdateProductListingHandler<U, R, E, A, AR>
 where
     U: UnitOfWork,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
     A: PartnerProductListingAuthorizerFactory<U::Tx>,
+    AR: PartnerProductListingAuctionResolver<U::Tx>,
 {
     #[tracing::instrument(name = "update_product_listing", skip_all, fields(product_listing_id = %product_listing_id, principal_type = context.principal.kind(), actor_id = tracing::field::Empty, request_id = %context.request_id, correlation_id = %context.correlation_id))]
     async fn execute(
@@ -239,6 +288,41 @@ where
         self.update(context, UpdateTarget::Key(product_key), command)
             .await
     }
+}
+
+async fn resolve_auction_context<Tx, AR>(
+    resolver: &AR,
+    tx: &mut Tx,
+    listing_source_id: listing_source_core::ListingSourceId,
+    existing: Option<&product_listing_core::product_listing_auction::ProductListingAuction>,
+    mut command: UpdateProductListingCommand,
+) -> Result<UpdateProductListingCommand, UpdateProductListingError>
+where
+    AR: PartnerProductListingAuctionResolver<Tx>,
+{
+    let PatchField::Set(context) = command.auction.clone() else {
+        return Ok(command);
+    };
+    let membership = resolver
+        .resolve(
+            tx,
+            listing_source_id,
+            existing.and_then(
+                product_listing_core::product_listing_auction::ProductListingAuction::membership,
+            ),
+            command.auction_source_id.clone(),
+            &command.auction_metadata,
+        )
+        .await?;
+    command.auction = PatchField::Set(
+        product_listing_core::product_listing_auction::ProductListingAuction::new(
+            membership,
+            context.lot_number().cloned(),
+            context.catalogue_position(),
+            context.timing().cloned(),
+        ),
+    );
+    Ok(command)
 }
 
 fn apply_command(
@@ -307,6 +391,22 @@ fn partner_actor(principal: &Principal) -> Option<UserId> {
         Principal::Anonymous | Principal::Service(_) | Principal::System => None,
     }
 }
+impl From<PartnerProductListingAuctionResolutionError> for UpdateProductListingError {
+    fn from(error: PartnerProductListingAuctionResolutionError) -> Self {
+        match error {
+            PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired => {
+                Self::AuctionMembershipCorrectionRequired
+            }
+            PartnerProductListingAuctionResolutionError::TemporarilyUnavailable { source } => {
+                Self::AuctionResolutionTemporarilyUnavailable { source }
+            }
+            PartnerProductListingAuctionResolutionError::Internal { source } => {
+                Self::AuctionResolutionInternal { source }
+            }
+        }
+    }
+}
+
 impl From<ChangeListingAvailabilityError> for UpdateProductListingError {
     fn from(_: ChangeListingAvailabilityError) -> Self {
         Self::ListingWithdrawn
@@ -386,6 +486,7 @@ mod tests {
 
     fn auction(lot_number: &str) -> ProductListingAuction {
         ProductListingAuction::new(
+            None,
             Some(
                 LotNumber::try_from(lot_number)
                     .unwrap_or_else(|error| panic!("valid lot number: {error}")),
@@ -416,6 +517,16 @@ mod tests {
             auction,
         })
         .unwrap_or_else(|error| panic!("valid listing should be created: {error}"))
+    }
+
+    #[test]
+    fn should_expose_auction_membership_correction_as_typed_update_error() {
+        assert!(matches!(
+            UpdateProductListingError::from(
+                PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired
+            ),
+            UpdateProductListingError::AuctionMembershipCorrectionRequired
+        ));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Auctions
 
-**Status:** iterations 01–04 implement standalone Auction state/admin and the one current raw-values schema. Iteration 05 replaces ambiguous ProductListing auction timestamps with an optional listing-owned lot context and qualified timing. It adds no Auction membership, source auction reference, shared Auction metadata, crawler extraction, public Auction read, or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration records](auction-iterations/05-qualified-lot-timing.md).
+**Status:** iterations 01–06 implement standalone Auction state/admin, current raw values, qualified listing timing, and source-key membership resolution. Iteration 06 adds no correction/override policy, crawler extraction, public Auction browsing, or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration records](auction-iterations/06-membership-resolution.md).
 
 ## Scope
 
@@ -39,16 +39,17 @@ The initial business schema changed directly. Local disposable PostgreSQL state 
 
 ## Current ProductListing context
 
-Iteration 05 has two distinct listing values:
+Iteration 06 has three distinct listing values:
 
 | Stored value | Meaning |
 | --- | --- |
 | `None` | No reliable auction-participation assertion. |
-| `Some(ProductListingAuction)` | Auction participation is asserted; the context may be empty. |
+| `Some` with no membership | Auction participation is asserted but source identity is unresolved. |
+| `Some` with `AuctionMembership` | The listing is assigned to one same-source Auction. |
 
-An asserted empty context never collapses to `None`. The context holds optional opaque `LotNumber`, optional one-based `CataloguePosition`, and qualified lot timing. It has **no Auction membership or source auction reference** yet. A lot remains one ProductListing even if it describes multiple physical objects.
+An asserted empty context never collapses to `None`. The context holds optional `AuctionMembership`, opaque `LotNumber`, one-based `CataloguePosition`, and qualified lot timing. A lot remains one ProductListing even if it describes multiple physical objects. Reliable `SourceAuctionId` resolves or creates an Auction inside the caller-owned ProductListing transaction; name, URL, and timing never infer identity.
 
-Typed partner creation accepts omitted or `null` auction as no assertion. Typed update/upsert omits auction to preserve it and accepts an object as a full replacement; `null` is rejected because a later explicit correction owns retraction. Raw `auction: CLEAR` likewise preserves an existing context. No key is inferred from name, URL, or timing.
+Typed partner creation accepts omitted or `null` auction as no assertion. Partner and raw writes can supply `auction.sourceAuctionId`; the same source key resolves/creates one Auction and embedded metadata can fill absent shared fields. Existing membership plus a different reliable key fails with `MEMBERSHIP_CHANGE_REQUIRES_CORRECTION`; no second Auction is created for that rejected reassignment. Typed update/upsert omits auction to preserve it and rejects `null`; raw `auction: CLEAR` also preserves existing context. No key is inferred from name, URL, or timing.
 
 ## Time semantics
 

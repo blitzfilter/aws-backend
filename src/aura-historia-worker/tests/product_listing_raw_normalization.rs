@@ -1,4 +1,8 @@
 use application::transaction::{Transaction, UnitOfWork};
+use auction_postgres::{
+    SqlxAuctionEventAppenderFactory, SqlxAuctionMetadataPolicyRepositoryFactory,
+    SqlxAuctionRepositoryFactory,
+};
 use aura_historia_worker::{
     WorkerRunError, WorkerScope,
     product_listing_raw_normalization::consume_product_listing_raw_normalization_queue,
@@ -317,6 +321,9 @@ impl RawNormalizationWorker {
                 SqlxProductListingRawNormalizationWriterFactory::new(),
                 SqlxProductListingRepositoryFactory::new(),
                 SqlxProductListingEventAppenderFactory::new(),
+                SqlxAuctionRepositoryFactory::new(),
+                SqlxAuctionEventAppenderFactory::new(),
+                SqlxAuctionMetadataPolicyRepositoryFactory::new(),
                 SqlxPendingProductListingRawStreamReader::new(pool),
             ));
         let (runtime, receiver) = support::composition(SCOPE).await?.into_parts();

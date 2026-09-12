@@ -406,6 +406,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-postgres",
  "aws-config",
  "aws-sdk-s3",
  "aws-sdk-sesv2",
@@ -5897,6 +5898,7 @@ dependencies = [
  "application",
  "async-trait",
  "auction-core",
+ "auction-postgres",
  "domain-primitives",
  "fxrate-core",
  "indexmap 2.14.2",
@@ -5932,6 +5934,8 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
+ "auction-service",
  "domain-primitives",
  "embedding",
  "fake",
@@ -5982,6 +5986,8 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
+ "auction-service",
  "domain-primitives",
  "indexmap 2.14.2",
  "listing-source-core",
@@ -7236,6 +7242,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-postgres",
  "aws_lambda_events",
  "fxrate-core",
  "fxrate-postgres",

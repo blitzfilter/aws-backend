@@ -1,4 +1,8 @@
 use crate::{AURA_API, BUSINESS_SCHEMA, OPENSEARCH, api_support};
+use auction_postgres::{
+    SqlxAuctionEventAppenderFactory, SqlxAuctionMetadataPolicyRepositoryFactory,
+    SqlxAuctionRepositoryFactory,
+};
 
 use api_support::{
     seed_access_token_for, seed_operator_partnership_listing_source_grant,
@@ -1194,6 +1198,9 @@ async fn normalize_pending_woocommerce_revisions(
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool),
     );
     let result = normalizer

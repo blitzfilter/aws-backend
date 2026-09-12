@@ -8,11 +8,20 @@ use crate::product_listing_title_slug_creation::{
     MAX_PRODUCT_LISTING_TITLE_SLUG_INSERT_ATTEMPTS, ProductListingTitleSlugGenerator,
     RandomProductListingTitleSlugGenerator, TitleSlugCollisionRetry, title_slug_collision_retry,
 };
-use application::error::{BoxError, box_error};
+use application::error::{BoxError, box_error, static_error};
 use application::operation_context::{
     CredentialCapability, OperationAuthorizationError, OperationContext, Principal,
 };
 use application::transaction::{Transaction, UnitOfWork};
+use auction_core::SourceAuctionId;
+use auction_service::{
+    EmbeddedAuctionMetadata, ResolveAuctionForListingError, ResolveAuctionForListingRequest,
+    ports::{
+        AuctionEventAppenderFactory, AuctionMetadataPolicyRepositoryFactory,
+        AuctionRepositoryFactory,
+    },
+    resolve_auction_for_listing,
+};
 
 use indexmap::IndexSet;
 use listing_source_core::ListingSourceId;
@@ -42,6 +51,8 @@ pub struct CreateProductListingCommand {
     pub url: Url,
     pub images: IndexSet<ProductListingImage>,
     pub auction: Option<ProductListingAuction>,
+    pub auction_source_id: Option<SourceAuctionId>,
+    pub auction_metadata: EmbeddedAuctionMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +76,18 @@ pub enum CreateProductListingError {
     },
     #[error("partner product listing authorization failed internally")]
     PartnerAuthorizationInternal {
+        #[source]
+        source: BoxError,
+    },
+    #[error("product listing auction membership requires an explicit correction")]
+    AuctionMembershipCorrectionRequired,
+    #[error("product listing auction resolution is temporarily unavailable")]
+    AuctionResolutionTemporarilyUnavailable {
+        #[source]
+        source: BoxError,
+    },
+    #[error("product listing auction resolution failed internally")]
+    AuctionResolutionInternal {
         #[source]
         source: BoxError,
     },
@@ -100,15 +123,32 @@ pub trait CreateProductListingUseCase: Send + Sync {
     ) -> Result<CreateProductListingResult, CreateProductListingError>;
 }
 
-pub struct CreateProductListingHandler<U, R, E, A, G = RandomProductListingTitleSlugGenerator> {
+pub struct CreateProductListingHandler<
+    U,
+    R,
+    E,
+    A,
+    G = RandomProductListingTitleSlugGenerator,
+    AR = NoopPartnerProductListingAuctionResolver,
+> {
     unit_of_work: U,
     products: R,
     events: E,
     authorizer: A,
     title_slug_generator: G,
+    auction_resolver: AR,
 }
 
-impl<U, R, E, A> CreateProductListingHandler<U, R, E, A, RandomProductListingTitleSlugGenerator> {
+impl<U, R, E, A>
+    CreateProductListingHandler<
+        U,
+        R,
+        E,
+        A,
+        RandomProductListingTitleSlugGenerator,
+        NoopPartnerProductListingAuctionResolver,
+    >
+{
     pub fn new(unit_of_work: U, products: R, events: E, authorizer: A) -> Self {
         Self::with_title_slug_generator(
             unit_of_work,
@@ -118,9 +158,28 @@ impl<U, R, E, A> CreateProductListingHandler<U, R, E, A, RandomProductListingTit
             RandomProductListingTitleSlugGenerator,
         )
     }
+
+    pub fn new_with_auction_resolver<AR>(
+        unit_of_work: U,
+        products: R,
+        events: E,
+        authorizer: A,
+        auction_resolver: AR,
+    ) -> CreateProductListingHandler<U, R, E, A, RandomProductListingTitleSlugGenerator, AR> {
+        CreateProductListingHandler::with_title_slug_generator_and_auction_resolver(
+            unit_of_work,
+            products,
+            events,
+            authorizer,
+            RandomProductListingTitleSlugGenerator,
+            auction_resolver,
+        )
+    }
 }
 
-impl<U, R, E, A, G> CreateProductListingHandler<U, R, E, A, G> {
+impl<U, R, E, A, G>
+    CreateProductListingHandler<U, R, E, A, G, NoopPartnerProductListingAuctionResolver>
+{
     pub(crate) fn with_title_slug_generator(
         unit_of_work: U,
         products: R,
@@ -128,23 +187,45 @@ impl<U, R, E, A, G> CreateProductListingHandler<U, R, E, A, G> {
         authorizer: A,
         title_slug_generator: G,
     ) -> Self {
+        Self::with_title_slug_generator_and_auction_resolver(
+            unit_of_work,
+            products,
+            events,
+            authorizer,
+            title_slug_generator,
+            NoopPartnerProductListingAuctionResolver,
+        )
+    }
+}
+
+impl<U, R, E, A, G, AR> CreateProductListingHandler<U, R, E, A, G, AR> {
+    pub(crate) fn with_title_slug_generator_and_auction_resolver(
+        unit_of_work: U,
+        products: R,
+        events: E,
+        authorizer: A,
+        title_slug_generator: G,
+        auction_resolver: AR,
+    ) -> Self {
         Self {
             unit_of_work,
             products,
             events,
             authorizer,
             title_slug_generator,
+            auction_resolver,
         }
     }
 }
 
-impl<U, R, E, A, G> CreateProductListingHandler<U, R, E, A, G>
+impl<U, R, E, A, G, AR> CreateProductListingHandler<U, R, E, A, G, AR>
 where
     U: UnitOfWork,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
     A: PartnerProductListingAuthorizerFactory<U::Tx>,
     G: ProductListingTitleSlugGenerator,
+    AR: PartnerProductListingAuctionResolver<U::Tx>,
 {
     async fn persist_attempt(
         &self,
@@ -166,9 +247,19 @@ where
         }
 
         let mut product = ProductListing::create(
-            command
-                .clone()
-                .into_new_product(product_listing_id, title_slug_id),
+            command.clone().into_new_product(
+                product_listing_id,
+                title_slug_id,
+                self.auction_resolver
+                    .resolve(
+                        &mut tx,
+                        command.listing_source_id,
+                        None,
+                        command.auction_source_id.clone(),
+                        &command.auction_metadata,
+                    )
+                    .await?,
+            ),
         )?;
         let event = stamp_product_listing_event(
             product.id(),
@@ -197,13 +288,15 @@ where
 }
 
 #[async_trait::async_trait]
-impl<U, R, E, A, G> CreateProductListingUseCase for CreateProductListingHandler<U, R, E, A, G>
+impl<U, R, E, A, G, AR> CreateProductListingUseCase
+    for CreateProductListingHandler<U, R, E, A, G, AR>
 where
     U: UnitOfWork,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
     A: PartnerProductListingAuthorizerFactory<U::Tx>,
     G: ProductListingTitleSlugGenerator,
+    AR: PartnerProductListingAuctionResolver<U::Tx>,
 {
     #[tracing::instrument(name = "create_product_listing", skip_all, fields(listing_source_id = %command.listing_source_id, source_listing_id = %command.source_listing_id, principal_type = context.principal.kind(), actor_id = tracing::field::Empty, request_id = %context.request_id, correlation_id = %context.correlation_id))]
     async fn execute(
@@ -270,6 +363,7 @@ impl CreateProductListingCommand {
         self,
         id: ProductListingId,
         title_slug_id: ProductListingSlugId,
+        membership: Option<product_listing_core::product_listing::AuctionMembership>,
     ) -> NewProductListing {
         NewProductListing {
             id,
@@ -282,7 +376,153 @@ impl CreateProductListingCommand {
             availability: self.availability,
             url: self.url,
             images: self.images,
-            auction: self.auction,
+            auction: self.auction.map(|auction| {
+                ProductListingAuction::new(
+                    membership,
+                    auction.lot_number().cloned(),
+                    auction.catalogue_position(),
+                    auction.timing().cloned(),
+                )
+            }),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PartnerProductListingAuctionResolutionError {
+    #[error("auction membership requires an explicit correction")]
+    MembershipCorrectionRequired,
+    #[error("auction resolution is temporarily unavailable")]
+    TemporarilyUnavailable {
+        #[source]
+        source: BoxError,
+    },
+    #[error("auction resolution failed internally")]
+    Internal {
+        #[source]
+        source: BoxError,
+    },
+}
+
+#[async_trait::async_trait]
+pub trait PartnerProductListingAuctionResolver<Tx>: Send + Sync {
+    async fn resolve(
+        &self,
+        tx: &mut Tx,
+        listing_source_id: ListingSourceId,
+        current: Option<product_listing_core::product_listing::AuctionMembership>,
+        source_auction_id: Option<SourceAuctionId>,
+        metadata: &EmbeddedAuctionMetadata,
+    ) -> Result<
+        Option<product_listing_core::product_listing::AuctionMembership>,
+        PartnerProductListingAuctionResolutionError,
+    >;
+}
+
+pub struct AuctionMembershipResolver<R, E, P> {
+    auctions: R,
+    events: E,
+    policies: P,
+}
+
+impl<R, E, P> AuctionMembershipResolver<R, E, P> {
+    pub fn new(auctions: R, events: E, policies: P) -> Self {
+        Self {
+            auctions,
+            events,
+            policies,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<Tx, R, E, P> PartnerProductListingAuctionResolver<Tx> for AuctionMembershipResolver<R, E, P>
+where
+    Tx: Send,
+    R: AuctionRepositoryFactory<Tx> + Send + Sync,
+    E: AuctionEventAppenderFactory<Tx> + Send + Sync,
+    P: AuctionMetadataPolicyRepositoryFactory<Tx> + Send + Sync,
+{
+    async fn resolve(
+        &self,
+        tx: &mut Tx,
+        listing_source_id: ListingSourceId,
+        current: Option<product_listing_core::product_listing::AuctionMembership>,
+        source_auction_id: Option<SourceAuctionId>,
+        metadata: &EmbeddedAuctionMetadata,
+    ) -> Result<
+        Option<product_listing_core::product_listing::AuctionMembership>,
+        PartnerProductListingAuctionResolutionError,
+    > {
+        let Some(source_auction_id) = source_auction_id else {
+            return Ok(current);
+        };
+
+        let current_membership = current.map(|membership| membership.auction_id());
+        let receipt = resolve_auction_for_listing(
+            tx,
+            &self.auctions,
+            &self.events,
+            &self.policies,
+            ResolveAuctionForListingRequest {
+                listing_source_id,
+                source_auction_id,
+                current_membership,
+                metadata: metadata.clone(),
+            },
+        )
+        .await
+        .map_err(map_auction_resolution_error)?;
+        Ok(Some(
+            product_listing_core::product_listing::AuctionMembership::new(receipt.auction_id),
+        ))
+    }
+}
+
+pub struct NoopPartnerProductListingAuctionResolver;
+
+#[async_trait::async_trait]
+impl<Tx> PartnerProductListingAuctionResolver<Tx> for NoopPartnerProductListingAuctionResolver
+where
+    Tx: Send,
+{
+    async fn resolve(
+        &self,
+        _: &mut Tx,
+        _: ListingSourceId,
+        current: Option<product_listing_core::product_listing::AuctionMembership>,
+        source_auction_id: Option<SourceAuctionId>,
+        _: &EmbeddedAuctionMetadata,
+    ) -> Result<
+        Option<product_listing_core::product_listing::AuctionMembership>,
+        PartnerProductListingAuctionResolutionError,
+    > {
+        if source_auction_id.is_some() {
+            return Err(PartnerProductListingAuctionResolutionError::Internal {
+                source: static_error("auction resolver was not configured"),
+            });
+        }
+        Ok(current)
+    }
+}
+
+fn map_auction_resolution_error(
+    error: ResolveAuctionForListingError,
+) -> PartnerProductListingAuctionResolutionError {
+    match error {
+        ResolveAuctionForListingError::TemporarilyUnavailable { source } => {
+            PartnerProductListingAuctionResolutionError::TemporarilyUnavailable { source }
+        }
+        ResolveAuctionForListingError::MembershipChangeRequiresCorrection => {
+            PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired
+        }
+        ResolveAuctionForListingError::ListingSourceNotFound
+        | ResolveAuctionForListingError::ConcurrencyConflict
+        | ResolveAuctionForListingError::InvalidPersistedState { .. }
+        | ResolveAuctionForListingError::Internal { .. } => {
+            PartnerProductListingAuctionResolutionError::Internal {
+                source: box_error(error),
+            }
         }
     }
 }
@@ -291,6 +531,22 @@ fn partner_actor(principal: &Principal) -> Option<UserId> {
     match principal {
         Principal::User(user_id) | Principal::DelegatedUser { user_id, .. } => Some(*user_id),
         Principal::Anonymous | Principal::Service(_) | Principal::System => None,
+    }
+}
+
+impl From<PartnerProductListingAuctionResolutionError> for CreateProductListingError {
+    fn from(error: PartnerProductListingAuctionResolutionError) -> Self {
+        match error {
+            PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired => {
+                Self::AuctionMembershipCorrectionRequired
+            }
+            PartnerProductListingAuctionResolutionError::TemporarilyUnavailable { source } => {
+                Self::AuctionResolutionTemporarilyUnavailable { source }
+            }
+            PartnerProductListingAuctionResolutionError::Internal { source } => {
+                Self::AuctionResolutionInternal { source }
+            }
+        }
     }
 }
 
@@ -545,6 +801,8 @@ mod tests {
                 .unwrap_or_else(|error| panic!("url: {error}")),
             images: IndexSet::new(),
             auction: None,
+            auction_source_id: None,
+            auction_metadata: EmbeddedAuctionMetadata::default(),
         }
     }
     fn handler(
@@ -563,6 +821,16 @@ mod tests {
             AuthorizerFake(Arc::clone(state)),
             GeneratorFake(Arc::clone(state)),
         )
+    }
+
+    #[test]
+    fn should_map_auction_membership_correction_to_typed_partner_error() {
+        assert!(matches!(
+            map_auction_resolution_error(
+                ResolveAuctionForListingError::MembershipChangeRequiresCorrection
+            ),
+            PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired
+        ));
     }
 
     #[tokio::test]

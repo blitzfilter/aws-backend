@@ -1,6 +1,6 @@
-use auction_core::{AuctionTime, AuctionTimeZone};
+use auction_core::{AuctionId, AuctionTime, AuctionTimeZone};
 use product_listing_core::product_listing_auction::{
-    CataloguePosition, LotAuctionTiming, LotNumber, ProductListingAuction,
+    AuctionMembership, CataloguePosition, LotAuctionTiming, LotNumber, ProductListingAuction,
 };
 use time::{Date, OffsetDateTime};
 
@@ -11,6 +11,7 @@ pub(crate) struct ProductListingAuctionMappingError;
 #[derive(Debug, Clone)]
 pub(crate) struct ProductListingAuctionParts {
     pub(crate) context_product_listing_id: Option<uuid::Uuid>,
+    pub(crate) auction_id: Option<uuid::Uuid>,
     pub(crate) lot_number: Option<String>,
     pub(crate) catalogue_position: Option<i64>,
     pub(crate) timing_product_listing_id: Option<uuid::Uuid>,
@@ -48,6 +49,11 @@ pub(crate) fn auction_from_parts(
         };
     }
 
+    let membership = parts
+        .auction_id
+        .map(|value| AuctionId::try_from(value).map(AuctionMembership::new))
+        .transpose()
+        .map_err(|_| ProductListingAuctionMappingError)?;
     let lot_number = parts
         .lot_number
         .map(|value| {
@@ -105,6 +111,7 @@ pub(crate) fn auction_from_parts(
     };
 
     Ok(Some(ProductListingAuction::new(
+        membership,
         lot_number,
         catalogue_position,
         timing,
@@ -136,6 +143,7 @@ fn auction_time_from_parts(
 }
 
 pub(crate) struct ProductListingAuctionWriteParts {
+    pub(crate) auction_id: Option<uuid::Uuid>,
     pub(crate) lot_number: Option<String>,
     pub(crate) catalogue_position: Option<i64>,
     pub(crate) timing: Option<LotAuctionTimingWriteParts>,
@@ -158,6 +166,9 @@ pub(crate) fn auction_write_parts(
     value: &ProductListingAuction,
 ) -> ProductListingAuctionWriteParts {
     ProductListingAuctionWriteParts {
+        auction_id: value
+            .membership()
+            .map(|value| *value.auction_id().as_uuid()),
         lot_number: value.lot_number().map(|value| value.as_str().to_owned()),
         catalogue_position: value
             .catalogue_position()

@@ -385,9 +385,13 @@ paths:
 
         The request body is an array of `UpdateProductListingData` objects. Omitted fields are unchanged;
 
-        `null` clears availability, price, and the whole auction context. `null` for `url` or `images` returns
+        `null` clears availability and price. Omit `auction` to preserve its context; `auction: null`, `url: null`,
 
-        `400 BAD_BODY_VALUE`; send `[]` to remove all images. The complete batch contract is
+        and `images: null` return `400 BAD_BODY_VALUE`; send `[]` to remove all images. An asserted
+
+        `auction.sourceAuctionId` resolves or creates membership in the entry transaction; a different key for an
+
+        existing membership returns `409 CONFLICT` and requires explicit correction. The complete batch contract is
 
         validated before any entry is applied synchronously in its own PostgreSQL transaction.
 
@@ -557,9 +561,7 @@ paths:
         \ Historia access tokens on this endpoint must include the `product-listings:write` scope.\nAllowed callers are Aura\
         \ Historia admins and users partnered with the target listing source.\n\nThe request body is an array of `UpsertProductListingData`\
         \ objects. Each entry is upserted\nsynchronously in its own PostgreSQL transaction. For each entry:\n- **New listing**\
-        \ — omitted or `null` availability, price, estimates, and auction context\n  create no value; a concrete value\
-        \ asserts the complete context.\n- **Existing listing** — availability, price, each price estimate, and auction context\n  are tri-state:\
-        \ omitted preserves, `null` clears, and a concrete value replaces the complete context. A withdrawn\n  listing is restored before current facts\
+        \ — omitted or `null` availability, price, and estimates create no value; `auction` is omitted or an asserted complete context (not `null`).\n- **Existing listing** — availability, price, and each price estimate\n  are tri-state: omitted preserves, `null` clears, and a concrete value replaces. Omit `auction` to preserve it; `auction: null` is invalid. An asserted `auction.sourceAuctionId` resolves or fills shared Auction membership, but a different current key returns `409 CONFLICT` pending explicit correction. A withdrawn\n  listing is restored before current facts\
         \ apply.\n- `title` and `description` apply only on creation. For an\n  existing\
         \ listing they preserve current state and emit no current-state history event.\n- `images` is separate: omit to preserve,\
         \ send `[]` to clear, or send an array to replace.\n  `null` is invalid. `url` is non-clearable: omit or send `null`\
@@ -11977,7 +11979,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionData"
           nullable: true
-          description: Optional source-asserted auction context; it does not identify Auction membership.
+          description: Optional source-asserted lot context. Membership is not exposed by this read model.
         created:
           type: string
           format: date-time
@@ -12543,8 +12545,18 @@ components:
     ProductListingAuctionData:
       type: object
       additionalProperties: false
-      description: Source-asserted lot context. It does not identify or join an Auction aggregate.
+      description: Source-asserted lot context. In partner writes, optional `sourceAuctionId` resolves shared Auction membership and `metadata` is fill-only; ordinary writes cannot change an existing membership.
       properties:
+        sourceAuctionId:
+          type: string
+          maxLength: 512
+          nullable: true
+          description: Optional reliable source Auction key. Outer Unicode whitespace is trimmed; case and internal whitespace are preserved.
+          example: spring-sale-2026
+        metadata:
+          allOf:
+            - $ref: "#/components/schemas/EmbeddedAuctionMetadataData"
+          description: Optional fill-only shared Auction metadata, applied only when `sourceAuctionId` is supplied.
         lotNumber:
           type: string
           maxLength: 128
@@ -12563,6 +12575,55 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionTimingData"
           nullable: true
+    EmbeddedAuctionMetadataData:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          allOf:
+            - $ref: "#/components/schemas/LocalizedTextData"
+          nullable: true
+        description:
+          allOf:
+            - $ref: "#/components/schemas/LocalizedTextData"
+          nullable: true
+        catalogueUrl:
+          type: string
+          format: uri
+          nullable: true
+        format:
+          type: string
+          enum: [LIVE, TIMED]
+          nullable: true
+        reportedStatus:
+          type: string
+          enum: [SCHEDULED, IN_PROGRESS, ENDED, POSTPONED, CANCELLED]
+          nullable: true
+        reportedLotCount:
+          type: integer
+          format: int32
+          minimum: 0
+          nullable: true
+        schedule:
+          type: object
+          additionalProperties: false
+          properties:
+            biddingOpens:
+              allOf:
+                - $ref: "#/components/schemas/AuctionTimeData"
+              nullable: true
+            liveStarts:
+              allOf:
+                - $ref: "#/components/schemas/AuctionTimeData"
+              nullable: true
+            lotsBeginClosing:
+              allOf:
+                - $ref: "#/components/schemas/AuctionTimeData"
+              nullable: true
+            scheduledEnd:
+              allOf:
+                - $ref: "#/components/schemas/AuctionTimeData"
+              nullable: true
     ProductListingAuctionTimingData:
       type: object
       additionalProperties: false
@@ -14963,7 +15024,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionData"
           nullable: true
-          description: Optional complete source-asserted lot context. It does not identify Auction membership.
+          description: Optional complete lot context. `sourceAuctionId` resolves shared Auction membership and optional embedded metadata is fill-only.
     PartnerProductListingBatchFailuresResponse:
       type: array
       description:
@@ -15008,9 +15069,9 @@ components:
       description:
         "Data for synchronously updating one ProductListing. Omitted fields remain unchanged.
 
-        `availability: null` clears the current assertion. `null` clears price and the whole auction context;
+        `availability: null` clears the current assertion and `price: null` clears price. Omit `auction` to preserve
 
-        `url` and `images` reject null. Send `images: []` to remove all images.
+        its context; `auction: null`, `url: null`, and `images: null` are invalid. Send `images: []` to remove all images.
 
         "
       required:
@@ -15056,7 +15117,7 @@ components:
         auction:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionData"
-          description: Omit to leave unchanged. Send an object to replace the whole auction context. `null` is invalid; a later correction operation owns retraction.
+          description: Omit to leave unchanged. Send an object to replace the lot context. `sourceAuctionId` resolves/fills Auction membership; a different current key returns `409 CONFLICT` pending correction. `null` is invalid.
     UpsertProductListingData:
       type: object
       additionalProperties: false
@@ -15067,7 +15128,9 @@ components:
 
         value, `null` clears it, and a concrete value replaces it. The auction context is omitted
 
-        to preserve it or supplied as a complete replacement; `null` is invalid. Upsert restores a withdrawn listing before current
+        to preserve it or supplied as a complete replacement; `null` is invalid. `sourceAuctionId` resolves or fills
+
+        Auction membership, but a different existing key requires explicit correction and returns `409 CONFLICT`. Upsert restores a withdrawn listing before current
 
         facts apply. Images and URL use the field-specific rules documented below.
 
@@ -15137,7 +15200,7 @@ components:
         auction:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionData"
-          description: Omit to preserve the current context or send an object to replace it. `null` is invalid; a later correction operation owns retraction.
+          description: Omit to preserve the current context or send an object to replace it. `sourceAuctionId` resolves/fills Auction membership; a different current key requires correction. `null` is invalid.
     WoocommerceProductWebhookImageData:
       type: object
       description: Image object extracted from a WooCommerce product payload.

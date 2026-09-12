@@ -145,6 +145,7 @@ use product_listing_postgres::{
     SqlxProductListingWatchlistDetailsReaderFactory,
 };
 use product_listing_service::readers::{CachedListingSourceSummaryReader, SourceSearchCacheConfig};
+use product_listing_service::use_cases::commands::create_product_listing::AuctionMembershipResolver;
 use product_listing_service::use_cases::{
     AuthorizeProductListingRawCaptureHandler, CaptureProductListingRawObservationHandler,
     CreateProductListingHandler, GetProductListingHandler, GetProductListingHistoryHandler,
@@ -1200,23 +1201,38 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         SqlxProductListingDetailsReaderFactory::new(),
         SqlxFxRateSnapshotRepositoryFactory,
     );
-    let create_product = CreateProductListingHandler::new(
+    let create_product = CreateProductListingHandler::new_with_auction_resolver(
         unit_of_work.clone(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
         SqlxPartnerProductListingAuthorizerFactory::new(),
+        AuctionMembershipResolver::new(
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        ),
     );
-    let update_product = UpdateProductListingHandler::new(
+    let update_product = UpdateProductListingHandler::new_with_auction_resolver(
         unit_of_work.clone(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
         SqlxPartnerProductListingAuthorizerFactory::new(),
+        AuctionMembershipResolver::new(
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        ),
     );
-    let upsert_product = UpsertProductListingHandler::new(
+    let upsert_product = UpsertProductListingHandler::new_with_auction_resolver(
         unit_of_work.clone(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
         SqlxPartnerProductListingAuthorizerFactory::new(),
+        AuctionMembershipResolver::new(
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        ),
     );
     let withdraw_product = WithdrawProductListingHandler::new(
         unit_of_work.clone(),

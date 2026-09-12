@@ -1,3 +1,7 @@
+use auction_postgres::{
+    SqlxAuctionEventAppenderFactory, SqlxAuctionMetadataPolicyRepositoryFactory,
+    SqlxAuctionRepositoryFactory,
+};
 use aws_lambda_events::eventbridge::EventBridgeEvent;
 use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
 use lambda_runtime::{Context, LambdaEvent};
@@ -1017,6 +1021,9 @@ async fn normalize_pending_shopify_revisions(pool: sqlx::PgPool) -> usize {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool),
     );
     normalizer

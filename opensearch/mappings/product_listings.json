@@ -169,6 +169,12 @@
             "eventId": {
                 "type": "keyword"
             },
+            "auctionId": {
+                "type": "keyword"
+            },
+            "hasAuctionContext": {
+                "type": "boolean"
+            },
             "title": {
                 "type": "object",
                 "properties": {

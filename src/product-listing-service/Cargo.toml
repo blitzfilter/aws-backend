@@ -9,6 +9,8 @@ listing-source-service = { workspace = true }
 fake = { workspace = true, optional = true }
 async-trait = { workspace = true }
 application = { workspace = true }
+auction-core = { workspace = true }
+auction-service = { workspace = true }
 domain-primitives = { workspace = true }
 embedding = { workspace = true }
 fxrate-core = { workspace = true }

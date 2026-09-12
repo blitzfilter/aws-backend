@@ -329,6 +329,7 @@ fn maximal_percolation_input() -> Result<ProductListingPercolationInput, Box<dyn
         "https://shop.example.test/product_listings/sku-1/image.jpg",
     )?)]);
     source.auction = Some(ProductListingAuction::new(
+        None,
         Some(LotNumber::try_from("Lot 12")?),
         Some(CataloguePosition::new(12)?),
         Some(LotAuctionTiming::new(

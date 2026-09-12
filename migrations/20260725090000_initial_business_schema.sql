@@ -557,13 +557,24 @@ CREATE TABLE product_listings (
     CONSTRAINT product_listings_projection_version_positive CHECK (projection_version >= 1)
 );
 
--- Listing-owned source assertions. They deliberately do not identify or join an
--- Auction aggregate: membership arrives in a later iteration.
+-- Listing-owned auction context. A row asserts participation; nullable auction_id
+-- means the source offering is known but its Auction remains unresolved.
+ALTER TABLE product_listings
+    ADD CONSTRAINT product_listings_id_source_unique
+    UNIQUE (product_listing_id, listing_source_id);
+
 CREATE TABLE product_listing_auction_contexts (
-    product_listing_id uuid PRIMARY KEY
-        REFERENCES product_listings(product_listing_id) ON DELETE CASCADE,
+    product_listing_id uuid PRIMARY KEY,
+    listing_source_id uuid NOT NULL,
+    auction_id uuid,
     lot_number text,
     catalogue_position bigint,
+    CONSTRAINT product_listing_auction_contexts_listing_fk
+        FOREIGN KEY (product_listing_id, listing_source_id)
+        REFERENCES product_listings(product_listing_id, listing_source_id) ON DELETE CASCADE,
+    CONSTRAINT product_listing_auction_contexts_auction_source_fk
+        FOREIGN KEY (auction_id, listing_source_id)
+        REFERENCES auctions(auction_id, listing_source_id) ON DELETE RESTRICT,
     CONSTRAINT product_listing_auction_contexts_lot_number_check CHECK (
         lot_number IS NULL OR (
             octet_length(lot_number) BETWEEN 1 AND 128
@@ -598,6 +609,9 @@ CREATE TABLE product_listing_lot_auction_timings (
         OR (scheduled_closes_precision = 'DATE' AND scheduled_closes_instant_at IS NULL AND scheduled_closes_date_on IS NOT NULL)
     )
 );
+
+CREATE INDEX product_listing_auction_contexts_auction_catalogue_idx
+    ON product_listing_auction_contexts (auction_id, catalogue_position, product_listing_id);
 
 CREATE INDEX product_listings_listing_source_id_idx ON product_listings (listing_source_id);
 CREATE INDEX product_listings_lifecycle_updated_idx ON product_listings (lifecycle, updated DESC);

@@ -1,4 +1,5 @@
 use crate::product_listing_image_document::ProductListingImageDocument;
+use auction_core::AuctionId;
 use domain_primitives::event_id::EventId;
 use fxrate_core::FxRateId;
 use indexmap::IndexSet;
@@ -270,6 +271,10 @@ pub(crate) struct ProductListingDocument {
     #[serde(with = "source_listing_id")]
     pub(crate) source_listing_id: SourceListingId,
     pub(crate) event_id: EventId,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub(crate) auction_id: Option<AuctionId>,
+    #[serde(default)]
+    pub(crate) has_auction_context: bool,
     pub(crate) title: TextDocument,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub(crate) title_de: Option<String>,
@@ -399,6 +404,8 @@ mod tests {
             source_listing_id: SourceListingId::try_from("sku-1")
                 .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
             event_id: EventId::new(),
+            auction_id: None,
+            has_auction_context: false,
             title: TextDocument::new("Vase", Language::En),
             title_de: None,
             title_en: Some("Vase".to_owned()),

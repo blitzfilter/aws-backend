@@ -1,6 +1,10 @@
 mod support;
 
 use application::transaction::{Transaction, UnitOfWork};
+use auction_postgres::{
+    SqlxAuctionEventAppenderFactory, SqlxAuctionMetadataPolicyRepositoryFactory,
+    SqlxAuctionRepositoryFactory,
+};
 use listing_source_core::ListingSourceId;
 use platform_postgres::SqlxUnitOfWork;
 use product_listing_normalization::{
@@ -91,6 +95,9 @@ async fn should_apply_other_facts_and_preserve_lot_context_when_timing_is_invali
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     )
     .execute(NormalizeProductListingRawRevisionCommand {
@@ -208,6 +215,9 @@ async fn should_process_stream_in_order_and_ignore_duplicate_late_wakeup() {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
     let command = NormalizeProductListingRawRevisionCommand {
@@ -311,6 +321,9 @@ async fn should_ignore_delete_without_bound_product_listing() {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
 
@@ -363,6 +376,9 @@ async fn should_fail_unsupported_stored_schema_without_advancing_progress() {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
 
@@ -431,6 +447,9 @@ async fn should_reconcile_healthy_stream_when_unsupported_stream_is_blocked_with
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
 
@@ -537,6 +556,9 @@ async fn should_reach_later_healthy_stream_after_blocked_reconciliation_page() {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
 
@@ -689,6 +711,9 @@ async fn should_continue_capped_stream_across_keyset_cursor_and_reach_later_stre
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
 
@@ -864,6 +889,9 @@ async fn should_advance_rejection_and_record_no_change_for_later_revisions() {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
     let result = normalizer
@@ -1042,6 +1070,9 @@ async fn should_reject_changed_derived_source_listing_id_without_second_listing(
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
     let result = normalizer
@@ -1108,6 +1139,9 @@ async fn should_normalize_valid_long_incompressible_url() {
         SqlxProductListingRawNormalizationWriterFactory::new(),
         SqlxProductListingRepositoryFactory::new(),
         SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
         SqlxPendingProductListingRawStreamReader::new(pool.clone()),
     );
 
@@ -1204,6 +1238,9 @@ async fn concurrent_normalization(max_revisions: u32) -> Result<(), Box<dyn std:
             SqlxProductListingRawNormalizationWriterFactory::new(),
             SqlxProductListingRepositoryFactory::new(),
             SqlxProductListingEventAppenderFactory::new(),
+            SqlxAuctionRepositoryFactory::new(),
+            SqlxAuctionEventAppenderFactory::new(),
+            SqlxAuctionMetadataPolicyRepositoryFactory::new(),
             SqlxPendingProductListingRawStreamReader::new(pool.clone()),
         )
     };

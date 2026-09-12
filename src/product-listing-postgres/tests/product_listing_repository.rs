@@ -170,6 +170,7 @@ async fn should_round_trip_listing_owned_auction_context_and_timing_without_auct
     let opening_date = time::Date::from_calendar_date(2026, time::Month::May, 14)
         .unwrap_or_else(|error| panic!("opening date: {error}"));
     let auction = ProductListingAuction::new(
+        None,
         Some(LotNumber::try_from("Lot 42").unwrap_or_else(|error| panic!("lot: {error}"))),
         Some(CataloguePosition::new(7).unwrap_or_else(|error| panic!("position: {error}"))),
         Some(

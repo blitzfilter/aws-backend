@@ -1,3 +1,7 @@
+use super::create_product_listing::{
+    NoopPartnerProductListingAuctionResolver, PartnerProductListingAuctionResolutionError,
+    PartnerProductListingAuctionResolver,
+};
 use crate::ports::{
     PartnerProductListingAuthorizationError, PartnerProductListingAuthorizer,
     PartnerProductListingAuthorizerFactory, ProductListingEventAppendError,
@@ -16,6 +20,8 @@ use application::operation_context::{
 };
 use application::patch_field::PatchField;
 use application::transaction::{Transaction, UnitOfWork};
+use auction_core::SourceAuctionId;
+use auction_service::EmbeddedAuctionMetadata;
 use domain_primitives::change_outcome::ChangeOutcome;
 
 use indexmap::IndexSet;
@@ -53,6 +59,8 @@ pub struct UpsertProductListingCommand {
     /// The outer context is asserted as one validated replacement. `Clear` preserves an
     /// existing context; a dedicated correction use case owns retraction.
     pub auction: PatchField<ProductListingAuction>,
+    pub auction_source_id: Option<SourceAuctionId>,
+    pub auction_metadata: EmbeddedAuctionMetadata,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpsertProductListingResult {
@@ -74,6 +82,18 @@ pub enum UpsertProductListingError {
     },
     #[error("partner product listing authorization failed internally")]
     PartnerAuthorizationInternal {
+        #[source]
+        source: BoxError,
+    },
+    #[error("product listing auction membership requires an explicit correction")]
+    AuctionMembershipCorrectionRequired,
+    #[error("product listing auction resolution is temporarily unavailable")]
+    AuctionResolutionTemporarilyUnavailable {
+        #[source]
+        source: BoxError,
+    },
+    #[error("product listing auction resolution failed internally")]
+    AuctionResolutionInternal {
         #[source]
         source: BoxError,
     },
@@ -106,12 +126,20 @@ pub trait UpsertProductListingUseCase: Send + Sync {
         command: UpsertProductListingCommand,
     ) -> Result<UpsertProductListingResult, UpsertProductListingError>;
 }
-pub struct UpsertProductListingHandler<U, R, E, A, G = RandomProductListingTitleSlugGenerator> {
+pub struct UpsertProductListingHandler<
+    U,
+    R,
+    E,
+    A,
+    G = RandomProductListingTitleSlugGenerator,
+    AR = NoopPartnerProductListingAuctionResolver,
+> {
     unit_of_work: U,
     products: R,
     events: E,
     authorizer: A,
     title_slug_generator: G,
+    auction_resolver: AR,
 }
 
 enum UpsertAttemptError {
@@ -144,6 +172,12 @@ impl From<PartnerProductListingAuthorizationError> for UpsertAttemptError {
     }
 }
 
+impl From<PartnerProductListingAuctionResolutionError> for UpsertAttemptError {
+    fn from(error: PartnerProductListingAuctionResolutionError) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
 impl From<ChangeListingAvailabilityError> for UpsertAttemptError {
     fn from(error: ChangeListingAvailabilityError) -> Self {
         Self::Failed(error.into())
@@ -161,7 +195,16 @@ impl From<RehydrateProductListingError> for UpsertAttemptError {
         Self::Failed(error.into())
     }
 }
-impl<U, R, E, A> UpsertProductListingHandler<U, R, E, A, RandomProductListingTitleSlugGenerator> {
+impl<U, R, E, A>
+    UpsertProductListingHandler<
+        U,
+        R,
+        E,
+        A,
+        RandomProductListingTitleSlugGenerator,
+        NoopPartnerProductListingAuctionResolver,
+    >
+{
     pub fn new(unit_of_work: U, products: R, events: E, authorizer: A) -> Self {
         Self::with_title_slug_generator(
             unit_of_work,
@@ -171,8 +214,27 @@ impl<U, R, E, A> UpsertProductListingHandler<U, R, E, A, RandomProductListingTit
             RandomProductListingTitleSlugGenerator,
         )
     }
+
+    pub fn new_with_auction_resolver<AR>(
+        unit_of_work: U,
+        products: R,
+        events: E,
+        authorizer: A,
+        auction_resolver: AR,
+    ) -> UpsertProductListingHandler<U, R, E, A, RandomProductListingTitleSlugGenerator, AR> {
+        UpsertProductListingHandler::with_title_slug_generator_and_auction_resolver(
+            unit_of_work,
+            products,
+            events,
+            authorizer,
+            RandomProductListingTitleSlugGenerator,
+            auction_resolver,
+        )
+    }
 }
-impl<U, R, E, A, G> UpsertProductListingHandler<U, R, E, A, G> {
+impl<U, R, E, A, G>
+    UpsertProductListingHandler<U, R, E, A, G, NoopPartnerProductListingAuctionResolver>
+{
     pub(crate) fn with_title_slug_generator(
         unit_of_work: U,
         products: R,
@@ -180,22 +242,43 @@ impl<U, R, E, A, G> UpsertProductListingHandler<U, R, E, A, G> {
         authorizer: A,
         title_slug_generator: G,
     ) -> Self {
+        Self::with_title_slug_generator_and_auction_resolver(
+            unit_of_work,
+            products,
+            events,
+            authorizer,
+            title_slug_generator,
+            NoopPartnerProductListingAuctionResolver,
+        )
+    }
+}
+impl<U, R, E, A, G, AR> UpsertProductListingHandler<U, R, E, A, G, AR> {
+    pub(crate) fn with_title_slug_generator_and_auction_resolver(
+        unit_of_work: U,
+        products: R,
+        events: E,
+        authorizer: A,
+        title_slug_generator: G,
+        auction_resolver: AR,
+    ) -> Self {
         Self {
             unit_of_work,
             products,
             events,
             authorizer,
             title_slug_generator,
+            auction_resolver,
         }
     }
 }
-impl<U, R, E, A, G> UpsertProductListingHandler<U, R, E, A, G>
+impl<U, R, E, A, G, AR> UpsertProductListingHandler<U, R, E, A, G, AR>
 where
     U: UnitOfWork,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
     A: PartnerProductListingAuthorizerFactory<U::Tx>,
     G: ProductListingTitleSlugGenerator,
+    AR: PartnerProductListingAuctionResolver<U::Tx>,
 {
     async fn persist(
         &self,
@@ -218,6 +301,14 @@ where
                 let expected_version = loaded.version;
                 let mut product = loaded.value;
                 product.restore()?;
+                let command = resolve_auction_context(
+                    &self.auction_resolver,
+                    tx,
+                    product.listing_source_id(),
+                    product.auction(),
+                    command,
+                )
+                .await?;
                 apply_update(&mut product, &command)?;
                 let event = product.take_pending_event_payload().map(|payload| {
                     stamp_product_listing_event(
@@ -260,9 +351,21 @@ where
                     .map_err(|_| UpsertProductListingError::InvalidProductListing {
                         source: box_error(std::io::Error::other("invalid generated title slug")),
                     })?;
-                let mut product = ProductListing::create(
-                    command.into_new_product(new_product_listing_id, title_slug_id)?,
-                )?;
+                let membership = self
+                    .auction_resolver
+                    .resolve(
+                        tx,
+                        command.listing_source_id,
+                        None,
+                        command.auction_source_id.clone(),
+                        &command.auction_metadata,
+                    )
+                    .await?;
+                let mut product = ProductListing::create(command.into_new_product(
+                    new_product_listing_id,
+                    title_slug_id,
+                    membership,
+                )?)?;
                 let event = stamp_product_listing_event(
                     product.id(),
                     time::OffsetDateTime::now_utc(),
@@ -325,13 +428,15 @@ where
     }
 }
 #[async_trait::async_trait]
-impl<U, R, E, A, G> UpsertProductListingUseCase for UpsertProductListingHandler<U, R, E, A, G>
+impl<U, R, E, A, G, AR> UpsertProductListingUseCase
+    for UpsertProductListingHandler<U, R, E, A, G, AR>
 where
     U: UnitOfWork,
     R: ProductListingRepositoryFactory<U::Tx>,
     E: ProductListingEventAppenderFactory<U::Tx>,
     A: PartnerProductListingAuthorizerFactory<U::Tx>,
     G: ProductListingTitleSlugGenerator,
+    AR: PartnerProductListingAuctionResolver<U::Tx>,
 {
     #[tracing::instrument(name = "upsert_product_listing", skip_all, fields(listing_source_id = %command.listing_source_id, source_listing_id = %command.source_listing_id, principal_type = context.principal.kind(), actor_id = tracing::field::Empty, request_id = %context.request_id, correlation_id = %context.correlation_id))]
     async fn execute(
@@ -390,6 +495,7 @@ impl UpsertProductListingCommand {
         self,
         id: ProductListingId,
         title_slug_id: ProductListingSlugId,
+        membership: Option<product_listing_core::product_listing::AuctionMembership>,
     ) -> Result<NewProductListing, UpsertProductListingError> {
         let url = match self.url {
             Some(url) => url,
@@ -420,9 +526,46 @@ impl UpsertProductListingCommand {
             },
             url,
             images: collection_patch_into_value(self.images),
-            auction: optional_patch_into_value(self.auction),
+            auction: optional_patch_into_value(self.auction).map(|auction| {
+                ProductListingAuction::new(
+                    membership,
+                    auction.lot_number().cloned(),
+                    auction.catalogue_position(),
+                    auction.timing().cloned(),
+                )
+            }),
         })
     }
+}
+async fn resolve_auction_context<Tx, AR>(
+    resolver: &AR,
+    tx: &mut Tx,
+    listing_source_id: ListingSourceId,
+    existing: Option<&ProductListingAuction>,
+    mut command: UpsertProductListingCommand,
+) -> Result<UpsertProductListingCommand, UpsertProductListingError>
+where
+    AR: PartnerProductListingAuctionResolver<Tx>,
+{
+    let PatchField::Set(context) = command.auction.clone() else {
+        return Ok(command);
+    };
+    let membership = resolver
+        .resolve(
+            tx,
+            listing_source_id,
+            existing.and_then(ProductListingAuction::membership),
+            command.auction_source_id.clone(),
+            &command.auction_metadata,
+        )
+        .await?;
+    command.auction = PatchField::Set(ProductListingAuction::new(
+        membership,
+        context.lot_number().cloned(),
+        context.catalogue_position(),
+        context.timing().cloned(),
+    ));
+    Ok(command)
 }
 fn apply_update(
     product: &mut ProductListing,
@@ -495,6 +638,21 @@ fn partner_actor(principal: &Principal) -> Option<UserId> {
     match principal {
         Principal::User(id) | Principal::DelegatedUser { user_id: id, .. } => Some(*id),
         Principal::Anonymous | Principal::Service(_) | Principal::System => None,
+    }
+}
+impl From<PartnerProductListingAuctionResolutionError> for UpsertProductListingError {
+    fn from(error: PartnerProductListingAuctionResolutionError) -> Self {
+        match error {
+            PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired => {
+                Self::AuctionMembershipCorrectionRequired
+            }
+            PartnerProductListingAuctionResolutionError::TemporarilyUnavailable { source } => {
+                Self::AuctionResolutionTemporarilyUnavailable { source }
+            }
+            PartnerProductListingAuctionResolutionError::Internal { source } => {
+                Self::AuctionResolutionInternal { source }
+            }
+        }
     }
 }
 impl From<OperationAuthorizationError> for UpsertProductListingError {
@@ -585,6 +743,8 @@ mod tests {
             url: None,
             images: PatchField::Unchanged,
             auction: PatchField::Unchanged,
+            auction_source_id: None,
+            auction_metadata: EmbeddedAuctionMetadata::default(),
         }
     }
 
@@ -595,6 +755,7 @@ mod tests {
 
     fn auction(lot_number: &str) -> ProductListingAuction {
         ProductListingAuction::new(
+            None,
             Some(
                 product_listing_core::product_listing_auction::LotNumber::try_from(lot_number)
                     .unwrap_or_else(|error| panic!("valid lot number: {error}")),
@@ -636,6 +797,16 @@ mod tests {
             auction,
         })
         .unwrap_or_else(|error| panic!("listing: {error}"))
+    }
+
+    #[test]
+    fn should_expose_auction_membership_correction_as_typed_upsert_error() {
+        assert!(matches!(
+            UpsertProductListingError::from(
+                PartnerProductListingAuctionResolutionError::MembershipCorrectionRequired
+            ),
+            UpsertProductListingError::AuctionMembershipCorrectionRequired
+        ));
     }
 
     #[test]
@@ -849,7 +1020,7 @@ mod tests {
     #[test]
     fn should_preserve_absent_title_when_creating_listing() {
         let new_listing = command(PatchField::Unchanged)
-            .into_new_product(ProductListingId::new(), test_title_slug())
+            .into_new_product(ProductListingId::new(), test_title_slug(), None)
             .unwrap_or_else(|error| panic!("new listing: {error}"));
 
         assert!(new_listing.title.is_none());
@@ -867,7 +1038,7 @@ mod tests {
                 PatchField::Clear | PatchField::Unchanged => None,
             };
             let new_listing = command(patch)
-                .into_new_product(ProductListingId::new(), test_title_slug())
+                .into_new_product(ProductListingId::new(), test_title_slug(), None)
                 .unwrap_or_else(|error| panic!("new listing: {error}"));
             assert_eq!(expected, new_listing.pricing.price);
         }
@@ -905,7 +1076,7 @@ mod tests {
             upsert.auction = auction_patch;
 
             let new_listing = upsert
-                .into_new_product(ProductListingId::new(), test_title_slug())
+                .into_new_product(ProductListingId::new(), test_title_slug(), None)
                 .unwrap_or_else(|error| panic!("new listing: {error}"));
 
             assert_eq!(new_listing.pricing.price_estimate_min, expected_min);

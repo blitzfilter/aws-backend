@@ -29,6 +29,7 @@ tracing = { workspace = true }
 html-to-markdown-rs = { workspace = true }
 
 [dev-dependencies]
+auction-postgres = { workspace = true }
 fxrate-core = { workspace = true }
 fxrate-postgres = { workspace = true }
 localization = { workspace = true }

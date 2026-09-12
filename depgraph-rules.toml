@@ -11,7 +11,7 @@ platform-postgres = ["application"]
 geo = []
 
 test-api-macros = []
-aura-historia-worker = ["application", "domain-primitives", "embedding", "fxrate-core", "fxrate-postgres", "large-language-model", "localization", "money", "notification-core", "notification-email-aws", "notification-postgres", "notification-service", "platform-observability", "platform-postgres", "product-listing-core", "product-listing-opensearch", "product-listing-postgres", "product-listing-service", "product-listing-translation-llm", "product-service", "search-filter-core", "search-filter-opensearch", "search-filter-postgres", "search-filter-service", "user-core", "user-postgres", "watchlist-postgres"]
+aura-historia-worker = ["application", "auction-postgres", "domain-primitives", "embedding", "fxrate-core", "fxrate-postgres", "large-language-model", "localization", "money", "notification-core", "notification-email-aws", "notification-postgres", "notification-service", "platform-observability", "platform-postgres", "product-listing-core", "product-listing-opensearch", "product-listing-postgres", "product-listing-service", "product-listing-translation-llm", "product-service", "search-filter-core", "search-filter-opensearch", "search-filter-postgres", "search-filter-service", "user-core", "user-postgres", "watchlist-postgres"]
 aura-historia-cron = ["fxrate-postgres", "large-language-model", "platform-observability", "platform-postgres", "product-listing-opensearch", "product-listing-postgres", "search-filter-postgres", "search-filter-service"]
 cloudwatch-log-retention-lambda = ["platform-observability"]
 
@@ -41,7 +41,7 @@ oauth-core = ["credential-core", "domain-primitives", "user-core"]
 
 product-listing-core = ["auction-core", "domain-primitives", "fxrate-core", "listing-source-core", "localization", "money", "strum", "strum_macros"]
 product-listing-normalization = ["auction-core", "lingua", "localization", "money", "product-listing-core", "regex", "serde", "serde_json", "sha2", "strum", "strum_macros", "time", "url"]
-product-service = ["application", "domain-primitives", "indexmap", "listing-source-core", "product-listing-core", "product-listing-normalization", "product-listing-service"]
+product-service = ["application", "auction-core", "auction-service", "domain-primitives", "indexmap", "listing-source-core", "product-listing-core", "product-listing-normalization", "product-listing-service"]
 
 user-service = ["application", "domain-primitives", "geo", "localization", "money", "user-core"]
 cognito-post-confirmation = ["application", "platform-observability", "platform-postgres", "user-core", "user-postgres", "user-service"]
@@ -49,7 +49,7 @@ crawler = ["application", "domain-primitives", "fxrate-postgres", "google-cloud-
 notification-core = ["domain-primitives", "listing-source-core", "localization", "money", "partnership-core", "party-core", "product-listing-core", "search-filter-core", "user-core"]
 
 oauth-service = ["application", "credential-core", "domain-primitives", "oauth-core", "serde", "user-core", "user-service"]
-product-listing-service = ["application", "domain-primitives", "embedding", "fxrate-core", "fxrate-service", "listing-source-core", "listing-source-service", "localization", "money", "notification-core", "notification-service", "product-listing-core", "product-listing-normalization", "search-filter-core", "sha2", "strum", "strum_macros", "user-core"]
+product-listing-service = ["application", "auction-core", "auction-service", "domain-primitives", "embedding", "fxrate-core", "fxrate-service", "listing-source-core", "listing-source-service", "localization", "money", "notification-core", "notification-service", "product-listing-core", "product-listing-normalization", "search-filter-core", "sha2", "strum", "strum_macros", "user-core"]
 woocommerce-service = ["application", "listing-source-core", "listing-source-service", "product-listing-normalization", "product-listing-service"]
 search-filter-core = ["domain-primitives", "fxrate-core", "product-listing-core", "user-core"]
 
@@ -64,7 +64,7 @@ notification-email = ["application", "notification-core", "user-core"]
 notification-email-aws = ["application", "domain-primitives", "localization", "money", "notification-core", "notification-email", "notification-service", "product-listing-core", "user-core"]
 notification-postgres = ["application", "domain-primitives", "listing-source-core", "localization", "money", "notification-core", "notification-email", "notification-service", "party-core", "partnership-core", "platform-postgres", "product-listing-core", "search-filter-core", "user-core"]
 oauth-postgres = ["application", "credential-core", "domain-primitives", "oauth-core", "oauth-service", "platform-postgres", "user-core"]
-product-listing-opensearch = ["application", "domain-primitives", "fxrate-core", "geo", "listing-source-core", "localization", "money", "platform-opensearch", "product-listing-core", "product-listing-service"]
+product-listing-opensearch = ["application", "auction-core", "domain-primitives", "fxrate-core", "geo", "listing-source-core", "localization", "money", "platform-opensearch", "product-listing-core", "product-listing-service"]
 product-listing-postgres = ["application", "auction-core", "domain-primitives", "fxrate-core", "listing-source-core", "localization", "money", "notification-core", "platform-postgres", "product-listing-core", "product-listing-normalization", "product-listing-service", "product-service", "search-filter-core", "user-core"]
 product-listing-translation-llm = ["application", "large-language-model", "localization", "product-listing-core", "product-listing-service"]
 

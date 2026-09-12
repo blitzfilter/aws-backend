@@ -2,8 +2,8 @@ use crate::description::Description;
 use crate::listing_availability::ListingAvailability;
 use crate::listing_lifecycle::ListingLifecycle;
 pub use crate::product_listing_auction::{
-    CataloguePosition, InvalidCataloguePosition, InvalidLotAuctionTiming, InvalidLotNumber,
-    LotAuctionTiming, LotNumber, ProductListingAuction,
+    AuctionMembership, CataloguePosition, InvalidCataloguePosition, InvalidLotAuctionTiming,
+    InvalidLotNumber, LotAuctionTiming, LotNumber, ProductListingAuction,
 };
 use crate::product_listing_event::{
     ProductListingChanged, ProductListingDiscovered, ProductListingEventPayload,
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn should_preserve_an_empty_asserted_auction_context() {
         let mut source = input();
-        source.auction = Some(ProductListingAuction::new(None, None, None));
+        source.auction = Some(ProductListingAuction::new(None, None, None, None));
 
         let listing =
             ProductListing::create(source).unwrap_or_else(|error| panic!("create: {error}"));
@@ -803,6 +803,7 @@ mod tests {
             Url::parse("https://shop.example/final").unwrap_or_else(|error| panic!("URL: {error}"));
         let first_auction = None;
         let final_auction = Some(ProductListingAuction::new(
+            None,
             Some(LotNumber::try_from("42").unwrap_or_else(|error| panic!("lot number: {error}"))),
             Some(
                 CataloguePosition::new(7)
@@ -1097,6 +1098,7 @@ mod tests {
     fn should_coalesce_auction_context_replacement_and_clear() {
         let mut listing = rehydrated();
         let auction = Some(ProductListingAuction::new(
+            None,
             Some(LotNumber::try_from("42").unwrap_or_else(|error| panic!("lot number: {error}"))),
             None,
             None,

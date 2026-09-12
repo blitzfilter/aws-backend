@@ -1,5 +1,5 @@
 use application::error::{BoxError, box_error};
-use auction_core::{AuctionTime, AuctionTimeZone};
+use auction_core::{AuctionId, AuctionTime, AuctionTimeZone};
 use domain_primitives::event_id::EventId;
 use listing_source_core::ListingSourceId;
 use localization::{Language, Localized};
@@ -8,7 +8,7 @@ use product_listing_core::{
     description::Description,
     listing_availability::ListingAvailability,
     product_listing::{ListingSaleObservation, ProductListingAuction, ProductListingPricing},
-    product_listing_auction::{CataloguePosition, LotAuctionTiming, LotNumber},
+    product_listing_auction::{AuctionMembership, CataloguePosition, LotAuctionTiming, LotNumber},
     product_listing_event::{
         ProductListingChanged, ProductListingDiscovered, ProductListingEventPayload,
         ProductListingEventType, ProductListingImageCount, ProductListingLifecycleChange,
@@ -762,6 +762,7 @@ impl From<Price> for PriceDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AuctionDto {
+    membership: Option<String>,
     lot_number: Option<String>,
     catalogue_position: Option<u32>,
     timing: Option<LotAuctionTimingDto>,
@@ -798,6 +799,9 @@ impl TryFrom<&ProductListingAuction> for AuctionDto {
 
     fn try_from(value: &ProductListingAuction) -> Result<Self, Self::Error> {
         Ok(Self {
+            membership: value
+                .membership()
+                .map(|value| value.auction_id().as_uuid().to_string()),
             lot_number: value.lot_number().map(|value| value.as_str().to_owned()),
             catalogue_position: value.catalogue_position().map(|value| value.value()),
             timing: value.timing().map(TryInto::try_into).transpose()?,
@@ -809,6 +813,15 @@ impl TryFrom<AuctionDto> for ProductListingAuction {
     type Error = ProductListingEventCodecError;
 
     fn try_from(value: AuctionDto) -> Result<Self, Self::Error> {
+        let membership = value
+            .membership
+            .map(|value| {
+                let uuid = parse_uuid(&value, "auction.membership")?;
+                AuctionId::try_from(uuid)
+                    .map(AuctionMembership::new)
+                    .map_err(|source| invalid_field_source("auction.membership", source))
+            })
+            .transpose()?;
         let lot_number = value
             .lot_number
             .map(|value| {
@@ -831,6 +844,7 @@ impl TryFrom<AuctionDto> for ProductListingAuction {
             .transpose()?;
         let timing = value.timing.map(TryInto::try_into).transpose()?;
         Ok(ProductListingAuction::new(
+            membership,
             lot_number,
             catalogue_position,
             timing,
@@ -1307,7 +1321,7 @@ fn validate_auction_shape(
     let auction = required_object(value, context)?;
     require_exact_keys(
         auction,
-        &["lotNumber", "cataloguePosition", "timing"],
+        &["membership", "lotNumber", "cataloguePosition", "timing"],
         context,
     )?;
     let timing = auction
@@ -2118,6 +2132,7 @@ mod tests {
             auction: Some((
                 None,
                 Some(ProductListingAuction::new(
+                    None,
                     Some(
                         LotNumber::try_from("42")
                             .unwrap_or_else(|error| panic!("lot number: {error}")),

@@ -8,6 +8,15 @@ use crate::product_listing_title_slug_creation::{
 };
 use application::error::{BoxError, box_error};
 use application::patch_field::PatchField;
+use auction_core::SourceAuctionId;
+use auction_service::{
+    EmbeddedAuctionMetadata, ResolveAuctionForListingError, ResolveAuctionForListingRequest,
+    ports::{
+        AuctionEventAppenderFactory, AuctionMetadataPolicyRepositoryFactory,
+        AuctionRepositoryFactory,
+    },
+    resolve_auction_for_listing,
+};
 use domain_primitives::change_outcome::ChangeOutcome;
 use domain_primitives::event_id::EventId;
 use indexmap::IndexSet;
@@ -46,6 +55,9 @@ pub struct CanonicalProductListingUpsert {
     /// Outer auction-context patch. `CLEAR` is non-destructive for existing listings;
     /// explicit correction owns retraction in a later iteration.
     pub auction: PatchField<ProductListingAuction>,
+    /// Reliable source identity for the asserted auction context, if the source supplied one.
+    pub auction_source_id: Option<SourceAuctionId>,
+    pub auction_metadata: EmbeddedAuctionMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +83,13 @@ pub enum CanonicalProductListingWriteError {
         #[source]
         source: BoxError,
     },
+    #[error("auction membership change requires an explicit correction")]
+    MembershipChangeRequiresCorrection,
+    #[error("canonical auction resolution failed")]
+    AuctionResolution {
+        #[source]
+        source: BoxError,
+    },
     #[error("canonical product listing event append failed")]
     EventAppend {
         #[source]
@@ -78,20 +97,37 @@ pub enum CanonicalProductListingWriteError {
     },
 }
 
+pub struct CanonicalProductListingWriterDependencies<'a, R, E, AR, AE, AP> {
+    pub products: &'a R,
+    pub events: &'a E,
+    pub auctions: &'a AR,
+    pub auction_events: &'a AE,
+    pub auction_policies: &'a AP,
+}
+
 pub struct CanonicalProductListingWriter;
 
 impl CanonicalProductListingWriter {
-    pub async fn upsert_in_transaction<Tx, R, E>(
+    pub async fn upsert_in_transaction<'a, Tx, R, E, AR, AE, AP>(
         tx: &mut Tx,
-        products: &R,
-        events: &E,
+        dependencies: CanonicalProductListingWriterDependencies<'a, R, E, AR, AE, AP>,
         bound_product_listing_id: Option<ProductListingId>,
         command: CanonicalProductListingUpsert,
     ) -> Result<CanonicalProductListingWriteResult, CanonicalProductListingWriteError>
     where
         R: ProductListingRepositoryFactory<Tx>,
         E: ProductListingEventAppenderFactory<Tx>,
+        AR: AuctionRepositoryFactory<Tx>,
+        AE: AuctionEventAppenderFactory<Tx>,
+        AP: AuctionMetadataPolicyRepositoryFactory<Tx>,
     {
+        let CanonicalProductListingWriterDependencies {
+            products,
+            events,
+            auctions,
+            auction_events,
+            auction_policies,
+        } = dependencies;
         let existing = match bound_product_listing_id {
             Some(product_listing_id) => products
                 .in_transaction(tx)
@@ -110,7 +146,16 @@ impl CanonicalProductListingWriter {
                     .await
                     .map_err(map_repository_error)?;
                 let Some(existing) = existing else {
-                    return Self::create(tx, products, events, command).await;
+                    return Self::create(
+                        tx,
+                        products,
+                        events,
+                        auctions,
+                        auction_events,
+                        auction_policies,
+                        command,
+                    )
+                    .await;
                 };
                 existing
             }
@@ -128,6 +173,16 @@ impl CanonicalProductListingWriter {
             .map_err(|error| CanonicalProductListingWriteError::InvalidInput {
                 source: box_error(error),
             })?;
+        let command = resolve_auction_context(
+            tx,
+            auctions,
+            auction_events,
+            auction_policies,
+            product.listing_source_id(),
+            product.auction(),
+            command,
+        )
+        .await?;
         apply_update(&mut product, &command)?;
         let event = product.take_pending_event_payload().map(|payload| {
             stamp_product_listing_event(product.id(), OffsetDateTime::now_utc(), payload)
@@ -208,16 +263,32 @@ impl CanonicalProductListingWriter {
         })
     }
 
-    async fn create<Tx, R, E>(
+    async fn create<Tx, R, E, AR, AE, AP>(
         tx: &mut Tx,
         products: &R,
         events: &E,
+        auctions: &AR,
+        auction_events: &AE,
+        auction_policies: &AP,
         command: CanonicalProductListingUpsert,
     ) -> Result<CanonicalProductListingWriteResult, CanonicalProductListingWriteError>
     where
         R: ProductListingRepositoryFactory<Tx>,
         E: ProductListingEventAppenderFactory<Tx>,
+        AR: AuctionRepositoryFactory<Tx>,
+        AE: AuctionEventAppenderFactory<Tx>,
+        AP: AuctionMetadataPolicyRepositoryFactory<Tx>,
     {
+        let command = resolve_auction_context(
+            tx,
+            auctions,
+            auction_events,
+            auction_policies,
+            command.listing_source_id,
+            None,
+            command,
+        )
+        .await?;
         let title = patch_value(command.title);
         let slug_title = title
             .as_ref()
@@ -286,6 +357,64 @@ impl CanonicalProductListingWriter {
             outcome: ChangeOutcome::Changed,
         })
     }
+}
+
+async fn resolve_auction_context<Tx, AR, AE, AP>(
+    tx: &mut Tx,
+    auctions: &AR,
+    auction_events: &AE,
+    auction_policies: &AP,
+    listing_source_id: ListingSourceId,
+    existing: Option<&ProductListingAuction>,
+    mut command: CanonicalProductListingUpsert,
+) -> Result<CanonicalProductListingUpsert, CanonicalProductListingWriteError>
+where
+    AR: AuctionRepositoryFactory<Tx>,
+    AE: AuctionEventAppenderFactory<Tx>,
+    AP: AuctionMetadataPolicyRepositoryFactory<Tx>,
+{
+    let PatchField::Set(context) = command.auction.clone() else {
+        return Ok(command);
+    };
+    let current_membership = existing.and_then(ProductListingAuction::membership);
+    let membership = match (current_membership, command.auction_source_id.clone()) {
+        (Some(current), None) => current,
+        (Some(_) | None, Some(source_auction_id)) => {
+            let receipt = resolve_auction_for_listing(
+                tx,
+                auctions,
+                auction_events,
+                auction_policies,
+                ResolveAuctionForListingRequest {
+                    listing_source_id,
+                    source_auction_id,
+                    current_membership: current_membership.map(|value| value.auction_id()),
+                    metadata: command.auction_metadata.clone(),
+                },
+            )
+            .await
+            .map_err(|source| match source {
+                ResolveAuctionForListingError::MembershipChangeRequiresCorrection => {
+                    CanonicalProductListingWriteError::MembershipChangeRequiresCorrection
+                }
+                source => CanonicalProductListingWriteError::AuctionResolution {
+                    source: box_error(source),
+                },
+            })?;
+            product_listing_core::product_listing::AuctionMembership::new(receipt.auction_id)
+        }
+        (None, None) => {
+            command.auction = PatchField::Set(context);
+            return Ok(command);
+        }
+    };
+    command.auction = PatchField::Set(ProductListingAuction::new(
+        Some(membership),
+        context.lot_number().cloned(),
+        context.catalogue_position(),
+        context.timing().cloned(),
+    ));
+    Ok(command)
 }
 
 fn patch_value<T>(patch: PatchField<T>) -> Option<T> {

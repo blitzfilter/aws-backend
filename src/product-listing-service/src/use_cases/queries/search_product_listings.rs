@@ -12,6 +12,7 @@ use application::error::{BoxError, box_error};
 use application::operation_context::{OperationContext, Principal};
 use application::pagination::{Cursor, CursoredResult};
 use application::personalized::Personalized;
+use auction_core::AuctionId;
 use domain_primitives::event_id::EventId;
 use domain_primitives::sort::Sort;
 use embedding::{EmbeddingGenerator, EmbeddingText};
@@ -74,6 +75,8 @@ pub struct ProductListingSearchItem {
     pub event_id: EventId,
     pub listing_source_id: ListingSourceId,
     pub source_listing_id: SourceListingId,
+    pub auction_id: Option<AuctionId>,
+    pub has_auction_context: bool,
     pub title: Option<Localized<Language, Title>>,
     pub display_price: Option<ProductListingPrice>,
     pub price_valuation: ProductListingSummaryPriceValuation,
@@ -91,6 +94,8 @@ pub struct ProductListingSummary {
     pub event_id: EventId,
     pub source: ListingSourceSummary,
     pub source_listing_id: SourceListingId,
+    pub auction_id: Option<AuctionId>,
+    pub has_auction_context: bool,
     pub title: Option<Localized<Language, Title>>,
     pub display_price: Option<ProductListingPrice>,
     pub price_valuation: ProductListingSummaryPriceValuation,
@@ -497,6 +502,8 @@ pub(crate) fn present_product_summaries_from_assessments(
                     event_id: product.item.item.event_id,
                     source: product.item.source,
                     source_listing_id: product.item.item.source_listing_id,
+                    auction_id: product.item.item.auction_id,
+                    has_auction_context: product.item.item.has_auction_context,
                     title: product.item.item.title,
                     display_price: product.item.item.display_price,
                     price_valuation: product.item.item.price_valuation,
@@ -1379,6 +1386,8 @@ mod tests {
                 listing_source_id: ListingSourceId::new(),
                 source_listing_id: SourceListingId::try_from("cabinet-1")
                     .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
+                auction_id: None,
+                has_auction_context: false,
                 title: Some(Localized {
                     localization: Language::En,
                     payload: Title::from("Cabinet"),

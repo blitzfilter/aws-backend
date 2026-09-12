@@ -768,6 +768,7 @@ async fn should_get_product_listing_history_with_timestamped_event_payloads() {
     let source_timezone = AuctionTimeZone::try_from("Asia/Kolkata")
         .unwrap_or_else(|error| panic!("valid source timezone: {error}"));
     let auction = ProductListingAuction::new(
+        None,
         Some(
             LotNumber::try_from("42A").unwrap_or_else(|error| panic!("valid lot number: {error}")),
         ),
@@ -831,6 +832,7 @@ async fn should_get_product_listing_history_with_timestamped_event_payloads() {
 
     product
         .replace_auction(Some(ProductListingAuction::new(
+            None,
             Some(
                 LotNumber::try_from("43A")
                     .unwrap_or_else(|error| panic!("valid replacement lot number: {error}")),

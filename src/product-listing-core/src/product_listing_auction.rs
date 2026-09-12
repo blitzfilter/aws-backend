@@ -1,4 +1,4 @@
-use auction_core::AuctionTime;
+use auction_core::{AuctionId, AuctionTime};
 use std::fmt;
 use time::OffsetDateTime;
 
@@ -154,12 +154,30 @@ impl LotAuctionTiming {
     }
 }
 
+/// Resolved, same-source Auction membership for one listing context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AuctionMembership {
+    auction_id: AuctionId,
+}
+
+impl AuctionMembership {
+    pub const fn new(auction_id: AuctionId) -> Self {
+        Self { auction_id }
+    }
+
+    pub const fn auction_id(self) -> AuctionId {
+        self.auction_id
+    }
+}
+
 /// Optional source assertions about the auction context of this listing.
 ///
-/// This does not identify or join an `Auction` aggregate; listing membership is
-/// deliberately outside iteration 05.
+/// `None` outer context means no participation assertion. A present context with
+/// no membership is an unresolved auction offering; an empty present context is
+/// still a participation assertion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductListingAuction {
+    membership: Option<AuctionMembership>,
     lot_number: Option<LotNumber>,
     catalogue_position: Option<CataloguePosition>,
     timing: Option<LotAuctionTiming>,
@@ -167,15 +185,21 @@ pub struct ProductListingAuction {
 
 impl ProductListingAuction {
     pub const fn new(
+        membership: Option<AuctionMembership>,
         lot_number: Option<LotNumber>,
         catalogue_position: Option<CataloguePosition>,
         timing: Option<LotAuctionTiming>,
     ) -> Self {
         Self {
+            membership,
             lot_number,
             catalogue_position,
             timing,
         }
+    }
+
+    pub const fn membership(&self) -> Option<AuctionMembership> {
+        self.membership
     }
 
     pub fn lot_number(&self) -> Option<&LotNumber> {
