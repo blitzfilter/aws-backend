@@ -150,10 +150,9 @@ fn demo_listing_sources() -> Vec<RegisteredListingSource> {
 #[tokio::main]
 async fn main() -> Result<(), LocalDatabaseError> {
     dotenvy::dotenv().ok();
-    let local = parse_postgres_environment(
-        |key| env::var(key),
-        |get| LocalDevelopmentConfig::from_lookup("crawler-demo", get),
-    )?;
+    let local = parse_postgres_environment(env::var, |get| {
+        LocalDevelopmentConfig::from_lookup("crawler-demo", get)
+    })?;
     let config = CrawlerCronConfig {
         spider_interval: Duration::from_secs(120),
         scraper_interval: Duration::from_secs(30),

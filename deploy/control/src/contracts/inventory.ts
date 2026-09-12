@@ -110,7 +110,10 @@ const Worker = Service.extend({
     email: z.strictObject({ s3_read_ref: SecretReference, ses_send_ref: SecretReference }).optional(),
   }),
 });
-const Cron = Service.extend({
+const Cron = z.strictObject({
+  host_id: Identifier,
+  resources: Resources,
+  operations_listener: z.strictObject({ port: PortNumber, bind: z.literal('LOOPBACK') }),
   ownership_plan: z.literal('READ_ONLY_TARGET'),
   credentials: z.strictObject({
     business: Pool, aws: RolesAnywhere, opensearch_ref: SecretReference, vertex: Vertex,
@@ -311,12 +314,13 @@ export const Inventory = z.strictObject({
     const allPlacements = [roles.api, ...roles.workers, roles.cron, roles.crawler,
       roles.postgres_business, roles.postgres_crawler, roles.opensearch, roles.sequin, roles.edge];
     const singleHost = new Set(allPlacements.map(role => role.host_id)).size === 1;
-    const services: Service[] = [...roles.workers, roles.cron, roles.crawler,
+    const services: Service[] = [...roles.workers, roles.crawler,
       roles.postgres_business, roles.postgres_crawler, roles.opensearch, roles.sequin];
     for (const service of services) {
       const host = allocate(service.host_id, stage.stage, service.resources, [service.listener]);
       if (host) validateEndpoint(service.endpoint, host, service.host_id, service.listener, service.ca_ref, real, singleHost, ctx);
     }
+    allocate(roles.cron.host_id, stage.stage, roles.cron.resources, [roles.cron.operations_listener]);
     const apiHost = allocate(roles.api.host_id, stage.stage, roles.api.resources_per_slot,
       Object.values(roles.api.slots).flatMap(slot => [slot.listener, slot.operations_listener]), 2);
     if (apiHost) {
@@ -426,7 +430,10 @@ export const RuntimeConfiguration = z.strictObject({
   }),
   api: Lifecycle,
   workers: z.array(RuntimeWorker).length(WorkerScope.options.length),
-  cron: Lifecycle.extend({ ownership_plan: z.literal('READ_ONLY_TARGET'), execution_seconds: Seconds }),
+  cron: Lifecycle.extend({
+    ownership_plan: z.literal('READ_ONLY_TARGET'), execution_seconds: Seconds.max(7200),
+    drain_seconds: Seconds.max(3600), stop_seconds: Seconds.max(3600),
+  }),
   crawler: Lifecycle.extend({ ownership_plan: z.literal('READ_ONLY_TARGET') }),
   email_assets: z.strictObject({
     bucket_ref: Identifier,

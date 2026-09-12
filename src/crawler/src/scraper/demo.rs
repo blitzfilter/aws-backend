@@ -89,10 +89,9 @@ struct ScrapeTarget {
 #[tokio::main]
 async fn main() -> Result<(), LocalDatabaseError> {
     dotenvy::dotenv().ok();
-    let local = parse_postgres_environment(
-        |key| std::env::var(key),
-        |get| LocalDevelopmentConfig::from_lookup("crawler-demo-scraper", get),
-    )?;
+    let local = parse_postgres_environment(std::env::var, |get| {
+        LocalDevelopmentConfig::from_lookup("crawler-demo-scraper", get)
+    })?;
 
     let targets: &[ScrapeTarget] = &[
         ScrapeTarget {

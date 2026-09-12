@@ -108,7 +108,8 @@ export function inventoryFixture(
         },
         workers,
         cron: {
-          ...service('cron', 8082), ownership_plan: 'READ_ONLY_TARGET',
+          host_id: hostFor('app').id, resources: resources(),
+          operations_listener: { port: 8082, bind: 'LOOPBACK' }, ownership_plan: 'READ_ONLY_TARGET',
           credentials: { business: pool('cron-business'), aws: aws('cron'), vertex: vertex('cron'), opensearch_ref: reference(`${stage}-cron-search`) },
         },
         crawler: {
@@ -201,7 +202,7 @@ export function insecureLocalFixture(stage: Stage = 'local'): RuntimeConfigurati
   const runtime = runtimeFixture(stage);
   const roles = runtime.inventory.stages[0]!.roles;
   const privateEndpoints = [roles.api.slots.blue.endpoint, roles.api.slots.green.endpoint,
-    ...roles.workers.map(worker => worker.endpoint), roles.cron.endpoint, roles.crawler.endpoint,
+    ...roles.workers.map(worker => worker.endpoint), roles.crawler.endpoint,
     roles.postgres_business.endpoint, roles.postgres_crawler.endpoint, roles.opensearch.endpoint, roles.sequin.endpoint];
   for (const endpoint of privateEndpoints) {
     endpoint.host = 'localhost';

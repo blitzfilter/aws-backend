@@ -25,8 +25,9 @@ fn assert_invalid(values: &BTreeMap<&'static str, String>, expected: ConfigError
         .err()
         .ok_or("expected PostgreSQL config rejection")?;
     let mut current: &(dyn Error + 'static) = error.as_ref();
+    let mut found_config = false;
     loop {
-        let rendered = format!("{current} {current:?} {current:#?}");
+        let rendered = format!("{current} {current:#} {current:?} {current:#?}");
         for canary in [
             "database_canary",
             "username_canary",
@@ -40,12 +41,15 @@ fn assert_invalid(values: &BTreeMap<&'static str, String>, expected: ConfigError
         }
         if let Some(config) = current.downcast_ref::<ConfigError>() {
             assert_eq!(config.to_string(), expected.to_string());
-            return Ok(());
+            found_config = true;
         }
-        current = current
-            .source()
-            .ok_or("shared configuration cause missing")?;
+        match current.source() {
+            Some(source) => current = source,
+            None => break,
+        }
     }
+    assert!(found_config, "shared configuration cause missing");
+    Ok(())
 }
 
 #[test]

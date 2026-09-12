@@ -8,6 +8,8 @@ Keep Rust domain/use-case boundaries and existing AWS resource ownership. Native
 
 Operational TypeScript controller/helper under `deploy/control` owns private S3 conditional control records and host-local OS locks, not domain audit events. A manifest proves artifact identity, not approval. A protected environment deployer must separately issue an exact intent binding plan, expected revision, stage/account/region, inventory/configuration and trusted controller/helper identity. No expiration-based lock takeover. Unknown remote work retains ownership until observed terminal/fenced.
 
+Cron's PostgreSQL advisory lease is overlap protection while its session lives, not distributed transaction fencing. Isolated tests confirm lease loss can admit a successor while the old separate transaction still commits. Controller handover must prove prior process termination (or a separately implemented fence); no timeout/unreachable-host takeover.
+
 Default placement: one separate host per dev/prod; roles remain independent of host names. Shared hardware requires explicit inventory acknowledgment plus stable-order stage/host conflict locks. No ordinary app release restarts databases, recreates volumes, prunes globally, downgrades SQL or removes mappings.
 
 Compatibility is explicit: compatible; compatible with named backfill gates; maintenance required; blocked. Unknown history, drift, queue/schema compatibility, provenance or live bootstrap evidence blocks mutation. No SQL keyword inference or generic replay subsystem.

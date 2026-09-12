@@ -11,6 +11,7 @@ The sections below preserve iteration 00 **baseline observations**, not current 
 
 - 02: shared explicit PostgreSQL stage/TLS/password-file contract; all native/DB Lambda paths covered. Crawler now requires both database URLs and never bootstraps/migrates in `server`; `bootstrap-local` is a separate excluded tool. CA materialization remains a rollout gate.
 - 03: API/worker SIGINT/SIGTERM, bounded owned cleanup and non-consuming preflight; exact business SQLx history/extension/table startup gate. API private loopback probes replace public probes; worker `/admission` stays independent of consumer `/ready`. Default API drain/stop 45/60s; worker 270/300s, configured worker ceiling 3600s. Explicit per-slot operational ports join host budgets. Unknown future history still blocks until compatible-superset evidence is implemented.
+- 04 foundations: cron loopback-only operations (daemon and run-once), strict non-scheduling preflight, retained execution/drain outcomes, default300/330s budgets. Crawler capture counts distinguish accepted/durable/completed; removed local completion shortcuts. Full crawler signal/producer/collector/spider ownership remains pending. Real PG tests prove advisory-session loss is not a transaction fence; handover requires confirmed prior-process termination.
 - Test PostgreSQL now uses a fixed local Docker socket and checked owned-ID cleanup. Raw-replay fixtures still do not create SQLx history; process fixtures apply genuine migrations. Real Sequin/SQS and deployment rehearsal remain unpassed.
 
 ## Processes

@@ -294,16 +294,13 @@ async fn main() -> Result<(), StartupError> {
     };
     config.validate_business_capacity();
     // Validate both URLs and the shared TLS policy before any provider or logging side effects.
-    let databases = parse_postgres_environment(
-        |key| std::env::var(key),
-        |get| {
-            ServerDatabaseConfig::from_lookup(
-                config.effective_db_max_connections(),
-                config.effective_business_db_max_connections(),
-                get,
-            )
-        },
-    )?;
+    let databases = parse_postgres_environment(std::env::var, |get| {
+        ServerDatabaseConfig::from_lookup(
+            config.effective_db_max_connections(),
+            config.effective_business_db_max_connections(),
+            get,
+        )
+    })?;
     let review_required = crawler_review_required();
     let url_pattern_review_required = crawler_review_url_pattern_required();
     let review_config =

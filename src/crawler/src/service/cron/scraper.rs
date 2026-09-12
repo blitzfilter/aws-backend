@@ -85,9 +85,77 @@ struct ScrapeCandidateOutcome {
 }
 
 struct ScrapeDomainOutcome {
-    succeeded: usize,
+    accepted: usize,
     failed: usize,
     skipped: usize,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RawCaptureDrainSummary {
+    accepted: usize,
+    durable: usize,
+    completed: usize,
+    stale: usize,
+    discarded_missing_source: usize,
+    capture_failed: usize,
+    local_mark_failed: usize,
+    failure_mark_failed: usize,
+    result_mismatches: usize,
+}
+
+impl RawCaptureDrainSummary {
+    fn merge(&mut self, batch: Self) {
+        self.accepted += batch.accepted;
+        self.durable += batch.durable;
+        self.completed += batch.completed;
+        self.stale += batch.stale;
+        self.discarded_missing_source += batch.discarded_missing_source;
+        self.capture_failed += batch.capture_failed;
+        self.local_mark_failed += batch.local_mark_failed;
+        self.failure_mark_failed += batch.failure_mark_failed;
+        self.result_mismatches += batch.result_mismatches;
+    }
+
+    fn unfinished(&self) -> usize {
+        self.capture_failed + self.local_mark_failed
+    }
+
+    fn is_complete(&self) -> bool {
+        self.unfinished() == 0 && self.failure_mark_failed == 0 && self.result_mismatches == 0
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("crawler raw capture drain incomplete")]
+struct RawCaptureDrainError {
+    summary: RawCaptureDrainSummary,
+}
+
+/// Counts are confirmed outcomes only. A failed task leaves its unreported work unknown.
+#[must_use]
+#[derive(Debug, Default)]
+pub(super) struct ScraperPassOutcome {
+    total: usize,
+    accepted: usize,
+    captures: RawCaptureDrainSummary,
+    failed: usize,
+    skipped: usize,
+    scope_refresh_failed: bool,
+    candidate_lookup_failed: bool,
+    worker_failed: bool,
+    collector_failed: bool,
+}
+
+impl ScraperPassOutcome {
+    pub(super) fn is_complete(&self) -> bool {
+        self.failed == 0
+            && self.captures.is_complete()
+            && !self.scope_refresh_failed
+            && !self.candidate_lookup_failed
+            && !self.worker_failed
+            && !self.collector_failed
+            && self.accepted == self.captures.accepted
+    }
 }
 
 struct ScheduledScrapeDomainOutcome {
@@ -107,7 +175,7 @@ async fn flush_batch(
     scraper_candidates: &Arc<dyn ScraperCandidateService>,
     batch: Vec<QueuedRawCapture>,
     queue_depth: usize,
-) {
+) -> RawCaptureDrainSummary {
     let batch_size = batch.len();
     let oldest_item_age_ms = batch
         .iter()
@@ -153,6 +221,7 @@ async fn flush_batch(
     let mut mark_as_scraped_count = 0;
     let mut stale_completion_count = 0;
     let mut mark_as_scraped_failure_count = 0;
+    let mut failure_mark_failed = 0;
 
     for (queued, outcome) in batch.into_iter().zip(outcomes) {
         match (
@@ -198,9 +267,9 @@ async fn flush_batch(
                             "Skipped stale crawler scrape completion after durable raw capture"
                         );
                     }
-                    Err(error) => {
+                    Err(_) => {
                         mark_as_scraped_failure_count += 1;
-                        warn!(listing_source_id = %meta.listing_source_id, error = %error, url = %meta.url, "Failed to mark product as scraped after raw capture");
+                        warn!(listing_source_id = %meta.listing_source_id, error_kind = "local_mark_failed", "Failed to mark product as scraped after raw capture");
                     }
                 }
             }
@@ -234,9 +303,9 @@ async fn flush_batch(
                         "Skipped stale crawler removal completion after durable raw capture"
                     );
                 }
-                Err(error) => {
+                Err(_) => {
                     mark_as_scraped_failure_count += 1;
-                    warn!(error = %error, listing_source_id = %listing_source_id, url = %url, "Raw removal capture committed but crawler scrape metadata update failed");
+                    warn!(listing_source_id = %listing_source_id, error_kind = "local_mark_failed", "Raw removal capture committed but crawler scrape metadata update failed");
                 }
             },
             (
@@ -266,11 +335,11 @@ async fn flush_batch(
                         "Skipped stale crawler raw-capture failure metadata"
                     );
                 }
-                Err(error) => {
+                Err(_) => {
+                    failure_mark_failed += 1;
                     warn!(
-                        error = %error,
+                        error_kind = "failure_mark_failed",
                         listing_source_id = %listing_source_id,
-                        url = %url,
                         "Failed to persist raw-capture failure metadata"
                     );
                 }
@@ -301,8 +370,21 @@ async fn flush_batch(
         mark_as_scraped_count,
         stale_completion_count,
         mark_as_scraped_failure_count,
-        "Crawler raw capture batch complete"
+        failure_mark_failed,
+        "Crawler raw capture batch finished"
     );
+
+    RawCaptureDrainSummary {
+        accepted: batch_size,
+        durable: persisted_count,
+        completed: mark_as_scraped_count,
+        stale: stale_completion_count,
+        discarded_missing_source: discarded_missing_source_count,
+        capture_failed: persistence_failure_count,
+        local_mark_failed: mark_as_scraped_failure_count,
+        failure_mark_failed,
+        result_mismatches: usize::from(actual != expected),
+    }
 }
 
 #[allow(clippy::result_large_err)]
@@ -508,65 +590,21 @@ async fn scrape_candidate(
                     .clone(),
             };
 
-            if candidate.last_captured_raw_input_sha256.as_deref()
-                == Some(meta.raw_input_sha256.as_slice())
-                && disposition == CrawlerDisposition::Active
-            {
-                match ctx
-                    .scraper_candidates
-                    .mark_as_scraped(
-                        &meta.listing_source_id,
-                        &meta.url,
-                        &meta.hash,
-                        &meta.schema_fingerprint,
-                        &meta.raw_input_sha256,
-                        meta.disposition,
-                        meta.expected_last_captured_raw_input_sha256.as_deref(),
-                    )
-                    .await
-                {
-                    Ok(CrawlerUrlWriteOutcome::Applied) => ScrapeCandidateOutcome {
-                        capture: None,
-                        errored: false,
-                        skipped: false,
-                    },
-                    Ok(CrawlerUrlWriteOutcome::NoopStale) => {
-                        debug!(
-                            listing_source_id = %meta.listing_source_id,
-                            url = %meta.url,
-                            crawler_url_write_outcome = "stale_noop",
-                            "Skipped stale active crawler scrape completion"
-                        );
-                        ScrapeCandidateOutcome {
-                            capture: None,
-                            errored: false,
-                            skipped: true,
-                        }
-                    }
-                    Err(error) => {
-                        warn!(error = %error, url = %meta.url, "Failed to persist unchanged raw scrape metadata");
-                        ScrapeCandidateOutcome {
-                            capture: None,
-                            errored: true,
-                            skipped: false,
-                        }
-                    }
-                }
-            } else {
-                ScrapeCandidateOutcome {
-                    capture: Some(RawCaptureRequest {
-                        item: ProductListingRawCaptureItem::crawler(
-                            candidate.listing_source_id,
-                            &candidate.url,
-                            scraped.raw_input,
-                            provenance,
-                        ),
-                        on_success: RawCaptureSuccessAction::MarkScraped(meta),
-                        on_failure: RawCaptureFailureAction::None,
-                    }),
-                    errored: false,
-                    skipped: false,
-                }
+            // Even equal local input can be stale after business commit/local mark failure.
+            // Let the authoritative capture transaction establish Changed or Unchanged.
+            ScrapeCandidateOutcome {
+                capture: Some(RawCaptureRequest {
+                    item: ProductListingRawCaptureItem::crawler(
+                        candidate.listing_source_id,
+                        &candidate.url,
+                        scraped.raw_input,
+                        provenance,
+                    ),
+                    on_success: RawCaptureSuccessAction::MarkScraped(meta),
+                    on_failure: RawCaptureFailureAction::None,
+                }),
+                errored: false,
+                skipped: false,
             }
         }
         Ok(None) => ScrapeCandidateOutcome {
@@ -771,7 +809,7 @@ async fn scrape_domain_candidates(
     ctx: ScrapeDomainContext,
 ) -> ScrapeDomainOutcome {
     let mut outcome = ScrapeDomainOutcome {
-        succeeded: 0,
+        accepted: 0,
         failed: 0,
         skipped: 0,
     };
@@ -784,7 +822,7 @@ async fn scrape_domain_candidates(
         } else if let Some(pair) = candidate_outcome.capture {
             match enqueue_raw_capture(&ctx.command_tx, pair).await {
                 Ok(queue_wait) => {
-                    outcome.succeeded += 1;
+                    outcome.accepted += 1;
 
                     if queue_wait >= Duration::from_millis(10) {
                         warn!(
@@ -802,92 +840,110 @@ async fn scrape_domain_candidates(
         } else if candidate_outcome.skipped {
             outcome.skipped += 1;
         } else {
-            outcome.succeeded += 1;
+            // No capture and no deliberate skip is not a completed URL.
+            outcome.failed += 1;
         }
     }
 
     outcome
 }
 
+/// Spawn independently of producers. Stop producers, drop every sender, then await this task;
+/// cancelling the collector itself cannot establish custody of its in-memory observations.
 async fn run_raw_capture_collector(
     mut command_rx: mpsc::Receiver<QueuedRawCapture>,
     raw_capture: Arc<dyn ProductListingRawCaptureService>,
     scraper_candidates: Arc<dyn ScraperCandidateService>,
     capture_batch_size: usize,
     capture_max_batch_age: Duration,
-) {
+) -> Result<RawCaptureDrainSummary, RawCaptureDrainError> {
     let capture_batch_size = capture_batch_size.max(1);
     let capture_max_batch_age = capture_max_batch_age.max(Duration::from_millis(1));
     let mut pending = Vec::<QueuedRawCapture>::with_capacity(capture_batch_size);
+    let mut summary = RawCaptureDrainSummary::default();
 
     loop {
-        if pending.is_empty() {
-            match command_rx.recv().await {
-                Some(item) => pending.push(item),
-                None => break,
-            }
-        } else {
-            let oldest_enqueued_at = pending
-                .iter()
-                .map(|item| item.enqueued_at)
-                .min()
-                .expect("pending batch is non-empty");
-            let flush_deadline = oldest_enqueued_at + capture_max_batch_age;
-
-            tokio::select! {
-                received = command_rx.recv() => {
-                    match received {
-                        Some(item) => pending.push(item),
-                        None => {
-                            let batch = std::mem::take(&mut pending);
-                            flush_batch(
-                                &raw_capture,
-                                &scraper_candidates,
-                                batch,
-                                command_rx.len(),
-                            )
-                            .await;
-                            break;
-                        }
+        let received =
+            if let Some(oldest_enqueued_at) = pending.iter().map(|item| item.enqueued_at).min() {
+                tokio::select! {
+                    received = command_rx.recv() => received,
+                    _ = tokio::time::sleep_until(oldest_enqueued_at + capture_max_batch_age) => {
+                        summary.merge(flush_batch(
+                            &raw_capture,
+                            &scraper_candidates,
+                            std::mem::take(&mut pending),
+                            command_rx.len(),
+                        ).await);
+                        continue;
                     }
                 }
-                _ = tokio::time::sleep_until(flush_deadline) => {
-                    let batch = std::mem::take(&mut pending);
-                    flush_batch(
-                        &raw_capture,
-                        &scraper_candidates,
-                        batch,
-                        command_rx.len(),
-                    )
-                    .await;
-                }
-            }
-        }
+            } else {
+                command_rx.recv().await
+            };
 
+        let Some(item) = received else { break };
+        pending.push(item);
         if pending.len() >= capture_batch_size {
-            let batch = std::mem::take(&mut pending);
-            flush_batch(&raw_capture, &scraper_candidates, batch, command_rx.len()).await;
+            summary.merge(
+                flush_batch(
+                    &raw_capture,
+                    &scraper_candidates,
+                    std::mem::take(&mut pending),
+                    command_rx.len(),
+                )
+                .await,
+            );
         }
     }
 
     if !pending.is_empty() {
-        flush_batch(&raw_capture, &scraper_candidates, pending, command_rx.len()).await;
+        summary.merge(flush_batch(&raw_capture, &scraper_candidates, pending, 0).await);
+    }
+
+    // Report here too: dropping a producer/pass future detaches, rather than joins, this task.
+    if summary.is_complete() {
+        info!(
+            event = "crawler.raw_capture.drained",
+            ?summary,
+            "Raw capture channel drained"
+        );
+        Ok(summary)
+    } else {
+        warn!(
+            event = "crawler.raw_capture.drain_incomplete",
+            ?summary,
+            "Raw capture drain left retryable or unconfirmed work"
+        );
+        Err(RawCaptureDrainError { summary })
     }
 }
 
 impl CrawlerCronJob {
     #[tracing::instrument(name = "crawler_run_scraper_once", skip(self))]
     pub(super) async fn run_scraper_once(&self) {
+        let outcome = self.run_scraper_pass().await;
+        if outcome.is_complete() {
+            info!(?outcome, "Scraper scheduler pass finished");
+        } else {
+            warn!(?outcome, "Scraper scheduler pass incomplete");
+        }
+    }
+
+    /// Runtime owners must inspect this outcome, not treat return from the pass as completion.
+    pub(super) async fn run_scraper_pass(&self) -> ScraperPassOutcome {
         let scraper_concurrency = self.config.scraper_concurrency;
         if scraper_concurrency == 0 {
             warn!(
                 scraper_concurrency,
                 "scraper_concurrency is 0, skipping scraper scheduler pass"
             );
-            return;
+            return ScraperPassOutcome::default();
         }
         if !self.admit_authoritative_scope_for_work("scraper").await {
-            return;
+            return ScraperPassOutcome {
+                scope_refresh_failed: true,
+                ..Default::default()
+            };
         }
 
         let pass_start = tokio::time::Instant::now();
@@ -910,11 +966,7 @@ impl CrawlerCronJob {
         let schema_pending_listing_sources = Arc::new(Mutex::new(HashSet::new()));
 
         let mut unique_listing_source_ids = HashSet::new();
-        let mut total = 0usize;
-        let mut succeeded = 0usize;
-        let mut failed = 0usize;
-        let mut skipped = 0usize;
-        let mut started = false;
+        let mut outcome = ScraperPassOutcome::default();
         let mut no_more_candidates = false;
 
         let raw_capture_collector = tokio::spawn(run_raw_capture_collector(
@@ -942,7 +994,7 @@ impl CrawlerCronJob {
                         Arc::clone(&schema_pending_listing_sources);
                     let span = tracing::info_span!("scrape_domain", domain = %domain);
                     active_domains.insert(domain.clone());
-                    total += candidates.len();
+                    outcome.total += candidates.len();
 
                     join_set.spawn(
                         async move {
@@ -987,28 +1039,20 @@ impl CrawlerCronJob {
                     .await
                 {
                     Ok(candidates) => candidates,
-                    Err(e) => {
-                        warn!(error = %e, "Failed to retrieve scraper candidates");
+                    Err(_) => {
+                        warn!(
+                            error_kind = "candidate_lookup_failed",
+                            "Failed to retrieve scraper candidates"
+                        );
+                        outcome.candidate_lookup_failed = true;
                         no_more_candidates = true;
                         break;
                     }
                 };
 
                 if candidates.is_empty() {
-                    if !started && join_set.is_empty() && pending_domains.is_empty() {
-                        debug!("No scraper candidates, skipping scheduler pass");
-                        drop(command_tx);
-                        if let Err(e) = raw_capture_collector.await {
-                            error!(error = %e, "Scraper push collector task failed to join");
-                        }
-                        return;
-                    }
                     no_more_candidates = true;
                     break;
-                }
-
-                if !started {
-                    started = true;
                 }
 
                 let mut by_domain: HashMap<String, Vec<ScraperCandidate>> = HashMap::new();
@@ -1035,13 +1079,16 @@ impl CrawlerCronJob {
             match join_set.join_next().await {
                 Some(Ok(scheduled)) => {
                     active_domains.remove(&scheduled.domain);
-                    succeeded += scheduled.outcome.succeeded;
-                    failed += scheduled.outcome.failed;
-                    skipped += scheduled.outcome.skipped;
+                    outcome.accepted += scheduled.outcome.accepted;
+                    outcome.failed += scheduled.outcome.failed;
+                    outcome.skipped += scheduled.outcome.skipped;
                 }
-                Some(Err(e)) => {
-                    error!(error = %e, "Scraper domain worker task failed to join");
-                    failed += 1;
+                Some(Err(_)) => {
+                    error!(
+                        error_kind = "worker_join_failed",
+                        "Scraper domain worker failed; unfinished URL count is unknown"
+                    );
+                    outcome.worker_failed = true;
                 }
                 None => break,
             }
@@ -1049,16 +1096,19 @@ impl CrawlerCronJob {
 
         drop(command_tx);
 
-        if let Err(e) = raw_capture_collector.await {
-            error!(error = %e, "Scraper push collector task failed to join");
-            failed += 1;
+        match raw_capture_collector.await {
+            Ok(Ok(summary)) => outcome.captures = summary,
+            Ok(Err(error)) => outcome.captures = error.summary,
+            Err(_) => {
+                error!(
+                    error_kind = "collector_join_failed",
+                    "Scraper raw capture collector failed; durable and unfinished counts are unknown"
+                );
+                outcome.collector_failed = true;
+            }
         }
 
         let duration_ms = pass_start.elapsed().as_millis() as u64;
-        info!(
-            total,
-            succeeded, failed, skipped, duration_ms, "Scraper scheduler pass complete"
-        );
 
         #[cfg(not(test))]
         {
@@ -1084,7 +1134,8 @@ impl CrawlerCronJob {
             }
         }
 
-        self.scraper_perf.record(total as u64, duration_ms);
+        self.scraper_perf.record(outcome.total as u64, duration_ms);
+        outcome
     }
 }
 
@@ -1319,6 +1370,347 @@ mod tests {
         .await;
     }
 
+    struct CaptureUseCase {
+        calls: Arc<AtomicUsize>,
+        commit_failed: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl product_listing_service::use_cases::CaptureProductListingRawObservationUseCase
+        for CaptureUseCase
+    {
+        async fn execute(
+            &self,
+            _: &application::operation_context::OperationContext,
+            _: product_listing_service::use_cases::CaptureProductListingRawObservationCommand,
+        ) -> Result<
+            product_listing_service::use_cases::CaptureProductListingRawObservationResult,
+            product_listing_service::use_cases::CaptureProductListingRawObservationError,
+        > {
+            use product_listing_service::use_cases::{
+                CaptureProductListingRawObservationError as Error,
+                CaptureProductListingRawObservationResult as Outcome,
+            };
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.commit_failed {
+                return Err(Error::CommitTransactionFailed);
+            }
+            let product_listing_raw_stream_id =
+                product_listing_service::ports::ProductListingRawStreamId::new();
+            if call == 0 {
+                Ok(Outcome::Changed {
+                    product_listing_raw_stream_id,
+                    product_listing_raw_revision_id:
+                        product_listing_service::ports::ProductListingRawRevisionId::new(),
+                    revision: 1,
+                })
+            } else {
+                Ok(Outcome::Unchanged {
+                    product_listing_raw_stream_id,
+                    latest_revision: 1,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_not_mark_done_when_capture_transaction_commit_fails() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let capture: Arc<dyn ProductListingRawCaptureService> = Arc::new(
+            crate::service::raw_capture::ProductListingRawCaptureServiceImpl::new(
+                Arc::new(CaptureUseCase {
+                    calls: calls.clone(),
+                    commit_failed: true,
+                }),
+                1,
+            ),
+        );
+        let mut candidates = MockScraperCandidateService::new();
+        candidates.expect_mark_as_scraped().never();
+        candidates.expect_touch_scraped().never();
+        candidates.expect_mark_removed().never();
+        let candidates: Arc<dyn ScraperCandidateService> = Arc::new(candidates);
+        let id = ListingSourceId::new();
+        let summary = flush_batch(
+            &capture,
+            &candidates,
+            vec![queued(
+                item(id, "commit-failed"),
+                meta(id, "https://example.test/products/commit-failed", "page"),
+            )],
+            0,
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(summary.accepted, 1);
+        assert_eq!(summary.durable, 0);
+        assert_eq!(summary.completed, 0);
+        assert_eq!(summary.capture_failed, 1);
+        assert!(!summary.is_complete());
+    }
+
+    #[tokio::test]
+    async fn should_reconfirm_equal_input_when_business_commit_succeeds_but_local_mark_fails() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let capture: Arc<dyn ProductListingRawCaptureService> = Arc::new(
+            crate::service::raw_capture::ProductListingRawCaptureServiceImpl::new(
+                Arc::new(CaptureUseCase {
+                    calls: calls.clone(),
+                    commit_failed: false,
+                }),
+                1,
+            ),
+        );
+        let marks = Arc::new(AtomicUsize::new(0));
+        let mut candidates = MockScraperCandidateService::new();
+        let calls_for_mark = calls.clone();
+        let marks_for_mock = marks.clone();
+        candidates.expect_mark_as_scraped().times(2).returning(
+            move |_, _, _, _, _, _, expected| {
+                assert_eq!(expected, Some(&[3; 32][..]));
+                let mark = marks_for_mock.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(
+                    calls_for_mark.load(Ordering::SeqCst),
+                    mark + 1,
+                    "each mark follows authoritative capture, including retry"
+                );
+                Box::pin(async move {
+                    if mark == 0 {
+                        Err(sqlx::Error::PoolClosed)
+                    } else {
+                        Ok(CrawlerUrlWriteOutcome::Applied)
+                    }
+                })
+            },
+        );
+        candidates.expect_touch_scraped().never();
+        let mut scraper = MockScraperService::new();
+        scraper.expect_scrape().times(2).returning(|_, url, _, _, _, _| {
+            let raw_input = crawler_verified_removal_input(url).unwrap();
+            Box::pin(async move { Ok(Some(ScrapedProduct {
+                raw_input,
+                availability: product_listing_normalization::ListingAvailabilityQuickCheck::NoAssertion,
+                hash: "same-page".to_owned(),
+                schema_fingerprint: "same-schema".to_owned(),
+                raw_input_sha256: vec![3; 32],
+            })) })
+        });
+        let ctx = scrape_candidate_context(candidates, scraper);
+        let id = ListingSourceId::new();
+        for attempt in 0..2 {
+            let mut candidate = scraper_candidate(
+                "Source",
+                url::Url::parse("https://example.test/products/retry").unwrap(),
+            );
+            candidate.listing_source_id = id;
+            candidate.last_scraped_hash = Some("same-page".to_owned());
+            candidate.last_scraped_schema_fingerprint = Some("same-schema".to_owned());
+            candidate.last_captured_raw_input_sha256 = Some(vec![3; 32]);
+            let request = scrape_candidate(candidate, &ctx)
+                .await
+                .capture
+                .expect("equal input must reach authoritative capture");
+            let summary = flush_batch(
+                &capture,
+                &ctx.scraper_candidates,
+                vec![QueuedRawCapture {
+                    request,
+                    enqueued_at: tokio::time::Instant::now(),
+                }],
+                0,
+            )
+            .await;
+            assert_eq!(summary.durable, 1);
+            assert_eq!(summary.completed, attempt);
+            assert_eq!(summary.local_mark_failed, 1 - attempt);
+            assert_eq!(summary.is_complete(), attempt == 1);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn should_report_acceptance_without_claiming_durable_completion() {
+        let mut scraper = MockScraperService::new();
+        scraper
+            .expect_scrape()
+            .once()
+            .returning(|_, url, _, _, _, _| {
+                let url = url.clone();
+                Box::pin(async move {
+                    Err(ScraperError::ProductListingRemoved {
+                        url,
+                        details: "test removal".into(),
+                    })
+                })
+            });
+        let mut candidates = MockScraperCandidateService::new();
+        candidates.expect_mark_removed().never();
+        let mut ctx = scrape_candidate_context(candidates, scraper);
+        let (tx, mut rx) = mpsc::channel(1);
+        ctx.command_tx = tx;
+        let summary = scrape_domain_candidates(
+            vec![scraper_candidate(
+                "Source",
+                url::Url::parse("https://example.test/products/accepted").unwrap(),
+            )],
+            ctx,
+        )
+        .await;
+        assert_eq!(summary.accepted, 1);
+        assert_eq!(summary.failed, 0);
+        assert!(rx.recv().await.is_some());
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[rstest::rstest]
+    #[case::zero_limit(0, vec![1, 1, 1, 1, 1])]
+    #[case::capped(2, vec![2, 2, 1])]
+    #[tokio::test]
+    async fn should_drain_all_accepted_batches_after_failure_and_producer_stop(
+        #[case] batch_size: usize,
+        #[case] expected_batch_sizes: Vec<usize>,
+    ) {
+        let batch_sizes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let batch_sizes_for_mock = batch_sizes.clone();
+        let mut capture = MockProductListingRawCaptureService::new();
+        capture.expect_capture().returning(move |items| {
+            let mut sizes = batch_sizes_for_mock.lock().unwrap();
+            let first = sizes.is_empty();
+            sizes.push(items.len());
+            let mut outcomes = vec![ProductListingRawCaptureOutcome::Persisted; items.len()];
+            if first {
+                outcomes[0] = ProductListingRawCaptureOutcome::RetryableFailure;
+            }
+            Box::pin(async move { outcomes })
+        });
+        let mut candidates = MockScraperCandidateService::new();
+        candidates
+            .expect_mark_as_scraped()
+            .times(4)
+            .returning(|_, _, _, _, _, _, _| {
+                Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) })
+            });
+        let (tx, rx) = mpsc::channel(5);
+        let collector = tokio::spawn(run_raw_capture_collector(
+            rx,
+            Arc::new(capture),
+            Arc::new(candidates),
+            batch_size,
+            Duration::from_secs(60),
+        ));
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let producer = tokio::spawn(async move {
+            let id = ListingSourceId::new();
+            for index in 0..5 {
+                enqueue_raw_capture(
+                    &tx,
+                    (
+                        item(id, &index.to_string()),
+                        meta(id, "https://example.test/products/drain", "page"),
+                    ),
+                )
+                .await
+                .unwrap();
+            }
+            accepted_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+            drop(tx);
+        });
+        accepted_rx.await.unwrap();
+        producer.abort();
+        assert!(producer.await.unwrap_err().is_cancelled());
+        let error = tokio::time::timeout(Duration::from_secs(2), collector)
+            .await
+            .expect("collector must survive producer stop")
+            .expect("collector must join")
+            .expect_err("first capture failed");
+        assert_eq!(*batch_sizes.lock().unwrap(), expected_batch_sizes);
+        assert_eq!(error.summary.accepted, 5);
+        assert_eq!(error.summary.durable, 4);
+        assert_eq!(error.summary.completed, 4);
+        assert_eq!(error.summary.capture_failed, 1);
+    }
+
+    #[tokio::test]
+    async fn should_surface_collector_panic_in_pass_outcome() {
+        let mut candidates = MockScraperCandidateService::new();
+        candidates
+            .expect_get_candidates()
+            .returning(get_candidates_once_by_domain(|| {
+                vec![scraper_candidate(
+                    "Source",
+                    url::Url::parse("https://example.test/products/panic").unwrap(),
+                )]
+            }));
+        let mut scraper = MockScraperService::new();
+        scraper
+            .expect_scrape()
+            .once()
+            .returning(|_, url, _, _, _, _| {
+                let url = url.clone();
+                Box::pin(async move {
+                    Err(ScraperError::ProductListingRemoved {
+                        url,
+                        details: "test removal".into(),
+                    })
+                })
+            });
+        let mut capture = MockProductListingRawCaptureService::new();
+        capture
+            .expect_capture()
+            .once()
+            .returning(|_| Box::pin(async { panic!("injected collector failure") }));
+        let mut job = scraper_job(CrawlerCronConfig::default(), candidates, scraper);
+        job.raw_capture = Arc::new(capture);
+        let outcome = job.run_scraper_pass().await;
+        assert_eq!(outcome.accepted, 1);
+        assert_eq!(outcome.captures.completed, 0);
+        assert!(outcome.collector_failed);
+        assert!(!outcome.is_complete());
+    }
+
+    #[tokio::test]
+    async fn should_surface_failed_capture_in_pass_outcome() {
+        let mut candidates = MockScraperCandidateService::new();
+        candidates
+            .expect_get_candidates()
+            .returning(get_candidates_once_by_domain(|| {
+                vec![scraper_candidate(
+                    "Source",
+                    url::Url::parse("https://example.test/products/failure").unwrap(),
+                )]
+            }));
+        candidates
+            .expect_mark_scraper_failure()
+            .once()
+            .returning(|_, _, _, _, _| Box::pin(async { Ok(CrawlerUrlWriteOutcome::Applied) }));
+        candidates.expect_mark_removed().never();
+        let mut scraper = MockScraperService::new();
+        scraper
+            .expect_scrape()
+            .once()
+            .returning(|_, url, _, _, _, _| {
+                let url = url.clone();
+                Box::pin(async move {
+                    Err(ScraperError::ProductListingRemoved {
+                        url,
+                        details: "test removal".into(),
+                    })
+                })
+            });
+        let mut capture = MockProductListingRawCaptureService::new();
+        capture.expect_capture().once().returning(|_| {
+            Box::pin(async { vec![ProductListingRawCaptureOutcome::RetryableFailure] })
+        });
+        let mut job = scraper_job(CrawlerCronConfig::default(), candidates, scraper);
+        job.raw_capture = Arc::new(capture);
+        let outcome = job.run_scraper_pass().await;
+        assert_eq!(outcome.accepted, 1);
+        assert_eq!(outcome.captures.capture_failed, 1);
+        assert_eq!(outcome.captures.completed, 0);
+        assert!(!outcome.is_complete());
+    }
+
     #[tokio::test]
     async fn should_apply_backpressure_when_raw_capture_queue_is_full() {
         let (command_tx, mut command_rx) = mpsc::channel::<QueuedRawCapture>(1);
@@ -1421,7 +1813,13 @@ mod tests {
         assert_eq!(push_calls.load(Ordering::SeqCst), 1);
 
         drop(tx);
-        collector.await.expect("collector task must join");
+        let summary = collector
+            .await
+            .expect("collector task must join")
+            .expect("drain must complete");
+        assert_eq!(summary.accepted, 1);
+        assert_eq!(summary.durable, 1);
+        assert_eq!(summary.completed, 1);
     }
 
     #[tokio::test]
@@ -1482,7 +1880,13 @@ mod tests {
         .expect("second enqueue must succeed");
 
         drop(tx);
-        collector.await.expect("collector task must join");
+        let summary = collector
+            .await
+            .expect("collector task must join")
+            .expect("drain must complete");
+        assert_eq!(summary.accepted, 2);
+        assert_eq!(summary.durable, 2);
+        assert_eq!(summary.completed, 2);
 
         assert_eq!(push_calls.load(Ordering::SeqCst), 1);
     }
@@ -1711,8 +2115,13 @@ mod tests {
         .await;
     }
 
+    #[rstest::rstest]
+    #[case::sold(product_listing_core::listing_availability::ListingAvailability::SoldOut)]
+    #[case::active(product_listing_core::listing_availability::ListingAvailability::Available)]
     #[tokio::test]
-    async fn should_queue_sold_observation_when_previous_raw_input_hash_matches() {
+    async fn should_queue_observation_when_previous_raw_input_hash_matches(
+        #[case] availability: product_listing_core::listing_availability::ListingAvailability,
+    ) {
         let url = url::Url::parse("https://example.com/product/sold").unwrap();
         let mut candidate = scraper_candidate("ListingSource", url.clone());
         candidate.last_captured_raw_input_sha256 = Some(vec![3; 32]);
@@ -1720,20 +2129,23 @@ mod tests {
         let raw_input = crawler_verified_removal_input(&url)
             .unwrap_or_else(|error| panic!("test raw input: {error}"));
         let mut scraper_service = MockScraperService::new();
-        scraper_service.expect_scrape().once().return_once(move |_, _, _, _, _, expected_raw_input_sha256| {
-            assert_eq!(expected_raw_input_sha256, Some(&[3; 32][..]));
-            Box::pin(async move {
-                Ok(Some(ScrapedProduct {
-                    raw_input,
-                    availability: product_listing_normalization::ListingAvailabilityQuickCheck::Resolved(
-                        product_listing_core::listing_availability::ListingAvailability::SoldOut,
-                    ),
-                    hash: "sold-hash".to_owned(),
-                    schema_fingerprint: "sold-schema".to_owned(),
-                    raw_input_sha256: vec![3; 32],
-                }))
-            })
-        });
+        scraper_service.expect_scrape().once().return_once(
+            move |_, _, _, _, _, expected_raw_input_sha256| {
+                assert_eq!(expected_raw_input_sha256, Some(&[3; 32][..]));
+                Box::pin(async move {
+                    Ok(Some(ScrapedProduct {
+                        raw_input,
+                        availability:
+                            product_listing_normalization::ListingAvailabilityQuickCheck::Resolved(
+                                availability,
+                            ),
+                        hash: "sold-hash".to_owned(),
+                        schema_fingerprint: "sold-schema".to_owned(),
+                        raw_input_sha256: vec![3; 32],
+                    }))
+                })
+            },
+        );
 
         let mut scraper_candidates = MockScraperCandidateService::new();
         scraper_candidates.expect_mark_as_scraped().never();
@@ -1741,9 +2153,11 @@ mod tests {
 
         let outcome = scrape_candidate(candidate, &ctx).await;
 
-        let request = outcome.capture.expect("sold scrape must queue raw capture");
+        let request = outcome
+            .capture
+            .expect("equal local input must queue raw capture");
         let RawCaptureSuccessAction::MarkScraped(meta) = request.on_success else {
-            panic!("sold scrape must queue a scrape completion");
+            panic!("scrape must queue a completion");
         };
         assert_eq!(
             meta.expected_last_captured_raw_input_sha256.as_deref(),

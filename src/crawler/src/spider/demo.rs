@@ -94,10 +94,9 @@ const DEMO_POOL_MAX_CONNECTIONS: u32 = 5;
 #[tokio::main]
 async fn main() -> Result<(), LocalDatabaseError> {
     dotenvy::dotenv().ok();
-    let local = parse_postgres_environment(
-        |key| env::var(key),
-        |get| LocalDevelopmentConfig::from_lookup("crawler-demo-spider", get),
-    )?;
+    let local = parse_postgres_environment(env::var, |get| {
+        LocalDevelopmentConfig::from_lookup("crawler-demo-spider", get)
+    })?;
     init_logging();
 
     let crawl_root_url = read_crawl_root_url();

@@ -303,14 +303,22 @@
                       "resources": {
                         "$ref": "#/$defs/__schema3"
                       },
-                      "listener": {
-                        "$ref": "#/$defs/__schema8"
-                      },
-                      "endpoint": {
-                        "$ref": "#/$defs/__schema10"
-                      },
-                      "ca_ref": {
-                        "$ref": "#/$defs/__schema6"
+                      "operations_listener": {
+                        "type": "object",
+                        "properties": {
+                          "port": {
+                            "$ref": "#/$defs/__schema9"
+                          },
+                          "bind": {
+                            "type": "string",
+                            "const": "LOOPBACK"
+                          }
+                        },
+                        "required": [
+                          "port",
+                          "bind"
+                        ],
+                        "additionalProperties": false
                       },
                       "ownership_plan": {
                         "type": "string",
@@ -344,9 +352,7 @@
                     "required": [
                       "host_id",
                       "resources",
-                      "listener",
-                      "endpoint",
-                      "ca_ref",
+                      "operations_listener",
                       "ownership_plan",
                       "credentials"
                     ],
@@ -856,17 +862,23 @@
           "$ref": "#/$defs/__schema22"
         },
         "drain_seconds": {
-          "$ref": "#/$defs/__schema23"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 3600
         },
         "stop_seconds": {
-          "$ref": "#/$defs/__schema23"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 3600
         },
         "ownership_plan": {
           "type": "string",
           "const": "READ_ONLY_TARGET"
         },
         "execution_seconds": {
-          "$ref": "#/$defs/__schema23"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 7200
         }
       },
       "required": [

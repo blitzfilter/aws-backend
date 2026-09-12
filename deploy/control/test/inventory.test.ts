@@ -106,6 +106,8 @@ const missingInventory: Path[] = [
   rolePath('api', 'slots', 'blue', 'operations_listener'),
   rolePath('api', 'slots', 'green', 'operations_listener', 'port'),
   rolePath('api', 'slots', 'green', 'operations_listener', 'bind'),
+  rolePath('cron', 'operations_listener'), rolePath('cron', 'operations_listener', 'bind'),
+  rolePath('cron', 'operations_listener', 'port'),
   rolePath('api', 'credentials', 'business', 'pool_max'), rolePath('api', 'credentials', 'aws', 'profile_ref'),
   rolePath('crawler', 'credentials', 'crawler'), [...database, 'migrator'], [...database, 'backup'],
   [...database, 'sequin'], [...database, 'reserve_sessions'], [...database, 'history_id'],
@@ -221,8 +223,8 @@ test('a worker role moves independently of host names and other roles', () => {
 test('same port on different hosts is allowed', () => {
   const inventory = inventoryFixture(['dev'], 'SPLIT_HOST');
   const roles = inventory.stages[0]!.roles;
-  roles.crawler.listener.port = roles.cron.listener.port;
-  roles.crawler.endpoint.port = roles.cron.listener.port;
+  roles.crawler.listener.port = roles.cron.operations_listener.port;
+  roles.crawler.endpoint.port = roles.cron.operations_listener.port;
   assert.doesNotThrow(() => parseInventory(inventory));
 });
 for (const [dimension, exact] of [['cpu_millicores', 5750], ['memory_mib', 11776], ['disk_mib', 35840]] as const) {
@@ -292,6 +294,38 @@ test('worker controller budgets match the runtime one-hour configuration ceiling
   worker.drain_seconds = 3601;
   worker.stop_seconds = 3631;
   invalidRuntime(runtime);
+});
+
+test('cron has only loopback operations and conservatively reserves its host port', () => {
+  const inventory = inventoryFixture(['dev']);
+  assert.doesNotThrow(() => parseInventory(inventory));
+  for (const bind of ['PRIVATE', 'PUBLIC', 'ALL_IPV4', 'ALL_IPV6', 'ALL_INTERFACES']) {
+    invalidInventory(changed(inventory, rolePath('cron', 'operations_listener', 'bind'), bind));
+  }
+  for (const port of [8080, 9080, 8100]) {
+    invalidInventory(changed(inventory, rolePath('cron', 'operations_listener', 'port'), port));
+  }
+  invalidInventory(changed(inventory, rolePath('cron', 'endpoint'), inventory.stages[0]!.roles.crawler.endpoint));
+  invalidInventory(changed(inventory, rolePath('cron', 'listener'), { port: 8082, bind: 'PUBLIC' }));
+  const shared = sharedHostFixture();
+  shared.stages[1]!.roles.cron.operations_listener.port = shared.stages[0]!.roles.cron.operations_listener.port;
+  invalidInventory(shared);
+});
+
+test('cron controller ceilings match runtime while long executions remain cancellable at drain', () => {
+  const runtime = runtimeFixture('dev');
+  runtime.cron.drain_seconds = 3570;
+  runtime.cron.stop_seconds = 3600;
+  assert.doesNotThrow(() => parseRuntimeConfiguration(runtime));
+  const fields = RuntimeConfiguration.shape.cron.shape;
+  for (const field of [fields.drain_seconds, fields.stop_seconds]) {
+    assert.equal(field.safeParse(3600).success, true);
+    assert.equal(field.safeParse(3601).success, false);
+  }
+  assert.equal(fields.execution_seconds.safeParse(7200).success, true);
+  assert.equal(fields.execution_seconds.safeParse(7201).success, false);
+  invalidRuntime(changed(runtime, ['cron', 'stop_seconds'], 3601));
+  invalidRuntime(changed(runtime, ['cron', 'execution_seconds'], 7201));
 });
 
 test('connection multiplication cannot round or overflow into an accepted budget', () => {

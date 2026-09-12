@@ -13,10 +13,9 @@ async fn main() -> Result<(), LocalDatabaseError> {
             platform_postgres::PostgresPoolConfigError::InvalidInput(".env"),
         ));
     }
-    let local = parse_postgres_environment(
-        |key| std::env::var(key),
-        |get| LocalDevelopmentConfig::from_lookup("crawler-bootstrap-local", get),
-    )?;
+    let local = parse_postgres_environment(std::env::var, |get| {
+        LocalDevelopmentConfig::from_lookup("crawler-bootstrap-local", get)
+    })?;
     bootstrap_all_local_databases(&local).await?;
     println!("Local crawler databases ready; migrations applied.");
     Ok(())

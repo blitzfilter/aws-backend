@@ -24,3 +24,8 @@ url = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+test-api = { workspace = true, features = ["postgres"] }
