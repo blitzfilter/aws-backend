@@ -13,6 +13,7 @@
 - Record actual SHA, checks, reviewer, external gates and mixed/uncertain outcomes. Never label scaffolding deployable.
 - No secrets, business payloads, receipt handles or provider bodies in examples or records.
 - Application rollback never downgrades schemas, purges queues or restores backups.
+- Owner steering (2026-09-12): still in development; no new incremental migrations, legacy-schema adoption, or migration/backfill machinery now. Keep existing baseline initialization for fresh installs and isolated tests. This does not authorize resetting/changing an existing database. Defer production upgrade/rollback-schema compatibility machinery, not TLS or data-custody safety.
 
 ## Index
 

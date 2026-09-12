@@ -12,6 +12,10 @@ Default placement: one separate host per dev/prod; roles remain independent of h
 
 Compatibility is explicit: compatible; compatible with named backfill gates; maintenance required; blocked. Unknown history, drift, queue/schema compatibility, provenance or live bootstrap evidence blocks mutation. No SQL keyword inference or generic replay subsystem.
 
+## Development scope override — 2026-09-12
+
+Owner: “no need for any real migrations as we're still in dev.” Defer incremental SQL/OpenSearch data migration, legacy adoption, historical backfills and upgrade/rollback-schema compatibility machinery. Retain existing baseline initialization and checks for fresh installations/isolated tests; no new migrator crate or executor started. Future packaging still needs an explicit fresh-schema initialization path, separate from application startup. This supersedes the migration-heavy portions of the iteration map below, not runtime custody, TLS, immutable artifacts, approval or durable deployment ownership. Existing databases are not implicitly disposable; no live execution/reset authorized. Draft catalog/command entries stay honestly unavailable until revised tooling exists.
+
 ## ADR-002 — Integration and ownership
 
 Existing `task/#1412-deployment` avoids legacy develop/prod triggers. Use local reviewed iteration commits here. Do not push/merge incomplete contracts to develop. Final enablement requires iterations 11–13, verified protection/bootstrap inputs and separate authorization.
@@ -25,8 +29,8 @@ Actual orchestrator: GPT-6-Astra. Delegation exposes no model selector; successf
 | 02 | 01 | Shared PG TLS config and all DB entrypoints, tests; shared Cargo/CDK files integrator |
 | 03 | 01,02 | API/worker lifecycle/preflight and private operational probes |
 | 04 | 02,03 | Crawler/cron startup/cancellation/custody |
-| 05 | 01,02 | `src/aura-historia-migrate`, immutable migration metadata/history validation |
-| 06 | 01,05 | Search planner, adapter aliases, registered projection backfill gates |
+| 05 | 01,02 | Rescoped: existing baseline initialization/verification only; incremental migration/adoption tooling deferred |
+| 06 | 01,05 | Rescoped: fresh search definitions/aliases; historical data migration/backfill machinery deferred |
 | 07 | 03–06 | Images, catalog-driven immutable bundle/build publication |
 | 08 | 01; final 07 | Host inventory/Compose/Ansible/SSM packaging/Sequin/backup fixtures |
 | 09 | 01,02 | CDK network, separated identities, prerequisites and handoff |

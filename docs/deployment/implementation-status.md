@@ -11,8 +11,12 @@ Models: orchestrator GPT-6-Astra; delegation has no model selector. Runtime inve
 | 00 | Accepted | `303f50b8de5c603f2c11498979cb2867634c620e`; reviewer `5d2424e8-0e8b-4dd9-b0cc-d3507ead76ac` accepted after two P2 inventory omissions fixed; no runtime change |
 | 01 | Accepted default-off contracts | `f96206473b1fc0395089008b799306c67251f6da`; independent reviewers `c6ac1bf8-98c5-4451-a690-0e1df1d045b5` (release/topology/catalog) and `b37687e6-7f20-44dd-8cae-96c3fb29216d` (state/hash/CLI/bootstrap) accepted after fixes |
 | 02 | Accepted local TLS/configuration slice | `d5bd9ca854e713b0c587528f02037211b2020fd4`; reviewers `08d567dc-f8ac-48b9-9740-801995410d99` (shared/TLS) and `96c8525b-bafa-4807-ad71-b3c0bfce2263` (callers/crawler/CDK) accepted; no runtime activation |
-| 03 | Accepted local lifecycle/preflight slice | Local commit follows; API/worker/shared-schema/fixture/controller independent reviews accepted after repairs. No deployment activation; real Sequin/SQS rehearsal unpassed |
-| 04–14 | Not started | 05 pinned-SQLx investigation only; dependency gates in `architecture-decisions.md`; no functionality claimed |
+| 03 | Accepted local lifecycle/preflight slice | `b0dd18439ba6492029b8781cc01ebdf894df1fd2`; API/worker/shared-schema/fixture/controller independent reviews accepted after repairs. No deployment activation; real Sequin/SQS rehearsal unpassed |
+| 04 | In progress, not accepted | Cron edits from interrupted delegation remain uncommitted/unreviewed; crawler source investigation only, no crawler edits |
+| 05–06 | Rescoped by owner | No real/incremental migrations while still dev. Existing fresh-baseline setup/checks only; upgrade/adoption/backfill machinery deferred |
+| 07–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
+
+Owner steering, 2026-09-12: no real migrations needed while still dev. No new migration SQL, migrator crate or executor created. Keep fresh-install/test baseline setup; defer incremental upgrade/adoption/backfill machinery. No reset or live database authority implied. See scope override in `architecture-decisions.md`.
 
 ## Baseline checks
 
