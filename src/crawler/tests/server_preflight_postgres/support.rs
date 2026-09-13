@@ -161,7 +161,8 @@ pub(super) fn supervise_fixture() -> TestResult {
                 String::from_utf8_lossy(&output.stderr)
             );
             // Never relay child logs/panic text. Reconstruct only known case IDs and classes.
-            let reports = fixture_reports(&text);
+            let mut reports = fixture_reports(&text);
+            reports.extend(super::idle_daemon::reports(&text));
             for report in &reports {
                 println!("{report}");
             }

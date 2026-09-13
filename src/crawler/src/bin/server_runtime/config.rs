@@ -92,6 +92,10 @@ const INPUTS: &[&str] = &[
     "GOOGLE_APPLICATION_CREDENTIALS",
     "CRAWLER_LLM_MAX_CONCURRENT_REQUESTS",
     "CRAWLER_LLM_MIN_REQUEST_INTERVAL_MS",
+    "CRAWLER_SHUTDOWN_GRACE_SECONDS",
+    "CRAWLER_STOP_TIMEOUT_SECONDS",
+    "CRAWLER_STARTUP_TIMEOUT_SECONDS",
+    "CRAWLER_OPERATIONS_BIND_ADDR",
     "CRAWLER_REVIEW_BIND_ADDR",
     "CRAWLER_REVIEW_AUTH_TOKEN",
     "CRAWLER_REVIEW_REQUIRED",
@@ -158,8 +162,56 @@ impl Environment {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct LifecycleConfig {
+    pub(super) shutdown_grace: Duration,
+    pub(super) stop_timeout: Duration,
+    pub(super) startup_timeout: Duration,
+}
+
+impl Default for LifecycleConfig {
+    fn default() -> Self {
+        Self {
+            shutdown_grace: Duration::from_secs(300),
+            stop_timeout: Duration::from_secs(330),
+            startup_timeout: Duration::from_secs(60),
+        }
+    }
+}
+
+impl LifecycleConfig {
+    fn from_environment(env: &Environment) -> Result<Self, ConfigError> {
+        let seconds = |key, default, min| {
+            env.optional(key)?
+                .map(|value| bounded_number(key, value, min, 3600))
+                .unwrap_or(Ok(default))
+                .map(Duration::from_secs)
+        };
+        let minimum_grace = if matches!(env.required("STAGE")?, "local" | "ephemeral" | "test") {
+            1
+        } else {
+            300
+        };
+        let shutdown_grace = seconds("CRAWLER_SHUTDOWN_GRACE_SECONDS", 300, minimum_grace)?;
+        let stop_timeout = seconds("CRAWLER_STOP_TIMEOUT_SECONDS", 330, 1)?;
+        if stop_timeout < shutdown_grace + Duration::from_secs(30) {
+            return Err(malformed(
+                "CRAWLER_STOP_TIMEOUT_SECONDS",
+                "must be at least shutdown grace plus 30 seconds",
+            ));
+        }
+        Ok(Self {
+            shutdown_grace,
+            stop_timeout,
+            startup_timeout: seconds("CRAWLER_STARTUP_TIMEOUT_SECONDS", 60, 1)?,
+        })
+    }
+}
+
 pub(super) struct ServerConfig {
     pub(super) commit_sha: String,
+    pub(super) lifecycle: LifecycleConfig,
+    pub(super) operations_bind_addr: SocketAddr,
     pub(super) databases: ServerDatabaseConfig,
     pub(super) cron: CrawlerCronConfig,
     pub(super) spider_max_size_bytes: usize,
@@ -185,8 +237,20 @@ impl ServerConfig {
         build_commit_sha: Option<&str>,
         get: impl FnMut(&'static str) -> Result<String, VarError>,
     ) -> Result<Self, ConfigError> {
+        Self::from_lookup_with_lifecycle(build_commit_sha, get, |_| {})
+    }
+
+    pub(super) fn from_lookup_with_lifecycle(
+        build_commit_sha: Option<&str>,
+        get: impl FnMut(&'static str) -> Result<String, VarError>,
+        configure_lifecycle: impl FnOnce(LifecycleConfig),
+    ) -> Result<Self, ConfigError> {
         let commit_sha = validate_commit_sha(build_commit_sha)?.to_owned();
         let env = Environment::read(get)?;
+        let lifecycle = LifecycleConfig::from_environment(&env)?;
+        // The daemon must apply these validated budgets before shared TLS validation can
+        // read a CA file synchronously. Preflight supplies a no-op and retains its own guard.
+        configure_lifecycle(lifecycle);
         // Keep existing crawl, capture, and review defaults; no pacing/budget relaxation.
         let cron = CrawlerCronConfig {
             spider_interval: Duration::from_hours(72),
@@ -308,6 +372,25 @@ impl ServerConfig {
         .map_err(|_| {
             ConfigError::Missing("CRAWLER_REVIEW_AUTH_TOKEN (required for non-loopback review)")
         })?;
+        let operations_bind_addr: SocketAddr = env
+            .optional("CRAWLER_OPERATIONS_BIND_ADDR")?
+            .unwrap_or("127.0.0.1:9083")
+            .parse()
+            .map_err(|_| {
+                malformed(
+                    "CRAWLER_OPERATIONS_BIND_ADDR",
+                    "expected an IP socket address",
+                )
+            })?;
+        if !operations_bind_addr.ip().is_loopback()
+            || operations_bind_addr.port() == 0
+            || operations_bind_addr.port() == bind_addr.port()
+        {
+            return Err(malformed(
+                "CRAWLER_OPERATIONS_BIND_ADDR",
+                "must be loopback, nonzero, and use a different port from review",
+            ));
+        }
         let review_required = env.boolean("CRAWLER_REVIEW_REQUIRED")?;
         let url_pattern_review_required = env.boolean("CRAWLER_REVIEW_URL_PATTERN_REQUIRED")?;
         let cloudwatch = cloudwatch_config(&env)?;
@@ -320,6 +403,8 @@ impl ServerConfig {
         )).map_err(|_| malformed("LOG_LEVEL", "expected a valid tracing filter"))?;
         Ok(Self {
             commit_sha,
+            lifecycle,
+            operations_bind_addr,
             databases,
             cron,
             spider_max_size_bytes,

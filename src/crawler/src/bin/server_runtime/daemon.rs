@@ -1,14 +1,17 @@
 //! Concrete daemon composition restored from server.rs at
 //! c7a46b9b434eb0dc02c26a4e91edc863cae34896, with validated startup inputs.
 //!
-//! The legacy review/run_loop task lifecycle is retained, not a graceful-shutdown proof.
-//! Signal handling, operational failure propagation, drain deadlines, and process fencing
-//! remain iteration04e2 work. This module is never called by help or check-config.
+//! Own concrete startup, retained scheduler/review tasks, and explicit pool/log cleanup.
+//! Process deadlines and signals remain alive outside the workload runtime.
+//! This module is never called by help or check-config.
 //!
 //! Optional CloudWatch export still creates the group/stream and publishes log batches;
 //! it requires logs:CreateLogGroup, logs:CreateLogStream, and logs:PutLogEvents.
 
 use super::config::ServerConfig;
+use super::lifecycle::{self, Lifecycle};
+use super::operations::OperationsServer;
+use super::shutdown::fatal;
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_cloudwatchlogs::Client as CloudWatchLogsClient;
@@ -26,7 +29,7 @@ use crawler::logging::{
     ensure_cloudwatch_log_destination,
 };
 use crawler::review::repository::CrawlerReviewRepository;
-use crawler::review::server::ReviewServer;
+use crawler::review::server::{BoundReviewServer, ReviewServer};
 use crawler::scraper::candidate_service::ScraperCandidateServiceImpl;
 use crawler::scraper::css_selector::product_schema_repository::ListingSourceProductSchemaRepositoryImpl;
 use crawler::scraper::css_selector::product_schema_service::ProductListingSchemaServiceImpl;
@@ -59,11 +62,13 @@ use product_listing_postgres::{
     SqlxPartnerProductListingAuthorizerFactory, SqlxProductListingRawCaptureWriterFactory,
 };
 use product_listing_service::use_cases::CaptureProductListingRawObservationHandler;
+use sqlx::PgPool;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
-use tracing::{Instrument, info, warn};
+use std::time::{Duration, Instant};
+use tokio::sync::watch;
+use tracing::{Instrument, info};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -284,14 +289,12 @@ pub(super) enum DaemonError {
     VertexClient(#[source] RedactedDaemonCause),
     #[error("crawler review server failed")]
     ReviewServer(#[source] RedactedDaemonCause),
-    #[error("crawler review task failed")]
-    ReviewTask(#[source] RedactedDaemonCause),
-    #[error("crawler cron task failed")]
-    CronTask(#[source] RedactedDaemonCause),
-    #[error("crawler review server stopped unexpectedly; graceful shutdown not verified")]
-    ReviewStopped,
-    #[error("crawler cron loop stopped unexpectedly; graceful shutdown not verified")]
-    CronStopped,
+    #[error("crawler operations listener failed")]
+    OperationsServer(#[source] RedactedDaemonCause),
+    #[error("crawler startup deadline exceeded")]
+    StartupTimeout,
+    #[error(transparent)]
+    Run(#[from] lifecycle::RunError),
 }
 
 // Retain original technical causes privately; even recursive source formatting stays safe.
@@ -300,7 +303,7 @@ pub(super) struct RedactedDaemonCause {
 }
 
 impl RedactedDaemonCause {
-    fn new(error: impl Error + Send + Sync + 'static) -> Self {
+    pub(super) fn new(error: impl Error + Send + Sync + 'static) -> Self {
         Self {
             _original: Box::new(error),
         }
@@ -332,10 +335,130 @@ fn create_model(config: VertexAiConfig) -> Result<VertexAiGemini, DaemonError> {
         .map_err(|error| DaemonError::VertexClient(RedactedDaemonCause::new(error)))
 }
 
-pub(super) async fn run(validated: ServerConfig) -> Result<(), DaemonError> {
+struct Prepared {
+    cron: CrawlerCronJob,
+    review: BoundReviewServer,
+    operations: OperationsServer,
+}
+
+pub(super) async fn run(validated: ServerConfig, lifecycle: &Lifecycle) -> Result<(), DaemonError> {
+    // Own both lazy handles before any cancellable connection/provider operation.
+    let pool = validated
+        .databases
+        .crawler
+        .pool_options()
+        .connect_lazy_with(validated.databases.crawler.connect_options());
+    let business_pool = validated
+        .databases
+        .business
+        .pool_options()
+        .connect_lazy_with(validated.databases.business.connect_options());
+    let mut cloudwatch_guard = None;
+    let grace = validated.lifecycle.shutdown_grace;
+    let startup_deadline = lifecycle.startup_deadline();
+    let initialized = {
+        let startup = async {
+            let result = compose(
+                validated,
+                &pool,
+                &business_pool,
+                &mut cloudwatch_guard,
+                lifecycle,
+            )
+            .await;
+            if result.is_err() {
+                lifecycle.stop(true);
+            }
+            result
+        };
+        tokio::pin!(startup);
+        let result = tokio::select! {
+            biased;
+            _ = lifecycle.wait() => Ok(None),
+            _ = tokio::time::sleep_until(startup_deadline.into()) => {
+                lifecycle.stop(true);
+                Err(DaemonError::StartupTimeout)
+            }
+            result = &mut startup => result.map(Some),
+        };
+        if Instant::now() >= startup_deadline {
+            lifecycle.stop(true);
+            result.and(Err(DaemonError::StartupTimeout))
+        } else {
+            result
+        }
+    };
+    let result = match initialized {
+        Ok(Some(prepared)) => {
+            let stop = lifecycle.stop_receiver();
+            let failure = lifecycle.failure_sender();
+            let review_shutdown = lifecycle.clone();
+            let (operations_stop, operations_shutdown) = watch::channel(false);
+            lifecycle::run_owned(
+                lifecycle,
+                async move {
+                    prepared
+                        .cron
+                        .run_until_with_failure(stop, failure)
+                        .await
+                        .map_err(RedactedDaemonCause::new)
+                },
+                async move {
+                    prepared
+                        .review
+                        .run_until_with_failure(review_shutdown.wait(), grace, || {
+                            review_shutdown.fail_early()
+                        })
+                        .await
+                        .map_err(RedactedDaemonCause::new)
+                },
+                async move {
+                    prepared
+                        .operations
+                        .run_until(operations_shutdown)
+                        .await
+                        .map_err(RedactedDaemonCause::new)
+                },
+                operations_stop,
+            )
+            .await
+            .map_err(Into::into)
+        }
+        Ok(None) if lifecycle.failed() => Err(DaemonError::StartupTimeout),
+        Ok(None) => Ok(()),
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        lifecycle.stop(true);
+    }
+    let cleanup_deadline = lifecycle.begin_cleanup();
+    tokio::select! {
+        biased;
+        _ = tokio::time::sleep_until(cleanup_deadline.into()) => fatal(),
+        _ = async { tokio::join!(pool.close(), business_pool.close()); } => {}
+    }
+    if Instant::now() >= cleanup_deadline {
+        fatal();
+    }
+    // Exporter's synchronous Drop, including its runtime, is inside the independent 5s budget.
+    drop(cloudwatch_guard);
+    drop(pool);
+    drop(business_pool);
+    result
+}
+
+async fn compose(
+    validated: ServerConfig,
+    pool: &PgPool,
+    business_pool: &PgPool,
+    cloudwatch_guard: &mut Option<tracing_cloudwatch::CloudWatchWorkerGuard>,
+    lifecycle: &Lifecycle,
+) -> Result<Prepared, DaemonError> {
     let ServerConfig {
         commit_sha,
-        databases,
+        databases: _,
+        lifecycle: _,
+        operations_bind_addr,
         cron: config,
         spider_max_size_bytes,
         review: review_config,
@@ -367,15 +490,14 @@ pub(super) async fn run(validated: ServerConfig) -> Result<(), DaemonError> {
             .map_err(|error| DaemonError::CloudWatchBootstrap(RedactedDaemonCause::new(error)))?;
     }
 
-    let _cloudwatch_guard = init_crawler_logging(
+    *cloudwatch_guard = init_crawler_logging(
         log_filter,
         cloudwatch_logging.as_ref(),
         cloudwatch_client.clone(),
     )?;
 
     async move {
-        info!(%commit_sha, "Starting Crawler Server");
-        warn!("Legacy daemon lifecycle active; signal/drain/deadline integration remains incomplete until iteration04e2");
+        info!(%commit_sha, state = lifecycle.state().as_str(), "Starting Crawler Server with owned lifecycle");
 
         if let Some(config) = cloudwatch_logging.as_ref() {
             info!(
@@ -407,25 +529,27 @@ pub(super) async fn run(validated: ServerConfig) -> Result<(), DaemonError> {
             "Crawler cron configuration loaded"
         );
 
-        let pool = databases.crawler.connect().await?;
+        let connection = pool.acquire().await.map_err(PostgresConnectError::from)?;
+        drop(connection);
 
         info!(
             max_connections = config.effective_db_max_connections(),
             "Connected to crawler-local Postgres"
         );
 
-        verify_crawler_schema(&pool).await?;
+        verify_crawler_schema(pool).await?;
         info!("Crawler-local schema and migration history verified (read-only)");
 
         let business_db_max_connections = config.effective_business_db_max_connections();
-        let business_pool = databases.business.connect().await?;
+        let connection = business_pool.acquire().await.map_err(PostgresConnectError::from)?;
+        drop(connection);
         info!(
             max_connections = business_db_max_connections,
             raw_capture_max_concurrency = config.effective_push_max_concurrency(),
             "Connected to authoritative business Postgres"
         );
 
-        verify_business_schema(&business_pool).await?;
+        verify_business_schema(business_pool).await?;
         info!("Business schema and migration history verified (read-only)");
 
         let review_repo = CrawlerReviewRepository::new(pool.clone());
@@ -561,7 +685,7 @@ pub(super) async fn run(validated: ServerConfig) -> Result<(), DaemonError> {
             raw_capture,
         );
 
-        // 8. Run forever
+        // Bind both listeners before the lifecycle may publish READY.
         info!(
             db_max_connections,
             scraper_max_llm_calls_per_listing_source,
@@ -576,7 +700,7 @@ pub(super) async fn run(validated: ServerConfig) -> Result<(), DaemonError> {
             review_required,
             url_pattern_review_required,
             review_bind_addr = %review_config.bind_addr,
-            "Crawler Server is fully initialized. Starting background tasks..."
+            "Crawler concrete dependencies initialized; binding listeners"
         );
         let review_server = ReviewServer::new(
             review_repo,
@@ -585,24 +709,11 @@ pub(super) async fn run(validated: ServerConfig) -> Result<(), DaemonError> {
             ))),
             review_config,
         );
-        // Preserve the baseline execution path. 04e2 must replace this legacy task
-        // boundary with retained run_until futures, signals, drain deadlines and fencing.
-        let review_handle = tokio::spawn(async move { review_server.run().await });
-        let cron_handle = tokio::spawn(async move {
-            cron_job.run_loop().await;
-        });
-
-        tokio::select! {
-            result = review_handle => {
-                result.map_err(|error| DaemonError::ReviewTask(RedactedDaemonCause::new(error)))?
-                    .map_err(|error| DaemonError::ReviewServer(RedactedDaemonCause::new(error)))?;
-                Err(DaemonError::ReviewStopped)
-            }
-            result = cron_handle => {
-                result.map_err(|error| DaemonError::CronTask(RedactedDaemonCause::new(error)))?;
-                Err(DaemonError::CronStopped)
-            }
-        }
+        let review = review_server.bind().await
+            .map_err(|error| DaemonError::ReviewServer(RedactedDaemonCause::new(error)))?;
+        let operations = OperationsServer::bind(operations_bind_addr, lifecycle.clone(), commit_sha).await
+            .map_err(|error| DaemonError::OperationsServer(RedactedDaemonCause::new(error)))?;
+        Ok(Prepared { cron: cron_job, review, operations })
     }
     .instrument(tracing::info_span!("crawler_startup"))
     .await
@@ -615,14 +726,13 @@ mod tests {
     #[test]
     fn should_redact_provider_logging_and_task_errors_through_startup_source_chains() {
         const CANARY: &str = "private-provider-body-or-credential-path";
-        let constructors: [fn(RedactedDaemonCause) -> DaemonError; 7] = [
+        let constructors: [fn(RedactedDaemonCause) -> DaemonError; 6] = [
             DaemonError::CloudWatchBootstrap,
             DaemonError::Logging,
             DaemonError::Credentials,
             DaemonError::VertexClient,
             DaemonError::ReviewServer,
-            DaemonError::ReviewTask,
-            DaemonError::CronTask,
+            DaemonError::OperationsServer,
         ];
         for constructor in constructors {
             let error = crate::StartupError::Daemon(constructor(RedactedDaemonCause::new(

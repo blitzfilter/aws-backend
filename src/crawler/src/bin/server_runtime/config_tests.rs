@@ -119,6 +119,10 @@ fn should_require_canonical_build_sha_without_runtime_override() {
 fn should_preserve_defaults_and_redact_configuration() -> Result<(), ConfigError> {
     let config = parse(&environment())?;
     assert_eq!(config.commit_sha, SHA);
+    assert_eq!(config.lifecycle.shutdown_grace, Duration::from_secs(300));
+    assert_eq!(config.lifecycle.stop_timeout, Duration::from_secs(330));
+    assert_eq!(config.lifecycle.startup_timeout, Duration::from_secs(60));
+    assert_eq!(config.operations_bind_addr.to_string(), "127.0.0.1:9083");
     assert_eq!(config.databases.crawler.max_connections(), 16);
     assert_eq!(config.databases.business.max_connections(), 8);
     assert_eq!(config.spider_max_size_bytes, 8 * 1024 * 1024);
@@ -180,6 +184,23 @@ fn should_distinguish_missing_and_empty_required_inputs(#[case] key: &'static st
     "CRAWLER_VERTEX_AI_URL_CLASSIFICATION_MODEL",
     "private-secret-canary/path"
 )]
+#[case("CRAWLER_SHUTDOWN_GRACE_SECONDS", "0")]
+#[case("CRAWLER_SHUTDOWN_GRACE_SECONDS", "+300")]
+#[case("CRAWLER_SHUTDOWN_GRACE_SECONDS", " 300")]
+#[case("CRAWLER_SHUTDOWN_GRACE_SECONDS", "3601")]
+#[case("CRAWLER_STOP_TIMEOUT_SECONDS", "329")]
+#[case("CRAWLER_STOP_TIMEOUT_SECONDS", "3601")]
+#[case("CRAWLER_STOP_TIMEOUT_SECONDS", "+330")]
+#[case("CRAWLER_STARTUP_TIMEOUT_SECONDS", "0")]
+#[case("CRAWLER_STARTUP_TIMEOUT_SECONDS", "3601")]
+#[case("CRAWLER_STARTUP_TIMEOUT_SECONDS", "1.0")]
+#[case("CRAWLER_STARTUP_TIMEOUT_SECONDS", "18446744073709551616")]
+#[case("CRAWLER_OPERATIONS_BIND_ADDR", "private-secret-canary")]
+#[case("CRAWLER_OPERATIONS_BIND_ADDR", "0.0.0.0:9083")]
+#[case("CRAWLER_OPERATIONS_BIND_ADDR", "[::]:9083")]
+#[case("CRAWLER_OPERATIONS_BIND_ADDR", "192.0.2.1:9083")]
+#[case("CRAWLER_OPERATIONS_BIND_ADDR", "127.0.0.1:0")]
+#[case("CRAWLER_OPERATIONS_BIND_ADDR", "[::1]:7878")]
 #[case("CRAWLER_REVIEW_BIND_ADDR", "private-secret-canary")]
 #[case("CRAWLER_REVIEW_BIND_ADDR", "127.0.0.1:0")]
 #[case("CRAWLER_REVIEW_AUTH_TOKEN", "private-secret-canary\n")]
@@ -229,6 +250,73 @@ fn should_accept_numeric_boundaries_without_changing_rate_defaults() -> Result<(
             env.insert(key, value.into());
             parse(&env)?;
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn should_apply_validated_lifecycle_budget_before_database_validation() {
+    let mut env = environment();
+    env.insert("LOCAL_DB_URL", CANARY.into());
+    env.insert("CRAWLER_STARTUP_TIMEOUT_SECONDS", "1".into());
+    let configured = std::cell::Cell::new(false);
+    let result = ServerConfig::from_lookup_with_lifecycle(
+        Some(SHA),
+        |key| env.get(key).cloned().ok_or(VarError::NotPresent),
+        |config| {
+            assert_eq!(config.startup_timeout, Duration::from_secs(1));
+            configured.set(true);
+        },
+    );
+    assert!(configured.get());
+    assert!(matches!(result, Err(ConfigError::Database(_))));
+    env.insert("CRAWLER_STARTUP_TIMEOUT_SECONDS", "+1".into());
+    configured.set(false);
+    assert!(
+        ServerConfig::from_lookup_with_lifecycle(
+            Some(SHA),
+            |key| env.get(key).cloned().ok_or(VarError::NotPresent),
+            |_| configured.set(true),
+        )
+        .is_err()
+    );
+    assert!(!configured.get());
+}
+
+#[test]
+fn should_enforce_stage_drain_and_total_stop_budgets() -> Result<(), ConfigError> {
+    for stage in ["local", "test", "ephemeral", "dev", "prod"] {
+        let mut env = Environment(environment());
+        env.0.insert("STAGE", stage.into());
+        env.0.insert("CRAWLER_SHUTDOWN_GRACE_SECONDS", "1".into());
+        env.0.insert("CRAWLER_STOP_TIMEOUT_SECONDS", "31".into());
+        assert_eq!(
+            LifecycleConfig::from_environment(&env).is_ok(),
+            matches!(stage, "local" | "ephemeral" | "test")
+        );
+        env.0
+            .insert("CRAWLER_SHUTDOWN_GRACE_SECONDS", "3570".into());
+        env.0.insert("CRAWLER_STOP_TIMEOUT_SECONDS", "3600".into());
+        for startup in ["1", "3600"] {
+            env.0
+                .insert("CRAWLER_STARTUP_TIMEOUT_SECONDS", startup.into());
+            LifecycleConfig::from_environment(&env)?;
+        }
+        env.0
+            .insert("CRAWLER_SHUTDOWN_GRACE_SECONDS", "3571".into());
+        assert!(LifecycleConfig::from_environment(&env).is_err());
+    }
+    let mut env = environment();
+    env.insert("CRAWLER_OPERATIONS_BIND_ADDR", "[::1]:9083".into());
+    env.insert("CRAWLER_SHUTDOWN_GRACE_SECONDS", "1".into());
+    env.insert("CRAWLER_STOP_TIMEOUT_SECONDS", "31".into());
+    for stage in ["local", "ephemeral", "test"] {
+        env.insert("STAGE", stage.into());
+        parse(&env)?;
+    }
+    for stage in ["dev", "prod", "unknown"] {
+        env.insert("STAGE", stage.into());
+        assert!(parse(&env).is_err());
     }
     Ok(())
 }

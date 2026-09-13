@@ -1,7 +1,9 @@
-//! Opt-in, actual `server --check-config` against test-api's fixed Unix-Docker PostgreSQL.
+//! Opt-in, actual server preflight and idle daemon against test-api's fixed Unix-Docker PostgreSQL.
 //! Run only the parent entry below on an isolated local coding host: the existing fixture
 //! publishes 0.0.0.0 for gateway tests. No external-reachability or release-artifact claim.
-//! COMMIT_SHA identifies this test build only. No cloud, websites, live data, or daemon tests.
+//! COMMIT_SHA identifies this test build only. No cloud, websites, or live data.
+//! Same owned fixture also runs idle production daemon gates, probes, and both signals;
+//! synthetic ADC refreshes only at an owned loopback spy; no real provider requests.
 //! Parent verifies exit-hook cleanup; never run the ignored fixture child directly.
 //! Includes crawler ledger view/RLS rejection and a held-lock deadline with role timeouts off.
 //! Run with AURA_CRAWLER_ISOLATED_LOCAL_POSTGRES=1 and fixture COMMIT_SHA at build time:
@@ -14,6 +16,10 @@
 mod database;
 #[path = "server_preflight_postgres/error.rs"]
 mod error;
+#[path = "server_preflight_postgres/idle_auth.rs"]
+mod idle_auth;
+#[path = "server_preflight_postgres/idle_daemon.rs"]
+mod idle_daemon;
 #[path = "server_preflight_postgres/process.rs"]
 mod process;
 #[path = "server_preflight_postgres/support.rs"]
@@ -54,9 +60,14 @@ impl Tripwires {
     }
 
     fn command(&self, databases: &Databases, directory: &Path) -> TestResult<Command> {
+        let mut command = self.base_command(databases, directory)?;
+        command.arg("--check-config");
+        Ok(command)
+    }
+
+    fn base_command(&self, databases: &Databases, directory: &Path) -> TestResult<Command> {
         let mut command = Command::new(env!("CARGO_BIN_EXE_server"));
         command
-            .arg("--check-config")
             .env_clear()
             .current_dir(directory)
             // Empty private PATH/HOME; no Docker executable, socket mount, dotenv,
@@ -502,10 +513,22 @@ async fn should_run_owned_postgres_preflight_child() -> TestResult {
                 }
             }
         }
+        for case in idle_daemon::CASES {
+            match idle_daemon::run_case(case, &admin, port).await {
+                Ok(()) => println!("PASS idle daemon {case:?}"),
+                Err(error) => {
+                    eprintln!("FAIL idle daemon {case:?}: {}", error.kind());
+                    failures.push(error);
+                }
+            }
+        }
         if !failures.is_empty() {
             return Err(TestError::failures("CASES_FAILED", failures));
         }
-        println!("PASS all {count} actual-server PostgreSQL cases");
+        println!(
+            "PASS all {count} actual-server PostgreSQL preflight cases and {} idle daemon cases",
+            idle_daemon::CASES.len()
+        );
         Ok(())
     }
     .await;

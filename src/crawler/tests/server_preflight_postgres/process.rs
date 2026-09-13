@@ -4,7 +4,7 @@ use std::{
     os::fd::AsRawFd,
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
@@ -46,7 +46,7 @@ impl Drop for ReaderCompletion {
 
 type Reader = JoinHandle<TestResult<Vec<u8>>>;
 
-struct Process {
+pub(super) struct Process {
     child: Child,
     mode: CleanupMode,
     readers: Vec<Reader>,
@@ -55,10 +55,15 @@ struct Process {
     reader_deadline: Instant,
     status: Option<ExitStatus>,
     cleanup_attempted: bool,
+    stdout: Arc<Mutex<Vec<u8>>>,
 }
 
 impl Process {
-    fn spawn(command: &mut Command, budget: Duration, mode: CleanupMode) -> TestResult<Self> {
+    pub(super) fn spawn(
+        command: &mut Command,
+        budget: Duration,
+        mode: CleanupMode,
+    ) -> TestResult<Self> {
         Self::spawn_with_reader_hook(command, budget, mode, |_, _| Ok(()))
     }
 
@@ -89,6 +94,7 @@ impl Process {
                 + READER_JOIN_GRACE,
             status: None,
             cleanup_attempted: false,
+            stdout: Arc::default(),
         };
         let setup: TestResult = (|| {
             let stdout = process.child.stdout.take().ok_or("missing child stdout")?;
@@ -112,18 +118,23 @@ impl Process {
         let cancel = self.cancel_readers.clone();
         let state = self.reader_state.clone();
         let deadline = self.reader_deadline;
+        let observed = if self.readers.is_empty() {
+            self.stdout.clone()
+        } else {
+            Arc::default()
+        };
         let reader = thread::Builder::new()
             .spawn(move || {
                 state.started.fetch_add(1, Ordering::Release);
                 let _completion = ReaderCompletion(state);
-                read_output(pipe, &cancel, deadline)
+                read_output(pipe, &cancel, deadline, &observed)
             })
             .map_err(|error| TestError::caused("READER_START", error))?;
         self.readers.push(reader);
         Ok(())
     }
 
-    fn try_reap(&mut self) -> TestResult<Option<ExitStatus>> {
+    pub(super) fn try_reap(&mut self) -> TestResult<Option<ExitStatus>> {
         if self.status.is_none() {
             self.status = self
                 .child
@@ -134,6 +145,39 @@ impl Process {
             self.reader_state.reaped.store(true, Ordering::Release);
         }
         Ok(self.status)
+    }
+
+    pub(super) fn stdout(&self) -> TestResult<String> {
+        let bytes = self
+            .stdout
+            .lock()
+            .map_err(|_| TestError::failure("READER_PANIC"))?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    pub(super) fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub(super) fn signal(&mut self, signal: libc::c_int) -> TestResult {
+        if !matches!(signal, libc::SIGINT | libc::SIGTERM) || self.try_reap()?.is_some() {
+            return Err(TestError::failure("CHILD_TERM"));
+        }
+        // SAFETY: this positive PID belongs to our unreaped child. No group/name lookup.
+        if unsafe { libc::kill(self.child.id() as libc::pid_t, signal) } != 0 {
+            return Err(TestError::caused("CHILD_TERM", io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn finish(&mut self, budget: Duration) -> TestResult<Output> {
+        let status = self.poll(budget);
+        let mut readers = self.cleanup()?.into_iter();
+        Ok(Output {
+            status: status?,
+            stdout: readers.next().ok_or("missing stdout result")?,
+            stderr: readers.next().ok_or("missing stderr result")?,
+        })
     }
 
     fn poll(&mut self, budget: Duration) -> TestResult<ExitStatus> {
@@ -267,7 +311,12 @@ fn nonblocking(pipe: &impl AsRawFd) -> TestResult {
     Ok(())
 }
 
-fn read_output(mut pipe: impl Read, cancel: &AtomicBool, deadline: Instant) -> TestResult<Vec<u8>> {
+fn read_output(
+    mut pipe: impl Read,
+    cancel: &AtomicBool,
+    deadline: Instant,
+    observed: &Mutex<Vec<u8>>,
+) -> TestResult<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
     loop {
@@ -279,6 +328,10 @@ fn read_output(mut pipe: impl Read, cancel: &AtomicBool, deadline: Instant) -> T
             Ok(count) => {
                 let retained = count.min(65536usize.saturating_sub(bytes.len()));
                 bytes.extend_from_slice(&buffer[..retained]);
+                observed
+                    .lock()
+                    .map_err(|_| TestError::failure("READER_PANIC"))?
+                    .extend_from_slice(&buffer[..retained]);
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => thread::sleep(POLL),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -293,14 +346,7 @@ pub(super) fn run_process(
     mode: CleanupMode,
 ) -> TestResult<Output> {
     let mut process = Process::spawn(command, budget, mode)?;
-    let status = process.poll(budget);
-    let readers = process.cleanup();
-    let mut readers = readers?.into_iter();
-    Ok(Output {
-        status: status?,
-        stdout: readers.next().ok_or("missing stdout result")?,
-        stderr: readers.next().ok_or("missing stderr result")?,
-    })
+    process.finish(budget)
 }
 
 #[cfg(test)]

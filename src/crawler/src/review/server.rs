@@ -98,10 +98,33 @@ impl BoundReviewServer {
     where
         F: Future<Output = ()>,
     {
+        self.run_until_with_failure(shutdown, drain, || {}).await
+    }
+
+    /// Notify once, as soon as accept/task/drain failure is known, before further cleanup.
+    /// The callback must not block or panic; it should arm the runtime's independent deadline.
+    /// Notification does not release ownership: callers must still await every connection join.
+    /// Ordinary peer I/O is request-local and never invokes the callback.
+    pub async fn run_until_with_failure<F, N>(
+        self,
+        shutdown: F,
+        drain: Duration,
+        on_failure: N,
+    ) -> std::io::Result<()>
+    where
+        F: Future<Output = ()>,
+        N: Fn() + Send + Sync,
+    {
         let Self { server, listener } = self;
+        let mut failure = FailureObserver::new(on_failure);
         let mut connections = JoinSet::new();
         let result = server
-            .accept_until(|| listener.accept(), shutdown, &mut connections)
+            .accept_until(
+                || listener.accept(),
+                shutdown,
+                &mut connections,
+                &mut failure,
+            )
             .await;
         let stopped_at = Instant::now();
         drop(listener);
@@ -115,7 +138,7 @@ impl BoundReviewServer {
                 ))),
             ),
         };
-        drain_connections(&mut connections, deadline, result).await
+        drain_connections(&mut connections, deadline, result, &mut failure).await
     }
 }
 
@@ -188,6 +211,7 @@ impl ReviewServer {
         mut accept: A,
         shutdown: F,
         connections: &mut JoinSet<std::io::Result<()>>,
+        failure: &mut FailureObserver<impl Fn()>,
     ) -> std::io::Result<()>
     where
         F: Future<Output = ()>,
@@ -200,11 +224,21 @@ impl ReviewServer {
                 biased;
                 _ = &mut shutdown => return Ok(()),
                 Some(result) = connections.join_next(), if !connections.is_empty() => {
+                    // A JoinError owns the panic payload; even its destructor may block.
+                    if result.is_err() {
+                        failure.report();
+                    }
                     connection_result(result)?;
                 }
                 // Count retained tasks, not only running tasks: completed handles stay bounded too.
                 accepted = async { accept().await }, if connections.len() < MAX_CONCURRENT_CONNECTIONS => {
-                    let (stream, _) = accepted?;
+                    let (stream, _) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            failure.report();
+                            return Err(error);
+                        }
+                    };
                     let server = self.clone();
                     connections.spawn(async move { server.handle_connection(stream).await });
                 }
@@ -788,6 +822,27 @@ impl ReviewServer {
     }
 }
 
+struct FailureObserver<N> {
+    notify: N,
+    reported: bool,
+}
+
+impl<N: Fn()> FailureObserver<N> {
+    fn new(notify: N) -> Self {
+        Self {
+            notify,
+            reported: false,
+        }
+    }
+
+    fn report(&mut self) {
+        if !self.reported {
+            self.reported = true;
+            (self.notify)();
+        }
+    }
+}
+
 fn connection_result(result: Result<std::io::Result<()>, JoinError>) -> std::io::Result<()> {
     match result {
         Ok(Ok(())) => Ok(()),
@@ -809,7 +864,11 @@ async fn drain_connections(
     connections: &mut JoinSet<std::io::Result<()>>,
     deadline: Instant,
     mut result: std::io::Result<()>,
+    failure: &mut FailureObserver<impl Fn()>,
 ) -> std::io::Result<()> {
+    if result.is_err() {
+        failure.report();
+    }
     while !connections.is_empty() {
         let joined = tokio::select! {
             biased;
@@ -818,6 +877,10 @@ async fn drain_connections(
         };
         // A ready join can win after the clock passed the deadline, before the timer was polled.
         let expired = joined.is_none() || Instant::now() >= deadline;
+        // Notify before panic-payload destruction, peer-I/O logging or abort cleanup.
+        if expired || joined.as_ref().is_some_and(Result::is_err) {
+            failure.report();
+        }
         if let Some(joined) = joined {
             result = result.and(connection_result(joined));
         }
@@ -1535,6 +1598,7 @@ mod tests {
                 },
                 std::future::pending(),
                 &mut connections,
+                &mut FailureObserver::new(|| {}),
             ),
         )
         .await?;
@@ -1546,6 +1610,7 @@ mod tests {
             &mut connections,
             Instant::now() + Duration::from_millis(20),
             result,
+            &mut FailureObserver::new(|| {}),
         )
         .await
         .expect_err("accept failure must survive cleanup");
@@ -1567,7 +1632,17 @@ mod tests {
         let mut connections = JoinSet::new();
         connections.spawn(async move { Err(std::io::Error::new(kind, "private request payload")) });
 
-        drain_connections(&mut connections, Instant::now() + TEST_TIMEOUT, Ok(())).await?;
+        let notifications = AtomicUsize::new(0);
+        drain_connections(
+            &mut connections,
+            Instant::now() + TEST_TIMEOUT,
+            Ok(()),
+            &mut FailureObserver::new(|| {
+                notifications.fetch_add(1, Ordering::SeqCst);
+            }),
+        )
+        .await?;
+        assert_eq!(notifications.load(Ordering::SeqCst), 0);
         assert!(connections.is_empty());
         Ok(())
     }
@@ -1602,6 +1677,7 @@ mod tests {
                 std::future::pending,
                 std::future::pending(),
                 &mut connections,
+                &mut FailureObserver::new(|| {}),
             ),
         )
         .await?;
@@ -1610,6 +1686,7 @@ mod tests {
             &mut connections,
             Instant::now() + Duration::from_millis(20),
             result,
+            &mut FailureObserver::new(|| {}),
         )
         .await
         .expect_err("task failure must survive cleanup");
@@ -1624,6 +1701,141 @@ mod tests {
         Ok(())
     }
 
+    #[rstest::rstest]
+    #[case::accept(false)]
+    #[case::drain(true)]
+    #[tokio::test]
+    async fn should_notify_task_failure_before_dropping_its_panic_payload(
+        #[case] draining: bool,
+    ) -> TestResult {
+        struct PanicPayload(Arc<AtomicUsize>);
+        impl Drop for PanicPayload {
+            fn drop(&mut self) {
+                assert_eq!(self.0.load(Ordering::SeqCst), 1);
+            }
+        }
+        let server = review_server_for_test(None).await?;
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut observer = FailureObserver::new(|| {
+            count.fetch_add(1, Ordering::SeqCst);
+        });
+        let payload = PanicPayload(count.clone());
+        let mut connections = JoinSet::new();
+        connections.spawn(async move { std::panic::resume_unwind(Box::new(payload)) });
+        let result = tokio::time::timeout(TEST_TIMEOUT, async {
+            if draining {
+                drain_connections(
+                    &mut connections,
+                    Instant::now() + TEST_TIMEOUT,
+                    Ok(()),
+                    &mut observer,
+                )
+                .await
+            } else {
+                server
+                    .accept_until(
+                        std::future::pending,
+                        std::future::pending(),
+                        &mut connections,
+                        &mut observer,
+                    )
+                    .await
+            }
+        })
+        .await?;
+        assert!(result.is_err());
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert!(connections.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_notify_first_task_failure_during_drain_before_other_connections_finish()
+    -> TestResult {
+        let notified = Arc::new(Notify::new());
+        let count = AtomicUsize::new(0);
+        let mut observer = FailureObserver::new(|| {
+            count.fetch_add(1, Ordering::SeqCst);
+            notified.notify_one();
+        });
+        let (release, released) = oneshot::channel();
+        let active = Arc::new(AtomicUsize::new(0));
+        let guard = ActiveTask::new(active.clone());
+        let mut connections = JoinSet::new();
+        connections.spawn(async move {
+            let _guard = guard;
+            released.await.map_err(std::io::Error::other)
+        });
+        let failed = connections.spawn(std::future::pending::<std::io::Result<()>>());
+        failed.abort();
+        let (result, ()) = tokio::time::timeout(TEST_TIMEOUT, async {
+            tokio::join!(
+                drain_connections(
+                    &mut connections,
+                    Instant::now() + TEST_TIMEOUT,
+                    Ok(()),
+                    &mut observer
+                ),
+                async {
+                    notified.notified().await;
+                    assert_eq!(active.load(Ordering::SeqCst), 1);
+                    assert_eq!(count.load(Ordering::SeqCst), 1);
+                    assert!(release.send(()).is_ok());
+                }
+            )
+        })
+        .await?;
+        assert!(result.is_err());
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert!(connections.is_empty());
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_notify_accept_failure_before_dropping_shutdown_future() -> TestResult {
+        struct ShutdownDrop<'a>(&'a AtomicUsize);
+        impl Future for ShutdownDrop<'_> {
+            type Output = ();
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<()> {
+                std::task::Poll::Pending
+            }
+        }
+        impl Drop for ShutdownDrop<'_> {
+            fn drop(&mut self) {
+                assert_eq!(self.0.load(Ordering::SeqCst), 1);
+            }
+        }
+        let server = review_server_for_test(None).await?;
+        let count = AtomicUsize::new(0);
+        let mut observer = FailureObserver::new(|| {
+            count.fetch_add(1, Ordering::SeqCst);
+        });
+        let mut connections = JoinSet::new();
+        let result = server
+            .accept_until(
+                || std::future::ready(Err(std::io::Error::other("fixture accept failure"))),
+                ShutdownDrop(&count),
+                &mut connections,
+                &mut observer,
+            )
+            .await;
+        assert!(result.is_err());
+        let result = drain_connections(
+            &mut connections,
+            Instant::now() + TEST_TIMEOUT,
+            result,
+            &mut observer,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
     #[tokio::test(start_paused = true)]
     async fn should_reject_ready_completion_after_absolute_deadline() {
         let mut connections = JoinSet::new();
@@ -1632,9 +1844,14 @@ mod tests {
         let deadline = Instant::now() + Duration::from_millis(10);
         tokio::time::advance(Duration::from_millis(11)).await;
 
-        let error = drain_connections(&mut connections, deadline, Ok(()))
-            .await
-            .expect_err("late completion must not report success");
+        let error = drain_connections(
+            &mut connections,
+            deadline,
+            Ok(()),
+            &mut FailureObserver::new(|| {}),
+        )
+        .await
+        .expect_err("late completion must not report success");
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(connections.is_empty());
     }
@@ -1651,6 +1868,7 @@ mod tests {
             &mut connections,
             Instant::now() + Duration::from_millis(5),
             Ok(()),
+            &mut FailureObserver::new(|| {}),
         )
         .await
         .expect_err("late completion must not report success");

@@ -662,8 +662,8 @@ fn should_execute_daemon_startup_without_discovering_cloud_credentials_when_expo
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Starting Crawler Server"));
-    assert!(stdout.contains("iteration04e2"));
-    assert!(stdout.contains("c7a46b9b434eb0dc02c26a4e91edc863cae34896"));
+    assert!(stdout.contains("owned lifecycle"));
+    assert!(stdout.contains(env!("COMMIT_SHA")));
     assert!(String::from_utf8_lossy(&output.stderr).contains("failed to connect to Postgres"));
     assert!(fixture.crawler.connections > 0);
     assert_eq!(
