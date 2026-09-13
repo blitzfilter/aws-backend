@@ -15,6 +15,7 @@
 - CloudFormation input surface stay tiny. Compute deploy version come from `CommitSHA`. Secrets and external IDs come from SSM dynamic refs. Fixed shared buckets stay fixed.
 - Postgres is self-hosted. Every DB Lambda receives explicit `STAGE`, `POSTGRES_SSL_MODE` (`verify-full` real / `disable` ephemeral), and real-stage `POSTGRES_SSL_ROOT_CERT` file path from SSM. CA file materialization/network/identity remain blocked hybrid rollout prerequisites; path alone does not provision trust. No RDS Proxy.
 - Infra own runtime glue: env vars, triggers, schedules, IAM, queue wiring, outputs, retention, alarms. Rust crates own business rules.
+- Hybrid `LambdaEgress` is standalone/uninstantiated. Explicit IPv4 CIDRs/AZs and SINGLE/PER_AZ NAT/EIP policy; no implicit lookups. Existing Lambda networking stays unchanged until separately reviewed prerequisite/identity/TLS attachment. No live egress claim from synth.
 
 ## Ownership
 
@@ -65,3 +66,4 @@
 - No child `AGENTS.md`.
 - `README.md` — stack, worker queue, identity handoff, and rollout contracts.
 - `examples/worker.env.example` — native worker queue environment, no credentials.
+- `lambda-egress-09a.md` — standalone network construct, exact inputs, cost/security limits and unpassed attachment gates.

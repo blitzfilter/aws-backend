@@ -17,7 +17,8 @@ Models: orchestrator GPT-6-Astra; delegation has no model selector. Runtime inve
 | 06 | Rescoped; not implemented | Fresh search definitions only; historical migrations/adoption/backfills deferred |
 | 07 | Not started | Immutable images/publication incomplete |
 | 08 | Application Compose foundation accepted; iteration incomplete | 08a evidence below; cron/crawler rendering only, no host execution |
-| 09–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
+| 09 | Standalone network foundation accepted; iteration incomplete | 09a evidence below; uninstantiated construct, no Lambda attachment/identity handoff |
+| 10–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
 
 Owner steering, 2026-09-12: no real migrations needed while still dev. No new migration SQL, migrator crate or incremental executor created. Keep fresh-install/test baseline setup; defer incremental upgrade/adoption/backfill machinery. No reset or live database authority implied. See scope override in `architecture-decisions.md`.
 
@@ -178,13 +179,25 @@ Limits: local PostgreSQL16/TTL3.0.0 only, existing public-bound isolated Docker 
 
 ## Iteration 08a — offline application Compose
 
-Baseline `b89d8942194f1ca676b487a9a89febb6f502f462`; checkout revalidation commit `b3f0e0549`. Implementer `1fc664f8-bdbb-4b20-93c7-763da1cf2ea8`; independent reviewer `f3fc68ed-d5e3-469b-a99f-fc7e1acf4b15` accepted narrow slice. Available model GPT-6-Astra. Accepted code identified by local commit `feat(deploy): render hardened isolated cron and crawler projects` (exact SHA recorded by following status update).
+Baseline `b89d8942194f1ca676b487a9a89febb6f502f462`; checkout revalidation commit `b3f0e0549`. Implementer `1fc664f8-bdbb-4b20-93c7-763da1cf2ea8`; independent reviewer `f3fc68ed-d5e3-469b-a99f-fc7e1acf4b15` accepted narrow slice. Available model GPT-6-Astra. Accepted commit `f759169db2285caebceade82c60d2436652fcf7f`.
 
 Changed `deploy/control/src/host/application-compose.ts`, its93-test suite and `deploy/compose/README.md`; nearest indexes updated. Pure fixed Compose JSON for cron/crawler, full runtime/identity revalidation, target private ECR digest/architecture, nonroot/read-only/resource/log limits, protected file references, container-local operations, matching drain/stop inputs. Separate projects and restart=no prevent automatic retired-owner resurrection but also disable active auto-recovery. No ownership, image build/verification, protected-file materializer or execution implemented. API/worker deliberately block missing trusted private bind IP; crawler pool8/16 and common DB TLS mode enforced. No shared schema/package/lock/workflow or Rust changes.
 
 Checks: fresh Node26.8.2 `tsc`, `node --test dist/test/*.test.js` **686 pass** (93 new), catalog pass (4native/5Lambda/10scopes/25mail, absent migrator still unavailable). Reviewer independently686 Node24 tests plus12 unchanged generated Compose5.4.0 `config --no-env-resolution --quiet` documents pass; cleared env/no resolved files/daemon. DEP-08/24/32/36/37 coverage is **unit/structure only**, not live launch, non-resurrection or handover evidence. Node26 control suite rerun against integrated files, not old agent build.
 
 Unrun: images, minimum Compose2.30, protected files/permissions/rotation, real DNS/TLS/provider auth, resource enforcement, probes, active custody/host restart/handover. New required inputs: approved runtime/image identity, fixed UID10001-readable ADC/CA and allowlisted secret env materialization; API/worker bind contract still missing. Code removal has no data/runtime effects while unused; no down/prune/reset. External resources changed:none. Deployment readiness:false.
+
+## Iteration 09a — standalone Lambda egress
+
+Baseline `b89d8942194f1ca676b487a9a89febb6f502f462`; integrated after08a `f759169db2285caebceade82c60d2436652fcf7f`. Implementer `df412e0a-dae7-4573-b55c-2611e80117b0`; independent reviewer `f93c35bb-70ed-4d25-96e1-36f4d6035e98` accepted. Actual GPT-6-Astra. Code commit `feat(infra): add explicit standalone Lambda NAT egress foundation`; exact SHA follows in status update.
+
+Changed only new `infra/src/constructs/lambda-egress.ts`,146-test suite, `infra/lambda-egress-09a.md`, nearest docs/indexes and status. Explicit stage/account/region/AZ/CIDR inputs; IPv4 private subnet NAT routes, owned EIPs, SINGLE/PER_AZ, no-ingress dedicated SG with DB public/32 TCP plus explicit HTTPS policy. Redacted validation rejects malformed/overlapping/unsafe ranges, tokens and IPv6. L1 VPC avoids pinned L2's otherwise unwanted lookup; typed L2 subnet handles preserve route dependencies. **No application instantiation**, Lambda attachment, identity/CA/concurrency handoff or firewall execution.
+
+Checks: Node26.8.2 fresh `tsc --noEmit` and full Jest **201 pass/4 suites**. All dev/prod/ephemeral CDK CLI synth pass with `--no-lookups`, installed ts-node app, AWS config/credentials=/dev/null, metadata disabled, template output suppressed. Existing CDK deprecations/Node20-provider/unversioned-artifact warnings retained. Reviewer independently146 tests,76negative/2limit checks, both topology dependency probes and unchanged11 application templates/410resources. DEP-30 coverage here is **CDK structural**, not Lambda source-EIP, firewall or TLS transport evidence.
+
+Cross-check: initial bare all-target Rust check failed because existing crawler test requires compile-time COMMIT_SHA; rerun with literal baseline SHA passed workspace all-target/all-feature locked/offline check, followed by depgraph pass. No Rust edits. Full workspace library suite not rerun after prior recorded timeout. No dependencies installed/upgraded; existing pinned caches used. No Compose/Ansible VM, live network, backup/restore, real GitHub/SSM/AWS checks run.
+
+Operator inputs and limitations: actual account/AZ availability, disjoint capacity, DB IP/TLS DNS identity, NAT topology/cost and quotas, HTTPS reachability policy, exact external EIP allowlists and later Lambda attachment/CA/roles/budgets. PUBLIC_IPV4 explicitly permits443 to any IPv4 address; no hostname/TLS filtering or DNS-exfiltration claim. No IPv6, default-SG hardening or EIP-retention lifecycle automation. While unused, code removal needs no runtime/data rollback; after future attachment, detach/reconcile firewall/EIP ownership first. External changes:none; deployment readiness:false.
 
 ## Required external rollout gates
 

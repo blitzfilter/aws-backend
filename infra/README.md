@@ -24,6 +24,7 @@ src/constructs/            # focused infrastructure modules
   cognito.ts               # Cognito user pool, public client, IdPs, hosted UI domain
   eventing.ts              # EventBridge buses/rules, SQS mappings, Pipes
   lambdas.ts               # Lambda definitions, env vars, IAM grants
+  lambda-egress.ts         # standalone hybrid IPv4 NAT/EIP foundation, NOT instantiated
   observability.ts         # prod-only alarms and alarm topic
   opensearch.ts            # external dev/prod endpoint or LocalStack domain
   queues.ts                # existing Shopify Lambda queue and DLQ
@@ -43,6 +44,12 @@ All native constructors share that policy, including crawler URLs and cron's ded
 Keep total connections within the reviewed inventory budget: ten worker pools + both API pools + cron pool **and one dedicated session** + crawler business/local pools + Lambda reserved concurrency × per-function pool + Sequin + migration/backup sessions + reserve. Defaults of two connections are per process, not an environment budget. Lambda concurrency/network enforcement lands in the approved prerequisite iteration.
 
 Certificate rotation: install old+new trust bundle first, restart/recycle each client through lifecycle controls, rotate server certificate, verify fresh connections, then remove old trust. Existing pools and published Lambda environment snapshots do not refresh themselves. Never roll secrets back with old code. No live rotation performed here.
+
+## Hybrid Lambda-egress foundation
+
+`LambdaEgress` synthesizes an explicit IPv4 VPC, public NAT subnets, private Lambda subnets, owned EIPs and dedicated no-ingress SG. `SINGLE` versus `PER_AZ` is an explicit cost/availability choice; DB egress requires exact public `/32` and port plus a separate explicit HTTPS policy. Account/region/AZs/CIDRs are required literal inputs, never discovery or guessed live values.
+
+**Not instantiated by this application.** Existing stack/resource identities, invocation targets and network attachment remain unchanged. No Lambda attachment, runtime identity/CA delivery, firewall mutation or verified reachability. Construct contract, operator inputs, validation and limits: [`lambda-egress-09a.md`](lambda-egress-09a.md). Future bootstrap consumes these typed handles only after review/approval; EIP tokens are not allocated addresses.
 
 ## Common commands
 
