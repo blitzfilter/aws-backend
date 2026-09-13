@@ -1,3 +1,4 @@
+use crate::ports::ListingSourceSummary;
 use crate::ports::{
     PersonalizedProductListingDetailsReadModel, ProductListingDetailsReadError,
     ProductListingDetailsReadRequest, ProductListingDetailsReader,
@@ -7,12 +8,16 @@ use application::error::BoxError;
 use application::operation_context::{OperationContext, Principal};
 use application::personalized::Personalized;
 use application::transaction::{Transaction, UnitOfWork};
+use auction_service::ports::{
+    AuctionSummary, AuctionSummaryBatchReadError, AuctionSummaryBatchReader,
+};
 use domain_primitives::event_id::EventId;
 use fxrate_core::{FxRateId, FxRateSnapshot, FxRateSnapshotError, RoundingMode};
 use fxrate_service::ports::{
     FxRateSnapshotRepository, FxRateSnapshotRepositoryError, FxRateSnapshotRepositoryFactory,
 };
 use indexmap::IndexSet;
+use listing_source_core::ListingSourceSlugId;
 use localization::{Language, Localized};
 use money::Currency;
 use product_listing_core::content_policy::{
@@ -22,9 +27,6 @@ use product_listing_core::listing_availability::ListingAvailability;
 use product_listing_core::listing_lifecycle::ListingLifecycle;
 use product_listing_core::product_listing_id::ProductListingId;
 use product_listing_core::product_listing_slug_id::ProductListingSlugId;
-
-use crate::ports::ListingSourceSummary;
-use listing_source_core::ListingSourceSlugId;
 use product_listing_core::source_listing_id::SourceListingId;
 use user_core::user_id::UserId;
 
@@ -178,6 +180,7 @@ pub struct ProductListingDetailsView {
     pub images: Vec<ProductListingImageView>,
     pub content_policy: Option<ContentPolicyDecision>,
     pub auction: Option<ProductListingAuction>,
+    pub auction_summary: Option<AuctionSummary>,
     pub created: OffsetDateTime,
     pub updated: OffsetDateTime,
 }
@@ -216,6 +219,19 @@ pub enum GetProductListingError {
         source: FxRateSnapshotError,
     },
 
+    #[error("Auction summary query failed")]
+    AuctionSummaryQueryFailed {
+        #[source]
+        source: BoxError,
+    },
+    #[error("Auction summary read model is invalid")]
+    AuctionSummaryReadModelInvalid {
+        #[source]
+        source: BoxError,
+    },
+    #[error("resolved Auction summary is missing")]
+    ResolvedAuctionSummaryMissing,
+
     #[error("failed to begin get product transaction")]
     BeginTransactionFailed,
     #[error("failed to commit get product transaction")]
@@ -231,28 +247,31 @@ pub trait GetProductListingUseCase: Send + Sync {
     ) -> Result<PersonalizedProductListingDetailsView, GetProductListingError>;
 }
 
-pub struct GetProductListingHandler<U, D, F> {
+pub struct GetProductListingHandler<U, D, F, A> {
     unit_of_work: U,
     details_reader: D,
     fx_rates: F,
+    auctions: A,
 }
 
-impl<U, D, F> GetProductListingHandler<U, D, F> {
-    pub fn new(unit_of_work: U, details_reader: D, fx_rates: F) -> Self {
+impl<U, D, F, A> GetProductListingHandler<U, D, F, A> {
+    pub fn new(unit_of_work: U, details_reader: D, fx_rates: F, auctions: A) -> Self {
         Self {
             unit_of_work,
             details_reader,
             fx_rates,
+            auctions,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, D, F> GetProductListingUseCase for GetProductListingHandler<U, D, F>
+impl<U, D, F, A> GetProductListingUseCase for GetProductListingHandler<U, D, F, A>
 where
     U: UnitOfWork,
     D: ProductListingDetailsReaderFactory<U::Tx>,
     F: FxRateSnapshotRepositoryFactory<U::Tx>,
+    A: AuctionSummaryBatchReader,
 {
     #[tracing::instrument(
         name = "get_product",
@@ -300,6 +319,8 @@ where
         )
         .await?;
         let mut details = present_product_details(factual_details, &snapshot, request.currency)?;
+        details.item.auction_summary =
+            auction_summary_for_context(details.item.auction.as_ref(), &self.auctions).await?;
 
         tx.commit()
             .await
@@ -335,6 +356,27 @@ where
         None => repository.find_latest_at_or_before(valuation_at).await?,
     };
     snapshot.ok_or(GetProductListingError::PricingFxSnapshotMissing)
+}
+
+async fn auction_summary_for_context<A>(
+    context: Option<&ProductListingAuction>,
+    auctions: &A,
+) -> Result<Option<AuctionSummary>, GetProductListingError>
+where
+    A: AuctionSummaryBatchReader,
+{
+    let Some(auction_id) = context
+        .and_then(ProductListingAuction::membership)
+        .map(|membership| membership.auction_id())
+    else {
+        return Ok(None);
+    };
+    let summaries = auctions.find_summaries(&[auction_id]).await?;
+    summaries
+        .get(&auction_id)
+        .cloned()
+        .map(Some)
+        .ok_or(GetProductListingError::ResolvedAuctionSummaryMissing)
 }
 
 pub fn present_product_details(
@@ -376,6 +418,7 @@ pub fn present_product_details(
             ),
             content_policy: item.content_policy,
             auction: item.auction,
+            auction_summary: None,
             created: item.created,
             updated: item.updated,
         },
@@ -463,6 +506,7 @@ pub fn redact_hidden_product(
     details.view_url = hidden_url;
     details.images.clear();
     details.auction = None;
+    details.auction_summary = None;
     details.created = OffsetDateTime::UNIX_EPOCH;
     details.updated = OffsetDateTime::UNIX_EPOCH;
 
@@ -477,6 +521,19 @@ fn hidden_title(language: Language) -> Title {
         Language::Es => Title::from("Título de producto oculto"),
         Language::It => Title::from("Titolo del prodotto mascherato"),
         _ => Title::from("Hidden ProductListing Title"),
+    }
+}
+
+impl From<AuctionSummaryBatchReadError> for GetProductListingError {
+    fn from(error: AuctionSummaryBatchReadError) -> Self {
+        match error {
+            AuctionSummaryBatchReadError::QueryFailed { source } => {
+                Self::AuctionSummaryQueryFailed { source }
+            }
+            AuctionSummaryBatchReadError::InvalidReadModel { source } => {
+                Self::AuctionSummaryReadModelInvalid { source }
+            }
+        }
     }
 }
 
@@ -525,6 +582,21 @@ impl From<ProductListingPricingPresentationError> for GetProductListingError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy)]
+    struct TestAuctionSummaryBatchReader;
+
+    #[async_trait::async_trait]
+    impl AuctionSummaryBatchReader for TestAuctionSummaryBatchReader {
+        async fn find_summaries(
+            &self,
+            _auction_ids: &[auction_core::AuctionId],
+        ) -> Result<HashMap<auction_core::AuctionId, AuctionSummary>, AuctionSummaryBatchReadError>
+        {
+            Ok(HashMap::new())
+        }
+    }
     use crate::ports::ProductListingDetailsReadModel;
 
     use application::{
@@ -734,6 +806,7 @@ mod tests {
         FakeUnitOfWork,
         FakeDetailsReaderFactory,
         FakeFxRateSnapshotRepositoryFactory,
+        TestAuctionSummaryBatchReader,
     > {
         GetProductListingHandler::new(
             FakeUnitOfWork {
@@ -745,6 +818,7 @@ mod tests {
             FakeFxRateSnapshotRepositoryFactory {
                 state: Arc::clone(state),
             },
+            TestAuctionSummaryBatchReader,
         )
     }
 

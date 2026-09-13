@@ -8,7 +8,7 @@
 
 - Service owns Auction write transactions. `auction-core` owns facts; this crate owns application policy.
 - Admin create/update/get require administrator authorization. Explicit admin metadata touches protect that field and write restricted audit state. Policy-only work creates no Auction domain event.
-- Repositories persist Auction aggregates. Details readers return service views. No ProductListing dependency until iteration 06.
+- Repositories persist Auction aggregates. Details readers return service views. `AuctionSummaryBatchReader` is a safe, pool-backed presentation-read port used by ProductListing and Watchlist handlers to hydrate resolved Auction metadata in batches; it returns no source key, audit, evidence, or storage state.
 
 ## Verification
 

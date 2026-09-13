@@ -1,6 +1,6 @@
 # Auctions
 
-**Status:** iterations 01–08 pass. Iteration 08 adds fixture-backed Lot-tissimo crawler capture; it adds no public Auction browsing or Auction-ID search. See the [implementation plan](auction-implementation.md), [iteration 07 record](auction-iterations/07-auction-corrections.md), and [iteration 08 record](auction-iterations/08-crawler-auctions.md).
+**Status:** iterations 01–09 pass. Iteration 09 batch-hydrates safe current Auction summaries on existing ProductListing reads; it adds no public Auction browsing or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration 09 record](auction-iterations/09-auction-summary-reads.md).
 
 ## Scope
 
@@ -75,7 +75,7 @@ Auction discovery and semantic metadata changes use `AUCTION_DISCOVERED` and `AU
 
 The eventual public resources are a bounded PostgreSQL Auction directory, Auction detail, and a PostgreSQL catalogue of visible assigned ProductListings. Listing full-text search remains OpenSearch and will expose an exact `auctionId` filter over listing-owned membership only. Auction metadata is batch-hydrated from PostgreSQL; no Auction OpenSearch index or metadata fan-out projection is planned.
 
-The directory, catalogue, and existing listing reads preserve current visibility, image assessment, localization, FX, and referral-url behavior. Public data never exposes source auction keys, raw evidence, correction reasons, actor details, authority state, or persistence versions.
+The directory, catalogue, and existing listing reads preserve current visibility, image assessment, localization, FX, and referral-url behavior. Existing ProductListing detail, search, similar, and watchlist reads now batch current resolved Auction summaries from PostgreSQL. A summary contains only Auction ID, optional localized name, format, reported status, and qualified schedule. No context remains no context; an asserted context without membership remains unresolved; a resolved ID missing from the authoritative batch is an integrity failure, not an unresolved result. Search remains eventually consistent for listing-owned facts while its Auction summary is current; no shared metadata is indexed or fanned out. Public data never exposes source auction keys, raw evidence, correction reasons, actor details, authority state, or persistence versions.
 
 ## Breaking development rewrite
 

@@ -7,21 +7,21 @@ use crate::ports::{
 };
 use crate::use_cases::PersonalizedProductListingSummary;
 use crate::use_cases::queries::product_listing_summary_personalization::{
-    ProductListingSummaryPersonalizationError, hydrate_listing_source_summaries,
-    hydrate_product_search_items,
+    ProductListingSummaryPersonalizationError, attach_auction_summaries, auction_ids,
+    hydrate_listing_source_summaries, hydrate_product_search_items,
 };
 use crate::use_cases::queries::search_product_listings::present_product_summaries;
 use application::error::{BoxError, box_error};
 use application::operation_context::{OperationContext, Principal};
 use application::personalized::Personalized;
 use application::transaction::{Transaction, UnitOfWork};
-use listing_source_core::ListingSourceId;
-use localization::Language;
-use money::Currency;
-
+use auction_service::ports::{AuctionSummaryBatchReadError, AuctionSummaryBatchReader};
 use fxrate_service::ports::{
     FxRateSnapshotRepository, FxRateSnapshotRepositoryError, FxRateSnapshotRepositoryFactory,
 };
+use listing_source_core::ListingSourceId;
+use localization::Language;
+use money::Currency;
 
 use time::OffsetDateTime;
 
@@ -95,6 +95,18 @@ pub enum GetSimilarProductListingsError {
         #[source]
         source: BoxError,
     },
+    #[error("Auction summary query failed")]
+    AuctionSummaryQueryFailed {
+        #[source]
+        source: BoxError,
+    },
+    #[error("Auction summary read model is invalid")]
+    AuctionSummaryReadModelInvalid {
+        #[source]
+        source: BoxError,
+    },
+    #[error("resolved Auction summary is missing")]
+    ResolvedAuctionSummaryMissing { auction_id: auction_core::AuctionId },
     #[error("product content assessment query failed")]
     ContentAssessmentQueryFailed {
         #[source]
@@ -116,7 +128,7 @@ pub trait GetSimilarProductListingsUseCase: Send + Sync {
     ) -> Result<GetSimilarProductListingsResult, GetSimilarProductListingsError>;
 }
 
-pub struct GetSimilarProductListingsHandler<U, E, F, S, L, P, A> {
+pub struct GetSimilarProductListingsHandler<U, E, F, S, L, P, A, AS> {
     unit_of_work: U,
     embedding_reader: E,
     fx_rates: F,
@@ -124,9 +136,11 @@ pub struct GetSimilarProductListingsHandler<U, E, F, S, L, P, A> {
     listing_sources: L,
     user_states: P,
     assessments: A,
+    auction_summaries: AS,
 }
 
-impl<U, E, F, S, L, P, A> GetSimilarProductListingsHandler<U, E, F, S, L, P, A> {
+impl<U, E, F, S, L, P, A, AS> GetSimilarProductListingsHandler<U, E, F, S, L, P, A, AS> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         unit_of_work: U,
         embedding_reader: E,
@@ -135,6 +149,7 @@ impl<U, E, F, S, L, P, A> GetSimilarProductListingsHandler<U, E, F, S, L, P, A> 
         listing_sources: L,
         user_states: P,
         assessments: A,
+        auction_summaries: AS,
     ) -> Self {
         Self {
             unit_of_work,
@@ -144,13 +159,14 @@ impl<U, E, F, S, L, P, A> GetSimilarProductListingsHandler<U, E, F, S, L, P, A> 
             listing_sources,
             user_states,
             assessments,
+            auction_summaries,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, E, F, S, L, P, A> GetSimilarProductListingsUseCase
-    for GetSimilarProductListingsHandler<U, E, F, S, L, P, A>
+impl<U, E, F, S, L, P, A, AS> GetSimilarProductListingsUseCase
+    for GetSimilarProductListingsHandler<U, E, F, S, L, P, A, AS>
 where
     U: UnitOfWork,
     E: ProductListingEmbeddingReaderFactory<U::Tx>,
@@ -159,6 +175,7 @@ where
     L: ListingSourceSummaryReader,
     P: ProductListingUserStateReader,
     A: ProductListingContentAssessmentReader,
+    AS: AuctionSummaryBatchReader,
 {
     #[tracing::instrument(
         name = "get_similar_products",
@@ -221,8 +238,16 @@ where
                 price_filter_plan,
             ))
             .await?;
-        let mut products = hydrate_listing_source_summaries(products, &self.listing_sources)
-            .await?
+        let auction_ids = auction_ids(&products);
+        let auction_summaries = self.auction_summaries.find_summaries(&auction_ids).await?;
+        let mut sourced_products =
+            hydrate_listing_source_summaries(products, &self.listing_sources).await?;
+        attach_auction_summaries(&mut sourced_products, &auction_summaries).map_err(
+            |auction_id| GetSimilarProductListingsError::ResolvedAuctionSummaryMissing {
+                auction_id,
+            },
+        )?;
+        let mut products = sourced_products
             .into_iter()
             .map(|item| Personalized {
                 item,
@@ -244,6 +269,19 @@ fn personalization_user_id(principal: &Principal) -> Option<user_core::user_id::
     match principal {
         Principal::User(user_id) | Principal::DelegatedUser { user_id, .. } => Some(*user_id),
         Principal::Anonymous | Principal::Service(_) | Principal::System => None,
+    }
+}
+
+impl From<AuctionSummaryBatchReadError> for GetSimilarProductListingsError {
+    fn from(error: AuctionSummaryBatchReadError) -> Self {
+        match error {
+            AuctionSummaryBatchReadError::QueryFailed { source } => {
+                Self::AuctionSummaryQueryFailed { source }
+            }
+            AuctionSummaryBatchReadError::InvalidReadModel { source } => {
+                Self::AuctionSummaryReadModelInvalid { source }
+            }
+        }
     }
 }
 
@@ -328,6 +366,23 @@ impl From<ProductListingSummaryPersonalizationError> for GetSimilarProductListin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    #[derive(Clone, Copy)]
+    struct TestAuctionSummaryBatchReader;
+
+    #[async_trait::async_trait]
+    impl AuctionSummaryBatchReader for TestAuctionSummaryBatchReader {
+        async fn find_summaries(
+            &self,
+            _auction_ids: &[auction_core::AuctionId],
+        ) -> Result<
+            HashMap<auction_core::AuctionId, auction_service::ports::AuctionSummary>,
+            AuctionSummaryBatchReadError,
+        > {
+            Ok(HashMap::new())
+        }
+    }
     use crate::ports::ListingSourceSummary;
     use crate::ports::{ProductListingEmbedding, ProductListingSimilarProductListingsReadError};
     use crate::use_cases::{ProductListingSearchItem, ProductListingSummaryPriceValuation};
@@ -352,7 +407,6 @@ mod tests {
 
     use crate::user_state::ProductListingUserState;
     use product_listing_core::title::Title;
-    use std::collections::HashMap;
     use std::sync::{Arc, Mutex, MutexGuard};
     use strum::IntoEnumIterator;
     use time::OffsetDateTime;
@@ -666,6 +720,7 @@ mod tests {
         StaticListingSourceSummaryReader,
         EmptyUserStateReader,
         EmptyAssessmentReader,
+        TestAuctionSummaryBatchReader,
     > {
         GetSimilarProductListingsHandler::new(
             FakeUnitOfWork {
@@ -681,6 +736,7 @@ mod tests {
             StaticListingSourceSummaryReader,
             EmptyUserStateReader,
             EmptyAssessmentReader,
+            TestAuctionSummaryBatchReader,
         )
     }
 
@@ -843,6 +899,7 @@ mod tests {
                 states: HashMap::from([(product_listing_id, user_state)]),
             },
             EmptyAssessmentReader,
+            TestAuctionSummaryBatchReader,
         );
 
         let result = handler
@@ -904,6 +961,7 @@ mod tests {
                 )]),
                 requests: Arc::clone(&requests),
             },
+            TestAuctionSummaryBatchReader,
         );
 
         let result = handler.execute(&context(), request()).await?;

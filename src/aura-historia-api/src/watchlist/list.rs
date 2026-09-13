@@ -339,6 +339,7 @@ mod tests {
                 images: Default::default(),
                 content_policy: None,
                 auction: None,
+                auction_summary: None,
                 created: OffsetDateTime::UNIX_EPOCH,
                 updated: OffsetDateTime::UNIX_EPOCH,
             },

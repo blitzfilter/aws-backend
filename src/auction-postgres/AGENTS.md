@@ -2,7 +2,7 @@
 
 ## Purpose
 
-- Own PostgreSQL Auction repository, schedule rows, event journal, metadata-protection audit, and details reader.
+- Own PostgreSQL Auction repository, schedule rows, event journal, metadata-protection audit, details reader, and batched safe summary reader.
 
 ## Core Design
 

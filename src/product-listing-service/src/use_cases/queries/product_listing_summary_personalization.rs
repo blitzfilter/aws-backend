@@ -7,6 +7,8 @@ use crate::use_cases::queries::search_product_listings::{
     ProductListingSearchItemWithSource,
 };
 use application::error::{BoxError, box_error};
+use auction_core::AuctionId;
+use auction_service::ports::AuctionSummary;
 use domain_primitives::event_id::EventId;
 use localization::{Language, Localized};
 use product_listing_core::listing_lifecycle::ListingLifecycle;
@@ -76,6 +78,15 @@ pub(crate) fn listing_source_ids(products: &[ProductListingSearchItem]) -> Vec<L
         .collect()
 }
 
+pub(crate) fn auction_ids(products: &[ProductListingSearchItem]) -> Vec<AuctionId> {
+    products
+        .iter()
+        .filter_map(|product| product.auction_id)
+        .collect::<IndexSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 pub(crate) fn product_listing_ids(products: &[ProductListingSearchItem]) -> Vec<ProductListingId> {
     products
         .iter()
@@ -136,11 +147,25 @@ pub(crate) fn attach_listing_sources(
                 )?;
             Ok(ProductListingSearchItemWithSource {
                 item,
+                auction_summary: None,
                 source: source.summary,
                 view_url,
             })
         })
         .collect()
+}
+
+pub(crate) fn attach_auction_summaries(
+    products: &mut [ProductListingSearchItemWithSource],
+    summaries: &HashMap<AuctionId, AuctionSummary>,
+) -> Result<(), AuctionId> {
+    for product in products {
+        let Some(auction_id) = product.item.auction_id else {
+            continue;
+        };
+        product.auction_summary = Some(summaries.get(&auction_id).cloned().ok_or(auction_id)?);
+    }
+    Ok(())
 }
 
 pub(crate) async fn hydrate_product_search_items<U>(
@@ -425,6 +450,87 @@ mod tests {
             Err(poisoned) => poisoned.into_inner(),
         };
         assert_eq!(vec![vec![source_one, source_two]], *requests);
+    }
+
+    #[test]
+    fn should_deduplicate_resolved_auction_ids_attach_summaries_in_hit_order_and_reject_missing_ids()
+     {
+        let source_id = ListingSourceId::new();
+        let auction_id = AuctionId::new();
+        let missing_auction_id = AuctionId::new();
+        let mut first = search_item(source_id);
+        let mut second = search_item(source_id);
+        let third = search_item(source_id);
+        first.auction_id = Some(auction_id);
+        second.auction_id = Some(auction_id);
+
+        assert_eq!(
+            vec![auction_id],
+            auction_ids(&[first.clone(), second.clone(), third.clone()])
+        );
+
+        let source = ListingSourceSummary {
+            listing_source_id: source_id,
+            name: ListingSourceName::try_from("Source")
+                .unwrap_or_else(|error| panic!("valid test source name: {error}")),
+            slug_id: ListingSourceSlugId::raw("source")
+                .unwrap_or_else(|error| panic!("valid test source slug: {error}")),
+        };
+        let mut products = vec![first, second, third]
+            .into_iter()
+            .map(|item| ProductListingSearchItemWithSource {
+                item,
+                auction_summary: None,
+                source: source.clone(),
+                view_url: Url::parse("https://source.example/cabinet")
+                    .unwrap_or_else(|error| panic!("valid test view URL: {error}")),
+            })
+            .collect::<Vec<_>>();
+        let summary = AuctionSummary {
+            auction_id,
+            name: None,
+            format: None,
+            reported_status: None,
+            schedule: auction_core::AuctionSchedule::default(),
+        };
+
+        let attached =
+            attach_auction_summaries(&mut products, &HashMap::from([(auction_id, summary)]));
+
+        assert!(attached.is_ok());
+        assert_eq!(
+            Some(auction_id),
+            products[0]
+                .auction_summary
+                .as_ref()
+                .map(|summary| summary.auction_id)
+        );
+        assert_eq!(
+            Some(auction_id),
+            products[1]
+                .auction_summary
+                .as_ref()
+                .map(|summary| summary.auction_id)
+        );
+        assert!(products[2].auction_summary.is_none());
+
+        products[1].item.auction_id = Some(missing_auction_id);
+        assert_eq!(
+            Err(missing_auction_id),
+            attach_auction_summaries(
+                &mut products,
+                &HashMap::from([(
+                    auction_id,
+                    AuctionSummary {
+                        auction_id,
+                        name: None,
+                        format: None,
+                        reported_status: None,
+                        schedule: auction_core::AuctionSchedule::default(),
+                    }
+                )]),
+            )
+        );
     }
 
     #[tokio::test]

@@ -1,3 +1,5 @@
 mod auction_details_reader;
+mod auction_summary_batch_reader;
 
 pub use auction_details_reader::SqlxAuctionDetailsReader;
+pub use auction_summary_batch_reader::SqlxAuctionSummaryBatchReader;

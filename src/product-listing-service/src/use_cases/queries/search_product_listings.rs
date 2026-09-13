@@ -5,14 +5,18 @@ use crate::ports::{
     ProductListingSearchReader, ProductListingUserStateReader,
 };
 use crate::use_cases::queries::product_listing_summary_personalization::{
-    ProductListingSummaryPersonalizationError, apply_product_user_states, attach_listing_sources,
-    listing_source_ids, product_listing_ids, product_listing_user_state_lookup,
+    ProductListingSummaryPersonalizationError, apply_product_user_states, attach_auction_summaries,
+    attach_listing_sources, auction_ids, listing_source_ids, product_listing_ids,
+    product_listing_user_state_lookup,
 };
 use application::error::{BoxError, box_error};
 use application::operation_context::{OperationContext, Principal};
 use application::pagination::{Cursor, CursoredResult};
 use application::personalized::Personalized;
 use auction_core::AuctionId;
+use auction_service::ports::{
+    AuctionSummary, AuctionSummaryBatchReadError, AuctionSummaryBatchReader,
+};
 use domain_primitives::event_id::EventId;
 use domain_primitives::sort::Sort;
 use embedding::{EmbeddingGenerator, EmbeddingText};
@@ -96,6 +100,7 @@ pub struct ProductListingSummary {
     pub source_listing_id: SourceListingId,
     pub auction_id: Option<AuctionId>,
     pub has_auction_context: bool,
+    pub auction_summary: Option<AuctionSummary>,
     pub title: Option<Localized<Language, Title>>,
     pub display_price: Option<ProductListingPrice>,
     pub price_valuation: ProductListingSummaryPriceValuation,
@@ -126,6 +131,7 @@ pub type PersonalizedProductListingSummary =
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ProductListingSearchItemWithSource {
     pub(crate) item: ProductListingSearchItem,
+    pub(crate) auction_summary: Option<AuctionSummary>,
     pub(crate) source: ListingSourceSummary,
     pub(crate) view_url: Url,
 }
@@ -195,6 +201,18 @@ pub enum SearchProductListingsError {
         #[source]
         source: BoxError,
     },
+    #[error("Auction summary query failed")]
+    AuctionSummaryQueryFailed {
+        #[source]
+        source: BoxError,
+    },
+    #[error("Auction summary read model is invalid")]
+    AuctionSummaryReadModelInvalid {
+        #[source]
+        source: BoxError,
+    },
+    #[error("resolved Auction summary is missing")]
+    ResolvedAuctionSummaryMissing { auction_id: AuctionId },
     #[error("product content assessment query failed")]
     ContentAssessmentQueryFailed {
         #[source]
@@ -216,17 +234,18 @@ pub trait SearchProductListingsUseCase: Send + Sync {
     ) -> Result<SearchProductListingsResult, SearchProductListingsError>;
 }
 
-pub struct SearchProductListingsHandler<R, F, E, L, U, A> {
+pub struct SearchProductListingsHandler<R, F, E, L, U, A, AS> {
     reader: R,
     fx_rates: F,
     embeddings: E,
     listing_sources: L,
     user_states: U,
     assessments: A,
+    auction_summaries: AS,
     read_execution_policy: ProductListingSearchReadExecutionPolicy,
 }
 
-impl<R, F, E, L, U, A> SearchProductListingsHandler<R, F, E, L, U, A> {
+impl<R, F, E, L, U, A, AS> SearchProductListingsHandler<R, F, E, L, U, A, AS> {
     pub fn new(
         reader: R,
         fx_rates: F,
@@ -234,6 +253,7 @@ impl<R, F, E, L, U, A> SearchProductListingsHandler<R, F, E, L, U, A> {
         listing_sources: L,
         user_states: U,
         assessments: A,
+        auction_summaries: AS,
     ) -> Self {
         Self {
             reader,
@@ -242,10 +262,13 @@ impl<R, F, E, L, U, A> SearchProductListingsHandler<R, F, E, L, U, A> {
             listing_sources,
             user_states,
             assessments,
+            auction_summaries,
             read_execution_policy: ProductListingSearchReadExecutionPolicy::Sequential,
         }
     }
+}
 
+impl<R, F, E, L, U, A, AS> SearchProductListingsHandler<R, F, E, L, U, A, AS> {
     pub fn with_read_execution_policy(
         mut self,
         read_execution_policy: ProductListingSearchReadExecutionPolicy,
@@ -256,8 +279,8 @@ impl<R, F, E, L, U, A> SearchProductListingsHandler<R, F, E, L, U, A> {
 }
 
 #[async_trait::async_trait]
-impl<R, F, E, L, U, A> SearchProductListingsUseCase
-    for SearchProductListingsHandler<R, F, E, L, U, A>
+impl<R, F, E, L, U, A, AS> SearchProductListingsUseCase
+    for SearchProductListingsHandler<R, F, E, L, U, A, AS>
 where
     R: ProductListingSearchReader,
     F: FxRateSnapshotReader,
@@ -265,6 +288,7 @@ where
     L: ListingSourceSummaryReader,
     U: ProductListingUserStateReader,
     A: ProductListingContentAssessmentReader,
+    AS: AuctionSummaryBatchReader,
 {
     #[tracing::instrument(
         name = "search_products",
@@ -359,6 +383,12 @@ where
         } else {
             let source_ids = listing_source_ids(&result.items);
             let listing_ids = product_listing_ids(&result.items);
+            let auction_ids = auction_ids(&result.items);
+            let auction_summaries = measure_search_stage(
+                "auction_summary_resolution",
+                self.auction_summaries.find_summaries(&auction_ids),
+            )
+            .await?;
             let user_state_lookup = personalization_user_id(&context.principal)
                 .map(|user_id| product_listing_user_state_lookup(user_id, &listing_ids));
 
@@ -371,7 +401,13 @@ where
                     )
                     .await
                     .map_err(ProductListingSummaryPersonalizationError::from)?;
-                    let mut items = attach_listing_sources(result.items, &sources)?
+                    let mut sourced_items = attach_listing_sources(result.items, &sources)?;
+                    attach_auction_summaries(&mut sourced_items, &auction_summaries).map_err(
+                        |auction_id| SearchProductListingsError::ResolvedAuctionSummaryMissing {
+                            auction_id,
+                        },
+                    )?;
+                    let mut items = sourced_items
                         .into_iter()
                         .map(|item| Personalized {
                             item,
@@ -420,7 +456,13 @@ where
                     );
                     let sources =
                         source_result.map_err(ProductListingSummaryPersonalizationError::from)?;
-                    let mut items = attach_listing_sources(result.items, &sources)?
+                    let mut sourced_items = attach_listing_sources(result.items, &sources)?;
+                    attach_auction_summaries(&mut sourced_items, &auction_summaries).map_err(
+                        |auction_id| SearchProductListingsError::ResolvedAuctionSummaryMissing {
+                            auction_id,
+                        },
+                    )?;
+                    let mut items = sourced_items
                         .into_iter()
                         .map(|item| Personalized {
                             item,
@@ -504,6 +546,7 @@ pub(crate) fn present_product_summaries_from_assessments(
                     source_listing_id: product.item.item.source_listing_id,
                     auction_id: product.item.item.auction_id,
                     has_auction_context: product.item.item.has_auction_context,
+                    auction_summary: product.item.auction_summary,
                     title: product.item.item.title,
                     display_price: product.item.item.display_price,
                     price_valuation: product.item.item.price_valuation,
@@ -642,6 +685,19 @@ impl From<ProductListingSearchReadError> for SearchProductListingsError {
     }
 }
 
+impl From<AuctionSummaryBatchReadError> for SearchProductListingsError {
+    fn from(error: AuctionSummaryBatchReadError) -> Self {
+        match error {
+            AuctionSummaryBatchReadError::QueryFailed { source } => {
+                Self::AuctionSummaryQueryFailed { source }
+            }
+            AuctionSummaryBatchReadError::InvalidReadModel { source } => {
+                Self::AuctionSummaryReadModelInvalid { source }
+            }
+        }
+    }
+}
+
 impl From<ProductListingContentAssessmentReadError> for SearchProductListingsError {
     fn from(error: ProductListingContentAssessmentReadError) -> Self {
         match error {
@@ -690,6 +746,19 @@ impl From<ProductListingSummaryPersonalizationError> for SearchProductListingsEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy)]
+    struct TestAuctionSummaryBatchReader;
+
+    #[async_trait::async_trait]
+    impl AuctionSummaryBatchReader for TestAuctionSummaryBatchReader {
+        async fn find_summaries(
+            &self,
+            _auction_ids: &[AuctionId],
+        ) -> Result<HashMap<AuctionId, AuctionSummary>, AuctionSummaryBatchReadError> {
+            Ok(HashMap::new())
+        }
+    }
     use crate::ports::{ProductListingUserStateLookup, ProductListingUserStateReadError};
     use application::error::box_error;
     use application::operation_context::{CorrelationId, Principal, RequestId};
@@ -861,6 +930,7 @@ mod tests {
         crate::readers::CachedListingSourceSummaryReader<RecordingListingSourceSummaryReader>,
         RecordingUserStatesReader,
         RecordingAssessmentReader,
+        TestAuctionSummaryBatchReader,
     >;
     type CachedComposition = (
         CachedComposedHandler,
@@ -1343,6 +1413,7 @@ mod tests {
         StaticListingSourceSummaryReader,
         FakeUserStatesReader,
         EmptyAssessmentReader,
+        TestAuctionSummaryBatchReader,
     > {
         SearchProductListingsHandler::new(
             search_reader(state),
@@ -1357,6 +1428,7 @@ mod tests {
                 state: Arc::clone(state),
             },
             EmptyAssessmentReader,
+            TestAuctionSummaryBatchReader,
         )
     }
 
@@ -1418,6 +1490,7 @@ mod tests {
         item: ProductListingSearchItem,
     ) -> ProductListingSearchItemWithSource {
         ProductListingSearchItemWithSource {
+            auction_summary: None,
             source: ListingSourceSummary {
                 listing_source_id: item.listing_source_id,
                 name: listing_source_core::ListingSourceName::try_from("Source")
@@ -1504,6 +1577,7 @@ mod tests {
                 sources,
                 user_states,
                 assessments,
+                TestAuctionSummaryBatchReader,
             )
             .with_read_execution_policy(policy),
             fx_calls,
@@ -1878,6 +1952,7 @@ mod tests {
                 CountingFailingAssessmentReader {
                     calls: Arc::clone(&assessment_calls),
                 },
+                TestAuctionSummaryBatchReader,
             )
             .with_read_execution_policy(policy);
 
@@ -1923,6 +1998,7 @@ mod tests {
                 CountingFailingAssessmentReader {
                     calls: Arc::clone(&assessment_calls),
                 },
+                TestAuctionSummaryBatchReader,
             )
             .with_read_execution_policy(policy);
 
@@ -1971,6 +2047,7 @@ mod tests {
                 barrier,
                 calls: Arc::clone(&assessment_calls),
             },
+            TestAuctionSummaryBatchReader,
         )
         .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
 
@@ -2012,6 +2089,7 @@ mod tests {
                 barrier,
                 calls: Arc::clone(&assessment_calls),
             },
+            TestAuctionSummaryBatchReader,
         )
         .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
 
@@ -2046,6 +2124,7 @@ mod tests {
                 state: Arc::clone(&state),
             },
             EmptyAssessmentReader,
+            TestAuctionSummaryBatchReader,
         )
         .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
         let task = tokio::spawn(async move { handler.execute(&context(), request()).await });
@@ -2105,6 +2184,7 @@ mod tests {
                 barrier: Arc::new(Barrier::new(1)),
                 calls: Arc::clone(&assessment_calls),
             },
+            TestAuctionSummaryBatchReader,
         )
         .with_read_execution_policy(ProductListingSearchReadExecutionPolicy::Concurrent);
 

@@ -11954,6 +11954,7 @@ components:
         - eventId
         - source
         - sourceListingId
+        - hasAuctionContext
         - priceValuation
         - availability
         - lifecycle
@@ -11977,6 +11978,17 @@ components:
           $ref: "#/components/schemas/ProductListingSourceData"
         sourceListingId:
           type: string
+        auctionId:
+          type: string
+          description: Resolved Auction TypeID. Omitted when this listing has no resolved Auction membership.
+        hasAuctionContext:
+          type: boolean
+          description: True when the source asserts this listing is an auction offering, including unresolved membership.
+        auctionSummary:
+          allOf:
+            - $ref: "#/components/schemas/AuctionSummaryData"
+          nullable: true
+          description: Current safe Auction metadata for a resolved membership. Omitted for no context or unresolved membership.
         title:
           allOf:
             - $ref: "#/components/schemas/LocalizedTextData"
@@ -12128,7 +12140,12 @@ components:
           allOf:
             - $ref: "#/components/schemas/ProductListingAuctionData"
           nullable: true
-          description: Optional source-asserted lot context. Membership is not exposed by this read model.
+          description: Optional source-asserted lot context, including an optional resolved Auction ID.
+        auctionSummary:
+          allOf:
+            - $ref: "#/components/schemas/AuctionSummaryData"
+          nullable: true
+          description: Current safe Auction metadata for a resolved membership. Omitted for no context or unresolved membership.
         created:
           type: string
           format: date-time
@@ -16481,14 +16498,43 @@ components:
           LOTS_BEGIN_CLOSING,
           SCHEDULED_END,
         ]
+    AuctionSummaryData:
+      type: object
+      additionalProperties: false
+      required: [auctionId, schedule]
+      description: Safe current Auction metadata hydrated from PostgreSQL for a resolved ProductListing Auction membership.
+      properties:
+        auctionId:
+          type: string
+          description: Strict `auc_` UUIDv7 TypeID.
+        name:
+          allOf: [{ $ref: "#/components/schemas/LocalizedTextData" }]
+          nullable: true
+        format:
+          allOf: [{ $ref: "#/components/schemas/AuctionFormatData" }]
+          nullable: true
+        reportedStatus:
+          allOf: [{ $ref: "#/components/schemas/AuctionReportedStatusData" }]
+          nullable: true
+        schedule:
+          $ref: "#/components/schemas/AuctionScheduleData"
     AuctionScheduleData:
       type: object
       additionalProperties: false
+      required: [biddingOpens, liveStarts, lotsBeginClosing, scheduledEnd]
       properties:
-        biddingOpens: { $ref: "#/components/schemas/AuctionTimeData" }
-        liveStarts: { $ref: "#/components/schemas/AuctionTimeData" }
-        lotsBeginClosing: { $ref: "#/components/schemas/AuctionTimeData" }
-        scheduledEnd: { $ref: "#/components/schemas/AuctionTimeData" }
+        biddingOpens:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+        liveStarts:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+        lotsBeginClosing:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
+        scheduledEnd:
+          allOf: [{ $ref: "#/components/schemas/AuctionTimeData" }]
+          nullable: true
     AuctionSchedulePatchData:
       type: object
       additionalProperties: false

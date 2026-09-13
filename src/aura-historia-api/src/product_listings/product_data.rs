@@ -1,6 +1,7 @@
 use crate::values::{LocalizedTextData, PriceData, ProductListingPriceData};
 use application::operation_context::Principal;
-use auction_core::{AuctionId, AuctionTime};
+use auction_core::{AuctionFormat, AuctionId, AuctionReportedStatus, AuctionSchedule, AuctionTime};
+use auction_service::ports::AuctionSummary;
 use axum::Json;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
@@ -76,6 +77,8 @@ pub(crate) struct ProductListingDetailsData {
     images: Vec<ProductListingImageData>,
     content_policy: Option<ContentPolicyData>,
     auction: Option<ProductListingAuctionData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auction_summary: Option<AuctionSummaryData>,
     #[serde(with = "time::serde::rfc3339")]
     created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -156,6 +159,8 @@ pub(crate) struct ProductListingSummaryData {
     #[serde(skip_serializing_if = "Option::is_none")]
     auction_id: Option<AuctionId>,
     has_auction_context: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auction_summary: Option<AuctionSummaryData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<LocalizedTextData>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -307,6 +312,7 @@ impl ProductListingDetailsData {
             images: view.images.into_iter().map(Into::into).collect(),
             content_policy: view.content_policy.map(Into::into),
             auction: view.auction.map(Into::into),
+            auction_summary: view.auction_summary.map(Into::into),
             created: view.created,
             updated: view.updated,
         }
@@ -316,6 +322,54 @@ impl ProductListingDetailsData {
 impl From<ProductListingDetailsView> for ProductListingDetailsData {
     fn from(view: ProductListingDetailsView) -> Self {
         Self::from_view(view)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuctionSummaryData {
+    auction_id: AuctionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<LocalizedTextData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reported_status: Option<&'static str>,
+    schedule: AuctionScheduleData,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuctionScheduleData {
+    bidding_opens: Option<AuctionTimeData>,
+    live_starts: Option<AuctionTimeData>,
+    lots_begin_closing: Option<AuctionTimeData>,
+    scheduled_end: Option<AuctionTimeData>,
+}
+
+impl From<AuctionSummary> for AuctionSummaryData {
+    fn from(value: AuctionSummary) -> Self {
+        Self {
+            auction_id: value.auction_id,
+            name: value.name.map(|name| LocalizedTextData {
+                text: name.payload.as_ref().to_owned(),
+                language: name.localization,
+            }),
+            format: value.format.map(AuctionFormat::as_str),
+            reported_status: value.reported_status.map(AuctionReportedStatus::as_str),
+            schedule: value.schedule.into(),
+        }
+    }
+}
+
+impl From<AuctionSchedule> for AuctionScheduleData {
+    fn from(value: AuctionSchedule) -> Self {
+        Self {
+            bidding_opens: value.bidding_opens().cloned().map(Into::into),
+            live_starts: value.live_starts().cloned().map(Into::into),
+            lots_begin_closing: value.lots_begin_closing().cloned().map(Into::into),
+            scheduled_end: value.scheduled_end().cloned().map(Into::into),
+        }
     }
 }
 
@@ -498,6 +552,7 @@ impl ProductListingSummaryData {
             source_listing_id: summary.source_listing_id,
             auction_id: summary.auction_id,
             has_auction_context: summary.has_auction_context,
+            auction_summary: summary.auction_summary.map(Into::into),
             title: summary.title.map(Into::into),
             display_price: summary.display_price.map(Into::into),
             price_valuation: summary.price_valuation.into(),
@@ -588,6 +643,58 @@ pub(crate) fn product_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auction_core::{AuctionName, AuctionTime};
+    use localization::Localized;
+    use time::macros::{date, datetime};
+
+    #[test]
+    fn should_serialize_only_safe_auction_summary_fields_with_time_precision() {
+        let auction_id = AuctionId::new();
+        let summary = AuctionSummary {
+            auction_id,
+            name: Some(Localized::new(
+                localization::Language::En,
+                AuctionName::try_from("Autumn Decorative Arts")
+                    .unwrap_or_else(|error| panic!("valid test auction name: {error}")),
+            )),
+            format: Some(AuctionFormat::Timed),
+            reported_status: Some(AuctionReportedStatus::Scheduled),
+            schedule: AuctionSchedule::new(
+                None,
+                Some(AuctionTime::instant(datetime!(2026-10-18 16:00 UTC), None)),
+                None,
+                Some(AuctionTime::date(date!(2026 - 10 - 19), None)),
+            )
+            .unwrap_or_else(|error| panic!("valid test auction schedule: {error}")),
+        };
+
+        let value = serde_json::to_value(AuctionSummaryData::from(summary))
+            .unwrap_or_else(|error| panic!("serialize auction summary: {error}"));
+
+        assert_eq!(
+            Some(&serde_json::Value::String(auction_id.to_string())),
+            value.get("auctionId")
+        );
+        assert_eq!(
+            Some(&serde_json::Value::String("TIMED".to_owned())),
+            value.get("format")
+        );
+        assert_eq!(
+            Some(&serde_json::Value::String("SCHEDULED".to_owned())),
+            value.get("reportedStatus")
+        );
+        assert_eq!(
+            Some(&serde_json::Value::String("INSTANT".to_owned())),
+            value.pointer("/schedule/liveStarts/precision")
+        );
+        assert_eq!(
+            Some(&serde_json::Value::String("DATE".to_owned())),
+            value.pointer("/schedule/scheduledEnd/precision")
+        );
+        assert!(value.get("sourceAuctionId").is_none());
+        assert!(value.get("version").is_none());
+    }
+
     #[test]
     fn should_serialize_a_presented_redacted_image() {
         let data = ProductListingImageData::from(

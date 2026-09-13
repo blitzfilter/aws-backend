@@ -4,6 +4,7 @@ use application::operation_context::{
 };
 use application::pagination::{Cursor, CursoredResult};
 use application::transaction::{Transaction, UnitOfWork};
+use auction_service::ports::{AuctionSummaryBatchReadError, AuctionSummaryBatchReader};
 use fxrate_core::{FxRateId, FxRateSnapshot, FxRateSnapshotError};
 use fxrate_service::ports::{
     FxRateSnapshotRepository, FxRateSnapshotRepositoryError, FxRateSnapshotRepositoryFactory,
@@ -73,6 +74,18 @@ pub enum ListWatchlistError {
         source: FxRateSnapshotError,
     },
 
+    #[error("Auction summary query failed")]
+    AuctionSummaryQueryFailed {
+        #[source]
+        source: BoxError,
+    },
+    #[error("Auction summary read model is invalid")]
+    AuctionSummaryReadModelInvalid {
+        #[source]
+        source: BoxError,
+    },
+    #[error("resolved Auction summary is missing")]
+    ResolvedAuctionSummaryMissing { auction_id: auction_core::AuctionId },
     #[error("failed to begin watchlist transaction")]
     BeginTransactionFailed,
     #[error("failed to commit watchlist transaction")]
@@ -88,28 +101,31 @@ pub trait ListWatchlistUseCase: Send + Sync {
     ) -> Result<ListWatchlistResult, ListWatchlistError>;
 }
 
-pub struct ListWatchlistHandler<U, D, F> {
+pub struct ListWatchlistHandler<U, D, F, A> {
     unit_of_work: U,
     details_reader: D,
     fx_rates: F,
+    auction_summaries: A,
 }
 
-impl<U, D, F> ListWatchlistHandler<U, D, F> {
-    pub fn new(unit_of_work: U, details_reader: D, fx_rates: F) -> Self {
+impl<U, D, F, A> ListWatchlistHandler<U, D, F, A> {
+    pub fn new(unit_of_work: U, details_reader: D, fx_rates: F, auction_summaries: A) -> Self {
         Self {
             unit_of_work,
             details_reader,
             fx_rates,
+            auction_summaries,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<U, D, F> ListWatchlistUseCase for ListWatchlistHandler<U, D, F>
+impl<U, D, F, A> ListWatchlistUseCase for ListWatchlistHandler<U, D, F, A>
 where
     U: UnitOfWork,
     D: ProductListingWatchlistDetailsReaderFactory<U::Tx>,
     F: FxRateSnapshotRepositoryFactory<U::Tx>,
+    A: AuctionSummaryBatchReader,
 {
     #[tracing::instrument(name = "list_watchlist", skip_all, fields(user_id = %request.user_id, principal_type = context.principal.kind(), request_id = %context.request_id, correlation_id = %context.correlation_id))]
     async fn execute(
@@ -164,7 +180,32 @@ where
             .await
             .map_err(|_| ListWatchlistError::CommitTransactionFailed)?;
 
+        let auction_ids = page
+            .items
+            .iter()
+            .filter_map(|product| product.item.auction.as_ref())
+            .filter_map(|context| context.membership())
+            .map(|membership| membership.auction_id())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let auction_summaries = self.auction_summaries.find_summaries(&auction_ids).await?;
+
         for product in &mut page.items {
+            if let Some(auction_id) = product
+                .item
+                .auction
+                .as_ref()
+                .and_then(|context| context.membership())
+                .map(|membership| membership.auction_id())
+            {
+                product.item.auction_summary = Some(
+                    auction_summaries
+                        .get(&auction_id)
+                        .cloned()
+                        .ok_or(ListWatchlistError::ResolvedAuctionSummaryMissing { auction_id })?,
+                );
+            }
             let user_state = product
                 .user_state
                 .as_ref()
@@ -285,6 +326,19 @@ impl From<OperationAuthorizationError> for ListWatchlistError {
     }
 }
 
+impl From<AuctionSummaryBatchReadError> for ListWatchlistError {
+    fn from(error: AuctionSummaryBatchReadError) -> Self {
+        match error {
+            AuctionSummaryBatchReadError::QueryFailed { source } => {
+                Self::AuctionSummaryQueryFailed { source }
+            }
+            AuctionSummaryBatchReadError::InvalidReadModel { source } => {
+                Self::AuctionSummaryReadModelInvalid { source }
+            }
+        }
+    }
+}
+
 impl From<ProductListingWatchlistDetailsReadError> for ListWatchlistError {
     fn from(error: ProductListingWatchlistDetailsReadError) -> Self {
         match error {
@@ -330,6 +384,22 @@ impl From<ProductListingPricingPresentationError> for ListWatchlistError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy)]
+    struct TestAuctionSummaryBatchReader;
+
+    #[async_trait::async_trait]
+    impl AuctionSummaryBatchReader for TestAuctionSummaryBatchReader {
+        async fn find_summaries(
+            &self,
+            _auction_ids: &[auction_core::AuctionId],
+        ) -> Result<
+            HashMap<auction_core::AuctionId, auction_service::ports::AuctionSummary>,
+            AuctionSummaryBatchReadError,
+        > {
+            Ok(HashMap::new())
+        }
+    }
     use application::error::box_error;
     use application::operation_context::{CorrelationId, Principal, RequestId};
     use application::personalized::Personalized;
@@ -533,11 +603,13 @@ mod tests {
         FakeUnitOfWork,
         FakeDetailsReaderFactory,
         FakeFxRateSnapshotRepositoryFactory,
+        TestAuctionSummaryBatchReader,
     > {
         ListWatchlistHandler::new(
             FakeUnitOfWork(Arc::clone(state)),
             FakeDetailsReaderFactory(Arc::clone(state)),
             FakeFxRateSnapshotRepositoryFactory(Arc::clone(state)),
+            TestAuctionSummaryBatchReader,
         )
     }
 

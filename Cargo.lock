@@ -8942,6 +8942,8 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
+ "auction-service",
  "domain-primitives",
  "fake",
  "fxrate-core",

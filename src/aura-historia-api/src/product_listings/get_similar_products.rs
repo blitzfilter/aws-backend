@@ -477,6 +477,7 @@ mod tests {
                     .unwrap_or_else(|error| panic!("valid source listing ID: {error}")),
                 auction_id: None,
                 has_auction_context: false,
+                auction_summary: None,
                 title: Some(Localized {
                     localization: Language::En,
                     payload: Title::from("Cabinet"),
