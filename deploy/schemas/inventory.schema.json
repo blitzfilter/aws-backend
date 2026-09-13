@@ -358,14 +358,39 @@
                   "resources": {
                     "$ref": "#/$defs/__schema2"
                   },
-                  "listener": {
-                    "$ref": "#/$defs/__schema7"
+                  "review_listener": {
+                    "type": "object",
+                    "properties": {
+                      "port": {
+                        "$ref": "#/$defs/__schema8"
+                      },
+                      "bind": {
+                        "type": "string",
+                        "const": "LOOPBACK"
+                      }
+                    },
+                    "required": [
+                      "port",
+                      "bind"
+                    ],
+                    "additionalProperties": false
                   },
-                  "endpoint": {
-                    "$ref": "#/$defs/__schema9"
-                  },
-                  "ca_ref": {
-                    "$ref": "#/$defs/__schema5"
+                  "operations_listener": {
+                    "type": "object",
+                    "properties": {
+                      "port": {
+                        "$ref": "#/$defs/__schema8"
+                      },
+                      "bind": {
+                        "type": "string",
+                        "const": "LOOPBACK"
+                      }
+                    },
+                    "required": [
+                      "port",
+                      "bind"
+                    ],
+                    "additionalProperties": false
                   },
                   "ownership_plan": {
                     "type": "string",
@@ -403,9 +428,8 @@
                 "required": [
                   "host_id",
                   "resources",
-                  "listener",
-                  "endpoint",
-                  "ca_ref",
+                  "review_listener",
+                  "operations_listener",
                   "ownership_plan",
                   "credentials"
                 ],

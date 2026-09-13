@@ -108,6 +108,9 @@ const missingInventory: Path[] = [
   rolePath('api', 'slots', 'green', 'operations_listener', 'bind'),
   rolePath('cron', 'operations_listener'), rolePath('cron', 'operations_listener', 'bind'),
   rolePath('cron', 'operations_listener', 'port'),
+  rolePath('crawler', 'review_listener'), rolePath('crawler', 'review_listener', 'bind'),
+  rolePath('crawler', 'review_listener', 'port'), rolePath('crawler', 'operations_listener'),
+  rolePath('crawler', 'operations_listener', 'bind'), rolePath('crawler', 'operations_listener', 'port'),
   rolePath('api', 'credentials', 'business', 'pool_max'), rolePath('api', 'credentials', 'aws', 'profile_ref'),
   rolePath('crawler', 'credentials', 'crawler'), [...database, 'migrator'], [...database, 'backup'],
   [...database, 'sequin'], [...database, 'reserve_sessions'], [...database, 'history_id'],
@@ -223,8 +226,8 @@ test('a worker role moves independently of host names and other roles', () => {
 test('same port on different hosts is allowed', () => {
   const inventory = inventoryFixture(['dev'], 'SPLIT_HOST');
   const roles = inventory.stages[0]!.roles;
-  roles.crawler.listener.port = roles.cron.operations_listener.port;
-  roles.crawler.endpoint.port = roles.cron.operations_listener.port;
+  roles.crawler.operations_listener.port = roles.cron.operations_listener.port;
+  roles.crawler.review_listener.port = roles.api.slots.blue.listener.port;
   assert.doesNotThrow(() => parseInventory(inventory));
 });
 for (const [dimension, exact] of [['cpu_millicores', 5750], ['memory_mib', 11776], ['disk_mib', 35840]] as const) {
@@ -305,7 +308,7 @@ test('cron has only loopback operations and conservatively reserves its host por
   for (const port of [8080, 9080, 8100]) {
     invalidInventory(changed(inventory, rolePath('cron', 'operations_listener', 'port'), port));
   }
-  invalidInventory(changed(inventory, rolePath('cron', 'endpoint'), inventory.stages[0]!.roles.crawler.endpoint));
+  invalidInventory(changed(inventory, rolePath('cron', 'endpoint'), inventory.stages[0]!.roles.opensearch.endpoint));
   invalidInventory(changed(inventory, rolePath('cron', 'listener'), { port: 8082, bind: 'PUBLIC' }));
   const shared = sharedHostFixture();
   shared.stages[1]!.roles.cron.operations_listener.port = shared.stages[0]!.roles.cron.operations_listener.port;
@@ -327,6 +330,58 @@ test('cron controller ceilings match runtime while long executions remain cancel
   invalidRuntime(changed(runtime, ['cron', 'stop_seconds'], 3601));
   invalidRuntime(changed(runtime, ['cron', 'execution_seconds'], 7201));
 });
+
+test('crawler reserves separate loopback review and operations ports without claiming native HTTPS', () => {
+  const inventory = inventoryFixture(['dev']);
+  const crawler = inventory.stages[0]!.roles.crawler;
+  assert.doesNotThrow(() => parseInventory(inventory));
+  for (const listener of ['review_listener', 'operations_listener'] as const) {
+    for (const bind of ['PRIVATE', 'PUBLIC', 'ALL_IPV4', 'ALL_IPV6', 'ALL_INTERFACES']) {
+      invalidInventory(changed(inventory, rolePath('crawler', listener, 'bind'), bind));
+    }
+    for (const port of [0, 65536, 8080, 9080, 8100, 8082]) {
+      invalidInventory(changed(inventory, rolePath('crawler', listener, 'port'), port));
+    }
+    const shared = sharedHostFixture();
+    shared.stages[1]!.roles.crawler[listener].port = shared.stages[0]!.roles.crawler[listener].port;
+    invalidInventory(shared);
+    invalidRuntime(changed(runtimeFixture('dev'), ['inventory', ...rolePath('crawler', listener)], undefined, true));
+  }
+  invalidInventory(changed(inventory, rolePath('crawler', 'operations_listener', 'port'), crawler.review_listener.port));
+  for (const field of ['endpoint', 'listener', 'ca_ref']) {
+    invalidInventory(changed(inventory, rolePath('crawler', field), {}));
+  }
+});
+
+for (const stage of ['dev', 'prod', 'local', 'ephemeral', 'test'] as const) {
+  test(`crawler lifecycle matches explicit stage policy: ${stage}`, () => {
+    const runtime = runtimeFixture(stage);
+    assert.doesNotThrow(() => parseRuntimeConfiguration(runtime));
+    runtime.crawler.drain_seconds = 1;
+    runtime.crawler.stop_seconds = 31;
+    if (stage === 'dev' || stage === 'prod') invalidRuntime(runtime);
+    else assert.doesNotThrow(() => parseRuntimeConfiguration(runtime));
+    runtime.crawler.drain_seconds = 300;
+    runtime.crawler.stop_seconds = 330;
+    for (const field of ['startup_seconds', 'drain_seconds', 'stop_seconds'] as const) {
+      invalidRuntime(changed(runtime, ['crawler', field], undefined, true));
+      for (const value of [0, -1, 1.5, 3601, '300', Number.MAX_SAFE_INTEGER]) {
+        invalidRuntime(changed(runtime, ['crawler', field], value));
+      }
+      const schema = RuntimeConfiguration.shape.crawler.shape[field];
+      assert.equal(schema.safeParse(3600).success, true);
+      assert.equal(schema.safeParse(3601).success, false);
+    }
+    invalidRuntime(changed(runtime, ['crawler', 'stop_seconds'], 329));
+    runtime.crawler.startup_seconds = 1;
+    runtime.crawler.drain_seconds = 3570;
+    runtime.crawler.stop_seconds = 3600;
+    assert.doesNotThrow(() => parseRuntimeConfiguration(runtime));
+    runtime.crawler.startup_seconds = 3600;
+    assert.doesNotThrow(() => parseRuntimeConfiguration(runtime));
+    invalidRuntime(changed(runtime, ['crawler', 'drain_seconds'], 3571));
+  });
+}
 
 test('connection multiplication cannot round or overflow into an accepted budget', () => {
   const inventory = inventoryFixture(['dev']);

@@ -113,7 +113,9 @@ export function inventoryFixture(
           credentials: { business: pool('cron-business'), aws: aws('cron'), vertex: vertex('cron'), opensearch_ref: reference(`${stage}-cron-search`) },
         },
         crawler: {
-          ...service('crawler', 7878, 'crawl'), ownership_plan: 'READ_ONLY_TARGET',
+          host_id: hostFor('crawl').id, resources: resources(), ownership_plan: 'READ_ONLY_TARGET',
+          review_listener: { port: 7878, bind: 'LOOPBACK' },
+          operations_listener: { port: 9083, bind: 'LOOPBACK' },
           credentials: {
             business: pool('crawler-business', 8), crawler: pool('crawler-runtime', 16),
             aws: aws('crawler'), vertex: vertex('crawler'), review_auth_ref: reference(`${stage}-crawler-review`),
@@ -191,7 +193,7 @@ export function runtimeFixture(stage: Stage = 'test', inventory = inventoryFixtu
       };
     }),
     cron: { probe: probe(), drain_seconds: 300, stop_seconds: 330, execution_seconds: 7200, ownership_plan: 'READ_ONLY_TARGET' },
-    crawler: { probe: probe(), drain_seconds: 60, stop_seconds: 90, ownership_plan: 'READ_ONLY_TARGET' },
+    crawler: { probe: probe(), startup_seconds: 60, drain_seconds: 300, stop_seconds: 330, ownership_plan: 'READ_ONLY_TARGET' },
     email_assets: { bucket_ref: `${stage}-mail-bucket`, prefix: `${stage}/${source_sha}/mjml/` },
     preflight: { mode: 'READ_ONLY', queue_read: 'GET_QUEUE_ATTRIBUTES' },
   };
@@ -202,7 +204,7 @@ export function insecureLocalFixture(stage: Stage = 'local'): RuntimeConfigurati
   const runtime = runtimeFixture(stage);
   const roles = runtime.inventory.stages[0]!.roles;
   const privateEndpoints = [roles.api.slots.blue.endpoint, roles.api.slots.green.endpoint,
-    ...roles.workers.map(worker => worker.endpoint), roles.crawler.endpoint,
+    ...roles.workers.map(worker => worker.endpoint),
     roles.postgres_business.endpoint, roles.postgres_crawler.endpoint, roles.opensearch.endpoint, roles.sequin.endpoint];
   for (const endpoint of privateEndpoints) {
     endpoint.host = 'localhost';

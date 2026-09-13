@@ -119,7 +119,11 @@ const Cron = z.strictObject({
     business: Pool, aws: RolesAnywhere, opensearch_ref: SecretReference, vertex: Vertex,
   }),
 });
-const Crawler = Service.extend({
+const Crawler = z.strictObject({
+  host_id: Identifier,
+  resources: Resources,
+  review_listener: z.strictObject({ port: PortNumber, bind: z.literal('LOOPBACK') }),
+  operations_listener: z.strictObject({ port: PortNumber, bind: z.literal('LOOPBACK') }),
   ownership_plan: z.literal('READ_ONLY_TARGET'),
   credentials: z.strictObject({
     business: Pool, crawler: Pool, aws: RolesAnywhere, vertex: Vertex, review_auth_ref: SecretReference,
@@ -314,13 +318,15 @@ export const Inventory = z.strictObject({
     const allPlacements = [roles.api, ...roles.workers, roles.cron, roles.crawler,
       roles.postgres_business, roles.postgres_crawler, roles.opensearch, roles.sequin, roles.edge];
     const singleHost = new Set(allPlacements.map(role => role.host_id)).size === 1;
-    const services: Service[] = [...roles.workers, roles.crawler,
+    const services: Service[] = [...roles.workers,
       roles.postgres_business, roles.postgres_crawler, roles.opensearch, roles.sequin];
     for (const service of services) {
       const host = allocate(service.host_id, stage.stage, service.resources, [service.listener]);
       if (host) validateEndpoint(service.endpoint, host, service.host_id, service.listener, service.ca_ref, real, singleHost, ctx);
     }
     allocate(roles.cron.host_id, stage.stage, roles.cron.resources, [roles.cron.operations_listener]);
+    allocate(roles.crawler.host_id, stage.stage, roles.crawler.resources,
+      [roles.crawler.review_listener, roles.crawler.operations_listener]);
     const apiHost = allocate(roles.api.host_id, stage.stage, roles.api.resources_per_slot,
       Object.values(roles.api.slots).flatMap(slot => [slot.listener, slot.operations_listener]), 2);
     if (apiHost) {
@@ -434,7 +440,10 @@ export const RuntimeConfiguration = z.strictObject({
     ownership_plan: z.literal('READ_ONLY_TARGET'), execution_seconds: Seconds.max(7200),
     drain_seconds: Seconds.max(3600), stop_seconds: Seconds.max(3600),
   }),
-  crawler: Lifecycle.extend({ ownership_plan: z.literal('READ_ONLY_TARGET') }),
+  crawler: Lifecycle.extend({
+    ownership_plan: z.literal('READ_ONLY_TARGET'), startup_seconds: Seconds.max(3600),
+    drain_seconds: Seconds.max(3600), stop_seconds: Seconds.max(3600),
+  }),
   email_assets: z.strictObject({
     bucket_ref: Identifier,
     prefix: z.string().regex(new RegExp(`^(?:${Stage.options.join('|')})/[0-9a-f]{40}/mjml/$`)),
@@ -453,7 +462,8 @@ export const RuntimeConfiguration = z.strictObject({
   if (runtime.api.drain_seconds < 45 || runtime.api.stop_seconds < 60
     || runtime.api.stop_seconds < runtime.api.drain_seconds + 15) reject(ctx);
   if (runtime.cron.drain_seconds < 300 || runtime.cron.stop_seconds < runtime.cron.drain_seconds + 30
-    || runtime.crawler.stop_seconds < runtime.crawler.drain_seconds + 30) reject(ctx);
+    || runtime.crawler.stop_seconds < runtime.crawler.drain_seconds + 30
+    || (real && runtime.crawler.drain_seconds < 300)) reject(ctx);
   if (!unique(runtime.workers.map(worker => worker.scope))) reject(ctx);
   const { account_id: account, region } = stage.aws;
   const partition = region.startsWith('cn-') ? 'aws-cn' : region.startsWith('us-gov-') ? 'aws-us-gov' : 'aws';
