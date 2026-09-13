@@ -19,6 +19,16 @@ Models: orchestrator GPT-6-Astra; delegation has no model selector. Runtime inve
 
 Owner steering, 2026-09-12: no real migrations needed while still dev. No new migration SQL, migrator crate or incremental executor created. Keep fresh-install/test baseline setup; defer incremental upgrade/adoption/backfill machinery. No reset or live database authority implied. See scope override in `architecture-decisions.md`.
 
+## 2026-09-13 checkout revalidation
+
+Resumed clean at `b89d8942194f1ca676b487a9a89febb6f502f462`, branch `task/#1412-deployment`; no reset/fetch or live operation. Original accepted commits above remain historical evidence, not fresh test results. Actual orchestrator/review agents: GPT-6-Astra; delegation exposes no model selector, so requested Terra High unavailable.
+
+Read-only investigators `22147b71-176c-415c-a4fc-76ae6f7e75ed` (runtime) and `5adf92df-6f01-4351-b4d7-d55d45af4c2a` (AWS/contracts) confirmed 71 Cargo packages, 15 bins, four native services/five Rust Lambdas/ten scopes. Crawler daemon is implemented; active custody and host handover remain unpassed. TLS CA delivery/Lambda egress and real Sequin/SQS remain rollout/test gaps. API stall-independent whole-process teardown is a source-review concern, not a reproduced failure. Existing controller is pure/default-off; legacy manual CDK workflow remains callable, not a global kill switch.
+
+Current full playbook conflicts with the persisted migration-deferral instruction in this directory's `AGENTS.md`. No migration-policy reversal inferred in this slice; preserve existing sources/tools and advance unrelated offline foundations. Migration/adoption/backfill scope needs explicit resolution before implementing those domains. This is a scope conflict, not missing cloud authorization.
+
+Fresh read-only checks: Git clean/SHA, locked/offline Cargo metadata, TS no-emit checks pass. Investigator Node24 in-memory inventory/bootstrap290 tests pass; not Node26 or full-suite evidence. Dependency/file ownership remains ADR-002; integrator owns shared types/manifests/locks/workflows/docs. New independent work:08a application-only Compose renderer;09a uninstantiated Lambda-egress construct. Each gets separate review, checks and local commit; neither enables live deployment.
+
 ## Baseline checks
 
 | Command / environment | Result |
