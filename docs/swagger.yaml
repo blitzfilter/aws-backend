@@ -1964,6 +1964,18 @@ paths:
             items:
               type: string
             uniqueItems: true
+        - name: auctionId
+          in: query
+          required: false
+          description: Exact resolved Auction membership IDs. Repeat up to 100 distinct strict `auc_` TypeIDs; supplied IDs OR together and intersect all other filters. Listings without resolved membership do not match.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              type: string
+            uniqueItems: true
         - name: price
           in: query
           required: false
@@ -13402,10 +13414,18 @@ components:
           description: ListingSource IDs to include.
         excludeListingSourceId:
           type: array
-          items: &id003
-            type: string
+          items: *id003
           uniqueItems: true
           description: ListingSource IDs to exclude.
+          nullable: true
+        auctionId:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+          maxItems: 100
+          nullable: true
+          description: Exact resolved Auction membership IDs. Omit to preserve; `null` clears.
         price:
           allOf: &id004
             - $ref: "#/components/schemas/RangeQueryUInt64"
@@ -13524,7 +13544,7 @@ components:
     PatchProductListingSearchData:
       type: object
       description:
-        Partial ProductListing search criteria. Omitted fields are unchanged. `enhancedSearchDescription`, price,
+        Partial ProductListing search criteria. Omitted fields are unchanged. `enhancedSearchDescription`, `auctionId`, price,
         date ranges, and the availability query may be cleared with `null`; availability, orderability, and includeUnspecifiedAvailability`
         must be supplied together or all be `null`.
       properties:
@@ -13554,7 +13574,13 @@ components:
           items: *id003
           uniqueItems: true
           description: ListingSource IDs to exclude.
-          nullable: true
+        auctionId:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+          maxItems: 100
+          description: Exact resolved Auction membership IDs. Values use strict `auc_` TypeIDs and OR together.
         price:
           allOf: *id004
           nullable: true

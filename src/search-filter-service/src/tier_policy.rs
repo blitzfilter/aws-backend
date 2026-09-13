@@ -57,6 +57,7 @@ enum RestrictedFeature {
     EnhancedSearchDescription,
     ListingSourceIdQuery,
     ExcludeListingSourceIdQuery,
+    AuctionIdQuery,
     CreatedQuery,
     UpdatedQuery,
     LotBiddingOpensQuery,
@@ -65,10 +66,11 @@ enum RestrictedFeature {
 
 const PRO_RESTRICTED_FEATURES: [RestrictedFeature; 1] =
     [RestrictedFeature::EnhancedSearchDescription];
-const FREE_RESTRICTED_FEATURES: [RestrictedFeature; 7] = [
+const FREE_RESTRICTED_FEATURES: [RestrictedFeature; 8] = [
     RestrictedFeature::EnhancedSearchDescription,
     RestrictedFeature::ListingSourceIdQuery,
     RestrictedFeature::ExcludeListingSourceIdQuery,
+    RestrictedFeature::AuctionIdQuery,
     RestrictedFeature::CreatedQuery,
     RestrictedFeature::UpdatedQuery,
     RestrictedFeature::LotBiddingOpensQuery,
@@ -81,6 +83,7 @@ impl RestrictedFeature {
             Self::EnhancedSearchDescription => "enhancedSearchDescription",
             Self::ListingSourceIdQuery => "listingSourceIdQuery",
             Self::ExcludeListingSourceIdQuery => "excludeListingSourceIdQuery",
+            Self::AuctionIdQuery => "auctionIdQuery",
             Self::CreatedQuery => "createdQuery",
             Self::UpdatedQuery => "updatedQuery",
             Self::LotBiddingOpensQuery => "lotBiddingOpensQuery",
@@ -93,6 +96,7 @@ impl RestrictedFeature {
             Self::EnhancedSearchDescription => search.enhanced_search_description.is_some(),
             Self::ListingSourceIdQuery => !search.listing_source_id_query.is_empty(),
             Self::ExcludeListingSourceIdQuery => !search.exclude_listing_source_id_query.is_empty(),
+            Self::AuctionIdQuery => !search.auction_id_query.is_empty(),
             Self::CreatedQuery => search.created_query.is_some(),
             Self::UpdatedQuery => search.updated_query.is_some(),
             Self::LotBiddingOpensQuery => search.lot_bidding_opens_query.is_some(),
@@ -107,6 +111,7 @@ mod tests {
         active_filter_quota, monthly_match_quota, validate_search_feature_changes,
         validate_search_features,
     };
+    use auction_core::AuctionId;
     use listing_source_core::ListingSourceId;
     use localization::Language;
     use money::Currency;
@@ -133,6 +138,8 @@ mod tests {
     fn should_reject_tier_restricted_search_features() {
         let listing_source_search = ProductListingSearch::new(Language::En, Currency::Eur)
             .with_listing_source_id_query([ListingSourceId::new()].into_iter().collect());
+        let auction_search = ProductListingSearch::new(Language::En, Currency::Eur)
+            .with_auction_id_query([AuctionId::new()].into_iter().collect());
         let enhanced_search = ProductListingSearch::new(Language::En, Currency::Eur)
             .with_enhanced_search_description(
                 EnhancedSearchDescription::try_from("gold ring").unwrap(),
@@ -141,6 +148,14 @@ mod tests {
         assert_eq!(
             Err("listingSourceIdQuery"),
             validate_search_features(UserTier::Free, &listing_source_search)
+        );
+        assert_eq!(
+            Err("auctionIdQuery"),
+            validate_search_features(UserTier::Free, &auction_search)
+        );
+        assert_eq!(
+            Ok(()),
+            validate_search_features(UserTier::Pro, &auction_search)
         );
         assert_eq!(
             Err("enhancedSearchDescription"),

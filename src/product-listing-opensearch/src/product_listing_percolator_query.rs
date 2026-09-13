@@ -126,6 +126,7 @@ fn build_text_match_clause(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auction_core::AuctionId;
     use domain_primitives::query::range_query::RangeQuery;
     use money::MonetaryAmount;
 
@@ -187,6 +188,22 @@ mod tests {
         assert_eq!(
             Some(&json!({ "gte": 10_000 })),
             build_percolator_query(&min_only)?.pointer("/bool/filter/0/range/priceByCurrency.usd")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_filter_percolation_by_exact_auction_membership()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let auction_id = AuctionId::new();
+        let search = ProductListingSearch::new(Language::En, Currency::Usd)
+            .with_auction_id_query([auction_id].into_iter().collect());
+
+        let query = build_percolator_query(&search)?;
+
+        assert_eq!(
+            Some(&json!([auction_id.to_string()])),
+            query.pointer("/bool/filter/0/terms/auctionId")
         );
         Ok(())
     }

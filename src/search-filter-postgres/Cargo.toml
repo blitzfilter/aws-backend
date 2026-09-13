@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 application = { workspace = true }
+auction-core = { workspace = true }
 user-core = { workspace = true }
 domain-primitives = { workspace = true }
 async-trait = { workspace = true }

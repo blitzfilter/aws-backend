@@ -598,6 +598,13 @@ pub(crate) fn build_common_filter_clauses(
             }
         }));
     }
+    if !search.auction_id_query.is_empty() {
+        filter.push(json!({
+            "terms": {
+                ProductListingDocumentSerdeField::AuctionId.as_str(): search.auction_id_query.iter().map(ToString::to_string).collect::<Vec<_>>()
+            }
+        }));
+    }
 
     apply_availability_filter(&mut filter, search.availability_query.as_ref());
 
@@ -816,6 +823,7 @@ fn availability_matches_query(
 mod tests {
     use super::*;
     use crate::product_listing_document::{SalePricesDocument, SourcePriceDocument, TextDocument};
+    use auction_core::AuctionId;
     use domain_primitives::event_id::EventId;
     use fxrate_core::{FX_RATE_SCALE, FxRateId, FxRateQuote, FxRateSource, NewFxRateSnapshot};
     use indexmap::IndexSet;
@@ -974,6 +982,30 @@ mod tests {
             filter.to_string().contains("shop")
                 || filter.to_string().contains("seller")
                 || filter.to_string().contains("geo")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn should_filter_by_any_resolved_auction_membership_and_intersect_other_dimensions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = AuctionId::new();
+        let second = AuctionId::new();
+        let source = ListingSourceId::new();
+        let search = ProductListingSearch::new(Language::En, Currency::Eur)
+            .with_auction_id_query([first, second].into_iter().collect())
+            .with_listing_source_id_query([source].into_iter().collect());
+
+        let (_, filters) = build_common_filter_clauses(&search)?;
+
+        assert!(filters.iter().any(|filter| {
+            filter.pointer("/terms/auctionId")
+                == Some(&json!([first.to_string(), second.to_string()]))
+                || filter.pointer("/terms/auctionId")
+                    == Some(&json!([second.to_string(), first.to_string()]))
+        }));
+        assert!(filters.iter().any(|filter| {
+            filter.pointer("/terms/listingSourceId") == Some(&json!([source.to_string()]))
         }));
         Ok(())
     }

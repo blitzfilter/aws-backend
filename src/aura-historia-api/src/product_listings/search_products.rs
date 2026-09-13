@@ -7,6 +7,7 @@ use crate::state::ProductListingsState;
 
 use application::operation_context::Principal;
 use application::pagination::Cursor;
+use auction_core::AuctionId;
 use axum::Json;
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -56,6 +57,8 @@ struct ProductListingSearchData {
     listing_source_id: HashSet<String>,
     #[serde(default)]
     exclude_listing_source_id: HashSet<String>,
+    #[serde(default)]
+    auction_id: HashSet<String>,
     #[serde(default)]
     price: Option<RangeQuery<u64>>,
     #[serde(
@@ -155,6 +158,12 @@ impl TryFrom<ProductListingSearchData> for ProductListingSearch {
                 data.exclude_listing_source_id,
                 "excludeListingSourceId",
                 "ListingSource",
+            )?
+            .into(),
+            auction_id_query: parse_query_object_ids::<AuctionId>(
+                data.auction_id,
+                "auctionId",
+                "Auction",
             )?
             .into(),
             price_query: data.price.map(|range| range.map(MonetaryAmount::from)),
@@ -499,6 +508,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (app, calls) = app();
         let fx_rate_id = FxRateId::new();
+        let auction_id = AuctionId::new();
         let cursor = serde_json::json!({
             "fxRateId": fx_rate_id,
             "searchAfter": ["next"]
@@ -510,7 +520,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::get(format!(
-                    "/api/v1/product-listings?language=de&currency=USD&productQuery=cabinet&sort=updated&order=desc&size=200&searchAfter={encoded_cursor}"
+                    "/api/v1/product-listings?language=de&currency=USD&productQuery=cabinet&auctionId={auction_id}&sort=updated&order=desc&size=200&searchAfter={encoded_cursor}"
                 ))
                 .body(Body::empty())?,
             )
@@ -527,6 +537,7 @@ mod tests {
         assert_eq!(Language::De, request.search.language);
         assert_eq!(Currency::Usd, request.search.currency);
         assert_eq!("cabinet", request.search.product_listing_query[0].as_ref());
+        assert!(request.search.auction_id_query.contains(&auction_id));
         assert!(matches!(
             request.sort,
             Some(Sort {
@@ -561,6 +572,22 @@ mod tests {
                 "ListingSource",
             ) else {
                 return Err("noncanonical ListingSource ID was accepted".into());
+            };
+            assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
+        }
+
+        let auction_id = AuctionId::new();
+        for invalid in [
+            ProductListingId::new().to_string(),
+            auction_id.as_uuid().to_string(),
+            "auc_not-a-typeid".to_owned(),
+        ] {
+            let Err(error) = parse_query_object_ids::<AuctionId>(
+                HashSet::from([invalid]),
+                "auctionId",
+                "Auction",
+            ) else {
+                return Err("noncanonical Auction ID was accepted".into());
             };
             assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
         }

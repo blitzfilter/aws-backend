@@ -1,4 +1,5 @@
 use application::error::box_error;
+use auction_core::AuctionId;
 use domain_primitives::event_id::EventId;
 use domain_primitives::query::range_query::RangeQuery;
 use fxrate_core::FxRateId;
@@ -496,6 +497,8 @@ struct ProductListingSearchJson {
     listing_source_id_query: HashSet<uuid::Uuid>,
     #[serde(with = "canonical_uuid_set")]
     exclude_listing_source_id_query: HashSet<uuid::Uuid>,
+    #[serde(with = "canonical_uuid_set")]
+    auction_id_query: HashSet<uuid::Uuid>,
     price_query: Option<RangeQuery<u64>>,
     availability_query: Option<ListingAvailabilityQueryJson>,
     created_query: Option<TimeRangeJson>,
@@ -584,6 +587,12 @@ impl TryFrom<&ProductListingSearch> for ProductListingSearchJson {
                 .copied()
                 .map(|id| id.into_uuid())
                 .collect(),
+            auction_id_query: v
+                .auction_id_query
+                .iter()
+                .copied()
+                .map(AuctionId::into_uuid)
+                .collect(),
             price_query: v.price_query.map(|v| v.map(u64::from)),
             availability_query: v.availability_query.as_ref().map(|query| {
                 ListingAvailabilityQueryJson {
@@ -640,6 +649,13 @@ pub(crate) fn product_search_from_json(
             .collect::<Result<HashSet<_>, _>>()
             .map_err(ProductListingSearchJsonMappingError::ObjectId)?
             .into(),
+        auction_id_query: j
+            .auction_id_query
+            .into_iter()
+            .map(AuctionId::try_from)
+            .collect::<Result<HashSet<_>, _>>()
+            .map_err(ProductListingSearchJsonMappingError::ObjectId)?
+            .into(),
         price_query: j.price_query.map(|v| v.map(Into::into)),
         availability_query: j.availability_query.map(|query| ListingAvailabilityQuery {
             any_of: query.availability.into(),
@@ -668,6 +684,7 @@ pub(crate) fn product_search_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auction_core::AuctionId;
     use listing_source_core::ListingSourceId;
     use localization::Language;
     use money::Currency;
@@ -832,11 +849,13 @@ mod tests {
         let excluded_product_listing_id = ProductListingId::new();
         let included_listing_source_id = ListingSourceId::new();
         let excluded_listing_source_id = ListingSourceId::new();
+        let auction_id = AuctionId::new();
         let mut search = ProductListingSearch::new(Language::En, Currency::Eur)
             .with_listing_source_id_query(HashSet::from([included_listing_source_id]).into())
             .with_exclude_listing_source_id_query(
                 HashSet::from([excluded_listing_source_id]).into(),
-            );
+            )
+            .with_auction_id_query(HashSet::from([auction_id]).into());
         search.exclude_product_listing_id_query =
             HashSet::from([excluded_product_listing_id]).into();
 
@@ -860,6 +879,10 @@ mod tests {
             )),
             persisted.pointer("/exclude_listing_source_id_query/0")
         );
+        assert_eq!(
+            Some(&serde_json::json!(auction_id.into_uuid().to_string())),
+            persisted.pointer("/auction_id_query/0")
+        );
         assert_eq!(search, product_search_from_json(persisted)?);
         Ok(())
     }
@@ -879,6 +902,7 @@ mod tests {
             "exclude_product_listing_id_query",
             "listing_source_id_query",
             "exclude_listing_source_id_query",
+            "auction_id_query",
         ] {
             for value in &noncanonical_values {
                 let mut persisted = product_search_to_json(&ProductListingSearch::new(
@@ -906,6 +930,7 @@ mod tests {
             "exclude_product_listing_id_query",
             "listing_source_id_query",
             "exclude_listing_source_id_query",
+            "auction_id_query",
         ] {
             let mut persisted =
                 product_search_to_json(&ProductListingSearch::new(Language::En, Currency::Eur))?;
@@ -928,8 +953,10 @@ mod tests {
     {
         let product_listing_id = ProductListingId::new();
         let listing_source_id = ListingSourceId::new();
+        let auction_id = AuctionId::new();
         let product_listing_uuid = product_listing_id.into_uuid().to_string();
         let listing_source_uuid = listing_source_id.into_uuid().to_string();
+        let auction_uuid = auction_id.into_uuid().to_string();
         let mut persisted =
             product_search_to_json(&ProductListingSearch::new(Language::En, Currency::Eur))?;
         persisted["exclude_product_listing_id_query"] =
@@ -938,6 +965,7 @@ mod tests {
             serde_json::json!([listing_source_uuid, listing_source_uuid]);
         persisted["exclude_listing_source_id_query"] =
             serde_json::json!([listing_source_uuid, listing_source_uuid]);
+        persisted["auction_id_query"] = serde_json::json!([auction_uuid, auction_uuid]);
 
         let decoded = product_search_from_json(persisted)?;
 
@@ -955,6 +983,8 @@ mod tests {
                 .exclude_listing_source_id_query
                 .contains(&listing_source_id)
         );
+        assert_eq!(1, decoded.auction_id_query.len());
+        assert!(decoded.auction_id_query.contains(&auction_id));
         Ok(())
     }
 
@@ -1036,7 +1066,8 @@ mod tests {
             None => panic!("product search JSON must be an object"),
         };
 
-        assert_eq!(13, object.len());
+        assert_eq!(14, object.len());
+        assert!(object.contains_key("auction_id_query"));
         assert!(object.contains_key("lot_scheduled_closes_query"));
         assert!(object.contains_key("listing_source_id_query"));
         assert!(object.contains_key("exclude_listing_source_id_query"));

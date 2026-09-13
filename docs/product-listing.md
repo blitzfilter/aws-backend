@@ -157,6 +157,8 @@ Public listing discovery contains active listings only. Withdrawn listings are n
 
 `ListingAvailabilityQuery` supports exact availability values, derived orderability values, and `include_unspecified`. Exact values OR together; orderability expands to detailed values; supplying both intersects them; unspecified values only match the missing field and are optionally ORed in. Contradictory exact/orderability filters yield no concrete matches.
 
+Public ProductListing search and saved searches accept up to 100 distinct repeated exact `auctionId` values. Each must be a strict `auc_` TypeID; IDs OR together and intersect all other filters before OpenSearch pagination. The filter matches only resolved listing membership. Missing `auctionId` in a document covers both no auction context and unresolved context, neither of which matches. The same filter is percolated and has the same paid-tier restriction as `listingSourceId`.
+
 OpenSearch stores an active listing document with optional availability. Concrete availability serializes as its canonical code; absent availability omits the field. Missing availability queries use `must_not exists`; `UNKNOWN` is never indexed.
 
 ## Content assessment and image visibility

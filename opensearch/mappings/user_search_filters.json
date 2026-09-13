@@ -265,6 +265,7 @@
                     "excludeProductId": {"type": "keyword"},
                     "listingSourceId": {"type": "keyword"},
                     "excludeListingSourceId": {"type": "keyword"},
+                    "auctionId": {"type": "keyword"},
                     "price": {
                         "type": "object",
                         "properties": {

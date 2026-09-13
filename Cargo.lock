@@ -6792,6 +6792,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
  "domain-primitives",
  "fxrate-core",
  "listing-source-core",
@@ -6820,6 +6821,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "auction-core",
  "domain-primitives",
  "embedding",
  "fxrate-core",

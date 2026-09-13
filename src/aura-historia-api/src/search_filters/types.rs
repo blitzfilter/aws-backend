@@ -1,6 +1,7 @@
 use crate::patch_value::{PatchValue, clearable, non_nullable_option, non_nullable_patch};
 
 use application::patch_field::PatchField;
+use auction_core::AuctionId;
 use domain_primitives::event_id::EventId;
 
 use domain_primitives::query::range_query::RangeQuery;
@@ -217,6 +218,8 @@ pub(super) struct ProductListingSearchPatchData {
     listing_source_id_query: PatchValue<HashSet<String>>,
     #[serde(rename = "excludeListingSourceId", default)]
     exclude_listing_source_id_query: PatchValue<HashSet<String>>,
+    #[serde(rename = "auctionId", default)]
+    auction_id_query: PatchValue<HashSet<String>>,
     #[serde(rename = "price", default)]
     price_query: PatchValue<RangeQuery<u64>>,
     #[serde(rename = "availability", default)]
@@ -290,6 +293,14 @@ impl ProductListingSearchPatchData {
                 .map(Into::into),
                 "search.excludeListingSourceId",
             )?,
+            auction_id_query: clearable(
+                parse_body_object_id_patch::<AuctionId>(
+                    self.auction_id_query,
+                    "search.auctionId",
+                    "Auction",
+                )?
+                .map(Into::into),
+            ),
             price_query: clearable(
                 self.price_query
                     .map(|query| query.map(MonetaryAmount::from)),
@@ -396,9 +407,13 @@ impl UpdateSearchFilterMatchFeedbackData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(
-    deserialize = "ProductId: Deserialize<'de> + Eq + Hash, SourceId: Deserialize<'de> + Eq + Hash"
+    deserialize = "ProductId: Deserialize<'de> + Eq + Hash, SourceId: Deserialize<'de> + Eq + Hash, AuctionIdValue: Deserialize<'de> + Eq + Hash"
 ))]
-pub(super) struct ProductListingSearchData<ProductId = String, SourceId = String> {
+pub(super) struct ProductListingSearchData<
+    ProductId = String,
+    SourceId = String,
+    AuctionIdValue = String,
+> {
     #[serde(default)]
     #[serde(with = "crate::wire::language")]
     language: Language,
@@ -434,6 +449,12 @@ pub(super) struct ProductListingSearchData<ProductId = String, SourceId = String
         default
     )]
     exclude_listing_source_id_query: HashSet<SourceId>,
+    #[serde(
+        rename = "auctionId",
+        skip_serializing_if = "HashSet::is_empty",
+        default
+    )]
+    auction_id_query: HashSet<AuctionIdValue>,
     #[serde(rename = "price", skip_serializing_if = "Option::is_none", default)]
     price_query: Option<RangeQuery<u64>>,
     #[serde(
@@ -486,10 +507,12 @@ pub(super) struct ProductListingSearchData<ProductId = String, SourceId = String
     lot_scheduled_closes_query: Option<RangeQuery<OffsetDateTime>>,
 }
 
-impl TryFrom<ProductListingSearchData<String, String>> for ProductListingSearch {
+impl TryFrom<ProductListingSearchData<String, String, String>> for ProductListingSearch {
     type Error = crate::error::ApiError;
 
-    fn try_from(data: ProductListingSearchData<String, String>) -> Result<Self, Self::Error> {
+    fn try_from(
+        data: ProductListingSearchData<String, String, String>,
+    ) -> Result<Self, Self::Error> {
         Ok(Self {
             language: data.language,
             currency: data.currency,
@@ -521,6 +544,12 @@ impl TryFrom<ProductListingSearchData<String, String>> for ProductListingSearch 
                 "ListingSource",
             )?
             .into(),
+            auction_id_query: parse_body_object_ids::<AuctionId>(
+                data.auction_id_query,
+                "search.auctionId",
+                "Auction",
+            )?
+            .into(),
             price_query: data
                 .price_query
                 .map(|query| query.map(MonetaryAmount::from)),
@@ -537,7 +566,9 @@ impl TryFrom<ProductListingSearchData<String, String>> for ProductListingSearch 
     }
 }
 
-impl From<ProductListingSearch> for ProductListingSearchData<ProductListingId, ListingSourceId> {
+impl From<ProductListingSearch>
+    for ProductListingSearchData<ProductListingId, ListingSourceId, AuctionId>
+{
     fn from(search: ProductListingSearch) -> Self {
         Self {
             language: search.language,
@@ -547,6 +578,7 @@ impl From<ProductListingSearch> for ProductListingSearchData<ProductListingId, L
             exclude_product_listing_id_query: search.exclude_product_listing_id_query.into(),
             listing_source_id_query: search.listing_source_id_query.into(),
             exclude_listing_source_id_query: search.exclude_listing_source_id_query.into(),
+            auction_id_query: search.auction_id_query.into(),
             price_query: search.price_query.map(|query| query.map(u64::from)),
             availability_query: search
                 .availability_query
@@ -577,7 +609,7 @@ pub(super) struct SearchFilterData {
     notifications: bool,
     #[serde(with = "crate::wire::search_filter_state")]
     state: SearchFilterState,
-    search: ProductListingSearchData<ProductListingId, ListingSourceId>,
+    search: ProductListingSearchData<ProductListingId, ListingSourceId, AuctionId>,
     #[serde(
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none"
@@ -659,6 +691,7 @@ pub(super) struct PaginatedData<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auction_core::AuctionId;
     use localization::Language;
 
     #[test]
@@ -705,6 +738,56 @@ mod tests {
             patch.listing_source_id_query,
             PatchField::Unchanged
         ));
+        assert!(matches!(patch.auction_id_query, PatchField::Unchanged));
+        Ok(())
+    }
+
+    #[test]
+    fn should_round_trip_and_validate_saved_filter_auction_ids()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let auction_id = AuctionId::new();
+        let search = ProductListingSearch::new(Language::En, Currency::Eur)
+            .with_auction_id_query(HashSet::from([auction_id]).into());
+
+        let value = serde_json::to_value(ProductListingSearchData::from(search.clone()))?;
+        assert_eq!(
+            Some(&serde_json::json!([auction_id.to_string()])),
+            value.get("auctionId")
+        );
+        let decoded = ProductListingSearch::try_from(serde_json::from_value::<
+            ProductListingSearchData,
+        >(value)?)?;
+        assert_eq!(search, decoded);
+
+        for invalid in [
+            ProductListingId::new().to_string(),
+            auction_id.as_uuid().to_string(),
+        ] {
+            let data: ProductListingSearchData = serde_json::from_value(serde_json::json!({
+                "auctionId": [invalid]
+            }))?;
+            let error = ProductListingSearch::try_from(data)
+                .err()
+                .ok_or("invalid ID accepted")?;
+            assert_eq!(crate::error::INVALID_OBJECT_ID, error.code());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn should_patch_set_and_clear_saved_filter_auction_ids()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let auction_id = AuctionId::new();
+        let set: UpdateSearchFilterData = serde_json::from_value(serde_json::json!({
+            "search": { "auctionId": [auction_id.to_string()] }
+        }))?;
+        let (_, _, _, patch) = set.into_fields()?;
+        assert!(matches!(patch.auction_id_query, PatchField::Set(_)));
+
+        let clear: UpdateSearchFilterData =
+            serde_json::from_str(r#"{ "search": { "auctionId": null } }"#)?;
+        let (_, _, _, patch) = clear.into_fields()?;
+        assert_eq!(PatchField::Clear, patch.auction_id_query);
         Ok(())
     }
 

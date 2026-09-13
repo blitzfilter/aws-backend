@@ -1,11 +1,11 @@
 # Auction implementation plan
 
-**Status:** iterations 00–10 are complete. Iteration 10 adds no Auction-ID search.
+**Status:** iterations 00–11 are complete.
 
 - Target issue: #1465; reliable identifier path of #1464.
 - Baseline: `c10ea0f44e63f249d398c10a7211933a3c48868f`.
 - Development policy: direct replacement; no successor raw/API/event/index version, compatibility reader, aliases, dual writes, backfill, or transition migration.
-- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md), [05 qualified lot timing](auction-iterations/05-qualified-lot-timing.md), [06 membership resolution](auction-iterations/06-membership-resolution.md), [07 auction corrections](auction-iterations/07-auction-corrections.md), [08 crawler Auction extraction](auction-iterations/08-crawler-auctions.md), [09 Auction summary reads](auction-iterations/09-auction-summary-reads.md), [10 public Auction browsing](auction-iterations/10-auction-public-browsing.md). Incomplete records state their blocker and must not be treated as passing gates.
+- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md), [05 qualified lot timing](auction-iterations/05-qualified-lot-timing.md), [06 membership resolution](auction-iterations/06-membership-resolution.md), [07 auction corrections](auction-iterations/07-auction-corrections.md), [08 crawler Auction extraction](auction-iterations/08-crawler-auctions.md), [09 Auction summary reads](auction-iterations/09-auction-summary-reads.md), [10 public Auction browsing](auction-iterations/10-auction-public-browsing.md), [11 Auction membership search](auction-iterations/11-auction-membership-search.md). Incomplete records state their blocker and must not be treated as passing gates.
 
 ## Observed baseline
 
@@ -17,7 +17,7 @@
 | Direct partner path | `aura-historia-api::partner_product_listings` maps typed input to direct canonical service writes. It does not capture raw revisions. |
 | Producers | Crawler emits schema `1` `DISPLAY_TEXT`. Shopify Lambda and WooCommerce emit schema `1` `MACHINE_DECIMAL`. All current producers match the same contract. |
 | Journal and CDC | `product_listing_events` uses domain schema `1`; the worker validates/routs listing events and raw revisions separately. Existing worker SQS envelope schema is `2`; it is a separate protocol marker. |
-| Search | ProductListing OpenSearch indexes exact `lotBiddingOpensAt`, `lotScheduledClosesAt`, and `lotReportedClosedAt` plus lot label/position; date-only values are omitted from exact fields. Saved filters use half-open exact lot-time ranges. No Auction index or Auction-ID filter exists. |
+| Search | ProductListing OpenSearch indexes exact `auctionId`, `lotBiddingOpensAt`, `lotScheduledClosesAt`, and `lotReportedClosedAt` plus lot label/position; date-only values are omitted from exact time fields. Saved filters persist and percolate exact resolved Auction membership. No Auction index exists. |
 | Source deletion | `listing-source-service`/`listing-source-postgres` block source deletion for retained ProductListings, raw streams, and partnership-application references. Auction becomes an additional blocker in iteration 02. |
 
 The original broad inventory scan requested `rg`, but this checkout does not have `rg` installed. The same locations were confirmed through source inspection and the recorded baseline source map.
@@ -37,7 +37,7 @@ The original broad inventory scan requested `rg`, but this checkout does not hav
 | 08 | Fixture-backed crawler auction extraction | **PASS.** `crawler` maps the fixture-backed Lot-tissimo source key, catalogue URL, reviewed catalogue-name/lot-label selectors, and current raw Auction metadata. It adds no canonical crawler write. A real PostgreSQL raw capture → normalizer → resolver test proves one linked Auction, fill-only metadata, and conflict preservation. |
 | 09 | Batched Auction summaries on listing reads | **PASS.** `auction-service` batch-reader port, `auction-postgres` adapter, and ProductListing detail/search/similar/watchlist presentation return safe current Auction summaries without shared-metadata indexing or fan-out. |
 | 10 | Public browsing | **PASS.** Auction directory/detail readers, a bounded full ProductListing catalogue presentation, PostgreSQL adapters, public controllers/OpenAPI, real PostgreSQL reader coverage, public API acceptance coverage, and workspace library tests pass. |
-| 11 | Auction-ID search and saved search | ProductListing search model, OpenSearch predicates/projection fixtures, API parser, search-filter codecs/percolation/tier policy. |
+| 11 | Auction-ID search and saved search | **PASS.** ProductListing search model, OpenSearch predicates/projection fixtures, API parser, strict saved-filter codecs/percolation, ListingSource-equivalent tier policy, and full API/worker/OpenSearch verification pass. |
 | 12 | Release audit | Full acceptance fixtures, clean initialization rehearsal, documentation and compatibility audit. No deferred feature implementation. |
 
 Target dependency direction is `auction-core -> auction-service -> auction-postgres -> composition`, with `product-listing-core` depending only on Auction semantic values required by the final context. Auction service/core must not depend on ProductListing service/core. Catalogue ownership stays in `product-listing-service`; presentation reads use bounded readers, not repositories.

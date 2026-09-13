@@ -1,3 +1,4 @@
+use auction_core::AuctionId;
 use domain_primitives::query::range_query::RangeQuery;
 use domain_primitives::query::text_query::TextQuery;
 
@@ -23,7 +24,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use user_core::user_id::UserId;
 
-const PRODUCT_SEARCH_FIELDS: [&str; 13] = [
+const PRODUCT_SEARCH_FIELDS: [&str; 14] = [
     "language",
     "currency",
     "productQuery",
@@ -31,6 +32,7 @@ const PRODUCT_SEARCH_FIELDS: [&str; 13] = [
     "excludeProductId",
     "listingSourceId",
     "excludeListingSourceId",
+    "auctionId",
     "price",
     "availability",
     "created",
@@ -281,6 +283,8 @@ struct ProductListingSearchDocument {
     listing_source_id_query: HashSet<ListingSourceId>,
     #[serde(rename = "excludeListingSourceId")]
     exclude_listing_source_id_query: HashSet<ListingSourceId>,
+    #[serde(rename = "auctionId")]
+    auction_id_query: HashSet<AuctionId>,
     #[serde(rename = "price")]
     price_query: Option<RangeQuery<u64>>,
     #[serde(rename = "availability")]
@@ -373,6 +377,7 @@ impl TryFrom<&ProductListingSearch> for ProductListingSearchDocument {
                 .iter()
                 .copied()
                 .collect(),
+            auction_id_query: search.auction_id_query.iter().copied().collect(),
             price_query: search.price_query.map(|range| range.map(u64::from)),
             availability_query: search.availability_query.as_ref().map(|query| {
                 ListingAvailabilityQueryDocument {
@@ -415,6 +420,7 @@ impl TryFrom<ProductListingSearchDocument> for ProductListingSearch {
             exclude_product_listing_id_query: document.exclude_product_listing_id_query.into(),
             listing_source_id_query: document.listing_source_id_query.into(),
             exclude_listing_source_id_query: document.exclude_listing_source_id_query.into(),
+            auction_id_query: document.auction_id_query.into(),
             price_query: document
                 .price_query
                 .map(|range| range.map(MonetaryAmount::from)),
@@ -531,6 +537,7 @@ mod tests {
         let excluded_product_listing_id = ProductListingId::new();
         let listing_source_id = ListingSourceId::new();
         let excluded_listing_source_id = ListingSourceId::new();
+        let auction_id = AuctionId::new();
         let expected = projection(
             ProductListingSearch::new(Language::En, Currency::Usd)
                 .with_exclude_product_listing_id_query(
@@ -542,6 +549,7 @@ mod tests {
                 .with_exclude_listing_source_id_query(
                     std::collections::HashSet::from([excluded_listing_source_id]).into(),
                 )
+                .with_auction_id_query(std::collections::HashSet::from([auction_id]).into())
                 .with_availability_query(ListingAvailabilityQuery {
                     any_of: std::collections::HashSet::from([ListingAvailability::InStock]).into(),
                     orderability: std::collections::HashSet::from([
@@ -585,6 +593,10 @@ mod tests {
             Some(&serde_json::json!(excluded_listing_source_id.to_string())),
             value.pointer("/search/excludeListingSourceId/0")
         );
+        assert_eq!(
+            Some(&serde_json::json!(auction_id.to_string())),
+            value.pointer("/search/auctionId/0")
+        );
         assert!(value.pointer("/search/shopName").is_none());
         assert!(value.pointer("/search/sellerName").is_none());
         assert!(value.pointer("/search/shopType").is_none());
@@ -602,6 +614,10 @@ mod tests {
         assert_eq!(
             Some(&serde_json::json!(excluded_listing_source_id.to_string())),
             value.pointer("/query/bool/must_not/1/terms/listingSourceId/0")
+        );
+        assert_eq!(
+            Some(&serde_json::json!(auction_id.to_string())),
+            value.pointer("/query/bool/filter/1/terms/auctionId/0")
         );
         assert_eq!(
             Some(&serde_json::json!("IN_STOCK")),
@@ -638,6 +654,7 @@ mod tests {
                 "/search/excludeListingSourceId/0",
                 ProductListingId::new().to_string(),
             ),
+            ("/search/auctionId/0", ProductListingId::new().to_string()),
         ];
 
         for (pointer, wrong_id) in cases {
@@ -672,6 +689,11 @@ mod tests {
             .iter()
             .next()
             .ok_or("excluded ListingSource ID missing")?;
+        let auction_id = search
+            .auction_id_query
+            .iter()
+            .next()
+            .ok_or("Auction ID missing")?;
         let cases = [
             (
                 "/userSearchFilterId",
@@ -690,6 +712,7 @@ mod tests {
                 "/search/excludeListingSourceId/0",
                 excluded_listing_source_id.as_uuid().to_string(),
             ),
+            ("/search/auctionId/0", auction_id.as_uuid().to_string()),
         ];
 
         for (pointer, bare_id) in cases {
@@ -714,7 +737,8 @@ mod tests {
                 )
                 .with_exclude_listing_source_id_query(
                     std::collections::HashSet::from([ListingSourceId::new()]).into(),
-                ),
+                )
+                .with_auction_id_query(std::collections::HashSet::from([AuctionId::new()]).into()),
         )
     }
 
@@ -814,6 +838,7 @@ mod tests {
             .with_exclude_listing_source_id_query(
                 std::collections::HashSet::from([ListingSourceId::new()]).into(),
             )
+            .with_auction_id_query(std::collections::HashSet::from([AuctionId::new()]).into())
             .with_price_query(RangeQuery {
                 min: Some(MonetaryAmount::from(10_000_u64)),
                 max: Some(MonetaryAmount::from(50_000_u64)),

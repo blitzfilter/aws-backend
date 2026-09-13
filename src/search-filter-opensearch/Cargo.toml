@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+auction-core = { workspace = true }
 user-core = { workspace = true }
 domain-primitives = { workspace = true }
 application = { workspace = true }
@@ -26,7 +27,6 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-auction-core = { workspace = true }
 fxrate-core = { workspace = true }
 indexmap = { workspace = true }
 serial_test = { workspace = true }

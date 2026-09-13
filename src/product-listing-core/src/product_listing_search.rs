@@ -1,6 +1,7 @@
 use crate::listing_availability::ListingAvailability;
 use crate::listing_orderability::ListingOrderability;
 use crate::product_listing_id::ProductListingId;
+use auction_core::AuctionId;
 
 use domain_primitives::query::any_of_query::AnyOfQuery;
 use domain_primitives::query::range_query::RangeQuery;
@@ -98,6 +99,7 @@ pub struct ProductListingSearch {
     pub exclude_product_listing_id_query: AnyOfQuery<ProductListingId>,
     pub listing_source_id_query: AnyOfQuery<ListingSourceId>,
     pub exclude_listing_source_id_query: AnyOfQuery<ListingSourceId>,
+    pub auction_id_query: AnyOfQuery<AuctionId>,
     pub price_query: Option<RangeQuery<MonetaryAmount>>,
     pub availability_query: Option<ListingAvailabilityQuery>,
     pub created_query: Option<RangeQuery<OffsetDateTime>>,
@@ -116,6 +118,7 @@ impl ProductListingSearch {
             exclude_product_listing_id_query: AnyOfQuery::default(),
             listing_source_id_query: AnyOfQuery::default(),
             exclude_listing_source_id_query: AnyOfQuery::default(),
+            auction_id_query: AnyOfQuery::default(),
             price_query: None,
             availability_query: None,
             created_query: None,
@@ -159,6 +162,11 @@ impl ProductListingSearch {
         exclude_listing_source_id_query: AnyOfQuery<ListingSourceId>,
     ) -> Self {
         self.exclude_listing_source_id_query = exclude_listing_source_id_query;
+        self
+    }
+
+    pub fn with_auction_id_query(mut self, auction_id_query: AnyOfQuery<AuctionId>) -> Self {
+        self.auction_id_query = auction_id_query;
         self
     }
 
@@ -219,6 +227,7 @@ mod tests {
         let product_listing_id = ProductListingId::new();
         let listing_source_id = ListingSourceId::new();
         let excluded_listing_source_id = ListingSourceId::new();
+        let auction_id = AuctionId::new();
         let search = ProductListingSearch::new(Language::En, Currency::Usd)
             .with_product_listing_query(text_query("vase"))
             .with_enhanced_search_description(
@@ -229,6 +238,7 @@ mod tests {
             .with_exclude_listing_source_id_query(
                 HashSet::from([excluded_listing_source_id]).into(),
             )
+            .with_auction_id_query(HashSet::from([auction_id]).into())
             .with_availability_query(ListingAvailabilityQuery {
                 any_of: HashSet::from([ListingAvailability::Available]).into(),
                 ..Default::default()
@@ -251,6 +261,7 @@ mod tests {
                 .exclude_listing_source_id_query
                 .contains(&excluded_listing_source_id)
         );
+        assert!(search.auction_id_query.contains(&auction_id));
         assert!(
             search
                 .availability_query
@@ -296,6 +307,7 @@ pub mod faker {
                 exclude_product_listing_id_query: config.fake_with_rng(rng),
                 listing_source_id_query: AnyOfQuery::default(),
                 exclude_listing_source_id_query: AnyOfQuery::default(),
+                auction_id_query: AnyOfQuery::default(),
                 price_query: config.fake_with_rng(rng),
                 availability_query: None,
                 created_query: fake_range_query_datetime(config, rng),
