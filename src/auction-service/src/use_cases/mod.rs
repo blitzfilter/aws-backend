@@ -12,3 +12,10 @@ pub use commands::update_auction::{
 pub use queries::get_auction::{
     AuctionAdminDetailsView, GetAuctionError, GetAuctionHandler, GetAuctionUseCase,
 };
+pub use queries::get_public_auction::{
+    GetPublicAuctionError, GetPublicAuctionHandler, GetPublicAuctionResult, GetPublicAuctionUseCase,
+};
+pub use queries::list_auctions::{
+    ListAuctionsError, ListAuctionsHandler, ListAuctionsRequest, ListAuctionsResult,
+    ListAuctionsUseCase,
+};

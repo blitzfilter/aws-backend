@@ -1,11 +1,11 @@
 # Auction implementation plan
 
-**Status:** iterations 00–09 are complete. Iteration 09 adds batched current Auction summaries to existing ProductListing reads. It adds no public Auction browsing or Auction-ID search.
+**Status:** iterations 00–10 are complete. Iteration 10 adds no Auction-ID search.
 
 - Target issue: #1465; reliable identifier path of #1464.
 - Baseline: `c10ea0f44e63f249d398c10a7211933a3c48868f`.
 - Development policy: direct replacement; no successor raw/API/event/index version, compatibility reader, aliases, dual writes, backfill, or transition migration.
-- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md), [05 qualified lot timing](auction-iterations/05-qualified-lot-timing.md), [06 membership resolution](auction-iterations/06-membership-resolution.md), [07 auction corrections](auction-iterations/07-auction-corrections.md), [08 crawler Auction extraction](auction-iterations/08-crawler-auctions.md), [09 Auction summary reads](auction-iterations/09-auction-summary-reads.md). Incomplete records state their blocker and must not be treated as passing gates.
+- Iteration records: [00 inventory](auction-iterations/00-inventory.md), [01 auction core](auction-iterations/01-auction-core.md), [02 Auction persistence](auction-iterations/02-auction-persistence.md), [03 admin HTTP](auction-iterations/03-auction-admin-api.md), [04 current raw contract](auction-iterations/04-current-raw-contract.md), [05 qualified lot timing](auction-iterations/05-qualified-lot-timing.md), [06 membership resolution](auction-iterations/06-membership-resolution.md), [07 auction corrections](auction-iterations/07-auction-corrections.md), [08 crawler Auction extraction](auction-iterations/08-crawler-auctions.md), [09 Auction summary reads](auction-iterations/09-auction-summary-reads.md), [10 public Auction browsing](auction-iterations/10-auction-public-browsing.md). Incomplete records state their blocker and must not be treated as passing gates.
 
 ## Observed baseline
 
@@ -36,7 +36,7 @@ The original broad inventory scan requested `rg`, but this checkout does not hav
 | 07 | Corrections, override barrier, and safe release | **PASS.** Listing-owned policy/audit/floors, canonical/raw/partner guards, admin context/correction/release endpoints, strict `If-Match`, and full worker verification pass. |
 | 08 | Fixture-backed crawler auction extraction | **PASS.** `crawler` maps the fixture-backed Lot-tissimo source key, catalogue URL, reviewed catalogue-name/lot-label selectors, and current raw Auction metadata. It adds no canonical crawler write. A real PostgreSQL raw capture → normalizer → resolver test proves one linked Auction, fill-only metadata, and conflict preservation. |
 | 09 | Batched Auction summaries on listing reads | **PASS.** `auction-service` batch-reader port, `auction-postgres` adapter, and ProductListing detail/search/similar/watchlist presentation return safe current Auction summaries without shared-metadata indexing or fan-out. |
-| 10 | Public browsing | Auction directory/detail readers, listing-service catalogue reader, PostgreSQL adapters, public controllers/OpenAPI/API tests. |
+| 10 | Public browsing | **PASS.** Auction directory/detail readers, a bounded full ProductListing catalogue presentation, PostgreSQL adapters, public controllers/OpenAPI, real PostgreSQL reader coverage, public API acceptance coverage, and workspace library tests pass. |
 | 11 | Auction-ID search and saved search | ProductListing search model, OpenSearch predicates/projection fixtures, API parser, search-filter codecs/percolation/tier policy. |
 | 12 | Release audit | Full acceptance fixtures, clean initialization rehearsal, documentation and compatibility audit. No deferred feature implementation. |
 

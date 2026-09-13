@@ -3,7 +3,10 @@ use admin_overview_service::GetAdminOverviewUseCase;
 use async_trait::async_trait;
 use auction_service::use_cases::{
     commands::{create_auction::CreateAuctionUseCase, update_auction::UpdateAuctionUseCase},
-    queries::get_auction::GetAuctionUseCase,
+    queries::{
+        get_auction::GetAuctionUseCase, get_public_auction::GetPublicAuctionUseCase,
+        list_auctions::ListAuctionsUseCase,
+    },
 };
 use billing_service::use_cases::{
     CreateBillingCheckoutSessionUseCase, CreateBillingManagementSessionUseCase,
@@ -55,8 +58,8 @@ use party_service::use_cases::queries::get_party::GetPartyUseCase;
 use party_service::use_cases::queries::search_parties::SearchPartiesUseCase;
 use product_listing_service::use_cases::{
     CorrectProductListingAuctionContextUseCase, CreateProductListingUseCase,
-    GetProductListingAuctionContextUseCase, GetProductListingHistoryUseCase,
-    GetProductListingUseCase, GetSimilarProductListingsUseCase,
+    GetAuctionCatalogueUseCase, GetProductListingAuctionContextUseCase,
+    GetProductListingHistoryUseCase, GetProductListingUseCase, GetSimilarProductListingsUseCase,
     ReleaseProductListingAuctionOverrideUseCase, SearchProductListingsUseCase,
     UpdateProductListingUseCase, UpsertProductListingUseCase, WithdrawProductListingUseCase,
 };
@@ -125,6 +128,7 @@ pub struct AppState {
     pub(crate) notifications: Option<NotificationsState>,
     pub(crate) webhooks: Option<WebhooksState>,
     pub(crate) auctions: Option<AuctionsState>,
+    pub(crate) public_auctions: Option<PublicAuctionsState>,
     pub(crate) admin_product_listing_auctions: Option<AdminProductListingAuctionsState>,
 }
 
@@ -154,6 +158,7 @@ impl AppState {
             notifications: None,
             webhooks: None,
             auctions: None,
+            public_auctions: None,
             admin_product_listing_auctions: None,
         }
     }
@@ -249,6 +254,11 @@ impl AppState {
         self
     }
 
+    pub fn with_public_auctions(mut self, public_auctions: PublicAuctionsState) -> Self {
+        self.public_auctions = Some(public_auctions);
+        self
+    }
+
     pub fn with_admin_product_listing_auctions(
         mut self,
         admin_product_listing_auctions: AdminProductListingAuctionsState,
@@ -277,6 +287,30 @@ impl AuctionsState {
             create,
             get,
             update,
+            authenticator,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct PublicAuctionsState {
+    pub(crate) get: Arc<dyn GetPublicAuctionUseCase>,
+    pub(crate) list: Arc<dyn ListAuctionsUseCase>,
+    pub(crate) catalogue: Arc<dyn GetAuctionCatalogueUseCase>,
+    pub(crate) authenticator: Arc<dyn TokenAuthenticator>,
+}
+
+impl PublicAuctionsState {
+    pub fn new(
+        get: Arc<dyn GetPublicAuctionUseCase>,
+        list: Arc<dyn ListAuctionsUseCase>,
+        catalogue: Arc<dyn GetAuctionCatalogueUseCase>,
+        authenticator: Arc<dyn TokenAuthenticator>,
+    ) -> Self {
+        Self {
+            get,
+            list,
+            catalogue,
             authenticator,
         }
     }

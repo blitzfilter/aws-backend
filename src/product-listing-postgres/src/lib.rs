@@ -32,7 +32,8 @@ pub use product_listing_repository::SqlxProductListingRepositoryFactory;
 pub use product_listing_translation_source_reader::SqlxProductListingTranslationSourceReader;
 pub use product_listing_translation_writer::SqlxProductListingTranslationWriterFactory;
 pub use readers::{
-    SqlxListingSourceSummaryReader, SqlxProductListingContentAssessmentReader,
+    SqlxAuctionCatalogueReaderFactory, SqlxListingSourceSummaryReader,
+    SqlxProductListingContentAssessmentReader,
     SqlxProductListingContentAssessmentSnapshotReaderFactory,
     SqlxProductListingCurrentEventGuardFactory, SqlxProductListingDetailsBatchReader,
     SqlxProductListingDetailsReaderFactory, SqlxProductListingEmbeddingReaderFactory,

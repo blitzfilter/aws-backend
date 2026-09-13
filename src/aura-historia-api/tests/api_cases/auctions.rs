@@ -248,3 +248,88 @@ async fn should_reject_duplicate_key_invalid_id_and_non_admin_auction_requests()
         "FORBIDDEN",
     );
 }
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA, OPENSEARCH, &AURA_API])]
+async fn should_browse_public_auction_directory_detail_and_empty_catalogue_anonymously() {
+    let source_id = ListingSourceId::try_from(seed_listing_source().await)
+        .unwrap_or_else(|error| panic!("invalid seeded ListingSource ID: {error}"));
+    let admin_id = seed_user("ADMIN").await;
+    let admin_token = seed_access_token_for(admin_id, std::collections::HashSet::new()).await;
+    let client = reqwest::Client::new();
+    let created = client
+        .post(format!("{}/api/v1/admin/auctions", AURA_API.base_url()))
+        .bearer_auth(String::from(admin_token))
+        .json(&json!({
+            "listingSourceId": source_id,
+            "sourceAuctionId": "public-catalogue"
+        }))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to create public Auction fixture: {error}"));
+    let (_, created_body) = json_response(created).await;
+    let auction_id = created_body["auctionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("created Auction response has no auctionId"))
+        .parse::<AuctionId>()
+        .unwrap_or_else(|error| panic!("created response has invalid Auction ID: {error}"));
+
+    let directory = client
+        .get(format!(
+            "{}/api/v1/auctions?pageSize=5",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to list public Auctions: {error}"));
+    let directory_cache_control = directory
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let (directory_status, directory_body) = json_response(directory).await;
+    assert_eq!(reqwest::StatusCode::OK, directory_status);
+    assert_eq!(Some("no-store".to_owned()), directory_cache_control);
+    assert_eq!(
+        json!(auction_id.to_string()),
+        directory_body["items"][0]["auctionId"]
+    );
+
+    let detail = client
+        .get(format!(
+            "{}/api/v1/auctions/{auction_id}",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to get public Auction: {error}"));
+    let detail_cache_control = detail
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let (detail_status, detail_body) = json_response(detail).await;
+    assert_eq!(reqwest::StatusCode::OK, detail_status);
+    assert_eq!(Some("no-store".to_owned()), detail_cache_control);
+    assert_eq!(json!(auction_id.to_string()), detail_body["auctionId"]);
+    assert!(detail_body.get("sourceAuctionId").is_none());
+    assert!(detail_body.get("expectedVersion").is_none());
+
+    let catalogue = client
+        .get(format!(
+            "{}/api/v1/auctions/{auction_id}/product-listings?pageSize=5",
+            AURA_API.base_url()
+        ))
+        .send()
+        .await
+        .unwrap_or_else(|error| panic!("failed to get public Auction catalogue: {error}"));
+    let catalogue_cache_control = catalogue
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let (catalogue_status, catalogue_body) = json_response(catalogue).await;
+    assert_eq!(reqwest::StatusCode::OK, catalogue_status);
+    assert_eq!(Some("no-store".to_owned()), catalogue_cache_control);
+    assert_eq!(json!(5), catalogue_body["pageSize"]);
+    assert_eq!(json!([]), catalogue_body["items"]);
+}

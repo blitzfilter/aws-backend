@@ -1,3 +1,4 @@
+mod auction_catalogue_reader;
 mod listing_source_summary_reader;
 mod product_listing_content_assessment_reader;
 mod product_listing_content_assessment_snapshot_reader;
@@ -11,6 +12,7 @@ mod product_listing_search_filter_match_source_reader;
 mod product_listing_user_state_reader;
 mod product_listing_watchlist_details_reader;
 mod product_listing_watchlist_notification_source_reader;
+pub use auction_catalogue_reader::SqlxAuctionCatalogueReaderFactory;
 pub use listing_source_summary_reader::SqlxListingSourceSummaryReader;
 pub use product_listing_content_assessment_reader::SqlxProductListingContentAssessmentReader;
 pub use product_listing_content_assessment_snapshot_reader::SqlxProductListingContentAssessmentSnapshotReaderFactory;

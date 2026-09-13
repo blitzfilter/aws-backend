@@ -8,5 +8,8 @@ mod repository_factory;
 
 pub use auction_event_appender::SqlxAuctionEventAppenderFactory;
 pub use metadata_policy_repository::SqlxAuctionMetadataPolicyRepositoryFactory;
-pub use readers::{SqlxAuctionDetailsReader, SqlxAuctionSummaryBatchReader};
+pub use readers::{
+    SqlxAuctionDetailsReader, SqlxAuctionDirectoryReader, SqlxAuctionSummaryBatchReader,
+    SqlxPublicAuctionDetailsReader,
+};
 pub use repository_factory::SqlxAuctionRepositoryFactory;

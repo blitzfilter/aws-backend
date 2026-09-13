@@ -53,6 +53,115 @@ servers:
   - url: https://api.aura-historia.com
     description: Production environment
 paths:
+  /api/v1/auctions:
+    get:
+      summary: List public Auctions
+      operationId: listAuctions
+      tags: [Auctions]
+      parameters:
+        - { name: listingSourceId, in: query, schema: { type: string } }
+        - {
+            name: format,
+            in: query,
+            schema: { type: string, enum: [LIVE, TIMED] },
+          }
+        - {
+            name: reportedStatus,
+            in: query,
+            schema:
+              {
+                type: string,
+                enum: [SCHEDULED, IN_PROGRESS, ENDED, POSTPONED, CANCELLED],
+              },
+          }
+        - {
+            name: timeRole,
+            in: query,
+            schema:
+              {
+                type: string,
+                enum:
+                  [
+                    BIDDING_OPENS,
+                    LIVE_STARTS,
+                    LOTS_BEGIN_CLOSING,
+                    SCHEDULED_END,
+                  ],
+              },
+          }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - {
+            name: pageSize,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 21 },
+          }
+        - name: searchAfter
+          in: query
+          description: Complete returned JSON cursor. Its scope must exactly match the source, format, reported-status, and exact-time filters of this request.
+          schema: { type: string }
+      responses:
+        "200":
+          {
+            description: "Bounded newest-first Auction directory. All responses use `Cache-Control: no-store`.",
+          }
+        "400":
+          {
+            description: Invalid ID,
+            filter,
+            cursor,
+            or incomplete exact-time range.,
+          }
+  /api/v1/auctions/{auctionId}:
+    get:
+      summary: Get public Auction detail
+      operationId: getAuction
+      tags: [Auctions]
+      parameters:
+        - name: auctionId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Strict `auc_` UUIDv7 TypeID.
+      responses:
+        "200":
+          {
+            description: Public Auction facts,
+            source summary,
+            schedule,
+            reported lot count,
+            and visible listing count. Always `Cache-Control: no-store`.,
+          }
+        "400": { description: Invalid Auction ID (`INVALID_OBJECT_ID`). }
+        "404": { description: Auction missing (`AUCTION_NOT_FOUND`). }
+  /api/v1/auctions/{auctionId}/product-listings:
+    get:
+      summary: Get public Auction catalogue
+      operationId: getAuctionCatalogue
+      tags: [Auctions]
+      parameters:
+        - name: auctionId
+          in: path
+          required: true
+          schema: { type: string }
+        - { name: language, in: query, schema: { type: string, default: en } }
+        - { name: currency, in: query, schema: { type: string, default: EUR } }
+        - {
+            name: pageSize,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 21 },
+          }
+        - name: searchAfter
+          in: query
+          description: Complete returned JSON cursor. It is scoped to this Auction and includes `auctionId`, catalogue position, and ProductListing ID.
+          schema: { type: string }
+      responses:
+        "200":
+          {
+            description: "Visible assigned ProductListings in normal personalized detail presentation, ordered by catalogue position, null positions last, then backing listing UUID. Always `Cache-Control: no-store`.",
+          }
+        "400": { description: Invalid Auction ID or cursor. }
+        "404": { description: Auction missing (`AUCTION_NOT_FOUND`). }
   /api/v1/admin/auctions:
     post:
       summary: Create a source-scoped Auction (admin)

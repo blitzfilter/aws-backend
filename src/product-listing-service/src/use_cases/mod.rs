@@ -67,6 +67,10 @@ pub use queries::authorize_product_listing_raw_capture::{
     AuthorizeProductListingRawCaptureRequest, AuthorizeProductListingRawCaptureResult,
     AuthorizeProductListingRawCaptureUseCase,
 };
+pub use queries::get_auction_catalogue::{
+    GetAuctionCatalogueError, GetAuctionCatalogueHandler, GetAuctionCatalogueRequest,
+    GetAuctionCatalogueUseCase,
+};
 pub use queries::get_product_listing::{
     DisplayProductListingPricing, GetProductListingError, GetProductListingHandler,
     GetProductListingRequest, GetProductListingUseCase, PersonalizedProductListingDetailsView,

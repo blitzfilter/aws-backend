@@ -262,7 +262,7 @@ impl From<AuctionAdminDetailsView> for AuctionAdminData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AuctionScheduleResponseData {
+pub(crate) struct AuctionScheduleResponseData {
     bidding_opens: Option<AuctionTimeResponseData>,
     live_starts: Option<AuctionTimeResponseData>,
     lots_begin_closing: Option<AuctionTimeResponseData>,
