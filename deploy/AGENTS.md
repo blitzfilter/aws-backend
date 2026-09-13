@@ -29,3 +29,4 @@
 - `control/` — TypeScript contracts/CLI/planning/state tests; Node26 production target.
 - `schemas/` — generated strict JSON Schema documents; semantic checks also mandatory.
 - `bootstrap/` — owner-provided protection/setup specifications, never applied implicitly.
+- `compose/` — offline application-template contract. Cron/crawler render only; API/worker blocked pending trusted private bind input. No executor or protected-file materializer. Retired singleton uses restart=no; active recovery needs durable owner-aware reconciliation.

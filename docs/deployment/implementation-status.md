@@ -15,7 +15,9 @@ Models: orchestrator GPT-6-Astra; delegation has no model selector. Runtime inve
 | 04 | Cron/crawler inner lifecycle and check-only slices accepted; iteration incomplete | Foundation `655dfe440813a26e165893d0894d99e2351a6b4a`, task ownership `c7a46b9b434eb0dc02c26a4e91edc863cae34896`, service/scheduler `1e4a9e606ec685bdfcdd8f3bdce3b603e8123762`, preflight `ea91dace22616e9c7fcc3c2234c6758b7f7d594c`, daemon `64b5f422a2050d71129d965a635c1d94070b5302`. Daemon slice below accepted; full active-custody/host handover remains unpassed |
 | 05 | Local fresh-baseline slice accepted | `e6c2311095636385504122e56722fc0bab550046`; guarded existing-command initialization/verification, no incremental executor. Real-stage setup unimplemented |
 | 06 | Rescoped; not implemented | Fresh search definitions only; historical migrations/adoption/backfills deferred |
-| 07–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
+| 07 | Not started | Immutable images/publication incomplete |
+| 08 | Application Compose foundation accepted; iteration incomplete | 08a evidence below; cron/crawler rendering only, no host execution |
+| 09–14 | Not started | Dependency gates in `architecture-decisions.md`; no functionality claimed |
 
 Owner steering, 2026-09-12: no real migrations needed while still dev. No new migration SQL, migrator crate or incremental executor created. Keep fresh-install/test baseline setup; defer incremental upgrade/adoption/backfill machinery. No reset or live database authority implied. See scope override in `architecture-decisions.md`.
 
@@ -173,6 +175,16 @@ Tests prove genuine initialization for both fresh targets, exact SQLx history, i
 Integrated locked/offline `cargo test -p crawler --bin bootstrap-local --bin server --test server_preflight_postgres --all-features`:20 bootstrap+130 server+10 fixture helpers pass;3 server helpers/3 fixture entries ignored at top level, separately exercised. Full workspace all-target/all-feature check, depgraph, fmt/whitespace pass; crawler all-target Clippy `--no-deps -D warnings` pass. Test runs<=240s; no full workspace-library rerun. Shared terminal leaf preserves daemon behavior. Embedded test SHA is baseline fixture metadata, not artifact provenance. No root Cargo/dependency/migration-source change.
 
 Limits: local PostgreSQL16/TTL3.0.0 only, existing public-bound isolated Docker fixture. No real-stage activation, complete commit/connection-loss/process-interruption fault matrix, extension-function tamper attestation, approved platform initializer/image or automatic deployment. Catalogue still honestly reports absent migrator unavailable; this local bootstrap must not be relabelled production migrator. New inputs are only explicit target URL/nonreal TLS plus separately provisioned prerequisites/exclusive target custody. Reverting code requires CLI/probe coordination, no database downgrade/reset. Deployment remains false.
+
+## Iteration 08a — offline application Compose
+
+Baseline `b89d8942194f1ca676b487a9a89febb6f502f462`; checkout revalidation commit `b3f0e0549`. Implementer `1fc664f8-bdbb-4b20-93c7-763da1cf2ea8`; independent reviewer `f3fc68ed-d5e3-469b-a99f-fc7e1acf4b15` accepted narrow slice. Available model GPT-6-Astra. Accepted code identified by local commit `feat(deploy): render hardened isolated cron and crawler projects` (exact SHA recorded by following status update).
+
+Changed `deploy/control/src/host/application-compose.ts`, its93-test suite and `deploy/compose/README.md`; nearest indexes updated. Pure fixed Compose JSON for cron/crawler, full runtime/identity revalidation, target private ECR digest/architecture, nonroot/read-only/resource/log limits, protected file references, container-local operations, matching drain/stop inputs. Separate projects and restart=no prevent automatic retired-owner resurrection but also disable active auto-recovery. No ownership, image build/verification, protected-file materializer or execution implemented. API/worker deliberately block missing trusted private bind IP; crawler pool8/16 and common DB TLS mode enforced. No shared schema/package/lock/workflow or Rust changes.
+
+Checks: fresh Node26.8.2 `tsc`, `node --test dist/test/*.test.js` **686 pass** (93 new), catalog pass (4native/5Lambda/10scopes/25mail, absent migrator still unavailable). Reviewer independently686 Node24 tests plus12 unchanged generated Compose5.4.0 `config --no-env-resolution --quiet` documents pass; cleared env/no resolved files/daemon. DEP-08/24/32/36/37 coverage is **unit/structure only**, not live launch, non-resurrection or handover evidence. Node26 control suite rerun against integrated files, not old agent build.
+
+Unrun: images, minimum Compose2.30, protected files/permissions/rotation, real DNS/TLS/provider auth, resource enforcement, probes, active custody/host restart/handover. New required inputs: approved runtime/image identity, fixed UID10001-readable ADC/CA and allowlisted secret env materialization; API/worker bind contract still missing. Code removal has no data/runtime effects while unused; no down/prune/reset. External resources changed:none. Deployment readiness:false.
 
 ## Required external rollout gates
 

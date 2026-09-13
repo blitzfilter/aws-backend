@@ -26,6 +26,7 @@ Iteration 04 continues that **draft-only break**: cron no longer has a network `
 - `src/contracts/hash.ts`: canonical compact UTF-8 control JSON, sorted keys, dense ordered arrays, safe integer numbers. Manifest publication must use these exact bytes; verify raw artifact digest before parsing. No self-digest. SQLx SHA-384 checksums differ from artifact SHA-256. S3 ETag is only a conditional-write token.
 - `src/contracts/bootstrap.ts`: owner-supplied GitHub protection/ref/OIDC policy, separate creation/immutability rules. Status remains disabled even if untrusted input claims live setup exists.
 - `src/contracts/result.ts`: stable exit codes, safe errors. Arbitrary payloads are fully redacted; separately validate any operational fields before logging.
+- `src/host/application-compose.ts`: offline cron/crawler Compose JSON rendering from revalidated runtime/identity; digest-pinned target ECR, hardening, fixed protected-file references and restart=no. API/worker reject missing trusted private bind IP. No execution, ownership, secret materialization or image-verification adapter. Required operator/packaging gates: `deploy/compose/README.md`.
 
 Source schemas generate `../schemas/*.schema.json` with `npm --prefix deploy/control run schemas`. Tests compare generated schemas. **JSON Schema alone is insufficient**: semantic parsers also enforce identity, completeness, budgets and transitions. Fixture builders under `fixtures/` are synthetic, not working production configuration or evidence.
 
