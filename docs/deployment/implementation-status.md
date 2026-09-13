@@ -189,7 +189,7 @@ Unrun: images, minimum Compose2.30, protected files/permissions/rotation, real D
 
 ## Iteration 09a — standalone Lambda egress
 
-Baseline `b89d8942194f1ca676b487a9a89febb6f502f462`; integrated after08a `f759169db2285caebceade82c60d2436652fcf7f`. Implementer `df412e0a-dae7-4573-b55c-2611e80117b0`; independent reviewer `f93c35bb-70ed-4d25-96e1-36f4d6035e98` accepted. Actual GPT-6-Astra. Code commit `feat(infra): add explicit standalone Lambda NAT egress foundation`; exact SHA follows in status update.
+Baseline `b89d8942194f1ca676b487a9a89febb6f502f462`; integrated after08a `f759169db2285caebceade82c60d2436652fcf7f`. Implementer `df412e0a-dae7-4573-b55c-2611e80117b0`; independent reviewer `f93c35bb-70ed-4d25-96e1-36f4d6035e98` accepted. Actual GPT-6-Astra. Accepted commit `5a90c8ddeca75f8097aa67069eda8e88f6137050`.
 
 Changed only new `infra/src/constructs/lambda-egress.ts`,146-test suite, `infra/lambda-egress-09a.md`, nearest docs/indexes and status. Explicit stage/account/region/AZ/CIDR inputs; IPv4 private subnet NAT routes, owned EIPs, SINGLE/PER_AZ, no-ingress dedicated SG with DB public/32 TCP plus explicit HTTPS policy. Redacted validation rejects malformed/overlapping/unsafe ranges, tokens and IPv6. L1 VPC avoids pinned L2's otherwise unwanted lookup; typed L2 subnet handles preserve route dependencies. **No application instantiation**, Lambda attachment, identity/CA/concurrency handoff or firewall execution.
 
@@ -198,6 +198,12 @@ Checks: Node26.8.2 fresh `tsc --noEmit` and full Jest **201 pass/4 suites**. All
 Cross-check: initial bare all-target Rust check failed because existing crawler test requires compile-time COMMIT_SHA; rerun with literal baseline SHA passed workspace all-target/all-feature locked/offline check, followed by depgraph pass. No Rust edits. Full workspace library suite not rerun after prior recorded timeout. No dependencies installed/upgraded; existing pinned caches used. No Compose/Ansible VM, live network, backup/restore, real GitHub/SSM/AWS checks run.
 
 Operator inputs and limitations: actual account/AZ availability, disjoint capacity, DB IP/TLS DNS identity, NAT topology/cost and quotas, HTTPS reachability policy, exact external EIP allowlists and later Lambda attachment/CA/roles/budgets. PUBLIC_IPV4 explicitly permits443 to any IPv4 address; no hostname/TLS filtering or DNS-exfiltration claim. No IPv6, default-SG hardening or EIP-retention lifecycle automation. While unused, code removal needs no runtime/data rollback; after future attachment, detach/reconcile firewall/EIP ownership first. External changes:none; deployment readiness:false.
+
+## Integrated 08a/09a review
+
+Final independent reviewer `f0578afa-57eb-4553-9275-1b3432d20502` (GPT-6-Astra) accepted **only these incomplete foundations** against actual integrated diff. Independently Node26.8.2 current-source686 controller tests/catalog, infra201 tests and11template/410resource byte-equivalence pass; no source/lock/workflow/Rust/migration contract overwritten. Existing build cache differed only by a renderer comment; integrator rebuilt before final handover. Review did not rerun Rust, CLI synth or real platform gates. No architecture-law exception beyond documented L1 CDK implementation choice; no live resource changed. Git emitted existing loose-object/gc warnings during commits; no prune/cleanup attempted.
+
+Full playbook remains **incomplete**. Next gates: resolve migration scope conflict; finish runtime custody evidence/fresh-search scope; immutable packaging; API/worker private-bind/TLS and credential materialization contracts; host/SSM/backup tooling; Lambda attachment/identities/activation; durable controller, approved workflows and recovery/rehearsal. Missing external inputs do not prove these code paths implemented.
 
 ## Required external rollout gates
 
