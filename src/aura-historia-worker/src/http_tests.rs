@@ -6,6 +6,101 @@ use crate::{
 };
 use std::time::Duration;
 
+async fn probe(runtime: WorkerRuntime, method: &str, path: &str) -> axum::response::Response {
+    use hyper::service::Service;
+    hyper_util::service::TowerToHyperService::new(super::router(runtime))
+        .call(
+            axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn should_return_safe_noncacheable_identity_state_and_admission_including_drain_and_head() {
+    use crate::operations::{OperationalConfig, OperationalIdentity};
+    let (mut runtime, _receivers) =
+        WorkerRuntime::with_notification_delivery_queue(QueueConfig::new(1)).unwrap();
+    let config = crate::WorkerConfig::from_getter(|_| None).unwrap();
+    let sha = "d5bd9ca854e713b0c587528f02037211b2020fd4";
+    runtime.operational = Some(OperationalConfig {
+        identity: OperationalIdentity::parse(
+            crate::WorkerScope::NotificationDelivery,
+            Some("prod"),
+            Some(sha.into()),
+            &config,
+        )
+        .unwrap(),
+        drain: config.drain_timeout(),
+        stop: config.stop_timeout(),
+        execution: Duration::from_secs(240),
+    });
+    for draining in [false, true] {
+        if draining {
+            runtime.shutdown();
+        }
+        for path in [
+            "/health",
+            "/ready",
+            "/admission",
+            "/state",
+            "/version",
+            "/missing",
+        ] {
+            let response = probe(runtime.clone(), "GET", path).await;
+            assert_eq!("no-store, max-age=0", response.headers()["cache-control"]);
+            if path == "/admission" {
+                assert_eq!(if draining { 503 } else { 200 }, response.status().as_u16());
+            }
+            if path == "/state" || path == "/version" {
+                assert_eq!(200, response.status());
+                let body = axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap();
+                let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                if path == "/version" {
+                    assert_eq!(
+                        serde_json::json!({"schema_version":1,"component":"aura-historia-worker",
+                        "scope":"notification-delivery","source_sha":sha,"local":false}),
+                        value
+                    );
+                } else {
+                    assert_eq!(!draining, value["ingress_admission"]);
+                    assert_eq!(
+                        if draining { "DRAINING" } else { "RUNNING" },
+                        value["lifecycle"]
+                    );
+                    assert_eq!(7, value.as_object().unwrap().len());
+                }
+            }
+            let head = probe(runtime.clone(), "HEAD", path).await;
+            assert_eq!("no-store, max-age=0", head.headers()["cache-control"]);
+            assert!(
+                axum::body::to_bytes(head.into_body(), 4096)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+    assert_eq!(
+        503,
+        probe(WorkerRuntime::default(), "GET", "/admission")
+            .await
+            .status()
+    );
+    assert_eq!(
+        503,
+        probe(WorkerRuntime::default(), "GET", "/version")
+            .await
+            .status()
+    );
+}
+
 const NOTIFICATION_DELIVERY_UUID: &str = "01900000-0000-7000-8000-000000000001";
 const NOTIFICATION_DELIVERY_TYPE_ID: &str = "nd_01j0000000e008000000000001";
 use tokio::{

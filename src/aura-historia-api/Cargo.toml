@@ -24,6 +24,8 @@ fxrate-service = { workspace = true }
 google-cloud-auth = { workspace = true }
 http = { workspace = true }
 httpdate = { workspace = true }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "service"] }
 indexmap = { workspace = true }
 oauth-core = { workspace = true }
 oauth-postgres = { workspace = true }

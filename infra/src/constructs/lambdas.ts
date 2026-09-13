@@ -139,6 +139,9 @@ function withPostgresEnvironment(context: LambdaEnvironmentContext, env: Record<
     POSTGRES_PASSWORD: context.postgres.password,
     POSTGRES_PORT: context.postgres.port,
     POSTGRES_USERNAME: context.postgres.username,
+    STAGE: context.config.stage,
+    POSTGRES_SSL_MODE: context.postgres.sslMode,
+    ...(context.postgres.sslRootCert ? { POSTGRES_SSL_ROOT_CERT: context.postgres.sslRootCert } : {}),
   };
 }
 

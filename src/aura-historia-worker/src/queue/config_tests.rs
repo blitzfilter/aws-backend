@@ -66,6 +66,18 @@ fn attributes(config: &SqsQueueConfig, dlq: bool) -> Attributes {
 }
 
 #[test]
+fn should_redact_queue_identity_from_debug_output() {
+    let config = config(WorkerScope::NotificationDelivery);
+    let output = format!("{config:?}");
+    for private in [config.queue_url().as_str(), "123456789012", "amazonaws.com"] {
+        assert!(
+            !output.contains(private),
+            "queue debug leaked private identity"
+        );
+    }
+}
+
+#[test]
 fn should_validate_exact_ten_scope_queue_and_dlq_contracts() {
     let scopes: Vec<_> = WorkerScope::iter().collect();
     assert_eq!(10, scopes.len());

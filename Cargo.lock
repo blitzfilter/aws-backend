@@ -237,6 +237,8 @@ dependencies = [
  "google-cloud-auth",
  "http 1.5.0",
  "httpdate",
+ "hyper 1.11.1",
+ "hyper-util",
  "indexmap 2.14.2",
  "jsonwebtokens",
  "listing-source-core",
@@ -318,6 +320,9 @@ dependencies = [
  "reqwest 0.12.28",
  "search-filter-postgres",
  "search-filter-service",
+ "serde_json",
+ "sqlx",
+ "test-api",
  "thiserror 2.0.20",
  "time",
  "tokio",
@@ -5610,9 +5615,14 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "libc",
+ "percent-encoding",
+ "rstest",
+ "rustls 0.23.43",
  "sqlx",
  "thiserror 2.0.20",
  "tokio",
+ "url",
 ]
 
 [[package]]

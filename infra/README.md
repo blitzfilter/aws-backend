@@ -24,6 +24,7 @@ src/constructs/            # focused infrastructure modules
   cognito.ts               # Cognito user pool, public client, IdPs, hosted UI domain
   eventing.ts              # EventBridge buses/rules, SQS mappings, Pipes
   lambdas.ts               # Lambda definitions, env vars, IAM grants
+  lambda-egress.ts         # standalone hybrid IPv4 NAT/EIP foundation, NOT instantiated
   observability.ts         # prod-only alarms and alarm topic
   opensearch.ts            # external dev/prod endpoint or LocalStack domain
   queues.ts                # existing Shopify Lambda queue and DLQ
@@ -31,6 +32,24 @@ src/constructs/            # focused infrastructure modules
   storage.ts               # Postgres connection settings
 
 ```
+
+## PostgreSQL TLS integration gate
+
+Hybrid work remains on a non-deploying integration branch. **Do not activate this configuration before CA delivery, network and identity prerequisites are implemented and approved.** Deployment status: `docs/deployment/implementation-status.md`.
+
+Every DB-using Lambda now receives `STAGE` and `POSTGRES_SSL_MODE`. Dev/prod require `verify-full` plus `POSTGRES_SSL_ROOT_CERT`, whose file path comes from `/postgres/{stage}/ssl-root-cert-path`. The CA must already exist at that path in the approved Lambda runtime/configuration; CDK does not materialize it. Missing/invalid CA blocks startup. Ephemeral explicitly uses `disable`. This is a configuration contract, not proof of Internet reachability or completed Lambda secret handoff.
+
+All native constructors share that policy, including crawler URLs and cron's dedicated session. Native credentials may use `POSTGRES_PASSWORD_FILE` (0400/0600) instead of `POSTGRES_PASSWORD`; both together fail. Root CA files are nonsecret and at most 1 MiB. Do not set ambient `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT` or `PGOPTIONS`. Supplied CA plus WebPKI trust is documented in deployment ADR-004; client certificates are not supported yet.
+
+Keep total connections within the reviewed inventory budget: ten worker pools + both API pools + cron pool **and one dedicated session** + crawler business/local pools + Lambda reserved concurrency × per-function pool + Sequin + migration/backup sessions + reserve. Defaults of two connections are per process, not an environment budget. Lambda concurrency/network enforcement lands in the approved prerequisite iteration.
+
+Certificate rotation: install old+new trust bundle first, restart/recycle each client through lifecycle controls, rotate server certificate, verify fresh connections, then remove old trust. Existing pools and published Lambda environment snapshots do not refresh themselves. Never roll secrets back with old code. No live rotation performed here.
+
+## Hybrid Lambda-egress foundation
+
+`LambdaEgress` synthesizes an explicit IPv4 VPC, public NAT subnets, private Lambda subnets, owned EIPs and dedicated no-ingress SG. `SINGLE` versus `PER_AZ` is an explicit cost/availability choice; DB egress requires exact public `/32` and port plus a separate explicit HTTPS policy. Account/region/AZs/CIDRs are required literal inputs, never discovery or guessed live values.
+
+**Not instantiated by this application.** Existing stack/resource identities, invocation targets and network attachment remain unchanged. No Lambda attachment, runtime identity/CA delivery, firewall mutation or verified reachability. Construct contract, operator inputs, validation and limits: [`lambda-egress-09a.md`](lambda-egress-09a.md). Future bootstrap consumes these typed handles only after review/approval; EIP tokens are not allocated addresses.
 
 ## Common commands
 

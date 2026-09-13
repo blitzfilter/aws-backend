@@ -14,6 +14,8 @@ export interface PostgresConnectionSettings {
   readonly username: string;
   readonly password: string;
   readonly maxConnections: string;
+    readonly sslMode: "verify-full" | "disable";
+    readonly sslRootCert: string | undefined;
 }
 
 export class Storage extends Construct {
@@ -35,6 +37,8 @@ function postgresConnectionSettings(config: StageConfig): PostgresConnectionSett
       username: "postgres",
       password: "postgres",
       maxConnections: "2",
+      sslMode: "disable",
+      sslRootCert: undefined,
     };
   }
 
@@ -45,5 +49,7 @@ function postgresConnectionSettings(config: StageConfig): PostgresConnectionSett
     username: ssmValue(`/postgres/${config.stage}/username`),
     password: ssmValue(`/secrets/${config.stage}/postgres-password`),
     maxConnections: "2",
+    sslMode: "verify-full",
+    sslRootCert: ssmValue(`/postgres/${config.stage}/ssl-root-cert-path`),
   };
 }

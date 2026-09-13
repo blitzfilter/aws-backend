@@ -222,7 +222,7 @@ pub async fn consume_product_listing_raw_normalization_queue(
                         }
                     }
                     _ = reconciliation.tick() => {
-                        reconcile_pending_stream_turn(Arc::clone(&use_case), &mut reconciliation_state).await;
+                        reconcile_pending_stream_turn(Arc::clone(&use_case), &mut reconciliation_state, &control).await;
                         priority = RawNormalizationPriority::Cdc;
                     }
                     () = polling.ready() => {
@@ -265,7 +265,7 @@ pub async fn consume_product_listing_raw_normalization_queue(
                         priority = RawNormalizationPriority::Reconciliation;
                     }
                     _ = reconciliation.tick() => {
-                        reconcile_pending_stream_turn(Arc::clone(&use_case), &mut reconciliation_state).await;
+                        reconcile_pending_stream_turn(Arc::clone(&use_case), &mut reconciliation_state, &control).await;
                         priority = RawNormalizationPriority::Cdc;
                     }
                 }
@@ -331,6 +331,7 @@ async fn normalize_job(
 async fn reconcile_pending_stream_turn(
     use_case: Arc<dyn NormalizeProductListingRawRevisionUseCase>,
     reconciliation_state: &mut ReconciliationState,
+    control: &crate::queue::RuntimeControl,
 ) {
     let turn = reconciliation_state.next_turn();
     let (command, reconciliation_page) = match turn {
@@ -350,7 +351,7 @@ async fn reconcile_pending_stream_turn(
             "continuation",
         ),
     };
-    let mut task = tokio::task::JoinSet::new();
+    let mut task = control.owned_tasks();
     task.spawn(async move { use_case.execute(command).await });
     let result = match tokio::time::timeout(Duration::from_secs(240), task.join_next()).await {
         Ok(Some(Ok(Ok(result)))) => Ok(result),

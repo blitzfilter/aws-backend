@@ -2,8 +2,6 @@ use crate::scraper::scraper_service::{
     DEFAULT_MAX_LLM_CALLS_PER_LISTING_SOURCE, DEFAULT_SCHEMA_SEED_PAGES, ScraperAutoThrottleConfig,
 };
 use crate::spider::discovery::website_spider::CrawlerConfig as SpiderCrawlerConfig;
-use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -137,14 +135,6 @@ impl CrawlerCronConfig {
         self.scraper_domain_batch_size
             .unwrap_or(self.scraper_concurrency)
             .max(1)
-    }
-
-    pub async fn connect_pool(&self, url: &str) -> Result<PgPool, sqlx::Error> {
-        PgPoolOptions::new()
-            .max_connections(self.effective_db_max_connections())
-            .acquire_timeout(Duration::from_secs(30))
-            .connect(url)
-            .await
     }
 }
 

@@ -6,6 +6,7 @@ pub mod listing_sources;
 pub mod newsletter;
 pub mod notifications;
 pub mod oauth;
+mod operations;
 pub(crate) mod pagination_data;
 pub mod parties;
 pub mod partner_product_listings;
@@ -13,7 +14,9 @@ pub(crate) mod partnership_applications;
 pub(crate) mod partnerships;
 pub(crate) mod patch_value;
 pub mod product_listings;
+mod runtime;
 pub mod search_filters;
+pub use runtime::{check_config, run_until_shutdown, serve};
 pub mod state;
 pub mod transport;
 pub mod users;
@@ -72,12 +75,10 @@ use oauth_service::use_cases::{
     IntrospectTokenHandler, ListOAuthClientsHandler, RevokeTokenHandler,
     TokenByAuthorizationCodeHandler, TokenByThirdPartyCodeHandler, UpdateOAuthClientHandler,
 };
-use opensearch::{
-    OpenSearch,
-    auth::Credentials,
-    http::transport::{SingleNodeConnectionPool, TransportBuilder},
+use opensearch::OpenSearch;
+use platform_postgres::{
+    PostgresConnectError, PostgresPoolConfig, PostgresPoolConfigError, SqlxUnitOfWork,
 };
-use platform_postgres::{PostgresConnectError, PostgresPoolConfig, SqlxUnitOfWork};
 use woocommerce_service::WoocommerceWebhookIntake;
 
 use listing_source_postgres::{
@@ -158,11 +159,9 @@ use search_filter_service::use_cases::{
 };
 
 use sqlx::PgPool;
-use std::future::Future;
 use std::net::{AddrParseError, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
 use tracing::info;
 use user_cognito::CognitoUserSessionRevoker;
 use user_postgres::{
@@ -249,14 +248,7 @@ const DEFAULT_PRODUCT_LISTING_SEARCH_FX_LATEST_TTL_SECONDS: u64 = 30;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_ENTRIES: u64 = 4_096;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_PRODUCT_LISTING_SEARCH_SOURCE_CACHE_TTL_SECONDS: u64 = 60;
-const POSTGRES_HOST_ENV: &str = "POSTGRES_HOST";
-const POSTGRES_PORT_ENV: &str = "POSTGRES_PORT";
-const POSTGRES_DATABASE_ENV: &str = "POSTGRES_DATABASE";
-const POSTGRES_USERNAME_ENV: &str = "POSTGRES_USERNAME";
-const POSTGRES_PASSWORD_ENV: &str = "POSTGRES_PASSWORD";
-const POSTGRES_MAX_CONNECTIONS_ENV: &str = "POSTGRES_MAX_CONNECTIONS";
-const DEFAULT_POSTGRES_PORT: u16 = 5432;
-const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 2;
+
 const DEFAULT_API_BIND_ADDR: &str = "0.0.0.0:8080";
 const JWKS_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const JWKS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -282,7 +274,7 @@ pub struct ApiConfig {
 
 impl ApiConfig {
     pub fn from_env() -> Result<Self, ApiConfigError> {
-        Self::from_getter(|name| std::env::var(name).ok())
+        Self::from_getter(runtime::env_input)
     }
 
     pub fn from_getter<F>(mut get: F) -> Result<Self, ApiConfigError>
@@ -630,11 +622,11 @@ pub enum ApiConfigError {
 }
 
 pub fn app(state: AppState) -> Router {
-    let health_routes = Router::new()
-        .route("/health", get(health))
-        .route("/ready", get(ready))
-        .with_state(Arc::clone(&state.readiness));
-    let mut routes = health_routes;
+    with_transport_middleware(business_routes(state))
+}
+
+fn business_routes(state: AppState) -> Router {
+    let mut routes = Router::new();
 
     if let Some(products) = state.product_listings {
         routes = routes.merge(
@@ -877,20 +869,7 @@ pub fn app(state: AppState) -> Router {
         routes = routes.merge(partnerships::router(partnerships));
     }
 
-    with_transport_middleware(routes)
-}
-
-async fn health() -> &'static str {
-    "ok\n"
-}
-
-async fn ready(
-    axum::extract::State(readiness): axum::extract::State<Arc<dyn ReadinessCheck>>,
-) -> axum::http::StatusCode {
-    match readiness.check().await {
-        Ok(()) => axum::http::StatusCode::NO_CONTENT,
-        Err(()) => axum::http::StatusCode::SERVICE_UNAVAILABLE,
-    }
+    routes
 }
 
 struct RuntimeReadiness {
@@ -899,39 +878,47 @@ struct RuntimeReadiness {
 }
 
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
 
 #[async_trait]
 impl ReadinessCheck for RuntimeReadiness {
     async fn check(&self) -> Result<(), ()> {
         self.postgres.acquire().await.map_err(|_| ())?;
-        self.opensearch.ping().send().await.map_err(|_| ())?;
-        Ok(())
+        let response = self.opensearch.ping().send().await.map_err(|_| ())?;
+        if response.status_code().is_success() {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }
 
 pub async fn app_state_from_env() -> Result<AppState, ApiStateError> {
     let config = ApiConfig::from_env().map_err(ApiStateError::Config)?;
-    app_state_from_config(&config).await
+    runtime::build_state(config).await
 }
 
-async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateError> {
-    let cognito_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+fn app_state_from_config(
+    config: &ApiConfig,
+    pool: PgPool,
+    opensearch_client: OpenSearch,
+    cognito_config: aws_config::SdkConfig,
+    google_credentials: google_cloud_auth::credentials::AccessTokenCredentials,
+) -> Result<AppState, ApiStateError> {
     let cognito_session_revoker = CognitoUserSessionRevoker::new(
         aws_sdk_cognitoidentityprovider::Client::new(&cognito_config),
         config.cognito_user_pool_id(),
     );
-    let pool = postgres_pool_from_env().await?;
+
     let unit_of_work = SqlxUnitOfWork::new(pool.clone());
     let get_product_listing_history = GetProductListingHistoryHandler::new(
         unit_of_work.clone(),
         SqlxProductListingHistoryReaderFactory::new(),
     );
     let search_filter_reader = SqlxSearchFilterReader::new(pool.clone());
-    let opensearch_client = opensearch_client_from_env()?;
+
     let embeddings: Arc<dyn EmbeddingGenerator> = Arc::new(VertexAiEmbeddingGenerator::new(
         config.vertex_ai_embedding().clone(),
-        google_application_default_credentials()?,
+        google_credentials,
     ));
 
     let get_admin_overview = GetAdminOverviewHandler::new(
@@ -1533,11 +1520,6 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
     )
     .with_dissolve(Arc::new(dissolve_partnership));
 
-    let readiness = Arc::new(RuntimeReadiness {
-        postgres: pool,
-        opensearch: opensearch_client.clone(),
-    });
-
     Ok(AppState::new()
         .with_admin_overview(AdminOverviewState::new(
             Arc::new(get_admin_overview),
@@ -1570,84 +1552,24 @@ async fn app_state_from_config(config: &ApiConfig) -> Result<AppState, ApiStateE
         .with_newsletter(NewsletterState::new(
             Arc::new(upsert_newsletter_subscription),
             Arc::clone(&authenticator) as Arc<dyn TokenAuthenticator>,
-        ))
-        .with_readiness(readiness))
+        )))
 }
 
-async fn postgres_pool_from_env() -> Result<PgPool, ApiStateError> {
-    let host = required_postgres_env(POSTGRES_HOST_ENV)?;
-    let database = required_postgres_env(POSTGRES_DATABASE_ENV)?;
-    let username = required_postgres_env(POSTGRES_USERNAME_ENV)?;
-    let password = required_postgres_env(POSTGRES_PASSWORD_ENV)?;
-    let port = optional_postgres_env(POSTGRES_PORT_ENV, DEFAULT_POSTGRES_PORT)?;
-    let max_connections = optional_postgres_env(
-        POSTGRES_MAX_CONNECTIONS_ENV,
-        DEFAULT_POSTGRES_MAX_CONNECTIONS,
-    )?;
-    let config = PostgresPoolConfig::new(host, port, database, username, password, max_connections)
-        .map_err(|_| ApiStateError::InvalidPostgresMaxConnections)?;
-
-    Ok(config
-        .connect()
-        .await
-        .map_err(PostgresConnectError::Connect)?)
+fn postgres_config(
+    get: &mut impl FnMut(&'static str) -> Option<String>,
+) -> Result<PostgresPoolConfig, ApiStateError> {
+    Ok(PostgresPoolConfig::from_lookup("aura-historia-api", get)?)
 }
 
-fn required_postgres_env(name: &'static str) -> Result<String, ApiStateError> {
-    std::env::var(name).map_err(|_| ApiStateError::MissingEnv { name })
-}
-
-fn optional_postgres_env<T>(name: &'static str, default: T) -> Result<T, ApiStateError>
-where
-    T: std::str::FromStr,
-{
-    match std::env::var(name) {
-        Ok(value) => value
-            .parse()
-            .map_err(|_| ApiStateError::InvalidPostgresInteger { name, value }),
-        Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(ApiStateError::MissingEnv { name }),
-    }
-}
-
-fn opensearch_client_from_env() -> Result<OpenSearch, ApiStateError> {
-    let endpoint =
-        std::env::var("OPENSEARCH_ENDPOINT_URL").map_err(|_| ApiStateError::MissingEnv {
-            name: "OPENSEARCH_ENDPOINT_URL",
-        })?;
-    let endpoint = url::Url::parse(&endpoint).map_err(|error| ApiStateError::OpenSearch {
-        detail: error.to_string(),
-    })?;
-    let stage = std::env::var("STAGE").unwrap_or_else(|_| "prod".to_owned());
-    let transport = if stage == "ephemeral" {
-        TransportBuilder::new(SingleNodeConnectionPool::new(endpoint)).build()
-    } else {
-        let username =
-            std::env::var("OPENSEARCH_USERNAME").map_err(|_| ApiStateError::MissingEnv {
-                name: "OPENSEARCH_USERNAME",
-            })?;
-        let password =
-            std::env::var("OPENSEARCH_PASSWORD").map_err(|_| ApiStateError::MissingEnv {
-                name: "OPENSEARCH_PASSWORD",
-            })?;
-        TransportBuilder::new(SingleNodeConnectionPool::new(endpoint))
-            .auth(Credentials::Basic(username, password))
-            .build()
-    }
-    .map_err(|error| ApiStateError::OpenSearch {
-        detail: error.to_string(),
-    })?;
-    Ok(OpenSearch::new(transport))
-}
+#[cfg(test)]
+mod postgres_config_tests;
 
 fn google_application_default_credentials()
 -> Result<google_cloud_auth::credentials::AccessTokenCredentials, ApiStateError> {
     GoogleCredentialsBuilder::default()
         .with_scopes([GOOGLE_CLOUD_PLATFORM_SCOPE])
         .build_access_token_credentials()
-        .map_err(|error| ApiStateError::VertexAiCredentials {
-            detail: error.to_string(),
-        })
+        .map_err(|_| ApiStateError::VertexAiCredentials)
 }
 
 fn compose_authenticator<P, R, A, U>(
@@ -1682,16 +1604,24 @@ pub enum ApiStateError {
     Postgres(#[from] PostgresConnectError),
     #[error(transparent)]
     Config(#[from] ApiConfigError),
-    #[error("invalid integer in environment variable {name}: {value}")]
-    InvalidPostgresInteger { name: &'static str, value: String },
-    #[error("POSTGRES_MAX_CONNECTIONS must be greater than zero")]
-    InvalidPostgresMaxConnections,
+    #[error("invalid PostgreSQL configuration")]
+    PostgresConfig(#[from] PostgresPoolConfigError),
     #[error("missing required environment variable {name}")]
     MissingEnv { name: &'static str },
-    #[error("failed to configure OpenSearch: {detail}")]
-    OpenSearch { detail: String },
-    #[error("failed to initialize Vertex AI credentials: {detail}")]
-    VertexAiCredentials { detail: String },
+    #[error("failed to configure OpenSearch")]
+    OpenSearch,
+    #[error("failed to initialize Vertex AI credentials")]
+    VertexAiCredentials,
+    #[error("invalid runtime configuration {name}")]
+    RuntimeConfig { name: &'static str },
+    #[error("business schema verification failed")]
+    Schema(#[from] platform_postgres::PostgresSchemaError),
+    #[error("required read-only dependency check failed: {name}")]
+    Dependency { name: &'static str },
+    #[error("startup or preflight deadline exceeded")]
+    StartupDeadline,
+    #[error("PostgreSQL pool close deadline exceeded")]
+    PoolCloseDeadline,
     #[error("failed to configure Cognito JWT authentication: {0}")]
     CognitoJwt(AuthError),
     #[error("failed to build JWKS HTTP client: {0}")]
@@ -1712,32 +1642,6 @@ fn log_product_listing_search_cache_config(config: &ApiConfig) {
         parallel_enrichment_enabled = config.product_listing_search_parallel_enrichment_enabled,
         "configured public product-listing search cache policy"
     );
-}
-
-pub async fn run_until_shutdown<S>(config: ApiConfig, shutdown: S) -> Result<(), ApiRunError>
-where
-    S: Future<Output = ()> + Send + 'static,
-{
-    log_product_listing_search_cache_config(&config);
-    let state = app_state_from_config(&config)
-        .await
-        .map_err(ApiRunError::State)?;
-    let listener = TcpListener::bind(config.bind_addr())
-        .await
-        .map_err(ApiRunError::Bind)?;
-    serve(listener, app(state), shutdown).await
-}
-
-pub async fn serve<S>(listener: TcpListener, app: Router, shutdown: S) -> Result<(), ApiRunError>
-where
-    S: Future<Output = ()> + Send + 'static,
-{
-    let local_addr = listener.local_addr().map_err(ApiRunError::LocalAddr)?;
-    info!(bind_addr = %local_addr, "aura-historia-api listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await
-        .map_err(ApiRunError::Serve)
 }
 
 #[cfg(test)]
@@ -1968,11 +1872,17 @@ mod tests {
 #[derive(thiserror::Error, Debug)]
 pub enum ApiRunError {
     #[error("failed to build API state")]
-    State(#[source] ApiStateError),
+    State(#[from] ApiStateError),
     #[error("failed to bind API listener")]
     Bind(#[source] std::io::Error),
     #[error("failed to read API listener local address")]
     LocalAddr(#[source] std::io::Error),
     #[error("failed to serve API")]
     Serve(#[source] std::io::Error),
+    #[error("API connection task failed")]
+    ConnectionTask,
+    #[error("API drain deadline exceeded")]
+    DrainDeadline,
+    #[error("API task cleanup deadline exceeded")]
+    CleanupDeadline,
 }

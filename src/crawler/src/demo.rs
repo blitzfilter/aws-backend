@@ -3,9 +3,11 @@
 //!
 //! On startup the demo automatically runs `docker compose up -d` (using the
 //! `docker-compose.yml` inside the `crawler` crate) and waits for Postgres to
-//! become ready before applying migrations. No manual setup required — just:
+//! become ready before applying migrations. Requires explicit non-real stage and TLS mode:
 //!
 //! ```powershell
+//! $env:STAGE="local"
+//! $env:POSTGRES_SSL_MODE="disable"
 //! gcloud auth application-default login
 //! $env:VERTEX_AI_PROJECT_ID="my-project"
 //! $env:VERTEX_AI_LOCATION="europe-west3"
@@ -24,7 +26,8 @@
 //! | `CRAWLER_VERTEX_AI_URL_CLASSIFICATION_MODEL` | Optional URL classification model override | `CRAWLER_VERTEX_AI_CHEAP_MODEL` |
 //! | `CRAWLER_LLM_MAX_CONCURRENT_REQUESTS` | Max in-flight crawler LLM calls | `1` |
 //! | `CRAWLER_LLM_MIN_REQUEST_INTERVAL_MS` | Minimum delay between LLM request starts | `2000` |
-//! | `LOCAL_DB_URL`   | Hardcoded local DB URL                | `postgres://postgres:postgres@localhost:5432/crawler_demo` |
+//! | `STAGE` | Required non-real stage | `local`, `ephemeral`, or `test` |
+//! | `POSTGRES_SSL_MODE` | Explicit shared PostgreSQL TLS mode | `disable` for bundled local Docker |
 //! | `CRAWLER_REVIEW_REQUIRED` | Block generated patterns/schemas until approved | unset / `false`                       |
 //! | `CRAWLER_REVIEW_URL_PATTERN_REQUIRED` | Block generated URL patterns until approved | unset / `false`            |
 //! | `CRAWLER_REVIEW_BIND_ADDR` | Review UI bind address        | `127.0.0.1:7878`                                |
@@ -32,6 +35,7 @@
 //! | `LOG_LEVEL`      | Global log level                     | `info`                                           |
 //! | `CRAWLER_LOG_LEVEL` | Crawler-internal log level        | `info`                                           |
 //!
+//! Demo database is fixed to local `crawler_demo`; `LOCAL_DB_URL` is server-only.
 //! Scraped products are written to `scraped_products.json` instead of calling the ProductListing upsert use case.
 
 use listing_source_core::ListingSourceId;
@@ -42,8 +46,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use crawler::llm_runtime::{CrawlerLlmGovernor, CrawlerLlmRateLimitConfig};
 use crawler::local_db::{
-    DEMO_DB_NAME, bootstrap_local_database,
-    crawler_domain_configuration_repository::CrawlerDomainConfigurationRepositoryImpl, demo_db_url,
+    DEMO_DB_NAME, LocalDatabaseError, LocalDevelopmentConfig, bootstrap_local_database,
+    crawler_domain_configuration_repository::CrawlerDomainConfigurationRepositoryImpl,
+    migrate_local_database, parse_postgres_environment,
 };
 use crawler::logging::HTML5EVER_TREE_BUILDER_LOG_DIRECTIVE;
 use crawler::review::repository::CrawlerReviewRepository;
@@ -75,6 +80,7 @@ use crawler::spider::discovery::website_spider::SpiderImpl;
 use crawler::spider::service::spider_service::{SpiderServiceConfig, SpiderServiceImpl};
 use crawler::vertex_ai::{CrawlerVertexAiConfig, CrawlerVertexAiModels};
 
+use platform_postgres::{PostgresConnectError, PostgresPoolConfig};
 use tracing::{Instrument, error, info};
 
 // ---------------------------------------------------------------------------
@@ -142,8 +148,23 @@ fn demo_listing_sources() -> Vec<RegisteredListingSource> {
 // ---------------------------------------------------------------------------
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), LocalDatabaseError> {
     dotenvy::dotenv().ok();
+    let local = parse_postgres_environment(env::var, |get| {
+        LocalDevelopmentConfig::from_lookup("crawler-demo", get)
+    })?;
+    let config = CrawlerCronConfig {
+        spider_interval: Duration::from_secs(120),
+        scraper_interval: Duration::from_secs(30),
+        scraper_urls_per_domain: 50,
+        spider_concurrency: 100,
+        spider_site_concurrency_limit: 8,
+        scraper_concurrency: 10,
+        spider_classify_threshold: 400,
+        scraper_schema_seed_pages: DEFAULT_SCHEMA_SEED_PAGES,
+        ..Default::default()
+    };
+    let database = local.pool_config(DEMO_DB_NAME, config.effective_db_max_connections())?;
     init_logging();
 
     async {
@@ -156,26 +177,13 @@ async fn main() {
         };
         let vertex_ai_models = CrawlerVertexAiModels::from_env();
 
-        let config = CrawlerCronConfig {
-            spider_interval: Duration::from_secs(120),
-            scraper_interval: Duration::from_secs(30),
-            scraper_urls_per_domain: 50,
-            spider_concurrency: 100,
-            spider_site_concurrency_limit: 8,
-            scraper_concurrency: 10,
-            spider_classify_threshold: 400,
-            scraper_schema_seed_pages: DEFAULT_SCHEMA_SEED_PAGES,
-            ..Default::default()
-        };
-
-        let db_url = demo_db_url();
-        if let Err(error) = bootstrap_local_database(DEMO_DB_NAME).await {
+        if let Err(error) = bootstrap_local_database(&local, DEMO_DB_NAME).await {
             error!(error = ?error, "Failed to bootstrap local Postgres database");
             return;
         }
 
         info!("Waiting for Postgres to be ready…");
-        let pool = match connect_with_retry(&config, &db_url).await {
+        let pool = match connect_with_retry(&database).await {
             Ok(p) => p,
             Err(e) => {
                 error!(error = %e, "Failed to connect to Postgres after retries");
@@ -183,7 +191,7 @@ async fn main() {
             }
         };
 
-        if let Err(error) = sqlx::migrate!("./migrations").run(&pool).await {
+        if let Err(error) = migrate_local_database(&local, &pool).await {
             error!(error = ?error, "Failed to apply database migrations");
             return;
         }
@@ -389,39 +397,28 @@ async fn main() {
         database = DEMO_DB_NAME
     ))
     .await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Database helpers
 // ---------------------------------------------------------------------------
 
-/// Runs `docker compose up -d` from the crawler crate directory.
-///
-/// `docker compose up -d` is idempotent:
-/// - Container already running → no-op, returns immediately.
-/// - Container exists but is stopped → restarts it.
-/// - Container does not exist → creates and starts it.
-///
-/// The compose file path is baked in via `CARGO_MANIFEST_DIR` so this works
-/// regardless of the working directory when `cargo run` is invoked.
-/// Attempts to connect to Postgres, retrying with exponential back-off.
-/// This handles the window between `docker compose up -d` returning and
-/// Postgres actually accepting connections.
-#[tracing::instrument(skip(config), fields(db_url = %db_url))]
+/// Waits for local Docker PostgreSQL using already validated shared connection policy.
+#[tracing::instrument(skip_all)]
 async fn connect_with_retry(
-    config: &CrawlerCronConfig,
-    db_url: &str,
-) -> Result<sqlx::PgPool, String> {
+    config: &PostgresPoolConfig,
+) -> Result<sqlx::PgPool, PostgresConnectError> {
     let mut attempt = 0u32;
     let mut delay = Duration::from_millis(200);
 
     loop {
         attempt += 1;
-        match config.connect_pool(db_url).await {
+        match config.connect().await {
             Ok(pool) => {
                 info!(
                     attempt,
-                    max_connections = config.effective_db_max_connections(),
+                    max_connections = config.max_connections(),
                     "Connected to Postgres"
                 );
                 return Ok(pool);
@@ -432,9 +429,7 @@ async fn connect_with_retry(
                 delay = (delay * 2).min(Duration::from_secs(3));
             }
             Err(e) => {
-                return Err(format!(
-                    "Could not connect to Postgres after {attempt} attempts: {e}"
-                ));
+                return Err(e);
             }
         }
     }

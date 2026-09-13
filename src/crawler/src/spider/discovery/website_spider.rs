@@ -1,11 +1,15 @@
 use bloomfilter::Bloom;
+use futures::FutureExt;
 use reqwest::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue};
-use spider::page::AntiBotTech;
+use spider::page::{AntiBotTech, Page};
 use spider::tokio;
 use spider::utils::auto_throttle::AutoThrottleConfig;
 use spider::website::{CrawlStatus, Website, WebsiteMetaInfo};
+use std::{future::Future, panic::AssertUnwindSafe, time::Duration};
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::task::JoinSet;
+use tokio::time::Instant;
 use url::Url;
 
 use crate::network::policy::{is_same_or_www_host, resolve_public_http_target};
@@ -99,16 +103,210 @@ impl DiagnosticSignal {
     }
 }
 
+/// Owns only our producer and forwarder, not Spider's internal network tasks.
+/// Drop aborts both wrappers; use `cancel_and_join` to confirm their termination.
 #[derive(Debug)]
+#[must_use = "crawl tasks must be consumed to completion or cancelled and joined"]
 pub struct SpiderCrawl {
-    pub pages: mpsc::Receiver<CrawledPage>,
-    pub diagnostics: oneshot::Receiver<CrawlDiagnostics>,
+    pages: mpsc::Receiver<CrawledPage>,
+    diagnostics: oneshot::Receiver<CrawlDiagnostics>,
+    tasks: JoinSet<Result<(), CrawlIncompleteError>>,
+    failure: watch::Sender<Option<CrawlIncompleteError>>,
+    outcome: Option<Result<CrawlDiagnostics, CrawlIncompleteError>>,
+}
+
+impl SpiderCrawl {
+    fn spawn_owned<P, F>(
+        pages: mpsc::Receiver<CrawledPage>,
+        diagnostics: oneshot::Receiver<CrawlDiagnostics>,
+        producer: P,
+        forwarder: F,
+        max_duration: Duration,
+    ) -> Self
+    where
+        P: Future<Output = Result<(), CrawlIncompleteError>> + Send + 'static,
+        F: Future<Output = Result<(), CrawlIncompleteError>> + Send + 'static,
+    {
+        let (failure, _) = watch::channel(None);
+        let deadline = Instant::now() + max_duration;
+        let mut tasks = JoinSet::new();
+        tasks.spawn(run_owned_crawl_task(producer, failure.clone(), deadline));
+        tasks.spawn(run_owned_crawl_task(forwarder, failure.clone(), deadline));
+        Self {
+            pages,
+            diagnostics,
+            tasks,
+            failure,
+            outcome: None,
+        }
+    }
+
+    /// Cancellation-safe. `Ok(None)` confirms both wrapper joins and diagnostics.
+    /// Pages already delivered before an error do not make the crawl complete.
+    pub async fn recv(&mut self) -> Result<Option<CrawledPage>, SpiderDiscoveryError> {
+        if let Some(Err(error)) = self.outcome {
+            return Err(error.into());
+        }
+        let mut failure = self.failure.subscribe();
+        tokio::select! {
+            biased;
+            _ = failure.wait_for(Option::is_some).map(drop) => {
+                self.completion().await?;
+                Ok(None)
+            }
+            page = self.pages.recv() => {
+                if page.is_none() {
+                    self.completion().await?;
+                }
+                Ok(page)
+            }
+        }
+    }
+
+    /// Joins both wrappers without consuming buffered pages. Normally call after
+    /// `recv` returns `None`; undrained backpressure remains subject to the deadline.
+    /// Cancellation-safe and repeatable, including after an incomplete result.
+    pub async fn completion(&mut self) -> Result<CrawlDiagnostics, SpiderDiscoveryError> {
+        if let Some(outcome) = &self.outcome {
+            return outcome.clone().map_err(Into::into);
+        }
+        while let Some(result) = self.tasks.join_next().await {
+            let result = result.unwrap_or_else(|error| {
+                Err(if error.is_panic() {
+                    CrawlIncompleteError::TaskPanicked
+                } else {
+                    CrawlIncompleteError::Cancelled
+                })
+            });
+            if let Err(error) = result {
+                record_crawl_failure(&self.failure, error);
+                self.pages.close();
+                self.tasks.abort_all();
+            }
+        }
+        let outcome = match *self.failure.borrow() {
+            Some(error) => Err(error),
+            // Both writers have joined: no later diagnostics delivery is valid.
+            None => self
+                .diagnostics
+                .try_recv()
+                .map_err(|_| CrawlIncompleteError::MissingDiagnostics),
+        };
+        self.outcome = Some(outcome.clone());
+        outcome.map_err(Into::into)
+    }
+
+    /// Stops and joins both wrappers. An unfinished crawl returns `Cancelled`
+    /// (or its earlier failure), never success. A completed outcome stays unchanged.
+    pub async fn cancel_and_join(&mut self) -> Result<CrawlDiagnostics, SpiderDiscoveryError> {
+        if self.outcome.is_none() {
+            record_crawl_failure(&self.failure, CrawlIncompleteError::Cancelled);
+            self.pages.close();
+            self.tasks.abort_all();
+        }
+        self.completion().await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(pages: Vec<CrawledPage>, diagnostics: Option<CrawlDiagnostics>) -> Self {
+        let (tx, rx) = mpsc::channel(25);
+        let (diagnostics_tx, diagnostics_rx) = oneshot::channel();
+        Self::spawn_owned(
+            rx,
+            diagnostics_rx,
+            async { Ok(()) },
+            async move {
+                for page in pages {
+                    tx.send(page)
+                        .await
+                        .map_err(|_| CrawlIncompleteError::PageDeliveryClosed)?;
+                }
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics_tx
+                        .send(diagnostics)
+                        .map_err(|_| CrawlIncompleteError::DiagnosticsDeliveryClosed)?;
+                }
+                Ok(())
+            },
+            CrawlerConfig::default().max_crawl_duration,
+        )
+    }
+}
+
+impl Drop for SpiderCrawl {
+    fn drop(&mut self) {
+        self.tasks.abort_all();
+    }
+}
+
+fn record_crawl_failure(
+    failure: &watch::Sender<Option<CrawlIncompleteError>>,
+    error: CrawlIncompleteError,
+) {
+    failure.send_if_modified(|current| {
+        if current.is_none() {
+            *current = Some(error);
+            true
+        } else {
+            false
+        }
+    });
+}
+
+async fn run_owned_crawl_task(
+    task: impl Future<Output = Result<(), CrawlIncompleteError>>,
+    failure: watch::Sender<Option<CrawlIncompleteError>>,
+    deadline: Instant,
+) -> Result<(), CrawlIncompleteError> {
+    let mut peer_failure = failure.subscribe();
+    let result = tokio::select! {
+        biased;
+        _ = tokio::time::sleep_until(deadline) => Err(CrawlIncompleteError::DeadlineExceeded),
+        // The original failure remains in the shared signal, not this cancellation.
+        _ = peer_failure.wait_for(Option::is_some).map(drop) => Err(CrawlIncompleteError::Cancelled),
+        result = AssertUnwindSafe(task).catch_unwind() => {
+            match result {
+                // A non-yielding final poll can outlive the timer check above.
+                Ok(Ok(())) if Instant::now() >= deadline => Err(CrawlIncompleteError::DeadlineExceeded),
+                Ok(result) => result,
+                Err(_) => Err(CrawlIncompleteError::TaskPanicked),
+            }
+        }
+    };
+    if let Err(error) = result {
+        record_crawl_failure(&failure, error);
+    }
+    result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum CrawlIncompleteError {
+    #[error("page subscription lagged by {skipped} messages")]
+    BroadcastLagged { skipped: u64 },
+    #[error("producer status was not delivered")]
+    MissingStatus,
+    #[error("crawl diagnostics were not delivered")]
+    MissingDiagnostics,
+    #[error("page consumer closed")]
+    PageDeliveryClosed,
+    #[error("status consumer closed")]
+    StatusDeliveryClosed,
+    #[error("diagnostics consumer closed")]
+    DiagnosticsDeliveryClosed,
+    #[error("owned crawl task panicked")]
+    TaskPanicked,
+    #[error("owned crawl tasks cancelled")]
+    Cancelled,
+    #[error("crawl deadline exceeded")]
+    DeadlineExceeded,
 }
 
 #[derive(Debug, Error)]
 pub enum SpiderDiscoveryError {
     #[error("Spider discovery error: {0}")]
     Discovery(String),
+    #[error("Spider crawl incomplete: {0}")]
+    Incomplete(#[from] CrawlIncompleteError),
 }
 
 #[derive(Debug, Clone)]
@@ -121,7 +319,7 @@ pub struct CrawlerConfig {
     pub channel_size: usize,
     /// Maximum pages accepted in one crawl, including the root page.
     pub max_pages_per_crawl: u32,
-    /// Whole-crawl wall-clock budget; request timeout remains per request.
+    /// Producer/forwarder wall-clock budget after root preflight; requests have their own timeout.
     pub max_crawl_duration: std::time::Duration,
     /// Hard page-body ceiling enforced by Spider's streaming transport.
     pub max_response_body_bytes: usize,
@@ -326,7 +524,9 @@ impl Spider for SpiderImpl {
             .with_request_timeout(Some(std::time::Duration::from_secs(
                 self.config.request_timeout_secs,
             )))
-            .with_crawl_timeout(Some(self.config.max_crawl_duration))
+            // Spider's own timeout returns unit and can masquerade as success.
+            // Our owned wrappers enforce the same budget with a typed failure.
+            .with_crawl_timeout(None)
             .with_limit(self.config.max_pages_per_crawl)
             .with_delay(
                 std::time::Duration::from_millis(self.config.delay_millis).as_millis() as u64,
@@ -335,83 +535,100 @@ impl Spider for SpiderImpl {
             .build()
             .map_err(|_| SpiderDiscoveryError::Discovery("Failed to build website".to_string()))?;
 
-        let mut spider_rx = website.subscribe(512);
-
-        tokio::spawn(async move {
+        let spider_rx = website.subscribe(512);
+        let bloom = Bloom::new_for_fp_rate(self.config.bloom_capacity, self.config.bloom_fp_rate)
+            .map_err(|_| {
+            SpiderDiscoveryError::Discovery("bloom filter init failed".to_string())
+        })?;
+        let producer = async move {
             website.crawl().await;
             let status = *website.get_status();
             let meta = *website.get_website_meta_info();
             website.unsubscribe();
-            let _ = status_tx.send((status, meta));
-        });
+            status_tx
+                .send((status, meta))
+                .map_err(|_| CrawlIncompleteError::StatusDeliveryClosed)
+        };
+        let forwarder = forward_pages(spider_rx, status_rx, tx, diagnostics_tx, root_url, bloom);
 
-        let config = self.config.clone();
-        let crawl_root_url = root_url.to_string();
-        tokio::spawn(async move {
-            let mut bloom = Bloom::new_for_fp_rate(config.bloom_capacity, config.bloom_fp_rate)
-                .expect("bloom filter init failed");
-            let mut diagnostics = CrawlDiagnostics::default();
-            let mut first_page_seen = false;
-            let configured_root = Url::parse(&crawl_root_url).ok();
-            let mut root_redirect_rejected = false;
+        Ok(SpiderCrawl::spawn_owned(
+            rx,
+            diagnostics_rx,
+            producer,
+            forwarder,
+            self.config.max_crawl_duration,
+        ))
+    }
+}
 
-            while let Ok(page) = spider_rx.recv().await {
-                if !first_page_seen {
-                    diagnostics = diagnostics_from_library_page(
-                        &crawl_root_url,
-                        page.get_url(),
-                        page.status_code.as_u16(),
-                        page.final_redirect_destination.as_deref(),
-                        page.anti_bot_tech,
-                    );
-                    root_redirect_rejected = matches!(
-                        diagnostics.failure_kind,
-                        Some(CrawlFailureKind::RedirectProblem)
-                    );
-                    first_page_seen = true;
+async fn forward_pages(
+    mut spider_rx: broadcast::Receiver<Page>,
+    status_rx: oneshot::Receiver<(CrawlStatus, WebsiteMetaInfo)>,
+    tx: mpsc::Sender<CrawledPage>,
+    diagnostics_tx: oneshot::Sender<CrawlDiagnostics>,
+    configured_root: Url,
+    mut bloom: Bloom<String>,
+) -> Result<(), CrawlIncompleteError> {
+    let forwarding = async {
+        let mut diagnostics = CrawlDiagnostics::default();
+        let mut first_page_seen = false;
+        let mut root_redirect_rejected = false;
+
+        loop {
+            let page = match spider_rx.recv().await {
+                Ok(page) => page,
+                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    return Err(CrawlIncompleteError::BroadcastLagged { skipped });
                 }
-
-                let raw_url = page.get_url();
-
-                let normalized = if let Ok(parsed) = url::Url::parse(raw_url) {
-                    CrawledUrl::new(parsed)
-                } else {
-                    continue;
-                };
-
-                if root_redirect_rejected
-                    || !configured_root
-                        .as_ref()
-                        .is_some_and(|root| is_same_or_www_host(root, normalized.as_url()))
-                {
-                    continue;
-                }
-
-                if normalized.is_blacklisted() {
-                    continue;
-                }
-
-                let normalized_str = normalized.to_string();
-
-                if !bloom.check(&normalized_str) {
-                    bloom.set(&normalized_str);
-
-                    if tx.send(CrawledPage { url: normalized }).await.is_err() {
-                        break;
-                    }
-                }
+            };
+            if !first_page_seen {
+                diagnostics = diagnostics_from_library_page(
+                    configured_root.as_str(),
+                    page.get_url(),
+                    page.status_code.as_u16(),
+                    page.final_redirect_destination.as_deref(),
+                    page.anti_bot_tech,
+                );
+                root_redirect_rejected = matches!(
+                    diagnostics.failure_kind,
+                    Some(CrawlFailureKind::RedirectProblem)
+                );
+                first_page_seen = true;
             }
 
-            if let Ok((status, meta)) = status_rx.await {
-                apply_website_status(&mut diagnostics, status, meta);
+            let normalized = if let Ok(parsed) = Url::parse(page.get_url()) {
+                CrawledUrl::new(parsed)
+            } else {
+                continue;
+            };
+            if root_redirect_rejected
+                || !is_same_or_www_host(&configured_root, normalized.as_url())
+                || normalized.is_blacklisted()
+            {
+                continue;
             }
-            let _ = diagnostics_tx.send(diagnostics);
-        });
+            let normalized_str = normalized.to_string();
+            if !bloom.check(&normalized_str) {
+                bloom.set(&normalized_str);
+                tx.send(CrawledPage { url: normalized })
+                    .await
+                    .map_err(|_| CrawlIncompleteError::PageDeliveryClosed)?;
+            }
+        }
 
-        Ok(SpiderCrawl {
-            pages: rx,
-            diagnostics: diagnostics_rx,
-        })
+        let (status, meta) = status_rx
+            .await
+            .map_err(|_| CrawlIncompleteError::MissingStatus)?;
+        apply_website_status(&mut diagnostics, status, meta);
+        diagnostics_tx
+            .send(diagnostics)
+            .map_err(|_| CrawlIncompleteError::DiagnosticsDeliveryClosed)
+    };
+    tokio::select! {
+        biased;
+        _ = tx.closed() => Err(CrawlIncompleteError::PageDeliveryClosed),
+        result = forwarding => result,
     }
 }
 
@@ -539,6 +756,10 @@ fn website_status_signal(status: CrawlStatus, meta: WebsiteMetaInfo) -> Option<D
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "website_spider_tests.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 mod tests {

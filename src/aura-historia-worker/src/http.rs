@@ -7,7 +7,7 @@ use crate::{
     cdc::{CdcIngestError, MAX_CDC_BODY_BYTES},
 };
 use axum::{
-    Extension, Router,
+    Extension, Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Request, State},
     http::{StatusCode, header},
@@ -37,7 +37,7 @@ use tokio::{
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_HTTP_REQUESTS: usize = 16;
 const MAX_HTTP_CONNECTIONS: usize = 16;
 const MAX_HTTP_HEADERS: usize = 32;
@@ -164,6 +164,9 @@ pub(crate) fn router(runtime: WorkerRuntime) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/admission", get(admission))
+        .route("/state", get(operational_state))
+        .route("/version", get(version))
         .route(SEQUIN_CDC_PATH, post(ingest))
         .fallback(|| async { (StatusCode::NOT_FOUND, "not found\n") })
         .layer(DefaultBodyLimit::max(MAX_CDC_BODY_BYTES))
@@ -178,7 +181,11 @@ async fn bounded_request(State(state): State<HttpState>, request: Request, next:
     if let Some(started) = request.extensions().get::<RequestStarted>() {
         started.0.store(true, Ordering::Release);
     }
-    let mut response = if state.runtime.control.stopping() {
+    let operational = matches!(
+        request.uri().path(),
+        "/health" | "/ready" | "/admission" | "/state" | "/version"
+    );
+    let mut response = if state.runtime.control.stopping() && !operational {
         (StatusCode::SERVICE_UNAVAILABLE, "worker stopping\n").into_response()
     } else if request
         .headers()
@@ -206,6 +213,11 @@ async fn bounded_request(State(state): State<HttpState>, request: Request, next:
         )
             .into_response()
     };
+    // Apply even on errors, HEAD, overload and shutdown responses.
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store, max-age=0"),
+    );
     // Preserve the private webhook server's one-request connection contract, without partial reads.
     response.headers_mut().insert(
         header::CONNECTION,
@@ -227,6 +239,46 @@ async fn ready(State(state): State<HttpState>) -> impl IntoResponse {
         (StatusCode::SERVICE_UNAVAILABLE, "not ready\n")
     }
 }
+async fn admission(State(state): State<HttpState>) -> impl IntoResponse {
+    if state.runtime.admitting() {
+        (StatusCode::OK, "accepting\n")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "not accepting\n")
+    }
+}
+
+async fn version(State(state): State<HttpState>) -> Response {
+    match &state.runtime.operational {
+        Some(config) => Json(&config.identity).into_response(),
+        None => (StatusCode::SERVICE_UNAVAILABLE, "identity unavailable\n").into_response(),
+    }
+}
+
+async fn operational_state(State(state): State<HttpState>) -> impl IntoResponse {
+    let runtime = &state.runtime;
+    let lifecycle = if runtime.control.stopping() {
+        "DRAINING"
+    } else if runtime.admitting() {
+        "RUNNING"
+    } else {
+        "UNCONFIGURED"
+    };
+    Json(serde_json::json!({
+        "schema_version": 1,
+        "lifecycle": lifecycle,
+        "ingress_admission": runtime.admitting(),
+        "consumer_live": runtime.control.live(),
+        "consumer_ready": runtime.control.ready(),
+        "identity": runtime.operational.as_ref().map(|config| &config.identity),
+        "budgets": runtime.operational.as_ref().map(|config| serde_json::json!({
+            "drain_seconds": config.drain.as_secs(),
+            "external_stop_seconds": config.stop.as_secs(),
+            "execution_seconds": config.execution.as_secs(),
+            "http_seconds": CONNECTION_TIMEOUT.as_secs(),
+        })),
+    }))
+}
+
 async fn ingest(State(state): State<HttpState>, body: Bytes) -> impl IntoResponse {
     // Consumer outages must not couple durable ingress to downstream availability.
     if state.runtime.control.stopping() {

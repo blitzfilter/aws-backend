@@ -3,20 +3,22 @@ use async_trait::async_trait;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{AssertSqlSafe, ConnectOptions, Executor, PgConnection, PgPool};
 use std::collections::HashMap;
-use std::net::TcpListener;
+use std::io;
 use std::path::Path;
-use std::process::Command;
-use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tokio::sync::OnceCell;
 use tracing::debug;
 
+#[path = "postgres_fixture.rs"]
+mod fixture;
+use fixture::DockerFixture;
+
 const POSTGRES_USER: &str = "postgres";
 const POSTGRES_PASSWORD: &str = "postgres";
 const POSTGRES_DB: &str = "postgres";
-const POSTGRES_CONTAINER_PORT: u16 = 5432;
+
 const POSTGRES_CONTAINER_NAME_PREFIX: &str = "aura-historia-aws-backend-postgres-test";
 const POSTGRES_PG_TTL_IMAGE: &str = include_str!(concat!(
     env!("CARGO_WORKSPACE_DIR"),
@@ -30,8 +32,8 @@ type MigrationInitializers = Mutex<HashMap<&'static str, Arc<OnceCell<()>>>>;
 ///
 /// [`tokio::sync::OnceCell`] is used so concurrent async callers all await the same
 /// initialisation future instead of racing to start duplicate containers.
-static POSTGRES_CONTAINER_STARTED: OnceCell<()> = OnceCell::const_new();
-static POSTGRES_HOST_PORT: OnceLock<u16> = OnceLock::new();
+static POSTGRES_CONTAINER_STARTED: OnceCell<u16> = OnceCell::const_new();
+static OWNED_CONTAINER: Mutex<Option<DockerFixture>> = Mutex::new(None);
 static MIGRATIONS_APPLIED: OnceLock<MigrationInitializers> = OnceLock::new();
 
 fn postgres_container_name() -> String {
@@ -39,17 +41,9 @@ fn postgres_container_name() -> String {
 }
 
 fn postgres_host_port() -> u16 {
-    *POSTGRES_HOST_PORT
+    *POSTGRES_CONTAINER_STARTED
         .get()
         .expect("Postgres host port not initialized; call `ensure_container_started()` first")
-}
-
-fn find_free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("shouldn't fail binding to a random port")
-        .local_addr()
-        .expect("shouldn't fail reading local address")
-        .port()
 }
 
 fn connection_string() -> String {
@@ -89,117 +83,127 @@ async fn open_connection() -> PgConnection {
         .expect("shouldn't fail connecting to Postgres test container")
 }
 
-async fn wait_for_postgres_connection() -> PgConnection {
-    let deadline = Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        let options = PgConnectOptions::from_str(&connection_string())
-            .expect("shouldn't fail parsing Postgres connection string");
+async fn provision_postgres(port: u16) -> io::Result<()> {
+    let url =
+        format!("postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{port}/{POSTGRES_DB}");
+    let options = PgConnectOptions::from_str(&url)
+        .map_err(|_| io::Error::other("invalid local Postgres fixture connection options"))?
+        .disable_statement_logging();
+    let mut connection = loop {
         match options.connect().await {
-            Ok(connection) => return connection,
-            Err(error) if Instant::now() < deadline => {
-                debug!(%error, "Postgres is not accepting connections yet.");
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-            Err(error) => panic!("Postgres did not become ready before deadline: {error}"),
+            Ok(connection) => break connection,
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+        }
+    };
+    connection
+        .execute(AssertSqlSafe("CREATE EXTENSION pg_ttl_index"))
+        .await
+        .map_err(|_| io::Error::other("Postgres fixture pg_ttl_index provisioning failed"))?;
+    connection
+        .execute(AssertSqlSafe("SELECT ttl_start_worker()"))
+        .await
+        .map_err(|_| io::Error::other("Postgres fixture pg_ttl_index worker startup failed"))?;
+    Ok(())
+}
+
+/// Ensures one process-lived, locally owned container; startup cancellation also cleans up.
+async fn ensure_container_started() {
+    POSTGRES_CONTAINER_STARTED
+        .get_or_try_init(start_container)
+        .await
+        .unwrap_or_else(|error| panic!("Postgres fixture startup failed: {error}"));
+}
+
+async fn start_container() -> io::Result<u16> {
+    let started = Instant::now();
+    let mut container = DockerFixture::local()?;
+    let image = match std::env::var("AURA_TEST_POSTGRES_IMAGE") {
+        Ok(image) => image,
+        Err(std::env::VarError::NotPresent) => POSTGRES_PG_TTL_IMAGE.trim().to_owned(),
+        Err(_) => {
+            return Err(io::Error::other(
+                "invalid local Postgres fixture image override",
+            ));
+        }
+    };
+    container.create(&postgres_container_name(), &image)?;
+    {
+        let mut owned = OWNED_CONTAINER
+            .lock()
+            .map_err(|_| io::Error::other("Postgres fixture ownership lock poisoned"))?;
+        if owned.is_some() {
+            return Err(io::Error::other(
+                "Postgres fixture still has an owned container",
+            ));
+        }
+        *owned = Some(container);
+    }
+    let mut startup = StartupCleanup { armed: true };
+    install_cleanup()?;
+    let port = {
+        let owned = OWNED_CONTAINER
+            .lock()
+            .map_err(|_| io::Error::other("Postgres fixture ownership lock poisoned"))?;
+        owned
+            .as_ref()
+            .ok_or_else(|| io::Error::other("Postgres fixture lost startup ownership"))?
+            .start()?
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), provision_postgres(port))
+        .await
+        .map_err(|_| io::Error::other("Postgres fixture readiness/provisioning timed out"))??;
+    debug!(
+        elapsed_ms = started.elapsed().as_millis(),
+        pid = std::process::id(),
+        "Postgres container started with pg_ttl_index."
+    );
+    startup.armed = false;
+    Ok(port)
+}
+
+struct StartupCleanup {
+    armed: bool,
+}
+
+impl Drop for StartupCleanup {
+    fn drop(&mut self) {
+        if self.armed {
+            cleanup();
         }
     }
 }
 
-/// Ensures the Postgres container is running, starting it at most once per process.
-///
-/// All concurrent callers await the same [`OnceCell`] initialisation future, so only one
-/// container is ever started. The container handle is intentionally leaked — it lives for
-/// the entire test-suite binary and is cleaned up by the `atexit` handler.
-async fn ensure_container_started() {
-    POSTGRES_CONTAINER_STARTED
-        .get_or_init(|| async {
-            install_cleanup();
-            let name = postgres_container_name();
-            let port = find_free_port();
-            POSTGRES_HOST_PORT
-                .set(port)
-                .expect("shouldn't fail setting Postgres host port");
-
-            // Remove any container left over from a previous aborted run of this process id.
-            let _ = docker_remove(&name);
-            let started = Instant::now();
-
-            use testcontainers::GenericImage;
-            use testcontainers::ImageExt;
-            use testcontainers::core::{IntoContainerPort, WaitFor};
-            use testcontainers::runners::AsyncRunner;
-
-            let image = std::env::var("AURA_TEST_POSTGRES_IMAGE")
-                .unwrap_or_else(|_| POSTGRES_PG_TTL_IMAGE.trim().to_owned());
-            let (repository, tag) = image.rsplit_once(':').unwrap_or_else(|| {
-                panic!("invalid Postgres test image reference '{image}'; expected repository:tag")
-            });
-            let container = GenericImage::new(repository, tag)
-                .with_wait_for(WaitFor::message_on_stdout(
-                    "database system is ready to accept connections",
-                ))
-                .with_env_var("POSTGRES_USER", POSTGRES_USER)
-                .with_env_var("POSTGRES_PASSWORD", POSTGRES_PASSWORD)
-                .with_env_var("POSTGRES_DB", POSTGRES_DB)
-                .with_cmd([
-                    "-c",
-                    "fsync=off",
-                    "-c",
-                    "wal_level=logical",
-                    "-c",
-                    "shared_preload_libraries=pg_ttl_index",
-                ])
-                .with_container_name(name)
-                .with_mapped_port(port, POSTGRES_CONTAINER_PORT.tcp())
-                .start()
-                .await
-                .expect("shouldn't fail starting Postgres test container");
-
-            let mut connection = wait_for_postgres_connection().await;
-            connection
-                .execute(AssertSqlSafe("CREATE EXTENSION pg_ttl_index"))
-                .await
-                .expect("should create pg_ttl_index extension in test database");
-            connection
-                .execute(AssertSqlSafe("SELECT ttl_start_worker()"))
-                .await
-                .expect("should start pg_ttl_index worker in test database");
-
-            debug!(
-                image,
-                elapsed_ms = started.elapsed().as_millis(),
-                pid = std::process::id(),
-                "Postgres container started with pg_ttl_index."
-            );
-
-            // Leak the handle intentionally: the container must stay alive for the whole
-            // test-suite. The atexit handler takes care of removing it on process exit.
-            std::mem::forget(container);
-        })
-        .await;
-}
-
-fn docker_remove(name: &str) -> std::io::Result<std::process::ExitStatus> {
-    Command::new("docker")
-        .args(["rm", "-f", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+fn cleanup_owned_container() -> io::Result<()> {
+    let mut owned = match OWNED_CONTAINER.lock() {
+        Ok(owned) => owned,
+        // A panic must not erase already acquired cleanup authority.
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(container) = owned.as_mut() {
+        container.cleanup()?;
+    }
+    owned.take();
+    Ok(())
 }
 
 extern "C" fn cleanup() {
-    let name = postgres_container_name();
-    let _ = docker_remove(&name);
+    if let Err(error) = cleanup_owned_container() {
+        eprintln!("{error}");
+    }
 }
 
-/// Installs cleanup hooks so that the Postgres container is removed both on normal
-/// process exit (`atexit`) and on an interrupted exit (`SIGINT` / `SIGTERM`).
-fn install_cleanup() {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        unsafe { libc::atexit(cleanup) };
+/// Register only after successful ID acquisition; hooks never discover ownership by name.
+fn install_cleanup() -> io::Result<()> {
+    static INIT: OnceLock<Result<(), &'static str>> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // SAFETY: fixed C-ABI callback, process-lived state, no unwinding from cleanup.
+        if unsafe { libc::atexit(cleanup) } != 0 {
+            return Err("could not register owned Postgres exit cleanup");
+        }
         crate::signal::register_signal_cleanup(|| cleanup());
-    });
+        Ok(())
+    })
+    .map_err(io::Error::other)
 }
 
 /// Returns a fresh [`PgPool`] connected to the test Postgres container.
@@ -234,7 +238,7 @@ pub async fn get_postgres_client() -> PgPool {
 /// Test helper representing a plain Postgres database for integration tests.
 ///
 /// Unlike AWS service helpers this helper does **not** use LocalStack. It spins up a real
-/// Postgres Docker container via [`testcontainers`] and manages it independently.
+/// Postgres Docker container via an explicit local Unix Docker CLI and manages it independently.
 ///
 /// # Lifecycle
 ///

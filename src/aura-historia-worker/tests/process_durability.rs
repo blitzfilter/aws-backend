@@ -3,11 +3,9 @@
 mod process_support;
 
 use process_support::*;
-use test_api::{
-    IntegrationTestService, Postgres, Sequin, aura_integration_test, get_postgres_client,
-};
+use test_api::{IntegrationTestService, Sequin, aura_integration_test, get_postgres_client};
 
-const POSTGRES: Postgres = Postgres::new("migrations");
+const POSTGRES: ProcessPostgres = ProcessPostgres;
 const SEQUIN: Sequin = Sequin::worker_webhook_for_tables(&["public.product_listing_events"]);
 
 #[aura_integration_test(services = [POSTGRES, WORKER_SQS, SEQUIN])]
@@ -352,52 +350,112 @@ async fn should_retry_ack_without_rerunning_handler_when_real_delete_response_is
 
 #[aura_integration_test(services = [POSTGRES, WORKER_SQS, SEQUIN])]
 async fn should_drain_blocked_work_on_sigterm_and_leave_queued_work_for_restart() {
+    case(drain_blocked_work(false)).await;
+}
+
+#[aura_integration_test(services = [POSTGRES, WORKER_SQS, SEQUIN])]
+async fn should_drain_blocked_work_on_sigint_and_leave_queued_work_for_restart() {
+    case(drain_blocked_work(true)).await;
+}
+
+async fn drain_blocked_work(interrupt: bool) -> TestResult {
+    let pool = get_postgres_client().await;
+    let observations = Observations::new();
+    let sqs = Relay::sqs("primary", observations.clone(), false).await?;
+    let address = unused_address()?;
+    let webhook = Relay::webhook(address, observations.clone()).await?;
+    let mut child = WorkerProcess::start(&pool, &sqs, address).await?;
+    let mut barrier = pool.begin().await?;
+    sqlx::query("LOCK TABLE product_listing_content_assessments IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *barrier)
+        .await?;
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *barrier)
+        .await?;
+    let source = commit_source(&pool).await?;
+    let (body, message_id) = observed_publication(&observations, source).await?;
+    let receipt = observations.received(&message_id, 1).await?;
+    wait_for_blocked_handler(&pool, blocker_pid).await?;
+    if interrupt {
+        child.interrupt()?;
+    } else {
+        child.terminate()?;
+    }
+    wait_for_http_shutdown(address).await?;
+    child.assert_running()?;
+    wait_for_blocked_handler(&pool, blocker_pid).await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM product_listing_content_assessments")
+        .fetch_one(&mut *barrier)
+        .await?;
+    assert_eq!(
+        0, count,
+        "signal must drain the owned attempt rather than cancel it"
+    );
+    let queued_message_id = send(&body).await?;
+    barrier.commit().await?;
+    let committed = persisted_assessment(&pool, source).await?;
+    observations.deleted(&receipt).await?;
+    child.wait_for_clean_exit().await?;
+    assert_queue_counts(1, 0).await?;
+
+    let mut restarted = WorkerProcess::start(&pool, &sqs, address).await?;
+    let queued = observations.received(&queued_message_id, 1).await?;
+    assert!(body == queued.body, "redelivery changed job identity");
+    observations.deleted(&queued).await?;
+    assert_eq!(Some(committed), assessment(&pool, source).await?);
+    assert_eq!(1, assessment_count(&pool).await?);
+    assert_one_source_event(&pool, source).await?;
+    assert_queue_counts(0, 0).await?;
+    restarted.kill()?;
+    webhook.stop().await?;
+    sqs.stop().await?;
+    Ok(())
+}
+
+#[aura_integration_test(services = [POSTGRES, WORKER_SQS, SEQUIN])]
+async fn should_exit_nonzero_on_sigint_deadline_and_leave_real_sqs_receipt_for_redelivery() {
     case(async {
         let pool = get_postgres_client().await;
         let observations = Observations::new();
         let sqs = Relay::sqs("primary", observations.clone(), false).await?;
         let address = unused_address()?;
         let webhook = Relay::webhook(address, observations.clone()).await?;
-        let mut child = WorkerProcess::start(&pool, &sqs, address).await?;
+        let mut child = WorkerProcess::spawn(
+            &pool,
+            &sqs.endpoint,
+            &sqs.queue_url()?,
+            address,
+            &[("AURA_HISTORIA_WORKER_DRAIN_TIMEOUT_SECONDS", "1")],
+            false,
+        )?;
+        child.wait_for_ready(address).await?;
         let mut barrier = pool.begin().await?;
         sqlx::query("LOCK TABLE product_listing_content_assessments IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *barrier)
             .await?;
-        let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *barrier)
             .await?;
         let source = commit_source(&pool).await?;
-        let (body, message_id) = observed_publication(&observations, source).await?;
+        let (_, message_id) = observed_publication(&observations, source).await?;
         let receipt = observations.received(&message_id, 1).await?;
-        wait_for_blocked_handler(&pool, blocker_pid).await?;
-        child.terminate()?;
-        wait_for_http_shutdown(address).await?;
-        child.assert_running()?;
-        wait_for_blocked_handler(&pool, blocker_pid).await?;
-        let count: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM product_listing_content_assessments")
-                .fetch_one(&mut *barrier)
-                .await?;
-        assert_eq!(
-            0, count,
-            "SIGTERM must drain the owned attempt rather than cancel it"
-        );
-        let queued_message_id = send(&body).await?;
-        barrier.commit().await?;
-        let committed = persisted_assessment(&pool, source).await?;
-        observations.deleted(&receipt).await?;
-        child.wait_for_clean_exit().await?;
-        assert_queue_counts(1, 0).await?;
-
+        wait_for_blocked_handler(&pool, blocker).await?;
+        child.interrupt()?;
+        child.wait_for_exit(1).await?;
+        observations.assert_never_deleted(std::slice::from_ref(&receipt));
+        barrier.rollback().await?;
+        assert!(assessment(&pool, source).await?.is_none());
         let mut restarted = WorkerProcess::start(&pool, &sqs, address).await?;
-        let queued = observations.received(&queued_message_id, 1).await?;
-        assert_eq!(body, queued.body);
-        observations.deleted(&queued).await?;
-        assert_eq!(Some(committed), assessment(&pool, source).await?);
-        assert_eq!(1, assessment_count(&pool).await?);
-        assert_one_source_event(&pool, source).await?;
-        assert_queue_counts(0, 0).await?;
-        restarted.kill()?;
+        // Native visibility expiry, no test visibility reset or republish.
+        let redelivery = observations.received(&message_id, 2).await?;
+        assert!(
+            receipt.handle != redelivery.handle,
+            "redelivery must get a fresh receipt"
+        );
+        observations.deleted(&redelivery).await?;
+        assert!(assessment(&pool, source).await?.is_some());
+        restarted.terminate()?;
+        restarted.wait_for_clean_exit().await?;
         webhook.stop().await?;
         sqs.stop().await?;
         Ok(())

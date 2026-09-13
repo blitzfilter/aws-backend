@@ -2,7 +2,10 @@
 #[path = "consumer_tests.rs"]
 mod tests;
 
-use super::{API_TIMEOUT, Message, RECEIVE_TIMEOUT, SqsQueue, Transport, bounded, config};
+use super::{
+    API_TIMEOUT, Message, RECEIVE_TIMEOUT, SqsQueue, Transport, bounded, config,
+    tasks::{CancelledTasks, OwnedTasks},
+};
 use crate::{InMemoryQueueReceiver, WorkerScope, jobs::DomainJob, wire};
 use std::{
     future::Future,
@@ -16,7 +19,6 @@ use std::{
 use time::OffsetDateTime;
 use tokio::{
     sync::{oneshot, watch},
-    task::JoinSet,
     time::{Instant, MissedTickBehavior},
 };
 use tracing::{info, instrument::WithSubscriber, warn};
@@ -28,6 +30,7 @@ struct ControlState {
     live: AtomicBool,
     ready: AtomicBool,
     shutdown: watch::Sender<bool>,
+    cancelled_tasks: CancelledTasks,
 }
 impl RuntimeControl {
     pub(crate) fn new(ready: bool) -> Self {
@@ -36,7 +39,14 @@ impl RuntimeControl {
             live: AtomicBool::new(ready),
             ready: AtomicBool::new(ready),
             shutdown,
+            cancelled_tasks: CancelledTasks::default(),
         }))
+    }
+    pub(crate) async fn join_cancelled_tasks(&self) {
+        self.0.cancelled_tasks.join().await;
+    }
+    pub(crate) fn owned_tasks<T: Send + 'static>(&self) -> OwnedTasks<T> {
+        OwnedTasks::new(self.0.cancelled_tasks.clone())
     }
     pub(crate) fn live(&self) -> bool {
         self.0.live.load(Ordering::Acquire) && !self.stopping()
@@ -127,7 +137,7 @@ pub(crate) struct Delivery {
 /// One reserved receive slot across timer turns. Readiness does not transfer receipt ownership.
 /// The owner keeps heartbeating until the scheduler selects CDC and explicitly joins the handoff.
 pub(crate) struct PendingReceive {
-    task: JoinSet<(WorkerQueueReceiver, Option<Delivery>)>,
+    task: OwnedTasks<(WorkerQueueReceiver, Option<Delivery>)>,
     ready: oneshot::Receiver<()>,
     handoff: Option<oneshot::Sender<()>>,
     control: RuntimeControl,
@@ -137,7 +147,7 @@ impl PendingReceive {
         let control = receiver.control();
         let (ready_tx, ready) = oneshot::channel();
         let (handoff, handoff_rx) = oneshot::channel();
-        let mut task = JoinSet::new();
+        let mut task = OwnedTasks::new(control.0.cancelled_tasks.clone());
         task.spawn(
             async move {
                 let mut delivery = receiver.recv().await;
@@ -413,7 +423,8 @@ impl WorkerQueueReceiver {
                     Source::Memory(_) => None,
                 };
                 let execution_started = Instant::now();
-                let result = execute_owned(
+                let result = execute_tracked(
+                    &self.control.0.cancelled_tasks,
                     transport,
                     message.as_ref(),
                     config::visibility(scope),
@@ -474,7 +485,8 @@ impl WorkerQueueReceiver {
     }
 }
 
-async fn execute_owned<F>(
+async fn execute_tracked<F>(
+    cancelled_tasks: &CancelledTasks,
     transport: Option<&dyn Transport>,
     message: Option<&Message>,
     visibility: Duration,
@@ -484,8 +496,8 @@ async fn execute_owned<F>(
 where
     F: Future<Output = JobOutcome> + Send + 'static,
 {
-    // JoinSet aborts its children on parent cancellation; no detached handler or heartbeat task.
-    let mut task = JoinSet::new();
+    // Cancellation retains the join in the runtime supervisor, not just an abort request.
+    let mut task = OwnedTasks::new(cancelled_tasks.clone());
     task.spawn(async move {
         tokio::time::timeout(budget, handler)
             .await
@@ -516,6 +528,21 @@ where
             }
         }
     }
+}
+
+#[cfg(test)]
+async fn execute_owned<F>(
+    transport: Option<&dyn Transport>,
+    message: Option<&Message>,
+    visibility: Duration,
+    budget: Duration,
+    handler: F,
+) -> JobOutcome
+where
+    F: Future<Output = JobOutcome> + Send + 'static,
+{
+    let cancelled = CancelledTasks::default();
+    execute_tracked(&cancelled, transport, message, visibility, budget, handler).await
 }
 
 fn heartbeat_interval(visibility: Duration) -> tokio::time::Interval {

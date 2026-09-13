@@ -1,14 +1,13 @@
 use crate::scheduled_job::{ActiveExecutionTracker, CronDrainError, CronJob, ScheduledJobRunner};
 use chrono::Utc;
 use cron_tab::AsyncCron;
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::{
-    sync::oneshot,
-    task::{AbortHandle, JoinError},
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
 };
-use tracing::{error, info};
+use tokio::task::JoinHandle;
+use tracing::info;
 
 #[doc(hidden)]
 pub struct JobRegistration {
@@ -21,19 +20,24 @@ pub struct JobRegistration {
 #[doc(hidden)]
 pub struct CronScheduler {
     tracker: Arc<ActiveExecutionTracker>,
-    scheduler_abort: AbortHandle,
-    scheduler_exit: Option<oneshot::Receiver<Result<(), JoinError>>>,
+    scheduler_task: Option<JoinHandle<()>>,
 }
 
 impl CronScheduler {
     pub async fn start(
         registrations: Vec<JobRegistration>,
     ) -> Result<Self, CronSchedulerStartError> {
+        Self::start_with_tracker(registrations, Arc::new(ActiveExecutionTracker::new())).await
+    }
+
+    pub(crate) async fn start_with_tracker(
+        registrations: Vec<JobRegistration>,
+        tracker: Arc<ActiveExecutionTracker>,
+    ) -> Result<Self, CronSchedulerStartError> {
         if registrations.is_empty() {
             return Err(CronSchedulerStartError::NoJobs);
         }
         let mut names = HashSet::new();
-        let tracker = Arc::new(ActiveExecutionTracker::new());
         let mut cron = AsyncCron::new(Utc);
         for registration in registrations {
             if !names.insert(registration.name) {
@@ -49,7 +53,11 @@ impl CronScheduler {
             ));
             cron.add_fn(&registration.schedule, move || {
                 let runner = Arc::clone(&runner);
-                async move { runner.run().await }
+                // cron_tab's unowned task is only a trigger. All execution joins belong
+                // to the tracker; a late trigger cannot pass its closed admission gate.
+                async move {
+                    drop(runner.submit());
+                }
             })
             .await
             .map_err(|error| CronSchedulerStartError::InvalidSchedule {
@@ -58,56 +66,74 @@ impl CronScheduler {
             })?;
         }
         let scheduler_task = tokio::spawn(async move { cron.start_blocking().await });
-        let scheduler_abort = scheduler_task.abort_handle();
-        let (scheduler_exit_sender, scheduler_exit) = oneshot::channel();
-        tokio::spawn(async move {
-            let _ = scheduler_exit_sender.send(scheduler_task.await);
-        });
         info!(job_count = names.len(), "cron.scheduler.started");
         Ok(Self {
             tracker,
-            scheduler_abort,
-            scheduler_exit: Some(scheduler_exit),
+            scheduler_task: Some(scheduler_task),
         })
     }
 
     pub async fn wait_for_exit(&mut self) -> CronSchedulerTaskExit {
-        let Some(scheduler_exit) = self.scheduler_exit.take() else {
+        let Some(task) = self.scheduler_task.as_mut() else {
             return CronSchedulerTaskExit::ObserverLost;
         };
-        match scheduler_exit.await {
-            Ok(Ok(())) => CronSchedulerTaskExit::Exited,
-            Ok(Err(error)) if error.is_panic() => CronSchedulerTaskExit::Panicked,
-            Ok(Err(_)) => CronSchedulerTaskExit::Cancelled,
-            Err(_) => CronSchedulerTaskExit::ObserverLost,
-        }
+        // Borrow, do not take: select cancellation must retain the shutdown join.
+        let outcome = match task.await {
+            Ok(()) => CronSchedulerTaskExit::Exited,
+            Err(error) if error.is_panic() => {
+                CronSchedulerTaskExit::Panicked(crate::CronErrorCause::new(error))
+            }
+            Err(error) => CronSchedulerTaskExit::Cancelled(crate::CronErrorCause::new(error)),
+        };
+        self.scheduler_task = None;
+        outcome
     }
 
     pub async fn shutdown(mut self, grace: Duration) -> Result<(), CronSchedulerShutdownError> {
-        let started_at = Instant::now();
+        let _deadline = crate::shutdown::FatalDeadline::after_drain(grace);
+        let started = Instant::now();
         self.tracker.stop_accepting();
-        self.scheduler_abort.abort();
-        if let Some(scheduler_exit) = self.scheduler_exit.take() {
-            let _ = scheduler_exit.await;
+        let mut scheduler_failure = None;
+        if let Some(task) = self.scheduler_task.take() {
+            task.abort();
+            match task.await {
+                Ok(()) => scheduler_failure = Some(CronSchedulerTaskExit::Exited),
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => {
+                    scheduler_failure = Some(CronSchedulerTaskExit::Panicked(
+                        crate::CronErrorCause::new(error),
+                    ))
+                }
+            }
         }
-        match self.tracker.drain(grace).await {
-            Ok(()) => {
-                info!(
-                    grace_ms = grace.as_millis() as u64,
-                    duration_ms = started_at.elapsed().as_millis() as u64,
-                    "cron.scheduler.drained"
-                );
-                Ok(())
-            }
-            Err(error @ CronDrainError::TimedOut { active }) => {
-                error!(
-                    grace_ms = grace.as_millis() as u64,
-                    duration_ms = started_at.elapsed().as_millis() as u64,
-                    active_executions = active,
-                    "cron.scheduler.drain_failed"
-                );
-                Err(error.into())
-            }
+        let result = self
+            .tracker
+            .drain(grace.saturating_sub(started.elapsed()))
+            .await;
+        info!(
+            duration_ms = started.elapsed().as_millis(),
+            outcome = if result.is_ok() {
+                "drained"
+            } else {
+                "cancelled"
+            },
+            "cron.scheduler.drained"
+        );
+        match (scheduler_failure, result) {
+            (None, result) => result.map_err(Into::into),
+            (Some(task), drain) => Err(CronSchedulerShutdownError::Task {
+                task,
+                drain: drain.err(),
+            }),
+        }
+    }
+}
+
+impl Drop for CronScheduler {
+    fn drop(&mut self) {
+        self.tracker.stop_accepting();
+        if let Some(task) = &self.scheduler_task {
+            task.abort();
         }
     }
 }
@@ -128,17 +154,23 @@ pub enum CronSchedulerStartError {
 pub enum CronSchedulerShutdownError {
     #[error(transparent)]
     Drain(#[from] CronDrainError),
+    #[error("scheduler task failed during shutdown")]
+    Task {
+        #[source]
+        task: CronSchedulerTaskExit,
+        drain: Option<CronDrainError>,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[doc(hidden)]
 pub enum CronSchedulerTaskExit {
     #[error("scheduler task exited")]
     Exited,
     #[error("scheduler task panicked")]
-    Panicked,
+    Panicked(#[source] crate::CronErrorCause),
     #[error("scheduler task was cancelled")]
-    Cancelled,
+    Cancelled(#[source] crate::CronErrorCause),
     #[error("scheduler task observer stopped")]
     ObserverLost,
 }
@@ -178,11 +210,10 @@ mod tests {
     #[tokio::test]
     async fn should_report_unexpected_scheduler_exit() {
         let mut scheduler = scheduler_for_task(tokio::spawn(async {}));
-
-        assert_eq!(
+        assert!(matches!(
             scheduler.wait_for_exit().await,
             CronSchedulerTaskExit::Exited
-        );
+        ));
     }
 
     #[tokio::test]
@@ -190,23 +221,28 @@ mod tests {
         let mut scheduler = scheduler_for_task(tokio::spawn(async {
             std::panic::panic_any("scheduler test panic");
         }));
-
-        assert_eq!(
+        assert!(matches!(
             scheduler.wait_for_exit().await,
-            CronSchedulerTaskExit::Panicked
-        );
+            CronSchedulerTaskExit::Panicked(_)
+        ));
     }
 
-    fn scheduler_for_task(scheduler_task: tokio::task::JoinHandle<()>) -> CronScheduler {
-        let scheduler_abort = scheduler_task.abort_handle();
-        let (scheduler_exit_sender, scheduler_exit) = oneshot::channel();
-        tokio::spawn(async move {
-            let _ = scheduler_exit_sender.send(scheduler_task.await);
-        });
+    #[tokio::test]
+    async fn should_retain_scheduler_join_when_exit_wait_is_cancelled() {
+        let mut scheduler = scheduler_for_task(tokio::spawn(std::future::pending()));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), scheduler.wait_for_exit())
+                .await
+                .is_err()
+        );
+        assert!(scheduler.scheduler_task.is_some());
+        assert!(scheduler.shutdown(Duration::from_secs(1)).await.is_ok());
+    }
+
+    fn scheduler_for_task(task: JoinHandle<()>) -> CronScheduler {
         CronScheduler {
             tracker: Arc::new(ActiveExecutionTracker::new()),
-            scheduler_abort,
-            scheduler_exit: Some(scheduler_exit),
+            scheduler_task: Some(task),
         }
     }
 }

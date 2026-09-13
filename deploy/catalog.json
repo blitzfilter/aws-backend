@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "native": [
+    { "id": "aura-historia-api", "package": "aura-historia-api", "binary": "aura-historia-api", "path": "src/aura-historia-api", "status": "IMPLEMENTED" },
+    { "id": "aura-historia-worker", "package": "aura-historia-worker", "binary": "aura-historia-worker", "path": "src/aura-historia-worker", "status": "IMPLEMENTED" },
+    { "id": "aura-historia-cron", "package": "aura-historia-cron", "binary": "aura-historia-cron", "path": "src/aura-historia-cron", "status": "IMPLEMENTED" },
+    { "id": "crawler", "package": "crawler", "binary": "server", "path": "src/crawler", "status": "IMPLEMENTED" },
+    { "id": "aura-historia-migrate", "package": "aura-historia-migrate", "binary": "aura-historia-migrate", "path": "src/aura-historia-migrate", "status": "NOT_IMPLEMENTED" }
+  ],
+  "lambdas": [
+    { "id": "cloudwatch-log-retention-lambda", "package": "cloudwatch-log-retention-lambda", "binary": "cloudwatch-log-retention-lambda", "path": "src/cloudwatch-log-retention-lambda", "status": "IMPLEMENTED", "architecture": "x86_64", "database": false },
+    { "id": "cognito-post-confirmation", "package": "cognito-post-confirmation", "binary": "cognito-post-confirmation", "path": "src/cognito-post-confirmation", "status": "IMPLEMENTED", "architecture": "x86_64", "database": true },
+    { "id": "shopify-lambda", "package": "shopify-lambda", "binary": "shopify-lambda", "path": "src/shopify-lambda", "status": "IMPLEMENTED", "architecture": "x86_64", "database": true },
+    { "id": "stripe-lambda", "package": "stripe-lambda", "binary": "stripe-lambda", "path": "src/stripe-lambda", "status": "IMPLEMENTED", "architecture": "x86_64", "database": true },
+    { "id": "fxrate-lambda", "package": "fxrate-lambda", "binary": "fxrate-lambda", "path": "src/fxrate-lambda", "status": "IMPLEMENTED", "architecture": "x86_64", "database": true }
+  ],
+  "excluded_tools": [
+    { "package": "crawler", "binary": "bootstrap-local" },
+    { "package": "crawler", "binary": "demo" },
+    { "package": "crawler", "binary": "demo-spider" },
+    { "package": "crawler", "binary": "demo-scraper" },
+    { "package": "crawler", "binary": "fetch-fixture" },
+    { "package": "ci-determinator", "binary": "ci-determinator" }
+  ],
+  "workers": [
+    { "scope": "product-listing-opensearch", "table": "product_listing_events", "operations": ["INSERT"] },
+    { "scope": "search-filter-projection", "table": "search_filters", "operations": ["INSERT", "UPDATE", "DELETE"] },
+    { "scope": "search-filter-percolator", "table": "product_listing_events", "operations": ["INSERT"] },
+    { "scope": "search-filter-match-notification", "table": "search_filter_matches", "operations": ["INSERT"] },
+    { "scope": "watchlist-notification", "table": "product_listing_events", "operations": ["INSERT"] },
+    { "scope": "product-content-assessment", "table": "product_listing_events", "operations": ["INSERT"] },
+    { "scope": "product-embedding", "table": "product_listing_events", "operations": ["INSERT"] },
+    { "scope": "product-translation", "table": "product_listing_events", "operations": ["INSERT"] },
+    { "scope": "product-listing-normalization", "table": "product_listing_raw_revisions", "operations": ["INSERT"] },
+    { "scope": "notification-delivery", "table": "notification_deliveries", "operations": ["INSERT"] }
+  ],
+  "mail": {
+    "root": "mjml",
+    "groups": ["partnership-application/approval", "partnership-application/rejection", "search-filter/match", "watchlist/product-update/availability", "watchlist/product-update/price"],
+    "languages": ["de", "en", "es", "fr", "it"]
+  },
+  "migrations": [
+    { "target": "business", "path": "migrations" },
+    { "target": "crawler", "path": "src/crawler/migrations" }
+  ],
+  "search": [
+    { "family": "PRODUCT_LISTINGS", "definition": "opensearch/mappings/product_listings.json", "physical_baseline": "product-listings" },
+    { "family": "USER_SEARCH_FILTERS", "definition": "opensearch/mappings/user_search_filters.json", "physical_baseline": "user_search_filters" }
+  ],
+  "analysis": [
+    { "id": "english-synonyms", "path": "opensearch/analysis/english_synonyms.txt", "node_path": "analysis/english_synonyms.txt" },
+    { "id": "german-synonyms", "path": "opensearch/analysis/german_synonyms.txt", "node_path": "analysis/german_synonyms.txt" },
+    { "id": "french-synonyms", "path": "opensearch/analysis/french_synonyms.txt", "node_path": "analysis/french_synonyms.txt" },
+    { "id": "spanish-synonyms", "path": "opensearch/analysis/spanish_synonyms.txt", "node_path": "analysis/spanish_synonyms.txt" },
+    { "id": "italian-synonyms", "path": "opensearch/analysis/italian_synonyms.txt", "node_path": "analysis/italian_synonyms.txt" }
+  ],
+  "release_inputs": ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo", "src", "migrations", "opensearch", "mjml", "infra", "deploy", ".github/workflows"]
+}

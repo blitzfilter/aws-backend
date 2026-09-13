@@ -20,6 +20,50 @@ use std::{
 use test_api::{WorkerSqs, get_sqs_client};
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+/// Process fixtures must apply real SQLx migrations, not synthesize a ledger after raw SQL.
+pub struct ProcessPostgres;
+#[async_trait::async_trait]
+impl test_api::IntegrationTestService for ProcessPostgres {
+    fn service_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+    async fn set_up(&self) {
+        let pool = test_api::get_postgres_client().await;
+        let result = sqlx::migrate!("../../migrations").run(&pool).await;
+        assert!(result.is_ok(), "worker fixture SQLx migrations failed");
+        pool.close().await;
+    }
+    async fn tear_down(&self) {
+        let pool = test_api::get_postgres_client().await;
+        let result = async {
+            let tables: Vec<String> = sqlx::query_scalar(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                 WHERE n.nspname='public' AND c.relkind='r' AND c.relname <> '_sqlx_migrations'
+                 AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid='pg_class'::regclass
+                    AND d.objid=c.oid AND d.deptype='e')",
+            )
+            .fetch_all(&pool)
+            .await?;
+            if !tables.is_empty() {
+                let tables = tables
+                    .iter()
+                    .map(|table| format!("\"{}\"", table.replace('"', "\"\"")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "TRUNCATE {tables} RESTART IDENTITY CASCADE"
+                )))
+                .execute(&pool)
+                .await?;
+            }
+            Ok::<(), sqlx::Error>(())
+        }
+        .await;
+        assert!(result.is_ok(), "worker fixture table cleanup failed");
+        pool.close().await;
+    }
+}
 pub const WORKER_SQS: WorkerSqs = WorkerSqs::new("product-content-assessment", 60);
 const BOUNDARY_TIMEOUT: Duration = Duration::from_secs(100);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -38,7 +82,7 @@ pub async fn case(future: impl Future<Output = TestResult>) {
     let result = tokio::time::timeout(Duration::from_secs(240), future).await;
     assert!(
         matches!(&result, Ok(Ok(()))),
-        "process acceptance failed: {result:?}"
+        "process acceptance failed (details suppressed)"
     );
 }
 
@@ -57,6 +101,26 @@ impl WorkerProcess {
         pool: &sqlx::PgPool,
         relay: &Relay,
         address: SocketAddr,
+    ) -> TestResult<Self> {
+        let mut process = Self::spawn(
+            pool,
+            &relay.endpoint,
+            &relay.queue_url()?,
+            address,
+            &[],
+            false,
+        )?;
+        process.wait_for_ready(address).await?;
+        Ok(process)
+    }
+
+    pub fn spawn(
+        pool: &sqlx::PgPool,
+        endpoint: &str,
+        queue_url: &str,
+        address: SocketAddr,
+        overrides: &[(&str, &str)],
+        check_config: bool,
     ) -> TestResult<Self> {
         let database = pool
             .connect_options()
@@ -82,14 +146,15 @@ impl WorkerProcess {
                     .map(|path| ("LLVM_PROFILE_FILE", path)),
             )
             .env("STAGE", "test")
+            .env("POSTGRES_SSL_MODE", "disable")
             .env("AWS_REGION", "eu-central-1")
             .env("AWS_ACCESS_KEY_ID", "test")
             .env("AWS_SECRET_ACCESS_KEY", "test")
             .env("AWS_EC2_METADATA_DISABLED", "true")
             .env("AWS_CONFIG_FILE", "/dev/null")
             .env("AWS_SHARED_CREDENTIALS_FILE", "/dev/null")
-            .env("AWS_ENDPOINT_URL_SQS", &relay.endpoint)
-            .env("AURA_HISTORIA_WORKER_QUEUE_URL", relay.queue_url()?)
+            .env("AWS_ENDPOINT_URL_SQS", endpoint)
+            .env("AURA_HISTORIA_WORKER_QUEUE_URL", queue_url)
             .env("AURA_HISTORIA_WORKER_SCOPE", "product-content-assessment")
             .env("AURA_HISTORIA_WORKER_HEALTH_BIND_ADDR", address.to_string())
             .env("POSTGRES_HOST", "127.0.0.1")
@@ -109,23 +174,32 @@ impl WorkerProcess {
             .env("POSTGRES_MAX_CONNECTIONS", "2")
             .env("TOKIO_WORKER_THREADS", "2")
             .env("LOG_LEVEL", "warn")
+            .envs(overrides.iter().copied())
+            .args(if check_config {
+                vec!["--check-config"]
+            } else {
+                vec![]
+            })
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()?;
-        let mut process = Self {
+        Ok(Self {
             child,
             reaped: false,
             coverage_profile,
-        };
+        })
+    }
+
+    pub async fn wait_for_ready(&mut self, address: SocketAddr) -> TestResult {
         let client = reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(1))
             .build()?;
         eventually("real worker process readiness", async {
             loop {
-                if let Some(status) = process.child.try_wait()? {
-                    process.reaped = true;
+                if let Some(status) = self.child.try_wait()? {
+                    self.reaped = true;
                     return Err(format!("worker exited before readiness: {status}").into());
                 }
                 match client.get(format!("http://{address}/ready")).send().await {
@@ -134,8 +208,7 @@ impl WorkerProcess {
                 }
             }
         })
-        .await?;
-        Ok(process)
+        .await
     }
 
     pub fn id(&self) -> u32 {
@@ -151,21 +224,33 @@ impl WorkerProcess {
     }
 
     pub fn terminate(&mut self) -> TestResult {
+        self.signal("-TERM")
+    }
+
+    pub fn interrupt(&mut self) -> TestResult {
+        self.signal("-INT")
+    }
+
+    fn signal(&mut self, signal: &str) -> TestResult {
         self.assert_running()?;
         let status = Command::new("/usr/bin/kill")
-            .args(["-TERM", &self.child.id().to_string()])
+            .args([signal, &self.child.id().to_string()])
             .status()?;
-        assert!(status.success(), "SIGTERM must reach the owned OS worker");
+        assert!(status.success(), "signal must reach the owned OS worker");
         Ok(())
     }
 
     pub async fn wait_for_clean_exit(&mut self) -> TestResult {
-        eventually("SIGTERM drain and successful OS exit", async {
+        self.wait_for_exit(0).await
+    }
+
+    pub async fn wait_for_exit(&mut self, code: i32) -> TestResult {
+        eventually("bounded worker OS exit", async {
             loop {
                 if let Some(status) = self.child.try_wait()? {
                     self.reaped = true;
                     assert_eq!(
-                        Some(0),
+                        Some(code),
                         status.code(),
                         "worker must drain, not be killed or fail"
                     );

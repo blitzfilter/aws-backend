@@ -1,18 +1,15 @@
 //! Demo binary - showcases end-to-end usage of [`SpiderService`].
 //!
-//! Uses a hardcoded local Postgres database (`crawler_demo_spider`). Bootstrap with:
-//!
-//! ```powershell
-//! # from src/crawler/
-//! .\db-up.ps1
-//! .\db-migrate.ps1
-//! ```
+//! Uses a fixed local Postgres database (`crawler_demo_spider`). Demo startup bootstraps
+//! Docker and migrations only with explicit `STAGE=local`, `ephemeral`, or `test`.
+//! Bundled Docker needs `POSTGRES_SSL_MODE=disable`. No production bootstrap.
 //!
 //! # Configuration
 //!
 //! | Env var          | Purpose                 | Default                         |
 //! |------------------|-----------------------  |---------------------------------|
-//! | `LOCAL_DB_URL`   | Hardcoded local DB URL | `.../crawler_demo_spider`      |
+//! | `STAGE` | Required non-real stage | no default |
+//! | `POSTGRES_SSL_MODE` | Explicit shared PostgreSQL TLS mode | no default |
 //! | `VERTEX_AI_PROJECT_ID` | Google Cloud project for Vertex AI | *(required)* |
 //! | `VERTEX_AI_LOCATION` | Vertex AI location | *(required)* |
 //! | `GOOGLE_APPLICATION_CREDENTIALS` | Optional local Application Default Credentials file | unset |
@@ -26,6 +23,8 @@
 //! # Running
 //!
 //! ```powershell
+//! $env:STAGE="local"
+//! $env:POSTGRES_SSL_MODE="disable"
 //! gcloud auth application-default login
 //! $env:VERTEX_AI_PROJECT_ID="my-project"
 //! $env:VERTEX_AI_LOCATION="europe-west3"
@@ -41,9 +40,9 @@ use std::sync::Arc;
 
 use crawler::llm_runtime::{CrawlerLlmGovernor, CrawlerLlmRateLimitConfig};
 use crawler::local_db::{
-    DEMO_SPIDER_DB_NAME, bootstrap_local_database,
+    DEMO_SPIDER_DB_NAME, LocalDatabaseError, LocalDevelopmentConfig, bootstrap_local_database,
     crawler_domain_configuration_repository::CrawlerDomainConfigurationRepositoryImpl,
-    demo_spider_db_url,
+    migrate_local_database, parse_postgres_environment,
 };
 use crawler::logging::HTML5EVER_TREE_BUILDER_LOG_DIRECTIVE;
 use crawler::service::crawler_domain_configuration::{
@@ -60,7 +59,6 @@ use crawler::spider::discovery::website_spider::SpiderImpl;
 use crawler::spider::service::{SpiderService, SpiderServiceConfig, SpiderServiceImpl};
 use crawler::vertex_ai::{CrawlerVertexAiConfig, CrawlerVertexAiModels};
 use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
 use thiserror::Error;
 use tracing::{Instrument, error, info};
 
@@ -94,8 +92,11 @@ const DEFAULT_CLASSIFY_THRESHOLD: usize = 200;
 const DEMO_POOL_MAX_CONNECTIONS: u32 = 5;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), LocalDatabaseError> {
     dotenvy::dotenv().ok();
+    let local = parse_postgres_environment(env::var, |get| {
+        LocalDevelopmentConfig::from_lookup("crawler-demo-spider", get)
+    })?;
     init_logging();
 
     let crawl_root_url = read_crawl_root_url();
@@ -110,7 +111,7 @@ async fn main() {
         };
         let vertex_ai_models = CrawlerVertexAiModels::from_env();
 
-        let pool = match connect_and_migrate().await {
+        let pool = match connect_and_migrate(&local).await {
             Ok(p) => p,
             Err(error) => {
                 error!(error = ?error, "Failed to connect to Postgres");
@@ -207,6 +208,7 @@ async fn main() {
         classify_threshold = DEFAULT_CLASSIFY_THRESHOLD
     ))
     .await;
+    Ok(())
 }
 
 #[tracing::instrument]
@@ -229,27 +231,18 @@ fn build_url_repository(pool: PgPool) -> Arc<UrlMetadataRepositoryImpl> {
 }
 
 /// Connects to local Postgres and applies pending migrations.
-#[tracing::instrument]
-async fn connect_and_migrate() -> Result<PgPool, DemoError> {
-    bootstrap_local_database(DEMO_SPIDER_DB_NAME)
-        .await
-        .map_err(DemoError::Demo)?;
-    let db_url = demo_spider_db_url();
-
-    let pool = PgPoolOptions::new()
-        .max_connections(DEMO_POOL_MAX_CONNECTIONS)
-        .connect(&db_url)
-        .await?;
+#[tracing::instrument(skip_all)]
+async fn connect_and_migrate(local: &LocalDevelopmentConfig) -> Result<PgPool, LocalDatabaseError> {
+    let database = local.pool_config(DEMO_SPIDER_DB_NAME, DEMO_POOL_MAX_CONNECTIONS)?;
+    bootstrap_local_database(local, DEMO_SPIDER_DB_NAME).await?;
+    let pool = database.connect().await?;
 
     info!(
         max_connections = DEMO_POOL_MAX_CONNECTIONS,
         "Connected to Postgres"
     );
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| DemoError::Database(sqlx::Error::from(e)))?;
+    migrate_local_database(local, &pool).await?;
 
     info!("Database migrations applied successfully");
 

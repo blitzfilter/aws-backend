@@ -1,3 +1,6 @@
+#[path = "consumer_shutdown_tests.rs"]
+mod shutdown_tests;
+
 use super::super::{
     API_TIMEOUT, Message, QueueError, RECEIVE_TIMEOUT, SqsQueue, SqsQueueConfig, Transport, bounded,
 };
@@ -34,6 +37,84 @@ use tokio::{
     task::JoinSet,
     time::Instant,
 };
+
+#[tokio::test]
+async fn should_keep_http_ingress_admission_while_downstream_consumer_circuit_is_open() {
+    let fake = Arc::new(FakeTransport::default());
+    fake.push(&wire::encode(&job()).unwrap());
+    let (runtime, mut receiver) =
+        crate::WorkerRuntimeComposition::from_sqs_queue(queue(fake.clone())).into_parts();
+    let _guard = receiver.start(WorkerScope::NotificationDelivery).unwrap();
+    let delivery = receiver.recv().await.unwrap();
+    receiver
+        .process(delivery, |_| async {
+            JobOutcome::DependencyUnavailable("down")
+        })
+        .await;
+    assert!(!runtime.control.ready());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut tasks = JoinSet::new();
+    tasks.spawn(crate::serve_with_runtime(
+        listener,
+        runtime.clone(),
+        std::future::pending::<()>(),
+    ));
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    for (path, status) in [("/ready", 503), ("/health", 200), ("/admission", 200)] {
+        let response = client
+            .get(format!("http://{address}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(status, response.status().as_u16());
+        assert_eq!("no-store, max-age=0", response.headers()["cache-control"]);
+    }
+    let response = client
+        .post(format!("http://{address}/cdc/sequin"))
+        .json(&serde_json::json!({"changes":[{"schema":"public","table":"notification_deliveries","operation":"insert","record":{"notification_delivery_id":NOTIFICATION_DELIVERY_UUID_1}}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(202, response.status());
+    assert_eq!(1, fake.count(Call::Receive));
+    assert_eq!(1, fake.count(Call::Send));
+    assert_eq!(0, fake.count(Call::Delete));
+    runtime.shutdown();
+    tasks.join_next().await.unwrap().unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn should_join_aborted_active_attempt_without_ack_or_later_receive() {
+    let fake = Arc::new(FakeTransport::default());
+    fake.push(&wire::encode(&job()).unwrap());
+    let (runtime, receiver) =
+        crate::WorkerRuntimeComposition::from_sqs_queue(queue(fake.clone())).into_parts();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let captured = dropped.clone();
+    let (started, wait) = oneshot::channel();
+    let start = Arc::new(Mutex::new(Some(started)));
+    let consumer = tokio::spawn(receiver.run(WorkerScope::NotificationDelivery, move |_| {
+        let guard = DropFlag(captured.clone());
+        let start = start.clone();
+        async move {
+            let _guard = guard;
+            start.lock().unwrap().take().unwrap().send(()).unwrap();
+            std::future::pending::<JobOutcome>().await
+        }
+    }));
+    wait.await.unwrap();
+    runtime.shutdown();
+    consumer.abort();
+    assert!(consumer.await.is_err());
+    runtime.join_cancelled_tasks().await;
+    assert!(dropped.load(Ordering::SeqCst));
+    assert_eq!(vec![Call::Receive], fake.calls());
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Call {

@@ -7,7 +7,15 @@ edition = "2024"
 application = { workspace = true }
 async-trait = { workspace = true }
 sqlx = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 thiserror = { workspace = true }
+percent-encoding = { workspace = true }
+url = { workspace = true }
+rustls = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
+rstest = { workspace = true }

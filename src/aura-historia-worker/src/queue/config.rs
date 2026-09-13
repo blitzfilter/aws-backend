@@ -13,7 +13,7 @@ pub const AWS_REGION_ENV: &str = "AWS_REGION";
 pub const SQS_ENDPOINT_ENV: &str = "AWS_ENDPOINT_URL_SQS";
 
 /// One Standard queue per deployed scope. Construction performs no AWS mutations.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SqsQueueConfig {
     pub(super) scope: WorkerScope,
     pub(super) queue_url: Url,
@@ -21,6 +21,14 @@ pub struct SqsQueueConfig {
     pub(super) stage: String,
     pub(super) endpoint: Option<Url>,
     account: String,
+}
+
+impl std::fmt::Debug for SqsQueueConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqsQueueConfig")
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

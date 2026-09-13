@@ -9,7 +9,7 @@ use crate::scraper::scraper_service::service::{FetchError, ScraperServiceImpl};
 use crate::scraper::scraper_service::util::hash::{
     fingerprint_scraper_context, hash_html, hash_main_fragment,
 };
-use crate::scraper::scraper_service::util::html::extract_main_fragment;
+
 use crate::spider::classification::url_metadata::CrawlerUrlWriteOutcome;
 use crate::spider::utils::url::CrawledUrl;
 use listing_source_core::ListingSourceId;
@@ -149,8 +149,8 @@ impl ScraperService for ScraperServiceImpl {
         listing_source_id: &ListingSourceId,
         url: &Url,
         product_url_pattern: Option<&str>,
-        last_scraped_hash: Option<&str>,
-        last_scraped_schema_fingerprint: Option<&str>,
+        _last_scraped_hash: Option<&str>,
+        _last_scraped_schema_fingerprint: Option<&str>,
         expected_last_captured_raw_input_sha256: Option<&[u8]>,
         fallback_currency: Option<money::Currency>,
     ) -> Result<Option<ScrapedProduct>, ScraperError> {
@@ -217,46 +217,14 @@ impl ScraperService for ScraperServiceImpl {
             });
         }
 
-        let has_main = extract_main_fragment(&html).is_some();
         let current_hash = hash_main_fragment(&html).unwrap_or_else(|| hash_html(&html));
 
-        // Obtain the effective schema set before the fast path. Selector or raw-attribute
-        // changes must force extraction even when the page fragment is byte-identical.
+        // Local fingerprints cannot prove current business custody: a later capture may
+        // have committed without its local mark. Re-extract even a byte-identical page;
+        // the authoritative raw-capture transaction decides whether input is unchanged.
         let listing_source_product_schemas = self
             .obtain_schemas(listing_source_id, url, product_url_pattern, &html)
             .await?;
-        let stored_schema_fingerprint = fingerprint_scraper_context(
-            &listing_source_product_schemas.product_schemas,
-            fallback_currency,
-        )
-        .map_err(ScraperError::SchemaFingerprint)?;
-
-        if has_main
-            && last_scraped_hash == Some(current_hash.as_str())
-            && last_scraped_schema_fingerprint == Some(stored_schema_fingerprint.as_str())
-        {
-            debug!("Page and schema fingerprints match; skipping extraction.");
-            match self
-                .candidate_service
-                .touch_scraped(
-                    listing_source_id,
-                    url,
-                    &current_hash,
-                    &stored_schema_fingerprint,
-                    expected_last_captured_raw_input_sha256,
-                )
-                .await
-            {
-                Ok(CrawlerUrlWriteOutcome::Applied) => {}
-                Ok(CrawlerUrlWriteOutcome::NoopStale) => {
-                    debug!("Skipped stale page/schema fast-path completion");
-                }
-                Err(error) => {
-                    warn!(error = %error, "Failed to touch URL after page/schema fast-path skip");
-                }
-            }
-            return Ok(None);
-        }
 
         // Select the richest cached schema that normalizes successfully.
         let selection = match self

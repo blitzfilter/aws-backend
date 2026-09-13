@@ -30,6 +30,13 @@
 - Bootstrap thin. Push reusable work into service or domain crate.
 - Be clear about event source, idempotency, and side effects.
 
+## PostgreSQL startup
+
+- Bootstrap uses `platform-postgres::PostgresPoolConfig::from_lookup`. Required: `STAGE`, `POSTGRES_SSL_MODE`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `POSTGRES_USERNAME`, and exactly one of `POSTGRES_PASSWORD` / `POSTGRES_PASSWORD_FILE`.
+- `dev`/`prod` require `verify-full` plus `POSTGRES_SSL_ROOT_CERT` (PEM CA file). Only explicit `local`/`test`/`ephemeral` may use `disable`; no stage or TLS default. Password files require Unix mode `0400` or `0600` and no final symlink.
+- Port defaults to `5432`; positive max connections defaults to `2`. Shared parsing rejects malformed/non-Unicode inputs and unsupported ambient `PGSSLCERT`, `PGSSLKEY`, `PGSSLROOTCERT`, `PGOPTIONS`; lookup must forward them. Application name is `stripe-lambda`; config/connect errors retain safe typed causes.
+- Binary `postgres_config_tests` need no Lambda runtime, database, or Stripe calls. `src/postgres-test-ca.crt` is public test-only CA material; never deploy it. Runtime fixtures need explicit local stage/TLS. Infra rollout remains out of this slice; default-off stays off.
+
 ## Verification
 
 - `cargo check -p stripe-lambda`

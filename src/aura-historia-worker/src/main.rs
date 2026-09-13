@@ -1,3 +1,8 @@
+mod preflight;
+mod shutdown;
+#[cfg(test)]
+mod shutdown_tests;
+
 use aura_historia_worker::notification_delivery::consume_notification_delivery_queue;
 use aura_historia_worker::product_content_assessment::consume_product_content_assessment_queue;
 use aura_historia_worker::product_embedding::consume_product_embedding_queue;
@@ -45,7 +50,7 @@ use opensearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
 };
 use platform_observability::{LogLevel, LoggingConfig, init};
-use platform_postgres::{PostgresConnectError, SqlxUnitOfWork};
+use platform_postgres::{PostgresConnectError, PostgresSchemaError, SqlxUnitOfWork};
 use product_listing_opensearch::OpenSearchProductListingSearchProjection;
 use product_listing_postgres::{
     SqlxPendingProductListingRawStreamReader,
@@ -87,22 +92,37 @@ use watchlist_postgres::SqlxWatchlistNotificationRecipientReaderFactory;
 
 const GOOGLE_CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 
-#[tokio::main]
-async fn main() {
+fn main() -> std::process::ExitCode {
     std::panic::set_hook(Box::new(|_| {
         tracing::error!(outcome = "worker_panic", "worker task panicked")
     }));
-    if run().await.is_err() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            tracing::error!(category = "RUNTIME_INITIALIZATION", "worker runtime failed");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let result = runtime.block_on(run());
+    shutdown::teardown(runtime);
+    if let Err(error) = result {
         // Provider SDK/error bodies can contain secrets. Do not print MainError's source chain.
         tracing::error!(
             outcome = "worker_stopped",
+            category = error.category(),
             "worker startup or supervision failed"
         );
-        std::process::exit(1);
+        return std::process::ExitCode::FAILURE;
     }
+    std::process::ExitCode::SUCCESS
 }
 
 async fn run() -> Result<(), MainError> {
+    // Both registrations are synchronous, before configuration, connection or AWS setup.
+    let mut signals = ShutdownSignals::register()?;
     init(LoggingConfig::new(
         std::env::var("LOG_LEVEL")
             .ok()
@@ -110,16 +130,68 @@ async fn run() -> Result<(), MainError> {
             .and_then(LogLevel::parse)
             .unwrap_or_default(),
     ));
+    let (stop, stopped) = watch::channel(false);
+    let work = run_with_shutdown(stopped);
+    tokio::pin!(work);
+    tokio::select! {
+        biased;
+        () = signals.wait() => {
+            tracing::info!(outcome = "worker_draining", "worker shutdown requested");
+            stop.send_replace(true);
+            work.await
+        }
+        result = &mut work => result,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunMode {
+    Worker,
+    CheckConfig,
+}
+impl RunMode {
+    fn parse(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self, MainError> {
+        let mut args = args.into_iter();
+        match (args.next(), args.next()) {
+            (None, None) => Ok(Self::Worker),
+            (Some(arg), None) if arg == "--check-config" => Ok(Self::CheckConfig),
+            _ => Err(MainError::Arguments),
+        }
+    }
+}
+
+struct RuntimeConfig {
+    worker: aura_historia_worker::WorkerConfig,
+    stopped: watch::Receiver<bool>,
+}
+
+async fn run_with_shutdown(mut stopped: watch::Receiver<bool>) -> Result<(), MainError> {
+    let mode = RunMode::parse(std::env::args_os().skip(1))?;
     let startup = WorkerStartupConfig::from_env()?;
+    let prepared = tokio::select! {
+        biased;
+        _ = stopped.wait_for(|stop| *stop) => return if mode == RunMode::CheckConfig { Err(MainError::StartupInterrupted) } else { Ok(()) },
+        result = preflight::check(&startup) => result?,
+    };
+    if mode == RunMode::CheckConfig {
+        prepared.pool.close().await;
+        tracing::info!(
+            outcome = "worker_config_checked",
+            "read-only worker preflight passed"
+        );
+        return Ok(());
+    }
+    if *stopped.borrow() {
+        prepared.pool.close().await;
+        return Ok(());
+    }
     let scope = startup.scope();
-    let worker_config = startup.worker().clone();
-    let queue = aura_historia_worker::queue::SqsQueue::from_config(startup.queue().clone()).await?;
-    let pool = startup
-        .postgres()
-        .connect()
-        .await
-        .map_err(PostgresConnectError::Connect)?;
-    let composition = WorkerRuntimeComposition::from_sqs_queue(queue);
+    let worker_config = RuntimeConfig {
+        worker: startup.worker().clone(),
+        stopped,
+    };
+    let pool = prepared.pool;
+    let composition = WorkerRuntimeComposition::from_sqs_queue(prepared.queue);
 
     match scope {
         WorkerScope::SearchFilterProjection => {
@@ -178,7 +250,7 @@ async fn run() -> Result<(), MainError> {
 }
 
 async fn run_search_filter_projection(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
     opensearch: &WorkerOpenSearchConfig,
@@ -189,12 +261,12 @@ async fn run_search_filter_projection(
             OpenSearchSearchFilterIndex::new(opensearch_client(opensearch)?),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_search_filter_projection_queue(receiver, handler));
+    let task = consume_search_filter_projection_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_search_filter_percolator(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
     opensearch: &WorkerOpenSearchConfig,
@@ -212,12 +284,12 @@ async fn run_search_filter_percolator(
             SqlxSearchFilterMatchWriterFactory,
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_search_filter_percolator_queue(receiver, handler));
+    let task = consume_search_filter_percolator_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_search_filter_match_notifications(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
 ) -> Result<(), MainError> {
@@ -236,14 +308,12 @@ async fn run_search_filter_match_notifications(
             ),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_search_filter_match_notification_queue(
-        receiver, handler,
-    ));
+    let task = consume_search_filter_match_notification_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_product_listing_opensearch(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
     opensearch: &WorkerOpenSearchConfig,
@@ -256,12 +326,12 @@ async fn run_product_listing_opensearch(
             OpenSearchProductListingSearchProjection::new(opensearch_client(opensearch)?),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_product_listing_opensearch_queue(receiver, handler));
+    let task = consume_product_listing_opensearch_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_product_content_assessment(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
 ) -> Result<(), MainError> {
@@ -272,12 +342,12 @@ async fn run_product_content_assessment(
             SqlxProductListingContentAssessmentWriterFactory::new(),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_product_content_assessment_queue(receiver, handler));
+    let task = consume_product_content_assessment_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_product_embedding(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
     vertex_ai: &WorkerVertexAiConfig,
@@ -293,12 +363,12 @@ async fn run_product_embedding(
             SqlxProductListingEmbeddingWriterFactory::new(),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_product_embedding_queue(receiver, handler));
+    let task = consume_product_embedding_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_product_translation(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
     vertex_ai: &WorkerVertexAiConfig,
@@ -313,12 +383,12 @@ async fn run_product_translation(
             SqlxProductListingTranslationWriterFactory::new(),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_product_translation_queue(receiver, handler));
+    let task = consume_product_translation_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_product_listing_raw_normalization(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
 ) -> Result<(), MainError> {
@@ -331,17 +401,13 @@ async fn run_product_listing_raw_normalization(
             SqlxPendingProductListingRawStreamReader::new(pool),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let (shutdown, shutdown_rx) = watch::channel(false);
-    let task = tokio::spawn(consume_product_listing_raw_normalization_queue(
-        receiver,
-        handler,
-        shutdown_rx,
-    ));
-    finish_raw_normalization_runtime(config, runtime, task, shutdown).await
+    let task =
+        consume_product_listing_raw_normalization_queue(receiver, handler, config.stopped.clone());
+    finish_runtime(config, runtime, task).await
 }
 
 async fn run_notification_delivery(
-    config: aura_historia_worker::WorkerConfig,
+    mut config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
     delivery: &aura_historia_worker::WorkerNotificationDeliveryConfig,
@@ -357,8 +423,12 @@ async fn run_notification_delivery(
                 .operation_timeout(std::time::Duration::from_secs(30))
                 .build(),
         )
-        .load()
-        .await;
+        .load();
+    let aws_config = tokio::select! {
+        biased;
+        _ = config.stopped.wait_for(|stop| *stop) => return Ok(()),
+        result = tokio::time::timeout(Duration::from_secs(15), aws_config) => result.map_err(|_| MainError::AwsStartupTimeout)?,
+    };
     let dispatcher =
         NotificationDeliveryDispatcher::new(vec![Arc::new(SesNotificationChannelSender::new(
             S3Client::new(&aws_config),
@@ -381,12 +451,12 @@ async fn run_notification_delivery(
         dispatcher,
     ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_notification_delivery_queue(receiver, handler));
+    let task = consume_notification_delivery_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
 async fn run_watchlist_notifications(
-    config: aura_historia_worker::WorkerConfig,
+    config: RuntimeConfig,
     pool: sqlx::PgPool,
     composition: WorkerRuntimeComposition,
 ) -> Result<(), MainError> {
@@ -402,36 +472,32 @@ async fn run_watchlist_notifications(
             ),
         ));
     let (runtime, receiver) = composition.into_parts();
-    let task = tokio::spawn(consume_watchlist_notification_queue(receiver, handler));
+    let task = consume_watchlist_notification_queue(receiver, handler);
     finish_runtime(config, runtime, task).await
 }
 
-async fn finish_raw_normalization_runtime(
-    config: aura_historia_worker::WorkerConfig,
-    runtime: aura_historia_worker::WorkerRuntime,
-    task: tokio::task::JoinHandle<()>,
-    consumer_shutdown: watch::Sender<bool>,
-) -> Result<(), MainError> {
-    let result = finish_runtime(config, runtime, task).await;
-    consumer_shutdown.send_replace(true);
-    result
-}
-
 async fn finish_runtime(
-    config: aura_historia_worker::WorkerConfig,
+    mut config: RuntimeConfig,
     runtime: aura_historia_worker::WorkerRuntime,
-    task: tokio::task::JoinHandle<()>,
+    consumer: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), MainError> {
-    let drain_timeout = config.drain_timeout();
+    if *config.stopped.borrow() {
+        runtime.shutdown();
+        return Ok(());
+    }
+    let task = tokio::spawn(consumer);
+    let drain_timeout = config.worker.drain_timeout();
     let (stop_http, stopped) = tokio::sync::oneshot::channel();
-    let server = run_until_shutdown_with_runtime(config, runtime.clone(), async move {
+    let server = run_until_shutdown_with_runtime(config.worker, runtime.clone(), async move {
         let _closed = stopped.await;
     });
     supervise_runtime(
         runtime,
         task,
         server,
-        shutdown_signal(),
+        async {
+            let _closed = config.stopped.wait_for(|stop| *stop).await;
+        },
         stop_http,
         drain_timeout,
     )
@@ -450,35 +516,37 @@ where
     S: Future<Output = Result<(), WorkerRunError>>,
     G: Future<Output = ()>,
 {
+    // Declared first, dropped last: cover both branches and their future destructors.
+    let mut _shutdown_deadline = None;
     let mut consumer = SupervisedConsumer(task);
     let mut stop_http = Some(stop_http);
     tokio::pin!(server);
     tokio::pin!(shutdown);
     tokio::select! {
-        result = &mut consumer.0 => {
+        biased;
+        () = &mut shutdown => {
+            _shutdown_deadline = Some(shutdown::FatalDeadline::for_runtime(drain_timeout));
             runtime.shutdown();
             if let Some(stop_http) = stop_http.take() {
                 let _closed = stop_http.send(());
             }
-            server.await?;
+            let (server_result, consumer_result) = tokio::join!(server, consumer.drain(&runtime, drain_timeout));
+            consumer_result.and(server_result.map_err(MainError::from))
+        }
+        result = &mut consumer.0 => {
+            _shutdown_deadline = Some(shutdown::FatalDeadline::for_runtime(drain_timeout));
+            runtime.shutdown();
+            if let Some(stop_http) = stop_http.take() {
+                let _closed = stop_http.send(());
+            }
+            let (_server_result, ()) = tokio::join!(server, consumer.cleanup(&runtime, true));
             let _joined = result;
             Err(MainError::ConsumerStopped)
         }
         result = &mut server => {
+            _shutdown_deadline = Some(shutdown::FatalDeadline::for_runtime(drain_timeout));
             runtime.shutdown();
-            consumer.drain(drain_timeout).await?;
-            result?;
-            Ok(())
-        }
-        () = &mut shutdown => {
-            runtime.shutdown();
-            if let Some(stop_http) = stop_http.take() {
-                let _closed = stop_http.send(());
-            }
-            let (server_result, consumer_result) = tokio::join!(server, consumer.drain(drain_timeout));
-            consumer_result?;
-            server_result?;
-            Ok(())
+            consumer.drain(&runtime, drain_timeout).await.and(result.map_err(MainError::from))
         }
     }
 }
@@ -490,10 +558,16 @@ impl Drop for SupervisedConsumer {
     }
 }
 impl SupervisedConsumer {
-    async fn drain(&mut self, drain_timeout: Duration) -> Result<(), MainError> {
-        match tokio::time::timeout(drain_timeout, &mut self.0).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(MainError::ConsumerStopped),
+    async fn drain(
+        &mut self,
+        runtime: &aura_historia_worker::WorkerRuntime,
+        drain_timeout: Duration,
+    ) -> Result<(), MainError> {
+        // Tokio timers cannot enforce a deadline if cancellation blocks every worker thread.
+        let _deadline = shutdown::FatalDeadline::after_drain(drain_timeout);
+        let (result, joined) = match tokio::time::timeout(drain_timeout, &mut self.0).await {
+            Ok(Ok(())) => (Ok(()), true),
+            Ok(Err(_)) => (Err(MainError::ConsumerStopped), true),
             Err(_) => {
                 tracing::error!(
                     outcome = "worker_drain_deadline",
@@ -501,12 +575,28 @@ impl SupervisedConsumer {
                     "consumer drain deadline exceeded; aborting local work"
                 );
                 self.0.abort();
-                let _cancelled = (&mut self.0).await;
-                Err(MainError::ConsumerDrainDeadline {
-                    seconds: drain_timeout.as_secs(),
-                })
+                (
+                    Err(MainError::ConsumerDrainDeadline {
+                        seconds: drain_timeout.as_secs(),
+                    }),
+                    false,
+                )
             }
-        }
+        };
+        self.cleanup(runtime, joined).await;
+        result
+    }
+
+    async fn cleanup(&mut self, runtime: &aura_historia_worker::WorkerRuntime, joined: bool) {
+        shutdown::join_cancelled(
+            async {
+                if !joined {
+                    let _cancelled = (&mut self.0).await;
+                }
+            },
+            runtime.join_cancelled_tasks(),
+        )
+        .await;
     }
 }
 
@@ -551,21 +641,23 @@ fn opensearch_client(config: &WorkerOpenSearchConfig) -> Result<OpenSearch, Main
     Ok(OpenSearch::new(transport))
 }
 
-async fn shutdown_signal() {
-    let Ok(mut terminate) =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-    else {
-        tracing::error!(
-            outcome = "signal_setup_failed",
-            "failed to listen for SIGTERM"
-        );
-        return;
-    };
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => {
-            if result.is_err() { tracing::error!(outcome = "signal_setup_failed", "failed to listen for SIGINT"); }
+struct ShutdownSignals {
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+impl ShutdownSignals {
+    fn register() -> Result<Self, MainError> {
+        use tokio::signal::unix::{SignalKind, signal};
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt()).map_err(|_| MainError::SignalSetup)?,
+            terminate: signal(SignalKind::terminate()).map_err(|_| MainError::SignalSetup)?,
+        })
+    }
+    async fn wait(&mut self) {
+        tokio::select! {
+            _ = self.interrupt.recv() => {},
+            _ = self.terminate.recv() => {},
         }
-        _ = terminate.recv() => {}
     }
 }
 
@@ -580,6 +672,25 @@ mod tests {
     use tokio::sync::oneshot;
 
     const EMPTY_CDC_BATCH: &str = r#"{"changes":[]}"#;
+
+    #[test]
+    fn should_accept_only_worker_or_explicit_check_config_arguments() {
+        for args in [vec![], vec!["--check-config"]] {
+            assert!(RunMode::parse(args.into_iter().map(std::ffi::OsString::from)).is_ok());
+        }
+        for args in [
+            vec!["--migrate"],
+            vec!["--check-config", "extra"],
+            vec!["--check-config=1"],
+            vec!["secret-canary"],
+        ] {
+            let error = RunMode::parse(args.into_iter().map(std::ffi::OsString::from))
+                .err()
+                .unwrap();
+            assert_eq!("ARGUMENTS_INVALID", error.category());
+            assert!(!format!("{error:?} {error}").contains("secret-canary"));
+        }
+    }
 
     struct DropSignal(Arc<AtomicBool>);
     impl Drop for DropSignal {
@@ -690,12 +801,46 @@ mod tests {
     }
 }
 
+impl MainError {
+    fn category(&self) -> &'static str {
+        match self {
+            Self::StartupConfig(_) => "CONFIG_INVALID",
+            Self::Postgres(_) => "POSTGRES_UNAVAILABLE",
+            Self::PostgresSchema(error) => error.code(),
+            Self::QueueConfig(_) => "SQS_CONTRACT_OR_DEPENDENCY",
+            Self::Arguments => "ARGUMENTS_INVALID",
+            Self::SignalSetup => "SIGNAL_REGISTRATION",
+            Self::StartupInterrupted => "PREFLIGHT_INTERRUPTED",
+            Self::AwsStartupTimeout => "AWS_STARTUP_TIMEOUT",
+            Self::OpenSearchCompatibility => "OPENSEARCH_COMPATIBILITY",
+
+            Self::ConsumerDrainDeadline { .. } => "DRAIN_DEADLINE",
+            Self::ConsumerStopped => "CONSUMER_STOPPED",
+            Self::Run(_) => "HTTP_SERVER",
+            _ => "SCOPED_ADAPTER_STARTUP",
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 enum MainError {
     #[error(transparent)]
     StartupConfig(#[from] WorkerStartupConfigError),
     #[error(transparent)]
     Postgres(#[from] PostgresConnectError),
+    #[error(transparent)]
+    PostgresSchema(#[from] PostgresSchemaError),
+    #[error("expected no arguments or --check-config")]
+    Arguments,
+    #[error("failed to register worker shutdown signals")]
+    SignalSetup,
+    #[error("worker preflight interrupted before verification completed")]
+    StartupInterrupted,
+    #[error("AWS startup timed out")]
+    AwsStartupTimeout,
+    #[error("OpenSearch read-only compatibility check failed")]
+    OpenSearchCompatibility,
+
     #[error(transparent)]
     QueueConfig(#[from] aura_historia_worker::queue::QueueError),
     #[error("missing validated configuration for {scope:?} worker scope")]

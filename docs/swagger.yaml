@@ -31,9 +31,10 @@ info:
     - Many list and search endpoints use **cursor-based pagination** via `searchAfter`\n- Every canonical API response includes\
     \ server-generated `X-Request-Id` and `X-Correlation-Id` headers. Clients may send `X-Correlation-Id` to preserve a trace\
     \ only when it is a 1–128-character ASCII value containing letters, digits, `.`, `_`, or `-`; invalid values are replaced.\
-    \ Both headers are CORS-exposed.\n- Requests are limited to 1 MiB and time out after 30 seconds.\n- `GET /health` is a\
-    \ process liveness check. `GET /ready` returns `204` only when the configured PostgreSQL and OpenSearch dependencies are\
-    \ reachable; it otherwise returns `503`.\n- WooCommerce webhook ingestion responds with **`204 No Content`** after\
+    \ Both headers are CORS-exposed.\n- Requests are limited to 1 MiB and time out after 30 seconds.\n- `/health`, `/ready`,\
+    \ and `/version` are private loopback operational probes, not public API routes. The business listener returns `404`\
+    \ for these paths. During graceful drain, newly admitted business work is rejected with non-cacheable `503`; common\
+    \ request/correlation and CORS response headers remain.\n- WooCommerce webhook ingestion responds with **`204 No Content`** after\
     \ signed validation. Events that map to raw capture are durably captured; `product.created` and `product.updated` events with missing or unsupported status are acknowledged as ignored. A capture `204` acknowledges a changed, unchanged, duplicate, or stale outcome—not necessarily a new raw revision; canonical normalization is asynchronous, while partner Product batch writes remain synchronous\n\n## Environment\
     \ endpoints\n\n- **Development:** `https://api.dev.aura-historia.com`\n- **Production:** `https://api.aura-historia.com`\n\
     \n## Notes for integrators\n\n- Treat Aura Historia identifiers such as `listingSourceId`, `productListingId`, `eventId`,\

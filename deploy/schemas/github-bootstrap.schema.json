@@ -1,0 +1,669 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Schema v1 offline owner inputs only. Semantic parsing and later live verification remain mandatory.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "example": {
+      "type": "boolean"
+    },
+    "repository": {
+      "type": "string",
+      "const": "aura-historia/backend"
+    },
+    "default_branch": {
+      "type": "string",
+      "const": "develop"
+    },
+    "merge": {
+      "type": "object",
+      "properties": {
+        "allow_squash_merge": {
+          "type": "boolean",
+          "const": true
+        },
+        "allow_merge_commit": {
+          "type": "boolean",
+          "const": false
+        },
+        "allow_rebase_merge": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "required": [
+        "allow_squash_merge",
+        "allow_merge_commit",
+        "allow_rebase_merge"
+      ],
+      "additionalProperties": false
+    },
+    "branch_protection": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "const": "refs/heads/develop"
+        },
+        "require_pull_request": {
+          "type": "boolean",
+          "const": true
+        },
+        "require_up_to_date_branch": {
+          "type": "boolean",
+          "const": true
+        },
+        "required_checks": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "description": "Exact expected check producer; workflow/app association still needs external verification.",
+            "type": "object",
+            "properties": {
+              "context": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "app_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "workflow_path": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "workflow_name": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "job_id": {
+                "type": "string",
+                "maxLength": 100,
+                "pattern": "^[a-zA-Z_][a-zA-Z0-9_-]*$"
+              }
+            },
+            "required": [
+              "context",
+              "app_id",
+              "workflow_path",
+              "workflow_name",
+              "job_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "allow_force_pushes": {
+          "type": "boolean",
+          "const": false
+        },
+        "allow_deletions": {
+          "type": "boolean",
+          "const": false
+        },
+        "bypass_actors": {
+          "$ref": "#/$defs/__schema3"
+        }
+      },
+      "required": [
+        "ref",
+        "require_pull_request",
+        "require_up_to_date_branch",
+        "required_checks",
+        "allow_force_pushes",
+        "allow_deletions",
+        "bypass_actors"
+      ],
+      "additionalProperties": false
+    },
+    "environments": {
+      "type": "object",
+      "properties": {
+        "aws-dev": {
+          "type": "object",
+          "properties": {
+            "reviewers": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "prevent_self_review": {
+              "type": "boolean",
+              "const": true
+            },
+            "admin_bypass": {
+              "type": "boolean",
+              "const": false
+            },
+            "deployment_ref": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "BRANCH"
+                },
+                "pattern": {
+                  "type": "string",
+                  "const": "develop"
+                }
+              },
+              "required": [
+                "type",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            "workflow": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "ref_pattern": {
+                  "type": "string",
+                  "const": "refs/heads/develop"
+                }
+              },
+              "required": [
+                "path",
+                "ref_pattern"
+              ],
+              "additionalProperties": false
+            },
+            "oidc": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "const": "https://token.actions.githubusercontent.com"
+                },
+                "aud": {
+                  "type": "string",
+                  "const": "sts.amazonaws.com"
+                },
+                "sub": {
+                  "type": "string",
+                  "const": "repo:aura-historia/backend:environment:aws-dev"
+                }
+              },
+              "required": [
+                "issuer",
+                "aud",
+                "sub"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "reviewers",
+            "prevent_self_review",
+            "admin_bypass",
+            "deployment_ref",
+            "workflow",
+            "oidc"
+          ],
+          "additionalProperties": false
+        },
+        "aws-prod": {
+          "type": "object",
+          "properties": {
+            "reviewers": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "prevent_self_review": {
+              "type": "boolean",
+              "const": true
+            },
+            "admin_bypass": {
+              "type": "boolean",
+              "const": false
+            },
+            "deployment_ref": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "TAG"
+                },
+                "pattern": {
+                  "type": "string",
+                  "const": "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"
+                }
+              },
+              "required": [
+                "type",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            "workflow": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "ref_pattern": {
+                  "type": "string",
+                  "const": "refs/tags/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"
+                }
+              },
+              "required": [
+                "path",
+                "ref_pattern"
+              ],
+              "additionalProperties": false
+            },
+            "oidc": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "const": "https://token.actions.githubusercontent.com"
+                },
+                "aud": {
+                  "type": "string",
+                  "const": "sts.amazonaws.com"
+                },
+                "sub": {
+                  "type": "string",
+                  "const": "repo:aura-historia/backend:environment:aws-prod"
+                }
+              },
+              "required": [
+                "issuer",
+                "aud",
+                "sub"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "reviewers",
+            "prevent_self_review",
+            "admin_bypass",
+            "deployment_ref",
+            "workflow",
+            "oidc"
+          ],
+          "additionalProperties": false
+        },
+        "prod-recovery": {
+          "type": "object",
+          "properties": {
+            "reviewers": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "prevent_self_review": {
+              "type": "boolean",
+              "const": true
+            },
+            "admin_bypass": {
+              "type": "boolean",
+              "const": false
+            },
+            "deployment_ref": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "BRANCH"
+                },
+                "pattern": {
+                  "type": "string",
+                  "const": "develop"
+                }
+              },
+              "required": [
+                "type",
+                "pattern"
+              ],
+              "additionalProperties": false
+            },
+            "workflow": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "ref_pattern": {
+                  "type": "string",
+                  "const": "refs/heads/develop"
+                }
+              },
+              "required": [
+                "path",
+                "ref_pattern"
+              ],
+              "additionalProperties": false
+            },
+            "oidc": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "const": "https://token.actions.githubusercontent.com"
+                },
+                "aud": {
+                  "type": "string",
+                  "const": "sts.amazonaws.com"
+                },
+                "sub": {
+                  "type": "string",
+                  "const": "repo:aura-historia/backend:environment:prod-recovery"
+                }
+              },
+              "required": [
+                "issuer",
+                "aud",
+                "sub"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "reviewers",
+            "prevent_self_review",
+            "admin_bypass",
+            "deployment_ref",
+            "workflow",
+            "oidc"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "aws-dev",
+        "aws-prod",
+        "prod-recovery"
+      ],
+      "additionalProperties": false
+    },
+    "oidc_subject_configuration": {
+      "description": "CUSTOMIZED requires explicit configuration verification. Source assertions are not live proof.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "DEFAULT"
+            },
+            "use_default": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "mode",
+            "use_default"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "CUSTOMIZED"
+            },
+            "use_default": {
+              "type": "boolean",
+              "const": false
+            },
+            "include_claim_keys": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "const": "repo"
+                },
+                {
+                  "type": "string",
+                  "const": "context"
+                }
+              ]
+            },
+            "verified": {
+              "type": "boolean",
+              "const": true
+            },
+            "verified_at": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "required": [
+            "mode",
+            "use_default",
+            "include_claim_keys",
+            "verified",
+            "verified_at"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "tag_protection": {
+      "description": "Two separate rulesets. Creation authorization MUST NOT bypass update/delete denial.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "UTC_CALVER"
+        },
+        "timezone": {
+          "type": "string",
+          "const": "UTC"
+        },
+        "creation_ruleset": {
+          "type": "object",
+          "properties": {
+            "enforcement": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "target": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "include": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "exclude": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "restrict_creations": {
+              "type": "boolean",
+              "const": true
+            },
+            "authorized_actors": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "TEAM",
+                      "INTEGRATION"
+                    ]
+                  },
+                  "id": {
+                    "$ref": "#/$defs/__schema1"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "enforcement",
+            "target",
+            "include",
+            "exclude",
+            "restrict_creations",
+            "authorized_actors"
+          ],
+          "additionalProperties": false
+        },
+        "immutability_ruleset": {
+          "type": "object",
+          "properties": {
+            "enforcement": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "target": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "include": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "exclude": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "deny_updates": {
+              "type": "boolean",
+              "const": true
+            },
+            "deny_deletions": {
+              "type": "boolean",
+              "const": true
+            },
+            "bypass_actors": {
+              "$ref": "#/$defs/__schema3"
+            }
+          },
+          "required": [
+            "enforcement",
+            "target",
+            "include",
+            "exclude",
+            "deny_updates",
+            "deny_deletions",
+            "bypass_actors"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "format",
+        "timezone",
+        "creation_ruleset",
+        "immutability_ruleset"
+      ],
+      "additionalProperties": false
+    },
+    "external_observations": {
+      "description": "Untrusted observation summary, never approval or evidence validation.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "observed_at": {
+              "$ref": "#/$defs/__schema5"
+            },
+            "environment_protection_available": {
+              "type": "boolean"
+            },
+            "tag_rulesets_available": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "observed_at",
+            "environment_protection_available",
+            "tag_rulesets_available"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "example",
+    "repository",
+    "default_branch",
+    "merge",
+    "branch_protection",
+    "environments",
+    "oidc_subject_configuration",
+    "tag_protection",
+    "external_observations"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9 ._()/:-]*[a-zA-Z0-9)]$|^[a-zA-Z0-9]$"
+    },
+    "__schema1": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema2": {
+      "type": "string",
+      "maxLength": 160,
+      "pattern": "^\\.github\\/workflows\\/[a-zA-Z0-9][a-zA-Z0-9_-]*\\.ya?ml$"
+    },
+    "__schema3": {
+      "type": "array",
+      "prefixItems": []
+    },
+    "__schema4": {
+      "minItems": 1,
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "TEAM"
+            ]
+          },
+          "id": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema5": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:Z))$"
+    },
+    "__schema6": {
+      "type": "string",
+      "const": "ACTIVE"
+    },
+    "__schema7": {
+      "type": "string",
+      "const": "TAG"
+    },
+    "__schema8": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "string",
+          "const": "refs/tags/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]"
+        }
+      ]
+    },
+    "__schema9": {
+      "type": "array",
+      "prefixItems": []
+    }
+  }
+}
