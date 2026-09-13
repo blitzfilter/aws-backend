@@ -6,6 +6,7 @@
 //! synthetic ADC refreshes only at an owned loopback spy; no real provider requests.
 //! Parent verifies exit-hook cleanup; never run the ignored fixture child directly.
 //! Includes crawler ledger view/RLS rejection and a held-lock deadline with role timeouts off.
+//! Iteration05 adds fresh-only bootstrap CLI cases on separately owned DBs/roles.
 //! Run with AURA_CRAWLER_ISOLATED_LOCAL_POSTGRES=1 and fixture COMMIT_SHA at build time:
 //! cargo test -p crawler --test server_preflight_postgres --all-features --offline --locked
 //! should_check_actual_server_with_readonly_postgres_and_owned_cleanup
@@ -25,7 +26,7 @@ mod process;
 #[path = "server_preflight_postgres/support.rs"]
 mod support;
 
-use database::{Database, Databases, PASSWORD};
+use database::{Database, Databases, PASSWORD, fresh_bootstrap};
 use error::{TestError, TestResult};
 use futures::FutureExt;
 use process::{CleanupMode, run_process};
@@ -522,12 +523,27 @@ async fn should_run_owned_postgres_preflight_child() -> TestResult {
                 }
             }
         }
+        for case in fresh_bootstrap::cases() {
+            let started = Instant::now();
+            match fresh_bootstrap::run_case(case, &admin, port).await {
+                Ok(()) => println!("PASS fresh bootstrap {case:?}"),
+                Err(error) => {
+                    eprintln!("FAIL fresh bootstrap {case:?}: {}", error.kind());
+                    failures.push(error);
+                }
+            }
+            println!(
+                "fresh bootstrap {case:?}: {}ms",
+                started.elapsed().as_millis()
+            );
+        }
         if !failures.is_empty() {
             return Err(TestError::failures("CASES_FAILED", failures));
         }
         println!(
-            "PASS all {count} actual-server PostgreSQL preflight cases and {} idle daemon cases",
-            idle_daemon::CASES.len()
+            "PASS all {count} actual-server PostgreSQL preflight cases, {} idle daemon cases and {} fresh bootstrap cases",
+            idle_daemon::CASES.len(),
+            fresh_bootstrap::cases().len()
         );
         Ok(())
     }

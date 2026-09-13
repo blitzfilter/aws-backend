@@ -163,8 +163,12 @@ pub(super) fn supervise_fixture() -> TestResult {
             // Never relay child logs/panic text. Reconstruct only known case IDs and classes.
             let mut reports = fixture_reports(&text);
             reports.extend(super::idle_daemon::reports(&text));
+            reports.extend(super::fresh_bootstrap::reports(&text));
             for report in &reports {
                 println!("{report}");
+            }
+            for evidence in super::fresh_bootstrap::evidence_reports(&text) {
+                println!("{evidence}");
             }
             if text.contains("cleanup failed") {
                 absent?;

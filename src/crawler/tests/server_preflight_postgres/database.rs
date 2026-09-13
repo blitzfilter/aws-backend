@@ -6,6 +6,10 @@ use std::time::Duration;
 
 pub(super) const PASSWORD: &str = "crawler-fixture-password-canary";
 
+// Descendant reuses exact private acquisition flags; no production visibility hooks.
+#[path = "fresh_bootstrap.rs"]
+pub(crate) mod fresh_bootstrap;
+
 pub(super) struct Database {
     pub pool: PgPool,
     pub name: String,

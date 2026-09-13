@@ -1,7 +1,7 @@
 # Task03 gate / task05 foundation evidence
 
 Baseline: `d5bd9ca854e713b0c587528f02037211b2020fd4`, SQLx exactly `0.9.0`.
-Scope: shared business startup verification only. No migration writer, runtime wiring, applied-SQL edits, ledger adoption, or deployment activation.
+Original task03 scope: shared business startup verification only, no writer/adoption/activation. Later runtime wiring and isolated fresh-only `bootstrap-local` modes are recorded in `docs/deployment/implementation-status.md` and `src/crawler/AGENTS.md`. Owner defers incremental migration/adoption/backfill machinery; the historical task05 proposals below are not current implementation requirements.
 
 ## Task03 interface and limits
 
@@ -11,7 +11,7 @@ Scope: shared business startup verification only. No migration writer, runtime w
 - Exact compiled up-history: version + successful application + SQLx checksum. Descriptions, timestamps and execution durations are not schema identity.
 - Installed public extensions and 33 persistent baseline table names. No business-row reads, DDL, mutation, history creation or stamping.
 - Read-only repeatable-read snapshot; bounded rows/checksum payloads and query/lock/overall deadlines. No migration advisory lock. Snapshot checks cannot serialize or attest later DDL.
-- Unknown future migrations block old binaries, including claimed additive changes. Task05 needs separately reviewed old/new compatible-superset evidence and a runtime protocol. Do not replace this with `set_ignore_missing(true)`.
+- Unknown future migrations block old binaries, including claimed additive changes. Compatible-superset evidence/runtime protocol remain deferred by the owner's dev-stage scope override. Do not replace this with `set_ignore_missing(true)`.
 - Not a full schema drift audit: no attestation of column types, constraints, indexes, triggers/function bodies, extension versions, preload configuration or TTL-worker health. Database/catalog administrators remain trusted.
 - Read-only plan code may reuse this exact-current startup check, but it is not a pending-migration planner. A fresh database is a rejection here, not authorization to stamp or migrate.
 
@@ -39,12 +39,12 @@ Local source prefix: `/home/jbruder/.cargo/registry/src/index.crates.io-1949cf8c
 
 - Business baseline: `migrations/20260725090000_initial_business_schema.sql:1-2` creates `pg_trgm`/`unaccent` in public. Lines `998-1012` require pre-provisioned `pg_ttl_index`; lines `1160-1169` register four absolute-expiry indexes. No no-transaction marker at byte zero. SQL stays immutable.
 - `docs/storage.md:38-47`: pg_ttl is asynchronous cleanup, not credential-expiry correctness; provision/preload before baseline.
-- Crawler: six independent migrations under `src/crawler/migrations/`; initial `20260101000000_initial_schema.sql:1` requires `pgcrypto`. `src/crawler/src/local_db/schema.rs:43-76` reads the crawler ledger using its own `sqlx::migrate!("./migrations")`; it checks required histories but currently does not reject extra successful versions. Do not conflate that policy or ledger with this business gate.
+- Crawler: six independent migrations under `src/crawler/migrations/`; initial `20260101000000_initial_schema.sql:1` requires `pgcrypto`. `src/crawler/src/local_db/schema.rs:43-76` reads the crawler ledger using its own `sqlx::migrate!("./migrations")`; it now rejects extra successful versions too (strict-preflight slice), in its own bounded read-only snapshot. Do not conflate the separate ledgers.
 - `src/test-api/src/postgres.rs:291-329` lexically replays raw SQL, **not** SQLx migration bookkeeping. Existing fixtures cannot satisfy the new startup gate without fixture-owner work. Lines `132-165` describe the pg_ttl image/preload/worker setup. This task reuses the image reference, not that process-global lifecycle.
 - Metadata source is `deploy/control/src/contracts/release.ts:49-67,257-280`: two streams, transaction mode, positive bounded lock/statement timeouts, extensions/capabilities, SHA-384 history checksum, SHA-256 SQL/artifact/evidence identities and declared compatibility. `primitives.ts:10` specifies `sha384:` plus 96 lowercase hex characters. Structural parsing/evidence digests are not evidence verification.
 - Dedicated safe connection boundary already exists: `src/platform-postgres/src/config.rs:316-326`, `PostgresPoolConfig::connect_session()`. Do not reconstruct raw URL/options or use a transaction-pooling endpoint for session locks.
 
-## Smallest task05 boundary proposal — not implemented
+## Historical task05 boundary proposal — deferred by owner
 
 1. Migration composition root owns explicit **business or crawler** target, trusted artifact/metadata inputs, approved credentials and one dedicated shared-TLS session per active target. Keep per-stream histories separate. No hidden cross-database transaction.
 2. Private read-only planner reads bounded catalog/history snapshots without ensure/DDL and distinguishes fresh, missing/dirty/changed/unknown, pending and exact states. It must not interpret existing tables as an adoptable baseline. Keep startup's exact interface/policy until compatible-superset acceptance is reviewed.
@@ -52,7 +52,7 @@ Local source prefix: `/home/jbruder/.cargo/registry/src/index.crates.io-1949cf8c
 4. Own lock cleanup on every error/cancellation: explicit unlock on normal exits plus dedicated-session close fallback. No pooled session carrying a migration lock. Treat disconnect/timeout/post-commit failure as possibly committed until reconciled.
 5. Before allowing nontransactional migrations, approve durable in-progress/failure evidence and repair-forward policy covering SQLx's no-dirty-row gap. Define crash/resume ownership and index-invalid/partial-effect checks. Default block until that protocol exists; never rewrite applied SQL or infer a stamp.
 
-### Required task05 acceptance / unresolved risks
+### Deferred upgrade machinery acceptance / unresolved risks
 
 - Real isolated PG: competing direct locks, lock timeout, unlock/disconnect, process death, statement timeout, apply success, transactional rollback, nontransactional/concurrent-index partial failure, successful SQL with failed ledger/timing update, retry/reconciliation, and no writes/history creation in plan/verify.
 - Compile/artifact tests: exact-byte checksums including CRLF/BOM/comments; byte-zero marker vs metadata mismatch; ascending unique versions; two ledgers; new-file rebuild invalidation; old/new binaries against reviewed supersets; evidence identity **and** trusted evidence verification.

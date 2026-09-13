@@ -1,22 +1,6 @@
-//! Explicit non-real-stage Docker/database/migration bootstrap. No crawler or provider work.
-use crawler::local_db::{
-    LocalDatabaseError, LocalDevelopmentConfig, bootstrap_all_local_databases,
-    parse_postgres_environment,
-};
+//! Explicit non-real legacy bootstrap or connect-only fresh initialization/verification.
+mod bootstrap_runtime;
 
-#[tokio::main]
-async fn main() -> Result<(), LocalDatabaseError> {
-    if let Err(error) = dotenvy::dotenv()
-        && !error.not_found()
-    {
-        return Err(LocalDatabaseError::Config(
-            platform_postgres::PostgresPoolConfigError::InvalidInput(".env"),
-        ));
-    }
-    let local = parse_postgres_environment(std::env::var, |get| {
-        LocalDevelopmentConfig::from_lookup("crawler-bootstrap-local", get)
-    })?;
-    bootstrap_all_local_databases(&local).await?;
-    println!("Local crawler databases ready; migrations applied.");
-    Ok(())
+fn main() -> std::process::ExitCode {
+    bootstrap_runtime::main()
 }

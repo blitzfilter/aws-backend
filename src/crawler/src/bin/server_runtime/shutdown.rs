@@ -7,24 +7,11 @@ use std::{
     time::Duration,
 };
 
-/// Terminal process fence. Callers must finish any explicit output/cleanup BEFORE this call.
-#[cfg(unix)]
-pub(super) fn terminal_exit(code: i32) -> ! {
-    // SAFETY: POSIX _exit accepts any integer and no pointers. It terminates the process
-    // without Rust stdout cleanup, libc atexit handlers, unwinding, or shared cleanup locks.
-    // This narrow runtime-boundary exception is required even when another thread is
-    // already stuck inside std::process::exit. No Rust-owned value is accessed afterward.
-    unsafe { libc::_exit(code) }
-}
+#[path = "terminal.rs"]
+mod terminal;
 
-#[cfg(not(unix))]
 pub(super) fn terminal_exit(code: i32) -> ! {
-    // Preserve ordinary successful CLI/help termination off Unix. If Rust cleanup stalls,
-    // the one-shot watchdog still aborts; only Unix has the daemon's terminal-fence contract.
-    if code == 0 {
-        std::process::exit(0);
-    }
-    std::process::abort()
+    terminal::terminal_exit(code)
 }
 
 pub(super) fn fatal() -> ! {
