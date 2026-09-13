@@ -462,7 +462,7 @@ async fn seed_watchlist_entries(
             "availability": "AVAILABLE",
             "url": "https://example.com/product-listings",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }))
         .execute(&mut *tx)
         .await

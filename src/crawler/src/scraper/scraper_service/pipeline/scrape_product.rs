@@ -1,4 +1,5 @@
 use crate::network::policy::NetworkErrorKind;
+use crate::scraper::auction::extract_lot_tissimo_auction;
 use crate::scraper::css_selector::removed_page_schema::RemovedPageSchema;
 use crate::scraper::raw_input::crawler_raw_input;
 use crate::scraper::scraper_service::domain::errors::ScraperError;
@@ -296,10 +297,12 @@ impl ScraperService for ScraperServiceImpl {
         }
         let schema_fingerprint = fingerprint_scraper_context(&effective_schemas, fallback_currency)
             .map_err(ScraperError::SchemaFingerprint)?;
+        let auction = extract_lot_tissimo_auction(url, &selection.raw);
         let raw_input = crawler_raw_input(
             &selection.raw,
             &selection.validated_image_urls,
             url,
+            auction.as_ref(),
             selection.fallback_currency,
             [
                 selection.prepared.price.is_some(),

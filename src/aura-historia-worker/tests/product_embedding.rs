@@ -330,7 +330,7 @@ async fn insert_product_with_event(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 1,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }),
         "PRODUCT_LISTING_CHANGED" => serde_json::json!({
             "availability": {"previous": null, "current": "AVAILABLE"}
@@ -384,7 +384,7 @@ async fn insert_product_with_event_then_rollback(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }))
         .execute(&mut *tx)
         .await?;

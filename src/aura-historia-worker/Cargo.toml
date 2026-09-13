@@ -51,6 +51,7 @@ serde_json = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
 time = { workspace = true, features = ["formatting", "parsing"] }
+time-tz = { workspace = true }
 uuid = { workspace = true }
 
 sqlx = { workspace = true }

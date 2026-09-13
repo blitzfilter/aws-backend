@@ -1,6 +1,6 @@
 # Auctions
 
-**Status:** iterations 01–06 pass. Iteration 07 implements guarded administrative corrections, with its full worker process-durability verification pending. It adds no crawler extraction, public Auction browsing, or Auction-ID search. See the [implementation plan](auction-implementation.md) and [iteration records](auction-iterations/07-auction-corrections.md).
+**Status:** iterations 01–08 pass. Iteration 08 adds fixture-backed Lot-tissimo crawler capture; it adds no public Auction browsing or Auction-ID search. See the [implementation plan](auction-implementation.md), [iteration 07 record](auction-iterations/07-auction-corrections.md), and [iteration 08 record](auction-iterations/08-crawler-auctions.md).
 
 ## Scope
 
@@ -50,6 +50,8 @@ Iteration 06 has three distinct listing values:
 An asserted empty context never collapses to `None`. The context holds optional `AuctionMembership`, opaque `LotNumber`, one-based `CataloguePosition`, and qualified lot timing. A lot remains one ProductListing even if it describes multiple physical objects. Reliable `SourceAuctionId` resolves or creates an Auction inside the caller-owned ProductListing transaction; name, URL, and timing never infer identity.
 
 Typed partner creation accepts omitted or `null` auction as no assertion. Partner and raw writes can supply `auction.sourceAuctionId`; the same source key resolves/creates one Auction and embedded metadata can fill absent shared fields. Existing membership plus a different reliable key fails with `MEMBERSHIP_CHANGE_REQUIRES_CORRECTION`; no second Auction is created for that rejected reassignment. Typed update/upsert omits auction to preserve it and rejects `null`; raw `auction: CLEAR` also preserves existing context. No key is inferred from name, URL, or timing.
+
+Crawler extraction is a raw producer. Its only implemented source rule is fixture-backed Lot-tissimo lot URLs: the exact HTTPS `/{locale}/auction-catalogues/{auctioneer}/catalogue-id-{id}/lot-{id}` shape yields the opaque source Auction ID and catalogue URL. Reviewed selector evidence supplies optional catalogue name and lot number. It emits the current `auctionMetadata` raw field; the real PostgreSQL raw-to-normalization path proves that one source key links one Auction, later conflicting embedded fields preserve initial accepted values, and absent shared fields can fill. Unknown hosts, malformed paths, query/fragment wrappers, names without that URL rule, and unqualified timing leave the Auction patch unchanged; crawler never resolves or writes canonical state.
 
 Iteration 07 adds an administrator-only complete-context correction. It checks both the ProductListing version and an independent auction-policy version; absent policy is version `0`. A correction may remove the outer assertion, leave it unresolved, or assign a same-source Auction. It requires a trimmed nonblank restricted reason (1–1,024 bytes), rejects withdrawn listings, retains unrelated listing state, and activates a listing-owned override barrier even when the final context is unchanged. The reason, actor/audit data, raw evidence, and policy state are never public Listing history or discovery data.
 

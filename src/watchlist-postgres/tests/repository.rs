@@ -847,7 +847,7 @@ async fn seed_product(pool: &sqlx::PgPool, label: &str) -> ProductListingId {
             "availability": null,
             "url": "https://example.com/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }))
         .execute(&mut *tx)
         .await

@@ -1,12 +1,14 @@
 //! Crawler-owned mapping from selected CSS extraction output to the generic raw-input contract.
 
+use crate::scraper::auction::CrawlerAuctionEvidence;
 use crate::scraper::css_selector::product_schema::RawExtractedProduct;
 use money::Currency;
 use product_listing_normalization::{
     NormalizationContext, NormalizationInputError, ProductListingNormalizationInput,
-    ProductListingRawValues, ProductListingRawValuesPatch, ProductListingRawValuesPriceFormat,
-    RawProductListingOperation, RawProductListingPayloadFormat, RawProductListingProvenance,
-    RawProductListingValues, SourcePayload,
+    ProductListingRawValues, ProductListingRawValuesAuction,
+    ProductListingRawValuesAuctionMetadata, ProductListingRawValuesPatch,
+    ProductListingRawValuesPriceFormat, RawProductListingOperation, RawProductListingPayloadFormat,
+    RawProductListingProvenance, RawProductListingValues, SourcePayload,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -22,6 +24,7 @@ pub(crate) fn crawler_raw_input(
     raw: &RawExtractedProduct,
     validated_image_urls: &[String],
     candidate_url: &Url,
+    auction: Option<&CrawlerAuctionEvidence>,
     fallback_currency: Option<Currency>,
     resolved_price_fields: [bool; 3],
 ) -> Result<ProductListingNormalizationInput, NormalizationInputError> {
@@ -49,9 +52,25 @@ pub(crate) fn crawler_raw_input(
         availability: ProductListingRawValuesPatch::Set(raw.state.clone()),
         url: ProductListingRawValuesPatch::Set(candidate_url.to_string()),
         images: ProductListingRawValuesPatch::Set(validated_image_urls.to_vec()),
-        // Existing selector fields are source evidence only until a provider rule
-        // qualifies their semantic roles; never invent a lot milestone here.
-        auction: ProductListingRawValuesPatch::Unchanged,
+        auction: auction.map_or(ProductListingRawValuesPatch::Unchanged, |auction| {
+            ProductListingRawValuesPatch::Set(ProductListingRawValuesAuction {
+                source_auction_id: ProductListingRawValuesPatch::Set(
+                    auction.source_auction_id.clone(),
+                ),
+                lot_number: auction.lot_number.clone(),
+                catalogue_position: None,
+                timing: None,
+                auction_metadata: ProductListingRawValuesAuctionMetadata {
+                    name: auction.name.clone(),
+                    description: None,
+                    catalogue_url: Some(auction.catalogue_url.clone()),
+                    format: None,
+                    reported_status: None,
+                    reported_lot_count: None,
+                    schedule: Default::default(),
+                },
+            })
+        }),
         attributes,
     };
     let raw_values = serde_json::to_value(raw_values)
@@ -149,6 +168,7 @@ mod tests {
             &extracted,
             &extracted.images,
             &url,
+            None,
             Some(Currency::Eur),
             [true, false, false],
         )?;
@@ -173,6 +193,59 @@ mod tests {
     }
 
     #[test]
+    fn should_map_fixture_backed_auction_evidence_to_current_raw_context()
+    -> Result<(), NormalizationInputError> {
+        let url = Url::parse(
+            "https://www.lot-tissimo.com/de-de/auction-catalogues/kunstauktionshaus-leipzig/catalogue-id-leipzig10033/lot-a2850590-e73c-4cce-9386-b3fd00b49bfd",
+        )
+        .unwrap_or_else(|error| panic!("static test URL must parse: {error}"));
+        let extracted = raw();
+        let evidence = CrawlerAuctionEvidence {
+            source_auction_id: "leipzig10033".to_owned(),
+            catalogue_url: "https://www.lot-tissimo.com/de-de/auction-catalogues/kunstauktionshaus-leipzig/catalogue-id-leipzig10033".to_owned(),
+            name: Some("Auktion 9".to_owned()),
+            lot_number: Some("54".to_owned()),
+        };
+
+        let input = crawler_raw_input(
+            &extracted,
+            &extracted.images,
+            &url,
+            Some(&evidence),
+            Some(Currency::Eur),
+            [true, false, false],
+        )?;
+
+        assert_eq!(
+            Some(&serde_json::json!({
+                "action": "SET",
+                "value": {
+                    "sourceAuctionId": {"action": "SET", "value": "leipzig10033"},
+                    "lotNumber": "54",
+                    "cataloguePosition": null,
+                    "timing": null,
+                    "auctionMetadata": {
+                        "name": "Auktion 9",
+                        "description": null,
+                        "catalogueUrl": "https://www.lot-tissimo.com/de-de/auction-catalogues/kunstauktionshaus-leipzig/catalogue-id-leipzig10033",
+                        "format": null,
+                        "reportedStatus": null,
+                        "reportedLotCount": null,
+                        "schedule": {
+                            "biddingOpens": null,
+                            "liveStarts": null,
+                            "lotsBeginClosing": null,
+                            "scheduledEnd": null
+                        }
+                    }
+                }
+            })),
+            input.raw_values().value().get("auction")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn should_clear_unresolved_price_from_generic_raw_values() -> Result<(), NormalizationInputError>
     {
         let url = Url::parse("https://example.com/products/1")
@@ -183,6 +256,7 @@ mod tests {
             &extracted,
             &extracted.images,
             &url,
+            None,
             None,
             [false, false, false],
         )?;
@@ -220,6 +294,7 @@ mod tests {
             &extracted,
             &validated_image_urls,
             &url,
+            None,
             Some(Currency::Eur),
             [true, false, false],
         )?;
@@ -260,6 +335,7 @@ mod tests {
             &extracted,
             &extracted.images,
             &url,
+            None,
             Some(Currency::Eur),
             [true, false, false],
         )?
@@ -272,6 +348,7 @@ mod tests {
             &changed,
             &changed.images,
             &url,
+            None,
             Some(Currency::Eur),
             [true, false, false],
         )?

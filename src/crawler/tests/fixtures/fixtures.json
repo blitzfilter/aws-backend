@@ -180,6 +180,16 @@
         "type": "attribute",
         "name": "data-lazy",
         "cardinality": "all"
+      },
+      "raw_attributes": {
+        "rawAuctionName": {
+          "selector": ".lot-details .description a[href*='/catalogue-id-']",
+          "type": "text"
+        },
+        "rawAuctionLotNumber": {
+          "selector": ".lot-details .lot-number",
+          "type": "text"
+        }
       }
     },
     "raw": {
@@ -196,7 +206,12 @@
         "https://cdn.globalauctionplatform.com/auctions-2026/leipzig10033/images/910428b0-2c99-4938-87eb-b3fd00b49fbc.jpg?w=540&h=360",
         "https://cdn.globalauctionplatform.com/auctions-2026/leipzig10033/images/7eaec736-7bc0-426f-93e3-b3fd00b4a4c3.jpg?w=540&h=360",
         "https://cdn.globalauctionplatform.com/auctions-2026/leipzig10033/images/5e0781dc-6d07-479a-a999-b3fd00b4a850.jpg?w=540&h=360"
-      ]    },
+      ],
+      "raw_attributes": {
+        "rawAuctionName": ["Auktion 9"],
+        "rawAuctionLotNumber": ["54"]
+      }
+    },
     "normalized": {
       "source_listing_id": "a2850590-e73c-4cce-9386-b3fd00b49bfd",
       "title": "GABRIEL DAUCHOT",

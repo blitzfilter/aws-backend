@@ -1303,7 +1303,7 @@ mod tests {
     #[case(
         WorkerScope::SearchFilterPercolator,
         WorkerQueue::SearchFilterPercolator,
-        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":{"start":null,"end":null}}}}]}"#
+        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":null}}}]}"#
     )]
     #[case(
         WorkerScope::SearchFilterMatchNotification,
@@ -1318,17 +1318,17 @@ mod tests {
     #[case(
         WorkerScope::ProductListingContentAssessment,
         WorkerQueue::ProductListingContentAssessment,
-        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":{"start":null,"end":null}}}}]}"#
+        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":null}}}]}"#
     )]
     #[case(
         WorkerScope::ProductListingTranslation,
         WorkerQueue::ProductListingTranslate,
-        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":{"start":null,"end":null}}}}]}"#
+        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":null}}}]}"#
     )]
     #[case(
         WorkerScope::ProductListingEmbedding,
         WorkerQueue::ProductListingEmbed,
-        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":{"start":null,"end":null}}}}]}"#
+        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":null}}}]}"#
     )]
     #[case(
         WorkerScope::ProductListingEmbedding,
@@ -1338,7 +1338,7 @@ mod tests {
     #[case(
         WorkerScope::ProductListingOpenSearch,
         WorkerQueue::ProductListingOpenSearch,
-        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":{"start":null,"end":null}}}}]}"#
+        r#"{"changes":[{"table":"product_listing_events","operation":"insert","record":{"event_id":"01900000-0000-7000-8000-000000000004","product_listing_id":"01900000-0000-7000-8000-000000000003","event_type":"PRODUCT_LISTING_DISCOVERED","event_group":"DOMAIN","event_type_schema_version":1,"payload":{"listingSourceId":"01900000-0000-7000-8000-000000000001","sourceListingId":"fixture-source-id","title":null,"description":null,"pricing":{"price":null,"priceEstimateMin":null,"priceEstimateMax":null},"availability":null,"url":"https://example.test/product","imageCount":0,"auction":null}}}]}"#
     )]
     #[case(
         WorkerScope::ProductListingRawNormalization,
@@ -1513,7 +1513,7 @@ mod tests {
                             "availability": null,
                             "url": "https://example.test/product",
                             "imageCount": 0,
-                            "auction": {"start": null, "end": null}
+                            "auction": null
                         }
                     }
                 }
@@ -1605,7 +1605,7 @@ mod tests {
                                 "availability": null,
                                 "url": "https://example.test/product",
                                 "imageCount": 0,
-                                "auction": {"start": null, "end": null},
+                                "auction": null,
                                 "unexpected": true
                             }
                         }

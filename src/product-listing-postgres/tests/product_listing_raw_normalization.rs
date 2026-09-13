@@ -40,6 +40,139 @@ use test_api::{IntegrationTestService, Postgres, aura_integration_test, get_post
 
 const BUSINESS_SCHEMA: Postgres = Postgres::new("migrations");
 
+type ResolvedCrawlerAuctionRow = (
+    uuid::Uuid,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    uuid::Uuid,
+);
+
+#[aura_integration_test(services = [BUSINESS_SCHEMA])]
+async fn should_resolve_crawler_auction_and_fill_only_absent_embedded_metadata() {
+    let pool = get_postgres_client().await;
+    let listing_source_id = seed_listing_source(&pool, "raw-normalization-crawler-auction").await;
+    let unit_of_work = SqlxUnitOfWork::new(pool.clone());
+    let capture_writer = SqlxProductListingRawCaptureWriterFactory::new();
+
+    let mut discovered = upsert_values("EUR 100");
+    discovered["auction"] = json!({"action": "SET", "value": {
+        "sourceAuctionId": {"action": "SET", "value": "catalogue-2026-0042"},
+        "lotNumber": "42A",
+        "cataloguePosition": 43,
+        "auctionMetadata": {
+            "name": "Autumn Decorative Arts",
+            "catalogueUrl": "https://example.test/auctions/autumn-2026",
+            "format": "TIMED"
+        }
+    }});
+    let first = capture(
+        &unit_of_work,
+        &capture_writer,
+        crawler_raw_write(
+            listing_source_id,
+            discovered.clone(),
+            "crawler-auction-first",
+        ),
+    )
+    .await;
+
+    let mut later_lot_page = discovered;
+    later_lot_page["price"] = json!({"action": "SET", "value": "EUR 120"});
+    later_lot_page["auction"]["value"]["auctionMetadata"] = json!({
+        "name": "Later conflicting auction title",
+        "catalogueUrl": "https://example.test/auctions/conflicting-catalogue",
+        "format": "LIVE",
+        "reportedLotCount": 42
+    });
+    let second = capture(
+        &unit_of_work,
+        &capture_writer,
+        crawler_raw_write(listing_source_id, later_lot_page, "crawler-auction-second"),
+    )
+    .await;
+    let (product_listing_raw_stream_id, product_listing_raw_revision_id, revision) =
+        changed_parts(second);
+    assert!(matches!(
+        first,
+        ProductListingRawCaptureWriteOutcome::Changed { revision: 1, .. }
+    ));
+    assert_eq!(2, revision);
+
+    let result = NormalizeProductListingRawRevisionHandler::new(
+        unit_of_work,
+        SqlxProductListingRawNormalizationWriterFactory::new(),
+        SqlxProductListingRepositoryFactory::new(),
+        SqlxProductListingEventAppenderFactory::new(),
+        SqlxAuctionRepositoryFactory::new(),
+        SqlxAuctionEventAppenderFactory::new(),
+        SqlxAuctionMetadataPolicyRepositoryFactory::new(),
+        SqlxProductListingAuctionOverrideRepositoryFactory::new(),
+        SqlxPendingProductListingRawStreamReader::new(pool.clone()),
+    )
+    .execute(NormalizeProductListingRawRevisionCommand {
+        mode: NormalizeProductListingRawRevisionMode::RawRevision {
+            product_listing_raw_stream_id,
+            product_listing_raw_revision_id,
+            revision,
+        },
+        max_revisions_per_stream: 2,
+        pending_stream_limit: 1,
+    })
+    .await
+    .unwrap_or_else(|error| panic!("normalize crawler auction stream: {error}"));
+    assert_eq!(
+        vec![
+            ProductListingRawNormalizationOutcome::Applied,
+            ProductListingRawNormalizationOutcome::Applied,
+        ],
+        result
+            .revisions
+            .into_iter()
+            .map(|revision| revision.outcome)
+            .collect::<Vec<_>>()
+    );
+
+    let auction_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM auctions WHERE listing_source_id = $1")
+            .bind(listing_source_id.into_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("count resolved auctions: {error}"));
+    assert_eq!(1, auction_count);
+    let (
+        auction_id,
+        source_auction_id,
+        name,
+        catalogue_url,
+        format,
+        reported_lot_count,
+        context_auction_id,
+    ): ResolvedCrawlerAuctionRow = sqlx::query_as(
+        "SELECT auction.auction_id, auction.source_auction_id, auction.name_text, \
+                auction.catalogue_url, auction.format, auction.reported_lot_count, \
+                context.auction_id \
+         FROM auctions auction \
+         JOIN product_listing_auction_contexts context ON context.auction_id = auction.auction_id \
+         WHERE auction.listing_source_id = $1",
+    )
+    .bind(listing_source_id.into_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap_or_else(|error| panic!("load resolved crawler auction: {error}"));
+    assert_eq!(auction_id, context_auction_id);
+    assert_eq!("catalogue-2026-0042", source_auction_id);
+    assert_eq!(Some("Autumn Decorative Arts".to_owned()), name);
+    assert_eq!(
+        Some("https://example.test/auctions/autumn-2026".to_owned()),
+        catalogue_url
+    );
+    assert_eq!(Some("TIMED".to_owned()), format);
+    assert_eq!(Some(42), reported_lot_count);
+}
+
 #[aura_integration_test(services = [BUSINESS_SCHEMA])]
 async fn should_apply_other_facts_and_preserve_lot_context_when_timing_is_invalid() {
     let pool = get_postgres_client().await;
@@ -1406,6 +1539,42 @@ fn upsert_values_with_url(price: &str, url: &str) -> Value {
 
 fn normalization_context() -> Value {
     json!({"baseUrl": "https://example.test/listings/source-123", "fallbackCurrency": "EUR"})
+}
+
+fn crawler_raw_write(
+    listing_source_id: ListingSourceId,
+    raw_values: Value,
+    source_event_id: &str,
+) -> ProductListingRawCaptureWrite {
+    let input = ProductListingNormalizationInput::new(
+        RawProductListingOperation::Upsert,
+        RawProductListingPayloadFormat::CrawlerExtractedProduct,
+        1,
+        1,
+        SourcePayload::new(json!({"crawlerFixture": source_event_id}))
+            .unwrap_or_else(|error| panic!("crawler source payload: {error}")),
+        RawProductListingValues::new(raw_values)
+            .unwrap_or_else(|error| panic!("crawler raw values: {error}")),
+        NormalizationContext::new(normalization_context())
+            .unwrap_or_else(|error| panic!("crawler normalization context: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("crawler normalization input: {error}"));
+    let input_sha256 = input
+        .hash()
+        .unwrap_or_else(|error| panic!("crawler normalization input hash: {error}"));
+    ProductListingRawCaptureWrite {
+        listing_source_id,
+        ingestion_method: ProductListingRawIngestionMethod::WebCrawl,
+        source_record_key: "crawler-lot-42a".to_owned(),
+        source_record_key_sha256: SourceRecordKeySha256::new([7; 32]),
+        input,
+        input_sha256,
+        provenance: RawProductListingProvenance::new(json!({"crawlerFixture": source_event_id}))
+            .unwrap_or_else(|error| panic!("crawler provenance: {error}")),
+        source_event_id: Some(source_event_id.to_owned()),
+        source_occurred_at: None,
+        provider_receipt: None,
+    }
 }
 
 fn raw_write(

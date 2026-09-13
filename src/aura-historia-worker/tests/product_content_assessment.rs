@@ -351,7 +351,7 @@ async fn insert_product_in_transaction(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         })
     };
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, $3, $4, 1, $5, now())")

@@ -15,9 +15,10 @@ use indexmap::IndexSet;
 use product_listing_normalization::error::NormalizationFailureScope;
 use product_listing_normalization::{
     ListingAvailabilityQuickCheck, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
-    ProductListingRawValuesNormalizationDiagnostic, ProductListingRawValuesNormalizationError,
-    ProductListingRawValuesNormalizationOutcome, ProductListingRawValuesNormalizer,
-    ProductListingRawValuesPatch, ProductListingRawValuesResolved,
+    ProductListingRawValuesAuctionMetadataResolved, ProductListingRawValuesNormalizationDiagnostic,
+    ProductListingRawValuesNormalizationError, ProductListingRawValuesNormalizationOutcome,
+    ProductListingRawValuesNormalizer, ProductListingRawValuesPatch,
+    ProductListingRawValuesResolved,
 };
 use product_listing_service::canonical_product_listing_write::{
     CanonicalProductListingUpsert, CanonicalProductListingWriteError,
@@ -30,7 +31,7 @@ use product_listing_service::ports::{
 use std::time::Instant;
 use time::OffsetDateTime;
 
-pub const NORMALIZER_VERSION: u16 = 3;
+pub const NORMALIZER_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizeProductListingRawRevisionMode {
@@ -714,8 +715,25 @@ fn canonical_upsert(
         },
         auction: to_patch(&resolved.auction),
         auction_source_id: resolved.auction_source_id.clone(),
-        auction_metadata: auction_service::EmbeddedAuctionMetadata::default(),
+        auction_metadata: auction_metadata(&resolved.auction_metadata),
         raw_auction_capture_generation: None,
+    }
+}
+
+fn auction_metadata(
+    metadata: &ProductListingRawValuesAuctionMetadataResolved,
+) -> auction_service::EmbeddedAuctionMetadata {
+    auction_service::EmbeddedAuctionMetadata {
+        name: metadata.name.clone(),
+        description: metadata.description.clone(),
+        catalogue_url: metadata.catalogue_url.clone(),
+        format: metadata.format,
+        reported_status: metadata.reported_status,
+        reported_lot_count: metadata.reported_lot_count,
+        bidding_opens: metadata.bidding_opens.clone(),
+        live_starts: metadata.live_starts.clone(),
+        lots_begin_closing: metadata.lots_begin_closing.clone(),
+        scheduled_end: metadata.scheduled_end.clone(),
     }
 }
 
@@ -1800,6 +1818,49 @@ mod tests {
     }
 
     #[test]
+    fn should_pass_normalized_embedded_auction_metadata_to_the_canonical_writer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = current_upsert_input(serde_json::json!({
+            "action": "SET",
+            "value": {
+                "sourceAuctionId": {"action": "SET", "value": "catalogue-2026-0042"},
+                "auctionMetadata": {
+                    "name": "Autumn Decorative Arts",
+                    "format": "TIMED",
+                    "schedule": {
+                        "liveStarts": {"precision": "INSTANT", "value": "2026-10-18T10:00:00Z"}
+                    }
+                }
+            }
+        }))?;
+        let ProductListingRawValuesNormalizationOutcome::Resolved(resolved) =
+            ProductListingRawValuesNormalizer::new().normalize(&input)
+        else {
+            panic!("valid raw auction metadata should resolve");
+        };
+
+        let command = canonical_upsert(ListingSourceId::new(), resolved.as_ref());
+
+        assert_eq!(
+            Some("Autumn Decorative Arts"),
+            command
+                .auction_metadata
+                .name
+                .as_ref()
+                .map(|value| value.payload.as_ref())
+        );
+        assert_eq!(
+            Some(auction_core::AuctionFormat::Timed),
+            command.auction_metadata.format
+        );
+        assert!(matches!(
+            command.auction_metadata.live_starts,
+            Some(auction_core::AuctionTime::Instant { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn should_preserve_auction_clear_and_complete_invalid_timing_diagnostics_successfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let clear_input = current_upsert_input(serde_json::json!({"action": "CLEAR"}))?;
@@ -1882,7 +1943,7 @@ mod tests {
                 Err(NormalizeProductListingRawRevisionError::UnsupportedStoredSchemaVersion)
             ));
         }
-        assert_eq!(3, NORMALIZER_VERSION);
+        assert_eq!(4, NORMALIZER_VERSION);
         Ok(())
     }
 

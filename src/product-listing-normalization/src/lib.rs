@@ -33,6 +33,9 @@ pub use price::{PriceNormalizationError, normalize_price, normalize_product_list
 pub use raw_values_normalizer::{
     LotAuctionTimingField, PRODUCT_LISTING_RAW_VALUES_SCHEMA_VERSION,
     ProductListingNormalizationContextV1, ProductListingRawValues, ProductListingRawValuesAuction,
+    ProductListingRawValuesAuctionMetadata,
+    ProductListingRawValuesAuctionMetadataNormalizationError,
+    ProductListingRawValuesAuctionMetadataResolved, ProductListingRawValuesAuctionMetadataSchedule,
     ProductListingRawValuesAuctionNormalizationError, ProductListingRawValuesAuctionTime,
     ProductListingRawValuesLotAuctionTiming, ProductListingRawValuesNormalizationDiagnostic,
     ProductListingRawValuesNormalizationError, ProductListingRawValuesNormalizationOutcome,

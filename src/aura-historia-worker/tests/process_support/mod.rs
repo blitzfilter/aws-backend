@@ -257,7 +257,7 @@ pub async fn commit_source(pool: &sqlx::PgPool) -> TestResult<Source> {
         "description": {"language": "de", "text": "Bemalter Stuhl"},
         "pricing": {"price": null, "priceEstimateMin": null, "priceEstimateMax": null},
         "availability": "AVAILABLE", "url": "https://example.test/product", "imageCount": 0,
-        "auction": {"start": null, "end": null}
+        "auction": null
     });
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, now())")
         .bind(event_id).bind(product_id).bind(payload).execute(&mut *tx).await?;

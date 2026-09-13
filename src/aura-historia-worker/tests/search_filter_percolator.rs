@@ -1327,7 +1327,7 @@ async fn create_product_with_domain_event(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }),
     )
     .await
@@ -1482,7 +1482,7 @@ async fn insert_cross_currency_product_with_event(
         "availability": availability,
         "url": "https://example.test/cross-currency-product",
         "imageCount": 0,
-        "auction": {"start": null, "end": null}
+        "auction": null
     });
     sqlx::query("INSERT INTO product_listing_events (event_id, product_listing_id, event_type, event_group, event_type_schema_version, payload, event_time) VALUES ($1, $2, 'PRODUCT_LISTING_DISCOVERED', 'DOMAIN', 1, $3, $4)")
         .bind(uuid::Uuid::from(discovery_event_id))
@@ -1743,7 +1743,7 @@ async fn create_product_with_event_then_rollback(
             "availability": "AVAILABLE",
             "url": "https://example.test/product",
             "imageCount": 0,
-            "auction": {"start": null, "end": null}
+            "auction": null
         }))
         .execute(&mut *tx)
         .await?;
@@ -2205,7 +2205,7 @@ async fn redeliver_product_event(
                 "availability": "AVAILABLE",
                 "url": "https://example.test/product",
                 "imageCount": 0,
-                "auction": {"start": null, "end": null}
+                "auction": null
             })
         }
         ("PRODUCT_LISTING_CHANGED", "DOMAIN") => json!({

@@ -1,6 +1,6 @@
 # Iteration 07 — Auction corrections
 
-**Status:** implementation complete; full worker process-durability verification pending
+**Status:** PASS
 
 ## Objective
 
@@ -44,12 +44,20 @@ cargo test -p aura-historia-worker --test product_listing_raw_normalization --al
 
 OpenAPI was parsed with PyYAML after correcting the Auction-context `If-Match` parameter description.
 
-Pending verification:
+Passed after fixture/worker contract repair:
+
+```text
+cargo test -p aura-historia-worker --lib --all-features
+cargo test -p aura-historia-worker --test process_durability --all-features \\
+  should_persist_accepted_work_after_process_dies_before_handler_commit_t07 -- --exact
+```
+
+Passed with the authorized 20-minute bound:
 
 ```text
 cargo test -p aura-historia-worker --all-features
 ```
 
-The command exceeded its 10-minute bound in the unrelated `process_durability` integration suite after its worker library and focused raw-normalization tests passed. Several timing-sensitive process-durability cases had failed before the timeout. It needs isolated follow-up; do not claim the full worker suite passed.
+The full worker suite completed successfully, including its real-infrastructure process tests.
 
 No shared database, remote data, queue, or deployment was reset. This changes the initial business schema. A matching development checkout needs an explicitly authorized disposable-environment reset before use.

@@ -1016,7 +1016,7 @@ mod tests {
                 "availability": null,
                 "url": "https://delete-test.example/product",
                 "imageCount": 0,
-                "auction": {"start": null, "end": null}
+                "auction": null
             }))
             .execute(&mut *transaction)
             .await

@@ -466,12 +466,24 @@ async fn should_hash_validated_image_projection_without_mutating_source_evidence
     assert_eq!(raw.images, source_images);
     assert_eq!(raw.images, source_image_groups());
 
-    let accepted_input =
-        crawler_raw_input(&raw, &accepted_primary, &url, None, [true, false, false])
-            .unwrap_or_else(|error| panic!("accepted image projection must build: {error}"));
-    let rejected_input =
-        crawler_raw_input(&raw, &rejected_primary, &url, None, [true, false, false])
-            .unwrap_or_else(|error| panic!("fallback image projection must build: {error}"));
+    let accepted_input = crawler_raw_input(
+        &raw,
+        &accepted_primary,
+        &url,
+        None,
+        None,
+        [true, false, false],
+    )
+    .unwrap_or_else(|error| panic!("accepted image projection must build: {error}"));
+    let rejected_input = crawler_raw_input(
+        &raw,
+        &rejected_primary,
+        &url,
+        None,
+        None,
+        [true, false, false],
+    )
+    .unwrap_or_else(|error| panic!("fallback image projection must build: {error}"));
 
     assert_eq!(
         accepted_input.source_payload().value().get("images"),
